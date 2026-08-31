@@ -278,6 +278,10 @@ struct WalletReviewRegistry: Sendable {
             && manifest.evmContracts.contains(entry)
     }
 
+    func containsAdapter(_ adapterID: String) -> Bool {
+        manifest.adapterIDs.contains(adapterID)
+    }
+
     private static func isStructurallyValid(
         _ manifest: WalletReviewManifest,
         now: Date
@@ -567,7 +571,7 @@ enum WalletNetworkCatalog {
         ),
         nativeAssetID: "solana:mainnet-beta/slip44:501", nativeSymbol: "SOL", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://explorer.solana.com/tx/{transaction}",
-        staticallyReviewedCapabilities: []
+        staticallyReviewedCapabilities: [.nativeTransfer, .autonomousPolicy]
     )
 
     static let solanaDevnet = WalletNetworkDescriptor(
@@ -576,7 +580,7 @@ enum WalletNetworkCatalog {
         identity: .init(kind: .solanaGenesisHash, value: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
         nativeAssetID: "solana:devnet/slip44:501", nativeSymbol: "SOL", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://explorer.solana.com/tx/{transaction}?cluster=devnet",
-        staticallyReviewedCapabilities: []
+        staticallyReviewedCapabilities: [.nativeTransfer, .autonomousPolicy]
     )
 
     static let suiMainnet = WalletNetworkDescriptor(

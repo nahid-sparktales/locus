@@ -487,7 +487,7 @@ struct WalletSettingsView: View {
                     .font(.body)
                     .foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
-                Button("New ETH Rule") { policyPresented = true }
+                Button("New Native Rule") { policyPresented = true }
                     .disabled(gateway.status != .unlocked)
             }
             ForEach(gateway.activePolicyStatuses) { status in
@@ -495,8 +495,10 @@ struct WalletSettingsView: View {
                     Text("\(policyLabel(status.policy)) → \(status.policy.allowedRecipients.sorted().joined(separator: ", "))")
                         .font(.headline)
                         .lineLimit(1)
-                    if status.policy.allowedAdapterIDs.contains("native-eth-transfer-v1") {
-                        Text("Used \(WalletAmountFormatter.ether(wei: status.spentBaseUnits) ?? status.spentBaseUnits) of \(WalletAmountFormatter.ether(wei: status.policy.maximumSessionBaseUnits) ?? status.policy.maximumSessionBaseUnits)")
+                    if let network = WalletNetworkCatalog.descriptor(
+                        id: status.policy.networkID
+                    ), status.policy.allowedAssetIDs == [network.nativeAssetID] {
+                        Text("Used \(WalletAmountFormatter.asset(baseUnits: status.spentBaseUnits, decimals: network.nativeDecimals, symbol: network.nativeSymbol) ?? status.spentBaseUnits) of \(WalletAmountFormatter.asset(baseUnits: status.policy.maximumSessionBaseUnits, decimals: network.nativeDecimals, symbol: network.nativeSymbol) ?? status.policy.maximumSessionBaseUnits)")
                             .font(.callout)
                             .accessibilityIdentifier("settings.wallet.rule.usage")
                     } else {
@@ -817,7 +819,8 @@ struct WalletSettingsView: View {
 
     private func adapterLabel(_ adapterID: String) -> String {
         switch adapterID {
-        case "native-eth-transfer-v1": "Native ETH"
+        case WalletReviewedAdapters.ethereumNativeTransfer: "Native ETH"
+        case WalletReviewedAdapters.solanaNativeTransfer: "Native SOL"
         case WalletReviewedAdapters.erc20: "ERC-20"
         case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
             "Uniswap exact input"
@@ -945,13 +948,16 @@ private struct WalletSendSheet: View {
             } else {
                 field("Amount (\(snapshot.symbol))", placeholder: "0.01", text: $amount)
             }
-            field("Maximum network fee (ETH)", placeholder: "0.01", text: $maximumFee)
+            field(
+                "Maximum network fee (\(network?.nativeSymbol ?? "native asset"))",
+                placeholder: "0.01", text: $maximumFee
+            )
 
             Text("The exact raw destination, network, amount, maximum fee, decoded effects, and fresh simulation appear again before signing.")
                 .font(.callout)
                 .foregroundStyle(LocusTheme.textSecondary)
 
-            if snapshot.chain != .evm {
+            if snapshot.chain == .sui || (snapshot.chain == .solana && !isNative) {
                 Label("This chain adapter remains disabled until its signer and audit gate passes.", systemImage: "lock.shield")
                     .font(.callout)
                     .foregroundStyle(LocusTheme.warning)
@@ -1003,11 +1009,22 @@ private struct WalletSendSheet: View {
     }
 
     private var isValid: Bool {
-        guard snapshot.chain == .evm,
-              recipient.trimmingCharacters(in: .whitespacesAndNewlines).count == 42,
-              WalletAmountFormatter.wei(
-                  fromEther: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines)
-              ) != nil else { return false }
+        let destination = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        let validDestination: Bool = switch snapshot.chain {
+        case .evm:
+            destination.count == 42 && destination.hasPrefix("0x")
+                && destination.dropFirst(2).allSatisfy(\.isHexDigit)
+        case .solana:
+            WalletSolanaBase58.decode(destination, exactLength: 32) != nil
+        case .sui:
+            false
+        }
+        guard validDestination,
+              WalletAmountFormatter.baseUnits(
+                  from: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines),
+                  decimals: network?.nativeDecimals ?? 0
+              ) != nil,
+              snapshot.chain == .evm || isNative else { return false }
         if isNFT { return resolvedTokenID != nil }
         let decimals = isNative ? (network?.nativeDecimals ?? 18) : (asset?.decimals ?? -1)
         return WalletAmountFormatter.baseUnits(
@@ -1024,8 +1041,9 @@ private struct WalletSendSheet: View {
     }
 
     private func prepare() {
-        guard let feeUnits = WalletAmountFormatter.wei(
-            fromEther: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let feeUnits = WalletAmountFormatter.baseUnits(
+            from: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: network?.nativeDecimals ?? 0
         ) else { return }
         preparing = true
         Task {
@@ -1200,8 +1218,15 @@ private struct WalletBrowserOriginGrantSheet: View {
 }
 
 private struct WalletNativePolicySheet: View {
+    private struct PolicyOption: Identifiable {
+        let account: WalletAccount
+        let network: WalletNetworkDescriptor
+        var id: String { "\(account.id)|\(network.id)" }
+    }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
+    @State private var selectedOptionID = ""
     @State private var recipient = ""
     @State private var perTransaction = ""
     @State private var sessionCap = ""
@@ -1215,17 +1240,23 @@ private struct WalletNativePolicySheet: View {
             Text("Create an Agent Spending Rule").font(.title2.weight(.bold))
             Text("This rule lives only inside the signer and disappears when the vault locks or Locus exits.")
                 .font(.body).foregroundStyle(LocusTheme.textSecondary)
-            field("Approved recipient", placeholder: "0x…", text: $recipient)
-            field("Maximum per transfer (ETH)", placeholder: "0.001", text: $perTransaction)
-            field("Total session allowance (ETH)", placeholder: "0.005", text: $sessionCap)
-            field("Maximum fee per transfer (ETH)", placeholder: "0.002", text: $feeCap)
+            Picker("Network", selection: $selectedOptionID) {
+                ForEach(options) { option in
+                    Text("\(option.network.displayName) · \(option.account.address.prefix(8))…")
+                        .tag(option.id)
+                }
+            }
+            field("Approved recipient", placeholder: recipientPlaceholder, text: $recipient)
+            field("Maximum per transfer (\(nativeSymbol))", placeholder: "0.001", text: $perTransaction)
+            field("Total session allowance (\(nativeSymbol))", placeholder: "0.005", text: $sessionCap)
+            field("Maximum fee per transfer (\(nativeSymbol))", placeholder: "0.002", text: $feeCap)
             field("Expires after (minutes, max 480)", placeholder: "30", text: $durationMinutes)
             Toggle("Save as a reusable template (authorization is never saved)", isOn: $saveTemplate)
                 .font(.callout)
             if saveTemplate {
-                field("Template name", placeholder: "Sepolia test allowance", text: $templateName)
+                field("Template name", placeholder: "Test network allowance", text: $templateName)
             }
-            Label("Only the reviewed native-ETH adapter can use this rule. Contracts and unlimited approvals cannot.", systemImage: "shield.lefthalf.filled")
+            Label("Only the reviewed native-transfer adapter for this exact account and network can use this rule. Contracts cannot.", systemImage: "shield.lefthalf.filled")
                 .font(.callout).foregroundStyle(LocusTheme.warning)
             HStack {
                 Button("Cancel") { dismiss() }
@@ -1236,18 +1267,57 @@ private struct WalletNativePolicySheet: View {
             }
             if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
         }
-        .padding(24).frame(width: 520)
+        .padding(24).frame(width: 540)
+        .onAppear {
+            if selectedOptionID.isEmpty { selectedOptionID = options.first?.id ?? "" }
+        }
+    }
+
+    private var options: [PolicyOption] {
+        gateway.accounts.flatMap { account in
+            account.networkIDs.compactMap { networkID in
+                guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+                      network.chain == account.chain,
+                      network.chain == .evm || network.chain == .solana,
+                      network.staticallyReviewedCapabilities.contains(.autonomousPolicy)
+                else { return nil }
+                return PolicyOption(account: account, network: network)
+            }
+        }.sorted {
+            if $0.network.environment != $1.network.environment {
+                return $0.network.environment == .testnet
+            }
+            return $0.network.displayName < $1.network.displayName
+        }
+    }
+
+    private var selectedOption: PolicyOption? {
+        options.first { $0.id == selectedOptionID }
+    }
+
+    private var nativeSymbol: String { selectedOption?.network.nativeSymbol ?? "asset" }
+    private var recipientPlaceholder: String {
+        selectedOption?.network.chain == .solana ? "Base58 address" : "0x…"
     }
 
     private var valid: Bool {
-        guard let perTransactionWei = parsedETH(perTransaction),
-              let sessionCapWei = parsedETH(sessionCap),
-              parsedETH(feeCap) != nil else { return false }
-        return recipient.count == 42 && recipient.hasPrefix("0x")
-            && WalletBaseUnits.lessThanOrEqual(perTransactionWei, sessionCapWei)
+        guard let selectedOption,
+              let perTransactionUnits = parsedNative(perTransaction),
+              let sessionCapUnits = parsedNative(sessionCap),
+              parsedNative(feeCap) != nil else { return false }
+        let validRecipient = switch selectedOption.network.chain {
+        case .evm:
+            recipient.count == 42 && recipient.hasPrefix("0x")
+                && recipient.dropFirst(2).allSatisfy(\.isHexDigit)
+        case .solana:
+            WalletSolanaBase58.decode(recipient, exactLength: 32) != nil
+        case .sui:
+            false
+        }
+        return validRecipient
+            && WalletBaseUnits.lessThanOrEqual(perTransactionUnits, sessionCapUnits)
             && (Int(durationMinutes) ?? 0) > 0 && (Int(durationMinutes) ?? 0) <= 480
             && (!saveTemplate || !templateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && !gateway.accounts.filter { $0.chain == .evm }.isEmpty
     }
 
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
@@ -1258,29 +1328,35 @@ private struct WalletNativePolicySheet: View {
     }
 
     private func activate() {
-        guard let account = gateway.accounts.first(where: { $0.chain == .evm }),
+        guard let selectedOption,
               let minutes = Int(durationMinutes),
-              let perTransactionWei = parsedETH(perTransaction),
-              let sessionCapWei = parsedETH(sessionCap),
-              let feeCapWei = parsedETH(feeCap) else { return }
+              let perTransactionUnits = parsedNative(perTransaction),
+              let sessionCapUnits = parsedNative(sessionCap),
+              let feeCapUnits = parsedNative(feeCap) else { return }
+        let network = selectedOption.network
+        let adapterID = network.chain == .solana
+            ? WalletReviewedAdapters.solanaNativeTransfer
+            : WalletReviewedAdapters.ethereumNativeTransfer
         let policy = WalletSessionPolicy(
-            id: UUID().uuidString.lowercased(), accountID: account.id,
-            networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: ["\(WalletGateway.sepoliaNetworkID)/slip44:60"],
+            id: UUID().uuidString.lowercased(), accountID: selectedOption.account.id,
+            networkID: network.id,
+            allowedAssetIDs: [network.nativeAssetID],
             allowedRecipients: [recipient],
-            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
-            maximumTransactionBaseUnits: perTransactionWei,
-            maximumSessionBaseUnits: sessionCapWei,
-            maximumFeeBaseUnits: feeCapWei,
+            allowedContractIDs: [], allowedAdapterIDs: [adapterID],
+            maximumTransactionBaseUnits: perTransactionUnits,
+            maximumSessionBaseUnits: sessionCapUnits,
+            maximumFeeBaseUnits: feeCapUnits,
             expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60)),
             allowedActionKinds: [.nativeTransfer]
         )
         let template = saveTemplate ? WalletPolicyTemplate(
                 id: UUID().uuidString.lowercased(),
                 name: templateName.trimmingCharacters(in: .whitespacesAndNewlines),
-                accountID: account.id, networkID: WalletGateway.sepoliaNetworkID,
-                recipient: recipient, maximumTransactionBaseUnits: perTransactionWei,
-                maximumSessionBaseUnits: sessionCapWei, maximumFeeBaseUnits: feeCapWei,
+                accountID: selectedOption.account.id, networkID: network.id,
+                recipient: recipient,
+                maximumTransactionBaseUnits: perTransactionUnits,
+                maximumSessionBaseUnits: sessionCapUnits,
+                maximumFeeBaseUnits: feeCapUnits,
                 durationMinutes: minutes
             ) : nil
         Task {
@@ -1291,8 +1367,12 @@ private struct WalletNativePolicySheet: View {
         }
     }
 
-    private func parsedETH(_ value: String) -> String? {
-        WalletAmountFormatter.wei(fromEther: value.trimmingCharacters(in: .whitespacesAndNewlines))
+    private func parsedNative(_ value: String) -> String? {
+        guard let network = selectedOption?.network else { return nil }
+        return WalletAmountFormatter.baseUnits(
+            from: value.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: network.nativeDecimals
+        )
     }
 }
 
@@ -1570,8 +1650,8 @@ private struct WalletTransactionConfirmationSheet: View {
                             detailRow("Nonce", transaction.nonce)
                             detailRow("Digest", transaction.digest)
                             detailRow("Spend (base units)", transaction.spendBaseUnits)
-                            detailRow("Fee quote (wei)", transaction.feeQuoteBaseUnits)
-                            detailRow("Fee ceiling (wei)", transaction.maximumFeeBaseUnits)
+                            detailRow("Fee quote (base units)", transaction.feeQuoteBaseUnits)
+                            detailRow("Fee ceiling (base units)", transaction.maximumFeeBaseUnits)
                             detailRow("Policy decision", transaction.policyDecision)
                             detailRow("Policy ID", transaction.policyID ?? "None")
                             detailRow("Expires", transaction.expiresAt.formatted(date: .abbreviated, time: .standard))
@@ -1586,7 +1666,7 @@ private struct WalletTransactionConfirmationSheet: View {
                                 }.joined(separator: "\n"))
                             } else {
                                 detailRow("Recipient", transaction.action.recipient ?? "Unknown")
-                                detailRow("Amount (wei)", transaction.action.amountBaseUnits ?? "0")
+                                detailRow("Amount (base units)", transaction.action.amountBaseUnits ?? "0")
                             }
                             detailRow("Decoded effects", transaction.effects.map {
                                 let destination = $0.spender.map { "spender \($0)" } ?? ($0.to ?? "unknown")
@@ -1646,7 +1726,7 @@ private struct WalletTransactionConfirmationSheet: View {
 
     private var actionTitle: String {
         if let amount = transaction.action.amountBaseUnits,
-           let formatted = WalletAmountFormatter.ether(wei: amount) {
+           let formatted = formattedNative(amount) {
             return "Send \(formatted)"
         }
         if let contract = transaction.contract {
@@ -1668,9 +1748,11 @@ private struct WalletTransactionConfirmationSheet: View {
     }
 
     private var feeText: String {
-        let formatted = WalletAmountFormatter.ether(wei: transaction.feeQuoteBaseUnits)
-            ?? "\(transaction.feeQuoteBaseUnits) wei"
-        return "\(formatted) · ceiling \(transaction.maximumFeeBaseUnits) wei"
+        let formatted = formattedNative(transaction.feeQuoteBaseUnits)
+            ?? "\(transaction.feeQuoteBaseUnits) base units"
+        let ceiling = formattedNative(transaction.maximumFeeBaseUnits)
+            ?? "\(transaction.maximumFeeBaseUnits) base units"
+        return "\(formatted) · ceiling \(ceiling)"
     }
 
     private var riskMessages: [String] {
@@ -1707,13 +1789,23 @@ private struct WalletTransactionConfirmationSheet: View {
 
     private var confirmationTitle: String {
         if let amount = transaction.action.amountBaseUnits,
-           let formatted = WalletAmountFormatter.ether(wei: amount) {
-            return "Confirm and Send \(formatted.replacingOccurrences(of: " ETH", with: "")) ETH"
+           let formatted = formattedNative(amount) {
+            return "Confirm and Send \(formatted)"
         }
         if let contract = transaction.contract {
             return "Confirm \(contract.function) on \(networkName)"
         }
         return "Confirm \(networkName) Transaction"
+    }
+
+    private func formattedNative(_ baseUnits: String) -> String? {
+        guard let network = WalletNetworkCatalog.descriptor(
+            id: transaction.networkID
+        ) else { return nil }
+        return WalletAmountFormatter.asset(
+            baseUnits: baseUnits, decimals: network.nativeDecimals,
+            symbol: network.nativeSymbol
+        )
     }
 
     private func summaryStatus(

@@ -66,6 +66,8 @@ private final class FakeWalletSigner: WalletSignerClient {
     var indexedActivityRows: [[String: Any]] = []
     var indexedHeadBlock: String?
     var accountAddress = "0xabc"
+    var accountChain: WalletChain = .evm
+    var accountNetworkIDs = [WalletGateway.sepoliaNetworkID]
     var reportedVaultState: WalletVaultState?
 
     func signerStatus() async throws -> WalletSignerStatus {
@@ -94,8 +96,10 @@ private final class FakeWalletSigner: WalletSignerClient {
     }
 
     func listAccounts() async throws -> [WalletAccount] {
-        [WalletAccount(id: "account-1", chain: .evm, address: accountAddress, label: "EVM",
-                       networkIDs: [WalletGateway.sepoliaNetworkID])]
+        [WalletAccount(
+            id: "account-1", chain: accountChain, address: accountAddress,
+            label: accountChain.rawValue, networkIDs: accountNetworkIDs
+        )]
     }
 
     func prepare(
@@ -158,15 +162,20 @@ private final class FakeWalletSigner: WalletSignerClient {
         riskFlags: [WalletRiskFlag],
         adapterID: String?
     ) -> WalletPreparedTransaction {
-        WalletPreparedTransaction(
+        let assetID = WalletNetworkCatalog.descriptor(id: request.networkID)?.nativeAssetID
+            ?? "slip44:60"
+        let recipient = request.action.recipient
+            ?? "0x1111111111111111111111111111111111111111"
+        let amount = request.action.amountBaseUnits ?? "1"
+        return WalletPreparedTransaction(
             id: "intent-1", digest: "canonical-digest",
             networkID: request.networkID, accountID: request.accountID,
             source: request.source, action: request.action, summary: "Send 1 wei",
             effects: [WalletDecodedEffect(id: "effect-1", kind: "debit",
-                                          assetID: "slip44:60", amountBaseUnits: "1",
-                                          from: "0xabc", to: "0xrecipient", spender: nil)],
+                                          assetID: assetID, amountBaseUnits: amount,
+                                          from: accountAddress, to: recipient, spender: nil)],
             riskFlags: riskFlags, contract: nil, adapterID: adapterID,
-            budgetAssetID: "slip44:60", spendBaseUnits: "1",
+            budgetAssetID: assetID, spendBaseUnits: amount,
             maximumFeeBaseUnits: request.maximumFeeBaseUnits,
             feeQuoteBaseUnits: "10", simulation: "Success", simulationSucceeded: true,
             nonce: "42", createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
@@ -213,7 +222,7 @@ final class WalletGatewayTests: XCTestCase {
         WalletPreparedTransaction(
             id: "intent-1", digest: "digest", networkID: WalletGateway.sepoliaNetworkID,
             accountID: "account-1", source: .agent,
-            action: .nativeTransfer(recipient: "0xrecipient", amountBaseUnits: "10"),
+            action: .nativeTransfer(recipient: "0x1111111111111111111111111111111111111111", amountBaseUnits: "10"),
             summary: "Transfer", effects: [], riskFlags: riskFlags, contract: nil,
             adapterID: adapterID, budgetAssetID: "slip44:60", spendBaseUnits: "10",
             maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15", simulation: "Success",
@@ -225,7 +234,7 @@ final class WalletGatewayTests: XCTestCase {
     private func policy() -> WalletSessionPolicy {
         WalletSessionPolicy(
             id: "policy-1", accountID: "account-1", networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: ["slip44:60"], allowedRecipients: ["0xrecipient"],
+            allowedAssetIDs: ["slip44:60"], allowedRecipients: ["0x1111111111111111111111111111111111111111"],
             allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
             maximumTransactionBaseUnits: "25", maximumSessionBaseUnits: "50",
             maximumFeeBaseUnits: "20", expiresAt: Date().addingTimeInterval(300)
@@ -901,6 +910,252 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(value is NSNull)
     }
 
+    func testSolanaCanonicalNativeMessageUsesStrictBase58AndReviewedShape() throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let transfer = try WalletSolanaCanonicalNativeTransfer(
+            feePayer: payer, recipient: recipient,
+            recentBlockhash: blockhash, amountBaseUnits: "123456789"
+        )
+        XCTAssertEqual(WalletSolanaBase58.decode(payer, exactLength: 32)?.count, 32)
+        XCTAssertEqual(transfer.message.count, 150)
+        XCTAssertEqual(transfer.unsignedTransaction.count, 215)
+        XCTAssertEqual(
+            transfer.canonicalMessageDigest,
+            "sha256:f5d55dd7bde27c8ff2565f8867ded2ec84d5ca0b75ada68aec6c6b3ec305d59d"
+        )
+        XCTAssertEqual(
+            transfer.resolvedAccountsDigest,
+            WalletSolanaCanonicalNativeTransfer.resolvedDigest(
+                feePayer: payer, recipient: recipient
+            )
+        )
+        XCTAssertNil(WalletSolanaBase58.decode("0OIl", exactLength: 32))
+        XCTAssertThrowsError(try WalletSolanaCanonicalNativeTransfer(
+            feePayer: payer, recipient: payer,
+            recentBlockhash: blockhash, amountBaseUnits: "1"
+        ))
+        XCTAssertThrowsError(try WalletSolanaCanonicalNativeTransfer(
+            feePayer: payer, recipient: recipient,
+            recentBlockhash: blockhash, amountBaseUnits: "18446744073709551616"
+        ))
+    }
+
+    func testSolanaProviderBindsGenesisBlockhashFeeSimulationAndRecheck() async throws {
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        var currentBlockHeight = 450
+        let client = makeSolanaRPCClient { request in
+            let body = try walletRPCRequestBody(request)
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? NSNumber)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "blockhash": blockhash,
+                        "lastValidBlockHeight": 500,
+                    ],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "err": NSNull(), "innerInstructions": [],
+                        "logs": ["Program 11111111111111111111111111111111 success"],
+                        "unitsConsumed": 150,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = currentBlockHeight
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nativeTransfer(
+                recipient: recipient, amountBaseUnits: "123456789"
+            ),
+            maximumFeeBaseUnits: "6000"
+        )
+        let packet = try await client.prepare(
+            request: request,
+            feePayer: "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        )
+        XCTAssertEqual(packet.genesisHash, WalletNetworkCatalog.solanaDevnet.identity.value)
+        XCTAssertEqual(packet.version, .legacy)
+        XCTAssertEqual(packet.recentBlockhash, blockhash)
+        XCTAssertEqual(packet.feeQuoteBaseUnits, "5000")
+        XCTAssertEqual(packet.priorityFeeBaseUnits, "0")
+        XCTAssertEqual(packet.instructions.count, 1)
+        XCTAssertEqual(
+            packet.instructions[0].adapterID,
+            WalletReviewedAdapters.solanaNativeTransfer
+        )
+
+        let recheck = try await client.recheck(intentID: "intent-sol", packet: packet)
+        XCTAssertEqual(recheck.intentID, "intent-sol")
+        XCTAssertEqual(recheck.currentBlockHeight, 450)
+        XCTAssertEqual(recheck.resolvedAccountsDigest, packet.resolvedAccountsDigest)
+        XCTAssertTrue(recheck.simulationSucceeded)
+
+        currentBlockHeight = 501
+        do {
+            _ = try await client.recheck(intentID: "intent-sol", packet: packet)
+            XCTFail("A stale Solana blockhash must be rejected before signing.")
+        } catch WalletRPCError.simulation(let message) {
+            XCTAssertTrue(message.contains("expired"))
+        }
+    }
+
+    func testSolanaProviderRejectsMaliciousGenesisBeforePreparation() async throws {
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!,
+                "result": "WrongGenesis111111111111111111111111111111",
+            ])
+        }
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nativeTransfer(recipient: recipient, amountBaseUnits: "1"),
+            maximumFeeBaseUnits: "5000"
+        )
+        do {
+            _ = try await client.prepare(
+                request: request,
+                feePayer: "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+            )
+            XCTFail("A mismatched Solana genesis must fail before message preparation.")
+        } catch WalletRPCError.wrongChain(let identity) {
+            XCTAssertTrue(identity.hasPrefix("WrongGenesis"))
+        }
+    }
+
+    func testSolanaBroadcastBindsTransactionIDToFirstSignature() async throws {
+        let signature = Data(repeating: 5, count: 64)
+        let transactionID = WalletSolanaBase58.encode(signature)
+        var signed = Data([1])
+        signed.append(signature)
+        signed.append(0)
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": transactionID,
+            ])
+        }
+        let result = try await client.broadcast(
+            signedTransaction: signed.base64EncodedString(),
+            expectedTransactionID: transactionID,
+            minimumContextSlot: 42
+        )
+        XCTAssertEqual(result, transactionID)
+
+        var substituted = signed
+        substituted[1] = 6
+        do {
+            _ = try await client.broadcast(
+                signedTransaction: substituted.base64EncodedString(),
+                expectedTransactionID: transactionID,
+                minimumContextSlot: 42
+            )
+            XCTFail("A transaction ID that is not the first signature must be rejected.")
+        } catch WalletGateway.Error.invalidArguments {
+            // Expected before any broadcast attempt.
+        }
+    }
+
+    func testGatewayPreparesHumanSOLTransferThroughSemanticPath() async {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        signer.adapterID = WalletReviewedAdapters.solanaNativeTransfer
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let prepared = await gateway.prepareHumanNativeTransfer(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "account-1", recipient: recipient,
+            amountBaseUnits: "1000", maximumFeeBaseUnits: "5000"
+        )
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(signer.preparedRequests.last?.networkID, "solana:devnet")
+        XCTAssertEqual(signer.preparedRequests.last?.action.amountBaseUnits, "1000")
+        XCTAssertEqual(gateway.pendingConfirmation?.source, .human)
+    }
+
+    func testGatewayRefreshesSOLBalanceAndFinalizedActivity() async {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        signer.adapterID = WalletReviewedAdapters.solanaNativeTransfer
+        signer.balanceBaseUnits = "123456789"
+        let suiteName = "WalletGatewayTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        XCTAssertEqual(gateway.accountSnapshots.first?.balanceBaseUnits, "123456789")
+
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let prepared = await gateway.prepareHumanNativeTransfer(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "account-1", recipient: recipient,
+            amountBaseUnits: "1000", maximumFeeBaseUnits: "5000"
+        )
+        XCTAssertTrue(prepared)
+        let executed = await gateway.confirmAndExecuteHumanIntent(intentID: "intent-1")
+        XCTAssertTrue(executed)
+        XCTAssertEqual(gateway.transactionHistory.first?.networkID, "solana:devnet")
+        signer.browserRPCResponse = [
+            "context": ["slot": 100],
+            "value": [[
+                "slot": 99, "confirmationStatus": "finalized", "err": NSNull(),
+            ]],
+        ]
+        await gateway.refreshTransactionHistory()
+        XCTAssertEqual(gateway.transactionHistory.first?.state, .confirmed)
+        XCTAssertEqual(gateway.transactionHistory.first?.finality, .finalized)
+        XCTAssertEqual(gateway.transactionHistory.first?.blockNumber, "99")
+    }
+
     private func makeRPCClient(
         response: @escaping (URLRequest) throws -> Data
     ) -> WalletSepoliaRPCClient {
@@ -909,6 +1164,19 @@ final class WalletGatewayTests: XCTestCase {
         configuration.protocolClasses = [WalletRPCURLProtocol.self]
         return WalletSepoliaRPCClient(
             endpoint: "https://wallet-rpc.test", session: URLSession(configuration: configuration)
+        )
+    }
+
+    private func makeSolanaRPCClient(
+        response: @escaping (URLRequest) throws -> Data
+    ) -> WalletSolanaRPCClient {
+        WalletRPCURLProtocol.handler = { request in (200, try response(request)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WalletRPCURLProtocol.self]
+        return try! WalletSolanaRPCClient(
+            network: WalletNetworkCatalog.solanaDevnet,
+            endpoint: "https://solana-wallet-rpc.test",
+            session: URLSession(configuration: configuration)
         )
     }
 
@@ -961,7 +1229,7 @@ final class WalletGatewayTests: XCTestCase {
         let browser = WalletPreparedTransaction(
             id: "browser-intent", digest: "digest", networkID: WalletGateway.sepoliaNetworkID,
             accountID: "account-1", source: .browser(origin: "https://dapp.test"),
-            action: .nativeTransfer(recipient: "0xrecipient", amountBaseUnits: "10"),
+            action: .nativeTransfer(recipient: "0x1111111111111111111111111111111111111111", amountBaseUnits: "10"),
             summary: "Transfer", effects: [], riskFlags: [], contract: nil,
             adapterID: "native-eth-transfer-v1", budgetAssetID: "slip44:60",
             spendBaseUnits: "10", maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15",
@@ -1125,6 +1393,80 @@ final class WalletGatewayTests: XCTestCase {
         ).contains("?value="))
     }
 
+    func testNativePolicyTemplateBindsSolanaAssetAndAdapter() {
+        let template = WalletPolicyTemplate(
+            id: "sol-rule", name: "SOL rule",
+            accountID: "locus-vault-solana-0",
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            recipient: WalletSolanaBase58.encode(Data(repeating: 7, count: 32)),
+            maximumTransactionBaseUnits: "1000",
+            maximumSessionBaseUnits: "5000",
+            maximumFeeBaseUnits: "5000", durationMinutes: 30
+        )
+        let policy = template.policy()
+        XCTAssertEqual(policy.allowedAssetIDs, [
+            WalletNetworkCatalog.solanaDevnet.nativeAssetID,
+        ])
+        XCTAssertEqual(policy.allowedAdapterIDs, [
+            WalletReviewedAdapters.solanaNativeTransfer,
+        ])
+        XCTAssertEqual(policy.networkID, WalletNetworkCatalog.solanaDevnet.id)
+    }
+
+    func testSolanaNativePolicyRequiresExactChainAssetAdapterAndRecipient() {
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let action = WalletSemanticAction.nativeTransfer(
+            recipient: recipient, amountBaseUnits: "1000"
+        )
+        let transaction = WalletPreparedTransaction(
+            id: "sol-intent", digest: "digest",
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .agent,
+            action: action, summary: "Send SOL", effects: [], riskFlags: [],
+            contract: nil, adapterID: WalletReviewedAdapters.solanaNativeTransfer,
+            budgetAssetID: WalletNetworkCatalog.solanaDevnet.nativeAssetID,
+            spendBaseUnits: "1000", maximumFeeBaseUnits: "5000",
+            feeQuoteBaseUnits: "5000", simulation: "Success",
+            simulationSucceeded: true, nonce: "blockhash",
+            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
+            policyDecision: "", policyID: nil
+        )
+        let policy = WalletPolicyTemplate(
+            id: "sol-rule", name: "SOL rule",
+            accountID: "locus-vault-solana-0",
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            recipient: recipient, maximumTransactionBaseUnits: "1000",
+            maximumSessionBaseUnits: "5000", maximumFeeBaseUnits: "5000",
+            durationMinutes: 30
+        ).policy()
+        XCTAssertEqual(WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy, spentThisSession: "0"
+        ), .automatic)
+
+        let wrongRecipient = WalletSemanticAction.nativeTransfer(
+            recipient: WalletSolanaBase58.encode(Data(repeating: 8, count: 32)),
+            amountBaseUnits: "1000"
+        )
+        let substituted = WalletPreparedTransaction(
+            id: transaction.id, digest: transaction.digest,
+            networkID: transaction.networkID, accountID: transaction.accountID,
+            source: transaction.source, action: wrongRecipient,
+            summary: transaction.summary, effects: transaction.effects,
+            riskFlags: transaction.riskFlags, contract: nil,
+            adapterID: transaction.adapterID, budgetAssetID: transaction.budgetAssetID,
+            spendBaseUnits: transaction.spendBaseUnits,
+            maximumFeeBaseUnits: transaction.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: transaction.feeQuoteBaseUnits,
+            simulation: transaction.simulation,
+            simulationSucceeded: transaction.simulationSucceeded,
+            nonce: transaction.nonce, createdAt: transaction.createdAt,
+            expiresAt: transaction.expiresAt, policyDecision: "", policyID: nil
+        )
+        guard case .requiresApproval = WalletPolicyEngine.evaluate(
+            transaction: substituted, policy: policy, spentThisSession: "0"
+        ) else { return XCTFail("A substituted SOL recipient must require exact approval.") }
+    }
+
     func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {
         var direct = AppSettings()
         XCTAssertTrue(direct.migrateLegacyWalletFeatureAccess(environment: [
@@ -1247,13 +1589,18 @@ final class WalletGatewayTests: XCTestCase {
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         XCTAssertEqual(gateway.capability?["protocol_version"] as? Int, 2)
+        XCTAssertTrue(
+            (gateway.capability?["supported_chains"] as? [String])?.contains(
+                WalletNetworkCatalog.solanaDevnet.id
+            ) == true
+        )
 
         let prepared = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
             "network_id": WalletGateway.sepoliaNetworkID,
             "account_id": "account-1",
             "action": [
                 "type": "native_transfer",
-                "recipient": "0xrecipient",
+                "recipient": "0x1111111111111111111111111111111111111111",
                 "amount_base_units": "0001",
             ],
             "maximum_fee_base_units": "20",
@@ -1388,7 +1735,7 @@ final class WalletGatewayTests: XCTestCase {
         do {
             _ = try await gateway.browserSendTransaction(
                 origin: "https://dapp.test",
-                transaction: ["from": "0xabc", "to": "0xrecipient", "value": "0x1"]
+                transaction: ["from": "0xabc", "to": "0x1111111111111111111111111111111111111111", "value": "0x1"]
             )
             XCTFail("Browser requests must never consume an autonomous policy.")
         } catch {
@@ -1437,7 +1784,7 @@ final class WalletGatewayTests: XCTestCase {
 
         let send = Task {
             try await gateway.browserSendTransaction(origin: "https://dapp.test:443/path", transaction: [
-                "from": "0xabc", "to": "0xrecipient", "value": "0x1",
+                "from": "0xabc", "to": "0x1111111111111111111111111111111111111111", "value": "0x1",
             ])
         }
         for _ in 0..<20 where gateway.pendingConfirmation == nil { await Task.yield() }
@@ -1470,7 +1817,7 @@ final class WalletGatewayTests: XCTestCase {
             "network_id": WalletGateway.sepoliaNetworkID,
             "account_id": "account-1",
             "action": [
-                "type": "native_transfer", "recipient": "0xrecipient",
+                "type": "native_transfer", "recipient": "0x1111111111111111111111111111111111111111",
                 "amount_base_units": "1",
             ],
             "maximum_fee_base_units": "20",

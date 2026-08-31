@@ -47,6 +47,8 @@ struct SignedReviewManifest: Codable {
 }
 
 let supportedAdapterIDs: Set<String> = [
+    "native-eth-transfer-v1",
+    "solana-system-transfer-v1",
     "erc20-v1",
     "erc721-safe-transfer-v1",
     "erc1155-safe-transfer-v1",

@@ -16,6 +16,8 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   explorers, and compiled adapters, with intersection-only emergency updates.
 - [x] Indexed Ethereum inbound/outbound activity reconciliation and quarantine
   for provider-discovered ERC-20/ERC-721/ERC-1155 assets.
+- [x] Native SOL legacy message reconstruction, signing, simulation recheck,
+  expiry handling, single-provider broadcast, status finality, and capped rules.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana native/SPL/Token-2022/NFT/compressed-collectible implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.

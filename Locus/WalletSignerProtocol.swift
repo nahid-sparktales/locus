@@ -293,12 +293,15 @@ struct WalletContractRegistryEntry: Codable, Equatable, Identifiable, Sendable {
 /// permitted function set. A registry caller cannot turn an arbitrary ABI into
 /// a reviewed adapter by supplying a label.
 enum WalletReviewedAdapters {
+    static let ethereumNativeTransfer = "native-eth-transfer-v1"
+    static let solanaNativeTransfer = "solana-system-transfer-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
     static let uniswapUniversalRouterV2ExactIn =
         "uniswap-universal-router-v2-exact-in-v1"
     static let staticallySupportedIDs: Set<String> = [
+        ethereumNativeTransfer, solanaNativeTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]
@@ -730,9 +733,13 @@ struct WalletSolanaPreparationPacket: Codable, Equatable, Sendable {
     let version: WalletSolanaTransactionVersion
     let recentBlockhash: String
     let lastValidBlockHeight: UInt64
+    let contextSlot: UInt64
     let feePayer: String
     let priorityFeeBaseUnits: String
+    let feeQuoteBaseUnits: String
     let maximumFeeBaseUnits: String
+    let canonicalMessageDigest: String
+    let resolvedAccountsDigest: String
     let instructions: [WalletSolanaReviewedInstruction]
     let simulation: String
     let simulationSucceeded: Bool
@@ -744,6 +751,7 @@ struct WalletSolanaRecheckPacket: Codable, Equatable, Sendable {
     let genesisHash: String
     let currentBlockHeight: UInt64
     let resolvedAccountsDigest: String
+    let feeQuoteBaseUnits: String
     let simulation: String
     let simulationSucceeded: Bool
     let observedAt: Date

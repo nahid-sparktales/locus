@@ -2107,11 +2107,14 @@ name = "locus-wallet-signer-core"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "base64 0.22.1",
  "bip39",
+ "bs58",
  "ed25519-dalek 3.0.0",
  "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "slip10_ed25519",
  "solana-pubkey",
  "sui-crypto",

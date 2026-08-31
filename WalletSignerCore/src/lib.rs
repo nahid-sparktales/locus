@@ -4,6 +4,7 @@
 //! Secret-bearing responses are consumed only inside the XPC process.
 
 use std::ffi::{CStr, CString, c_char};
+use std::str::FromStr;
 
 use alloy::consensus::{SignableTransaction, TxEip1559, TxEnvelope};
 use alloy::dyn_abi::{JsonAbiExt, Specifier};
@@ -13,9 +14,11 @@ use alloy::network::TxSignerSync;
 use alloy::primitives::{Address, Bytes, TxKind, U256, keccak256};
 use alloy::signers::local::MnemonicBuilder;
 use alloy::signers::local::coins_bip39::English;
+use base64::Engine;
 use bip39::{Language, Mnemonic};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use slip10_ed25519::derive_ed25519_private_key;
 use solana_pubkey::Pubkey;
 use sui_crypto::ed25519::Ed25519PrivateKey;
@@ -70,6 +73,28 @@ struct SignedEvmTransaction {
     digest: String,
     raw_transaction: String,
     transaction_hash: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct SolanaNativeTransferRequest {
+    fee_payer: String,
+    recipient: String,
+    recent_blockhash: String,
+    amount_base_units: String,
+}
+
+#[derive(Serialize)]
+struct PreparedSolanaTransaction {
+    from: String,
+    canonical_message_digest: String,
+}
+
+#[derive(Serialize)]
+struct SignedSolanaTransaction {
+    from: String,
+    canonical_message_digest: String,
+    transaction_id: String,
+    signed_transaction: String,
 }
 
 #[derive(Deserialize)]
@@ -234,6 +259,89 @@ fn build_evm_transaction(request: &EvmTransactionRequest) -> Result<TxEip1559, &
     })
 }
 
+fn solana_signing_key(mnemonic: &Mnemonic) -> SigningKey {
+    let mut seed = mnemonic.to_seed("");
+    let mut secret = derive_ed25519_private_key(&seed, &[44, 501, 0, 0]);
+    let key = SigningKey::from_bytes(&secret);
+    secret.zeroize();
+    seed.zeroize();
+    key
+}
+
+fn parse_solana_request(value: *const c_char) -> Result<SolanaNativeTransferRequest, &'static str> {
+    if value.is_null() {
+        return Err("missing Solana transaction");
+    }
+    // SAFETY: Callers provide a live NUL-terminated CString for this call.
+    let json = unsafe { CStr::from_ptr(value) }.to_bytes();
+    if json.len() > 16 * 1024 {
+        return Err("Solana transaction is too large");
+    }
+    serde_json::from_slice(json).map_err(|_| "invalid Solana transaction JSON")
+}
+
+fn encode_shortvec(mut value: usize, output: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if value == 0 {
+            return;
+        }
+    }
+}
+
+fn build_solana_native_message(
+    request: &SolanaNativeTransferRequest,
+    signing_key: &SigningKey,
+) -> Result<Vec<u8>, &'static str> {
+    let payer = Pubkey::from_str(&request.fee_payer).map_err(|_| "invalid Solana fee payer")?;
+    let recipient = Pubkey::from_str(&request.recipient).map_err(|_| "invalid Solana recipient")?;
+    let expected_payer = Pubkey::new_from_array(signing_key.verifying_key().to_bytes());
+    let system_program = Pubkey::new_from_array([0_u8; 32]);
+    if payer != expected_payer || recipient == payer || recipient == system_program {
+        return Err("Solana account roles do not match the reviewed transfer");
+    }
+    let amount = request
+        .amount_base_units
+        .parse::<u64>()
+        .map_err(|_| "invalid SOL transfer amount")?;
+    if amount == 0 || amount.to_string() != request.amount_base_units {
+        return Err("SOL transfer amount must be a positive canonical u64");
+    }
+    let blockhash = bs58::decode(&request.recent_blockhash)
+        .into_vec()
+        .map_err(|_| "invalid Solana blockhash")?;
+    if blockhash.len() != 32 || bs58::encode(&blockhash).into_string() != request.recent_blockhash {
+        return Err("Solana blockhash must be canonical base58");
+    }
+
+    // Legacy message with exactly one System Program transfer instruction.
+    // Accounts: fee payer (signer+writable), recipient (writable), System
+    // Program (readonly). Instruction data is bincode enum tag 2 + u64 lamports.
+    let mut message = vec![1, 0, 1];
+    encode_shortvec(3, &mut message);
+    message.extend_from_slice(payer.as_array());
+    message.extend_from_slice(recipient.as_array());
+    message.extend_from_slice(system_program.as_array());
+    message.extend_from_slice(&blockhash);
+    encode_shortvec(1, &mut message);
+    message.push(2);
+    encode_shortvec(2, &mut message);
+    message.extend_from_slice(&[0, 1]);
+    encode_shortvec(12, &mut message);
+    message.extend_from_slice(&2_u32.to_le_bytes());
+    message.extend_from_slice(&amount.to_le_bytes());
+    Ok(message)
+}
+
+fn solana_message_digest(message: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(message)))
+}
+
 /// Resolve a registered JSON ABI function and encode typed string arguments.
 /// This is deliberately separate from transaction signing so native code can
 /// simulate the signer-produced calldata before asking the signer to store an
@@ -352,6 +460,70 @@ pub extern "C" fn locus_wallet_sign_evm_transaction_json(
             digest: digest.to_string(),
             transaction_hash: keccak256(&raw).to_string(),
             raw_transaction: format!("0x{}", hex::encode(raw)),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Independently rebuild one reviewed legacy System Program transfer and
+/// return its exact message digest. No caller-supplied instructions or message
+/// bytes cross this boundary.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_prepare_solana_native_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = solana_signing_key(&mnemonic);
+        let request = parse_solana_request(transaction_json)?;
+        let message = build_solana_native_message(&request, &signing_key)?;
+        Ok::<_, &'static str>(PreparedSolanaTransaction {
+            from: Pubkey::new_from_array(signing_key.verifying_key().to_bytes()).to_string(),
+            canonical_message_digest: solana_message_digest(&message),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Rebuild and sign only the reviewed legacy System Program transfer shape.
+/// The first Ed25519 signature is also the canonical Solana transaction ID.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_sign_solana_native_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = solana_signing_key(&mnemonic);
+        let request = parse_solana_request(transaction_json)?;
+        let message = build_solana_native_message(&request, &signing_key)?;
+        let signature = signing_key.sign(&message).to_bytes();
+        let mut transaction = Vec::with_capacity(1 + signature.len() + message.len());
+        encode_shortvec(1, &mut transaction);
+        transaction.extend_from_slice(&signature);
+        transaction.extend_from_slice(&message);
+        Ok::<_, &'static str>(SignedSolanaTransaction {
+            from: Pubkey::new_from_array(signing_key.verifying_key().to_bytes()).to_string(),
+            canonical_message_digest: solana_message_digest(&message),
+            transaction_id: bs58::encode(signature).into_string(),
+            signed_transaction: base64::engine::general_purpose::STANDARD.encode(transaction),
         })
     })();
     entropy.zeroize();
@@ -524,6 +696,108 @@ mod tests {
             value["accounts"][2]["address"],
             "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
         );
+    }
+
+    #[test]
+    fn solana_native_transfer_is_rebuilt_and_signed_deterministically() {
+        use ed25519_dalek::{Signature, Verifier};
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let recipient = Pubkey::new_from_array([7_u8; 32]).to_string();
+        let blockhash = Pubkey::new_from_array([9_u8; 32]).to_string();
+        let request = CString::new(
+            serde_json::json!({
+                "fee_payer": "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+                "recipient": recipient,
+                "recent_blockhash": blockhash,
+                "amount_base_units": "123456789"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let prepared_pointer =
+            locus_wallet_prepare_solana_native_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let prepared_json = unsafe { CStr::from_ptr(prepared_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(prepared_pointer) };
+        let prepared: serde_json::Value = serde_json::from_str(&prepared_json).unwrap();
+        assert_eq!(
+            prepared["from"],
+            "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        );
+        assert_eq!(
+            prepared["canonical_message_digest"],
+            "sha256:f5d55dd7bde27c8ff2565f8867ded2ec84d5ca0b75ada68aec6c6b3ec305d59d"
+        );
+
+        let signed_pointer =
+            locus_wallet_sign_solana_native_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let signed_json = unsafe { CStr::from_ptr(signed_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(signed_pointer) };
+        let signed: serde_json::Value = serde_json::from_str(&signed_json).unwrap();
+        assert_eq!(
+            signed["canonical_message_digest"],
+            prepared["canonical_message_digest"]
+        );
+        assert_eq!(
+            bs58::decode(signed["transaction_id"].as_str().unwrap())
+                .into_vec()
+                .unwrap()
+                .len(),
+            64
+        );
+        let transaction = base64::engine::general_purpose::STANDARD
+            .decode(signed["signed_transaction"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(transaction[0], 1);
+        let signature_bytes: [u8; 64] = transaction[1..65].try_into().unwrap();
+        let signature = Signature::from_bytes(&signature_bytes);
+        let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
+        let signing_key = solana_signing_key(&mnemonic);
+        signing_key
+            .verifying_key()
+            .verify(&transaction[65..], &signature)
+            .unwrap();
+        entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn solana_native_transfer_rejects_foreign_fee_payer_and_self_transfer() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let foreign = Pubkey::new_from_array([4_u8; 32]).to_string();
+        let blockhash = Pubkey::new_from_array([9_u8; 32]).to_string();
+        for recipient in [
+            Pubkey::new_from_array([7_u8; 32]).to_string(),
+            foreign.clone(),
+        ] {
+            let request = CString::new(
+                serde_json::json!({
+                    "fee_payer": foreign,
+                    "recipient": recipient,
+                    "recent_blockhash": blockhash,
+                    "amount_base_units": "1"
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let pointer = locus_wallet_prepare_solana_native_transfer_json(
+                entropy.as_ptr(),
+                request.as_ptr(),
+            );
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert!(value["error"].as_str().is_some());
+        }
     }
 
     #[test]

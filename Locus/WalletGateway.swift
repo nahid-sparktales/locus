@@ -151,10 +151,15 @@ struct WalletPolicyTemplate: Codable, Equatable, Identifiable, Sendable {
     let durationMinutes: Int
 
     func policy() -> WalletSessionPolicy {
-        WalletSessionPolicy(
+        let descriptor = WalletNetworkCatalog.descriptor(id: networkID)
+        let assetID = descriptor?.nativeAssetID ?? "\(networkID)/slip44:60"
+        let adapterID = descriptor?.chain == .solana
+            ? WalletReviewedAdapters.solanaNativeTransfer
+            : WalletReviewedAdapters.ethereumNativeTransfer
+        return WalletSessionPolicy(
             id: UUID().uuidString.lowercased(), accountID: accountID, networkID: networkID,
-            allowedAssetIDs: ["\(networkID)/slip44:60"], allowedRecipients: [recipient],
-            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
+            allowedAssetIDs: [assetID], allowedRecipients: [recipient],
+            allowedContractIDs: [], allowedAdapterIDs: [adapterID],
             maximumTransactionBaseUnits: maximumTransactionBaseUnits,
             maximumSessionBaseUnits: maximumSessionBaseUnits,
             maximumFeeBaseUnits: maximumFeeBaseUnits,
@@ -372,7 +377,8 @@ enum WalletPolicyEngine {
         }
         let counterparties: [String]
         switch adapterID {
-        case "native-eth-transfer-v1":
+        case WalletReviewedAdapters.ethereumNativeTransfer,
+             WalletReviewedAdapters.solanaNativeTransfer:
             counterparties = transaction.action.recipient.map { [$0] } ?? []
         case WalletReviewedAdapters.erc20:
             counterparties = transaction.effects.compactMap { effect in
@@ -813,13 +819,23 @@ final class WalletGateway: ObservableObject {
 
     var capability: [String: Any]? {
         guard agentToolingAvailable, let sessionID = signer.sessionID else { return nil }
-        var supportedChains = [Self.sepoliaNetworkID]
+        var supportedChains = [
+            Self.sepoliaNetworkID,
+            WalletNetworkCatalog.solanaDevnet.id,
+        ]
         if (try? launchGate.authorize(
             networkID: Self.ethereumMainnetNetworkID,
             capability: .nativeTransfer,
             regionCode: regionCode
         )) != nil {
             supportedChains.append(Self.ethereumMainnetNetworkID)
+        }
+        if (try? launchGate.authorize(
+            networkID: Self.solanaMainnetNetworkID,
+            capability: .nativeTransfer,
+            regionCode: regionCode
+        )) != nil {
+            supportedChains.append(Self.solanaMainnetNetworkID)
         }
         return [
             "protocol_version": Self.protocolVersion,
@@ -1057,8 +1073,7 @@ final class WalletGateway: ObservableObject {
             value.count == 42 && value.hasPrefix("0x")
                 && value.dropFirst(2).allSatisfy(\.isHexDigit)
         case .solana:
-            (32...44).contains(value.count)
-                && value.allSatisfy { "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".contains($0) }
+            WalletSolanaBase58.decode(value, exactLength: 32) != nil
         case .sui:
             value.count == 66 && value.hasPrefix("0x")
                 && value.dropFirst(2).allSatisfy(\.isHexDigit)
@@ -1085,15 +1100,66 @@ final class WalletGateway: ObservableObject {
                 continue
             }
             do {
-                let result = try await signer.browserRPC(
-                    networkID: original.networkID,
-                    method: "eth_getTransactionReceipt",
-                    params: [original.transactionHash]
-                )
+                guard let chain = WalletNetworkCatalog.descriptor(
+                    id: original.networkID
+                )?.chain else { continue }
+                let result: Any
+                switch chain {
+                case .evm:
+                    result = try await signer.browserRPC(
+                        networkID: original.networkID,
+                        method: "eth_getTransactionReceipt",
+                        params: [original.transactionHash]
+                    )
+                case .solana:
+                    result = try await signer.browserRPC(
+                        networkID: original.networkID,
+                        method: "getSignatureStatuses",
+                        params: [
+                            [original.transactionHash],
+                            ["searchTransactionHistory": true],
+                        ]
+                    )
+                case .sui:
+                    continue
+                }
                 guard let index = transactionHistory.firstIndex(where: { $0.id == recordID }) else {
                     continue
                 }
                 transactionHistory[index].lastCheckedAt = Date()
+                if chain == .solana {
+                    guard let envelope = result as? [String: Any],
+                          let values = envelope["value"] as? [Any],
+                          values.count == 1 else { continue }
+                    if values[0] is NSNull {
+                        changed = true
+                        continue
+                    }
+                    guard let status = values[0] as? [String: Any],
+                          let confirmation = status["confirmationStatus"] as? String,
+                          ["processed", "confirmed", "finalized"].contains(
+                              confirmation
+                          ) else { continue }
+                    if let error = status["err"], !(error is NSNull) {
+                        transactionHistory[index].state = .failed
+                        transactionHistory[index].finality = .failed
+                        transactionHistory[index].detail = "Solana execution failed."
+                    } else {
+                        transactionHistory[index].state = confirmation == "processed"
+                            ? .submitted : .confirmed
+                        transactionHistory[index].finality = confirmation == "finalized"
+                            ? .finalized : (confirmation == "confirmed" ? .confirmed : .pending)
+                        transactionHistory[index].detail = nil
+                    }
+                    if let slot = status["slot"] as? NSNumber,
+                       CFGetTypeID(slot) != CFBooleanGetTypeID(),
+                       slot.decimalValue >= 0,
+                       slot.decimalValue == Decimal(slot.uint64Value) {
+                        transactionHistory[index].blockNumber = String(slot.uint64Value)
+                    }
+                    changed = true
+                    continue
+                }
                 if result is NSNull {
                     changed = true
                     continue
@@ -1376,7 +1442,7 @@ final class WalletGateway: ObservableObject {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
             synchronizeAccountSnapshots(with: publicAccounts)
-            for snapshot in accountSnapshots where snapshot.chain == .evm {
+            for snapshot in accountSnapshots where snapshot.chain != .sui {
                 do {
                     let result = try await signer.performRead(
                         tool: "wallet_get_balance",
@@ -2282,7 +2348,6 @@ final class WalletGateway: ObservableObject {
     ) throws -> WalletPrepareRequest {
         guard let networkID = nonempty(arguments["network_id"]),
               let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
-              descriptor.chain == .evm,
               let accountID = nonempty(arguments["account_id"]),
               let maximumFee = WalletBaseUnits.normalize(nonempty(arguments["maximum_fee_base_units"]) ?? ""),
               let actionObject = arguments["action"] as? [String: Any],
@@ -2294,12 +2359,16 @@ final class WalletGateway: ObservableObject {
         switch kind {
         case .nativeTransfer:
             guard let recipient = nonempty(actionObject["recipient"]),
-                  let amount = WalletBaseUnits.normalize(nonempty(actionObject["amount_base_units"]) ?? "") else {
+                  Self.validAddress(recipient, chain: descriptor.chain),
+                  let amount = WalletBaseUnits.normalize(
+                      nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0" else {
                 throw Error.invalidArguments("A native transfer requires recipient and amount_base_units.")
             }
             action = .nativeTransfer(recipient: recipient, amountBaseUnits: amount)
         case .contractCall:
-            guard let contractID = nonempty(actionObject["contract_id"]),
+            guard descriptor.chain == .evm,
+                  let contractID = nonempty(actionObject["contract_id"]),
                   let function = nonempty(actionObject["function"]),
                   !function.lowercased().hasPrefix("0x"), actionObject["calldata"] == nil else {
                 throw Error.invalidArguments("A contract call requires a registry ID and canonical function signature; raw calldata is forbidden.")
@@ -2323,7 +2392,8 @@ final class WalletGateway: ObservableObject {
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
         case .fungibleTokenTransfer:
-            guard let assetID = nonempty(actionObject["asset_id"]),
+            guard descriptor.chain == .evm,
+                  let assetID = nonempty(actionObject["asset_id"]),
                   let recipient = nonempty(actionObject["recipient"]),
                   Self.validAddress(recipient, chain: .evm),
                   let amount = WalletBaseUnits.normalize(
@@ -2337,7 +2407,8 @@ final class WalletGateway: ObservableObject {
                 assetID: assetID, recipient: recipient, amountBaseUnits: amount
             )
         case .nftTransfer:
-            guard let assetID = nonempty(actionObject["asset_id"]),
+            guard descriptor.chain == .evm,
+                  let assetID = nonempty(actionObject["asset_id"]),
                   let tokenID = WalletBaseUnits.normalize(
                       nonempty(actionObject["token_id"]) ?? ""
                   ),

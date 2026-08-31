@@ -40,6 +40,18 @@ private func rustSignEVMTransaction(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_prepare_solana_native_transfer_json")
+private func rustPrepareSolanaNativeTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("locus_wallet_sign_solana_native_transfer_json")
+private func rustSignSolanaNativeTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_encode_contract_call_json")
 private func rustEncodeContractCall(_ requestJSON: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -67,6 +79,18 @@ private struct RustSignedEVM: Decodable {
     let transactionHash: String
 }
 
+private struct RustPreparedSolana: Decodable {
+    let from: String
+    let canonicalMessageDigest: String
+}
+
+private struct RustSignedSolana: Decodable {
+    let from: String
+    let canonicalMessageDigest: String
+    let transactionID: String
+    let signedTransaction: String
+}
+
 private struct RustEncodedContractCall: Decodable {
     let input: String
 }
@@ -88,8 +112,21 @@ private struct RustEVMTransaction: Encodable {
     let input: String
 }
 
+private struct RustSolanaNativeTransfer: Encodable {
+    let feePayer: String
+    let recipient: String
+    let recentBlockhash: String
+    let amountBaseUnits: String
+}
+
 private struct StoredEVMIntent {
     let transaction: WalletEVMTransactionFields
+    var prepared: WalletPreparedTransaction
+    var explicitlyApproved = false
+}
+
+private struct StoredSolanaIntent {
+    let packet: WalletSolanaPreparationPacket
     var prepared: WalletPreparedTransaction
     var explicitlyApproved = false
 }
@@ -340,6 +377,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private let queue = DispatchQueue(label: "io.sparktales.locus.wallet-signer")
     private let store = WalletVaultStore()
     private let launchGate: WalletLaunchGate?
+    private let reviewRegistry: WalletReviewRegistry?
     private let regionCode: String
     private var pendingEntropy: Data?
     private var pendingWords: [String] = []
@@ -348,6 +386,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private var unlockedEntropy: Data?
     private var activeSessionID: String?
     private var preparedIntents: [String: StoredEVMIntent] = [:]
+    private var preparedSolanaIntents: [String: StoredSolanaIntent] = [:]
     private var activePolicies: [String: SignerActivePolicy] = [:]
     private var pendingPresenceIntents: Set<String> = []
     private var policyPresencePending = false
@@ -355,6 +394,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     override init() {
         launchGate = Self.loadLaunchGate()
+        reviewRegistry = Self.loadReviewRegistry()
         regionCode = (Locale.current.region?.identifier ?? "ZZ").uppercased()
         super.init()
     }
@@ -626,6 +666,17 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 let authorized: WalletAuthorizedRequest<WalletSolanaPreparationPacket> =
                     try self.authorized(request)
                 let packet = authorized.payload
+                guard packet.request.source == authorized.source else {
+                    throw self.signerError("The request source changed before Solana preparation.")
+                }
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                self.expireIntents()
+                guard self.preparedIntents.count + self.preparedSolanaIntents.count
+                        < Self.maximumPreparedIntents else {
+                    throw self.signerError("Too many wallet intents are pending for this session.")
+                }
                 guard let descriptor = WalletNetworkCatalog.descriptor(id: packet.request.networkID),
                       descriptor.chain == .solana,
                       descriptor.identity.kind == .solanaGenesisHash,
@@ -636,7 +687,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     descriptor.id, chain: .solana,
                     capability: self.capability(for: packet.request.action.type)
                 )
-                throw self.signerError("The reviewed Solana transaction builder is not active in this build.")
+                let intent = try self.prepareSolanaNativeTransfer(
+                    packet: packet, entropy: entropy
+                )
+                self.preparedSolanaIntents[intent.prepared.id] = intent
+                reply(self.encoded(intent.prepared))
             } catch {
                 reply(self.error("Solana preparation failed: \(error.localizedDescription)"))
             }
@@ -644,15 +699,142 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     }
 
     func simulateSolana(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Solana simulation failed: no reviewed Solana intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSolanaRecheckPacket> =
+                    try self.authorized(request)
+                let recheck = authorized.payload
+                var intent = try self.validatedSolanaIntent(for: recheck)
+                guard intent.prepared.source == authorized.source else {
+                    throw self.signerError("The request source changed before Solana recheck.")
+                }
+                intent.prepared = self.recheckedSolana(intent.prepared, using: recheck)
+                self.preparedSolanaIntents[recheck.intentID] = intent
+                reply(self.encoded(intent.prepared))
+            } catch {
+                reply(self.error("Solana simulation failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func confirmSolana(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Solana confirmation failed: no reviewed Solana intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<String> = try self.authorized(request)
+                guard let intent = self.preparedSolanaIntents[authorized.payload],
+                      intent.prepared.expiresAt > Date(),
+                      intent.prepared.source == authorized.source else {
+                    throw self.signerError(
+                        "The prepared Solana transaction is missing, expired, or belongs to another source."
+                    )
+                }
+                if WalletNetworkCatalog.descriptor(
+                    id: intent.prepared.networkID
+                )?.environment == .mainnet {
+                    guard self.pendingPresenceIntents.insert(authorized.payload).inserted else {
+                        throw self.signerError(
+                            "User presence is already pending for this transaction."
+                        )
+                    }
+                    self.requireUserPresence(
+                        reason: "Approve this exact Locus Vault Solana mainnet transaction"
+                    ) { result in
+                        self.pendingPresenceIntents.remove(authorized.payload)
+                        guard self.activeSessionID == authorized.sessionID,
+                              self.unlockedEntropy != nil else {
+                            return reply(self.error(
+                                "Solana confirmation failed: Locus Vault locked while approval was pending."
+                            ))
+                        }
+                        switch result {
+                        case .failure(let error):
+                            reply(self.error(
+                                "Solana confirmation failed: \(error.localizedDescription)"
+                            ))
+                        case .success:
+                            guard var current = self.preparedSolanaIntents[authorized.payload],
+                                  current.prepared == intent.prepared,
+                                  current.prepared.expiresAt > Date() else {
+                                return reply(self.error(
+                                    "Solana confirmation failed: the intent changed or expired."
+                                ))
+                            }
+                            current.explicitlyApproved = true
+                            self.preparedSolanaIntents[authorized.payload] = current
+                            reply(self.encoded(current.prepared))
+                        }
+                    }
+                    return
+                }
+                var approved = intent
+                approved.explicitlyApproved = true
+                self.preparedSolanaIntents[authorized.payload] = approved
+                reply(self.encoded(approved.prepared))
+            } catch {
+                reply(self.error("Solana confirmation failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func executeSolana(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Solana execution failed: no reviewed Solana intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSolanaRecheckPacket> =
+                    try self.authorized(request)
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                let recheck = authorized.payload
+                let validated = try self.validatedSolanaIntent(for: recheck)
+                guard validated.prepared.source == authorized.source else {
+                    throw self.signerError(
+                        "The Solana transaction belongs to another request source."
+                    )
+                }
+                let automaticPolicyID: String?
+                if validated.explicitlyApproved {
+                    automaticPolicyID = nil
+                } else {
+                    let currentPolicyID = try self.validAutomaticPolicyID(
+                        for: validated.prepared
+                    )
+                    guard currentPolicyID == validated.prepared.policyID else {
+                        throw self.signerError(
+                            "The autonomous policy changed after Solana preparation."
+                        )
+                    }
+                    automaticPolicyID = currentPolicyID
+                }
+                guard let intent = self.preparedSolanaIntents.removeValue(
+                    forKey: recheck.intentID
+                ) else {
+                    return reply(self.error(
+                        "The prepared Solana transaction was already consumed."
+                    ))
+                }
+                let signed = try self.rustSignSolana(
+                    packet: intent.packet, entropy: entropy
+                )
+                let vaultAddress = try self.solanaAddress()
+                guard signed.from == vaultAddress,
+                      signed.canonicalMessageDigest == intent.prepared.digest else {
+                    return reply(self.error(
+                        "The signing core returned mismatched Solana transaction material."
+                    ))
+                }
+                if let policyID = automaticPolicyID {
+                    try self.reserveBudget(for: intent.prepared, policyID: policyID)
+                }
+                reply(self.encoded(WalletSolanaSignedTransaction(
+                    intentID: recheck.intentID,
+                    transactionID: signed.transactionID,
+                    canonicalMessageDigest: signed.canonicalMessageDigest,
+                    signedTransaction: signed.signedTransaction
+                )))
+            } catch {
+                reply(self.error("Solana execution failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func prepareSui(_ request: Data, reply: @escaping (Data) -> Void) {
@@ -1012,6 +1194,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         try authorizeNetwork(
             packet.request.networkID, capability: .nativeTransfer
         )
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.ethereumNativeTransfer,
+            networkID: packet.request.networkID
+        )
         guard let expectedChainID = Self.evmChainID(for: packet.request.networkID),
               packet.transaction.chainID == expectedChainID,
               packet.request.action.type == .nativeTransfer,
@@ -1063,7 +1249,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 assetID: "\(packet.request.networkID)/slip44:60",
                 amountBaseUnits: amount, from: account.address, to: recipient, spender: nil
             )],
-            riskFlags: [], contract: nil, adapterID: "native-eth-transfer-v1",
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.ethereumNativeTransfer,
             budgetAssetID: "\(packet.request.networkID)/slip44:60", spendBaseUnits: amount,
             maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
             feeQuoteBaseUnits: fee, simulation: packet.simulation,
@@ -1077,6 +1264,116 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             prepared.policyID = policyID
         }
         return StoredEVMIntent(transaction: packet.transaction, prepared: prepared)
+    }
+
+    private func prepareSolanaNativeTransfer(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data
+    ) throws -> StoredSolanaIntent {
+        let action = packet.request.action
+        guard action.type == .nativeTransfer,
+              action.assetID == nil, action.tokenID == nil,
+              action.inputAssetID == nil, action.outputAssetID == nil,
+              action.minimumOutputBaseUnits == nil, action.adapterID == nil,
+              action.authorizationFormat == nil, action.metadataDigest == nil,
+              action.contractID == nil,
+              action.function == nil, action.arguments.isEmpty,
+              action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              let amount = action.amountBaseUnits.flatMap(SignerUnsignedInteger.normalize),
+              let amountValue = UInt64(amount), amountValue > 0,
+              String(amountValue) == amount,
+              packet.version == .legacy,
+              packet.priorityFeeBaseUnits == "0",
+              packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
+              let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              SignerUnsignedInteger.lessThanOrEqual(
+                  fee, packet.request.maximumFeeBaseUnits
+              ),
+              packet.lastValidBlockHeight > 0,
+              packet.simulationSucceeded,
+              abs(packet.observedAt.timeIntervalSinceNow) <= 30 else {
+            throw signerError(
+                "The RPC evidence does not match a fresh reviewed SOL transfer."
+            )
+        }
+        let account = try store.accounts().first {
+            $0.id == packet.request.accountID && $0.chain == .solana
+                && $0.networkIDs.contains(packet.request.networkID)
+        }
+        guard let account, account.address == packet.feePayer,
+              Self.isSolanaAddress(recipient), recipient != account.address,
+              recipient != Self.solanaSystemProgramID else {
+            throw signerError("The requested Solana account roles are invalid.")
+        }
+        let expectedAccounts = [
+            WalletSolanaResolvedAccount(
+                address: account.address, isSigner: true, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: recipient, isSigner: false, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+        ]
+        let expectedInstruction = WalletSolanaReviewedInstruction(
+            programID: Self.solanaSystemProgramID,
+            adapterID: WalletReviewedAdapters.solanaNativeTransfer,
+            semanticOperation: WalletActionKind.nativeTransfer.rawValue,
+            accounts: expectedAccounts,
+            canonicalArguments: ["lamports": amount]
+        )
+        let resolvedDigest = Self.solanaResolvedAccountsDigest(
+            feePayer: account.address, recipient: recipient
+        )
+        guard packet.instructions == [expectedInstruction],
+              packet.resolvedAccountsDigest == resolvedDigest else {
+            throw signerError(
+                "The Solana programs, account privileges, or arguments are outside the reviewed adapter."
+            )
+        }
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.solanaNativeTransfer,
+            networkID: packet.request.networkID
+        )
+        let rust = try rustPrepareSolana(packet: packet, entropy: entropy)
+        guard rust.from == account.address,
+              rust.canonicalMessageDigest == packet.canonicalMessageDigest else {
+            throw signerError(
+                "The signer-rebuilt Solana message differs from provider preparation."
+            )
+        }
+        let now = Date()
+        let intentID = UUID().uuidString.lowercased()
+        var prepared = WalletPreparedTransaction(
+            id: intentID, digest: rust.canonicalMessageDigest,
+            networkID: packet.request.networkID,
+            accountID: packet.request.accountID,
+            source: packet.request.source, action: action,
+            summary: "Send \(amount) lamports on \(packet.request.networkID) to \(recipient)",
+            effects: [WalletDecodedEffect(
+                id: "\(intentID):sol-debit", kind: "debit",
+                assetID: "\(packet.request.networkID)/slip44:501",
+                amountBaseUnits: amount, from: account.address,
+                to: recipient, spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.solanaNativeTransfer,
+            budgetAssetID: "\(packet.request.networkID)/slip44:501",
+            spendBaseUnits: amount,
+            maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: fee,
+            simulation: packet.simulation, simulationSucceeded: true,
+            nonce: packet.recentBlockhash,
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "exact_confirmation_required", policyID: nil
+        )
+        if packet.request.source.kind == .agent,
+           let policyID = try? validAutomaticPolicyID(for: prepared) {
+            prepared.policyDecision = "allowed_by_session_policy"
+            prepared.policyID = policyID
+        }
+        return StoredSolanaIntent(packet: packet, prepared: prepared)
     }
 
     private func prepareContractCall(
@@ -1397,17 +1694,24 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
         try authorizeNetwork(policy.networkID, capability: .autonomousPolicy)
         let accounts = try store.accounts()
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: policy.networkID) else {
+            throw signerError("The policy network is not recognized.")
+        }
+        let validRecipient: (String) -> Bool = switch descriptor.chain {
+        case .evm: Self.isEVMAddress
+        case .solana: Self.isSolanaAddress
+        case .sui: { _ in false }
+        }
         guard !policy.id.isEmpty, policy.id.count <= 128,
-              Self.evmChainID(for: policy.networkID) != nil,
               accounts.contains(where: {
-                  $0.id == policy.accountID && $0.chain == .evm
+                  $0.id == policy.accountID && $0.chain == descriptor.chain
                       && $0.networkIDs.contains(policy.networkID)
               }),
               policy.expiresAt > Date(),
               policy.expiresAt <= Date().addingTimeInterval(8 * 60 * 60),
               !policy.allowedRecipients.isEmpty,
               policy.allowedRecipients.count <= 32,
-              policy.allowedRecipients.allSatisfy(Self.isEVMAddress),
+              policy.allowedRecipients.allSatisfy(validRecipient),
               policy.allowedAssetIDs.count == 1,
               policy.allowedAdapterIDs.count == 1,
               policy.allowedActionKinds?.isEmpty == false,
@@ -1419,14 +1723,19 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                   policy.maximumTransactionBaseUnits, policy.maximumSessionBaseUnits
               ) else {
             throw signerError(
-                "Wallet policies require one reviewed adapter and asset, explicit EVM counterparties, bounded base-unit budgets, and an expiry within eight hours."
+                "Wallet policies require one reviewed adapter and asset, explicit chain-valid counterparties, bounded base-unit budgets, and an expiry within eight hours."
             )
         }
         let adapterID = policy.allowedAdapterIDs.first!
-        let nativePolicy = adapterID == "native-eth-transfer-v1"
+        let nativeEVMPolicy = descriptor.chain == .evm
+            && adapterID == WalletReviewedAdapters.ethereumNativeTransfer
             && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:60"]
             && policy.allowedContractIDs.isEmpty
-        let contractPolicy = [
+        let nativeSolanaPolicy = descriptor.chain == .solana
+            && adapterID == WalletReviewedAdapters.solanaNativeTransfer
+            && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:501"]
+            && policy.allowedContractIDs.isEmpty
+        let contractPolicy = descriptor.chain == .evm && [
             WalletReviewedAdapters.erc20,
             WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
         ].contains(adapterID)
@@ -1434,7 +1743,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             && policy.allowedAssetIDs.allSatisfy {
                 Self.isERC20AssetID($0, networkID: policy.networkID)
             }
-        guard nativePolicy || contractPolicy else {
+        guard nativeEVMPolicy || nativeSolanaPolicy || contractPolicy else {
             throw signerError("The policy does not match a supported reviewed adapter shape.")
         }
     }
@@ -1443,7 +1752,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         expirePolicies()
         guard transaction.source.kind == .agent,
               let adapterID = transaction.adapterID,
-              ["native-eth-transfer-v1", WalletReviewedAdapters.erc20,
+              [WalletReviewedAdapters.ethereumNativeTransfer,
+               WalletReviewedAdapters.solanaNativeTransfer, WalletReviewedAdapters.erc20,
                WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn].contains(adapterID),
               transaction.riskFlags.isEmpty,
               let counterparties = policyCounterparties(for: transaction),
@@ -1487,7 +1797,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private func policyCounterparties(for transaction: WalletPreparedTransaction) -> [String]? {
         switch transaction.adapterID {
-        case "native-eth-transfer-v1":
+        case WalletReviewedAdapters.ethereumNativeTransfer,
+             WalletReviewedAdapters.solanaNativeTransfer:
             return transaction.action.recipient.map { [$0] }
         case WalletReviewedAdapters.erc20:
             let values = transaction.effects.compactMap { effect -> String? in
@@ -1532,6 +1843,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func expireIntents() {
         let now = Date()
         preparedIntents = preparedIntents.filter { $0.value.prepared.expiresAt > now }
+        preparedSolanaIntents = preparedSolanaIntents.filter {
+            $0.value.prepared.expiresAt > now
+        }
     }
 
     private func policyStatuses() -> [WalletActivePolicyStatus] {
@@ -1540,6 +1854,85 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private static func isEVMAddress(_ value: String) -> Bool {
         value.count == 42 && value.hasPrefix("0x") && value.dropFirst(2).allSatisfy(\.isHexDigit)
+    }
+
+    private static let solanaSystemProgramID =
+        "11111111111111111111111111111111"
+
+    private static func isSolanaAddress(_ value: String) -> Bool {
+        guard let decoded = decodeSolanaBase58(value), decoded.count == 32 else {
+            return false
+        }
+        return encodeSolanaBase58(decoded) == value
+    }
+
+    private static let solanaBase58Alphabet = Array(
+        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8
+    )
+
+    private static let solanaBase58Positions = Dictionary(
+        uniqueKeysWithValues: solanaBase58Alphabet.enumerated().map {
+            ($0.element, $0.offset)
+        }
+    )
+
+    private static func decodeSolanaBase58(_ value: String) -> [UInt8]? {
+        let encoded = Array(value.utf8)
+        guard !encoded.isEmpty, encoded.count <= 128 else { return nil }
+        var littleEndian: [UInt8] = []
+        for character in encoded {
+            guard var carry = solanaBase58Positions[character] else { return nil }
+            for index in littleEndian.indices {
+                let next = Int(littleEndian[index]) * 58 + carry
+                littleEndian[index] = UInt8(next & 0xff)
+                carry = next >> 8
+            }
+            while carry > 0 {
+                littleEndian.append(UInt8(carry & 0xff))
+                carry >>= 8
+            }
+        }
+        let leadingZeroCount = encoded.prefix {
+            $0 == solanaBase58Alphabet[0]
+        }.count
+        return Array(repeating: 0, count: leadingZeroCount)
+            + littleEndian.reversed()
+    }
+
+    private static func encodeSolanaBase58(_ value: [UInt8]) -> String {
+        guard !value.isEmpty else { return "" }
+        let leadingZeroCount = value.prefix { $0 == 0 }.count
+        var digits: [UInt8] = []
+        for byte in value {
+            var carry = Int(byte)
+            for index in digits.indices {
+                let next = Int(digits[index]) * 256 + carry
+                digits[index] = UInt8(next % 58)
+                carry = next / 58
+            }
+            while carry > 0 {
+                digits.append(UInt8(carry % 58))
+                carry /= 58
+            }
+        }
+        let prefix = String(repeating: "1", count: leadingZeroCount)
+        let significant = digits.reversed().map {
+            Character(UnicodeScalar(solanaBase58Alphabet[Int($0)]))
+        }
+        return prefix + String(significant)
+    }
+
+    private static func solanaResolvedAccountsDigest(
+        feePayer: String,
+        recipient: String
+    ) -> String {
+        let value = Data(
+            "legacy|\(solanaSystemProgramID)|\(feePayer):signer:writable|\(recipient):nonsigner:writable"
+                .utf8
+        )
+        return "sha256:" + SHA256.hash(data: value).map {
+            String(format: "%02x", $0)
+        }.joined()
     }
 
     private static func evmChainID(for networkID: String) -> UInt64? {
@@ -1589,6 +1982,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
+    private func authorizeReviewedAdapter(
+        _ adapterID: String,
+        networkID: String
+    ) throws {
+        guard WalletReviewedAdapters.staticallySupportedIDs.contains(adapterID),
+              let descriptor = WalletNetworkCatalog.descriptor(id: networkID) else {
+            throw signerError("The signer does not recognize this reviewed adapter.")
+        }
+        guard descriptor.environment == .mainnet else { return }
+        guard reviewRegistry?.containsAdapter(adapterID) == true else {
+            throw signerError(
+                "Mainnet signing is disabled because the adapter is absent from the signed review manifest."
+            )
+        }
+    }
+
     private func requireUserPresence(
         reason: String,
         completion: @escaping (Result<Void, Error>) -> Void
@@ -1629,6 +2038,30 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
     }
 
+    private static func loadReviewRegistry(
+        bundle: Bundle = .main
+    ) -> WalletReviewRegistry? {
+        guard let publicKeyText = bundle.object(
+            forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+        ) as? String,
+        let publicKeyData = Data(base64Encoded: publicKeyText),
+        let publicKey = try? Curve25519.Signing.PublicKey(
+            rawRepresentation: publicKeyData
+        ),
+        let manifestText = bundle.object(
+            forInfoDictionaryKey: "LocusWalletReviewManifestBase64"
+        ) as? String,
+        let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedReviewManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletReviewRegistry(
+            signedManifest: signed, publicKey: publicKey
+        )
+    }
+
     private static func isERC20AssetID(_ value: String, networkID: String) -> Bool {
         let prefix = "\(networkID)/erc20:"
         guard value.hasPrefix(prefix) else { return false }
@@ -1662,6 +2095,28 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         return intent
     }
 
+    private func validatedSolanaIntent(
+        for recheck: WalletSolanaRecheckPacket
+    ) throws -> StoredSolanaIntent {
+        expireIntents()
+        guard let intent = preparedSolanaIntents[recheck.intentID],
+              intent.prepared.expiresAt > Date(),
+              recheck.genesisHash == intent.packet.genesisHash,
+              recheck.currentBlockHeight <= intent.packet.lastValidBlockHeight,
+              recheck.resolvedAccountsDigest == intent.packet.resolvedAccountsDigest,
+              recheck.simulationSucceeded,
+              abs(recheck.observedAt.timeIntervalSinceNow) <= 30,
+              let fee = SignerUnsignedInteger.normalize(recheck.feeQuoteBaseUnits),
+              SignerUnsignedInteger.lessThanOrEqual(
+                  fee, intent.prepared.maximumFeeBaseUnits
+              ) else {
+            throw signerError(
+                "Solana genesis, blockhash, accounts, fee, simulation, or expiry changed after preparation."
+            )
+        }
+        return intent
+    }
+
     private func rechecked(
         _ prepared: WalletPreparedTransaction,
         using recheck: WalletEVMRecheckPacket
@@ -1677,6 +2132,29 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             feeQuoteBaseUnits: recheck.feeQuoteBaseUnits,
             simulation: recheck.simulation, simulationSucceeded: recheck.simulationSucceeded,
             nonce: prepared.nonce, createdAt: prepared.createdAt, expiresAt: prepared.expiresAt,
+            policyDecision: prepared.policyDecision, policyID: prepared.policyID
+        )
+    }
+
+    private func recheckedSolana(
+        _ prepared: WalletPreparedTransaction,
+        using recheck: WalletSolanaRecheckPacket
+    ) -> WalletPreparedTransaction {
+        WalletPreparedTransaction(
+            id: prepared.id, digest: prepared.digest,
+            networkID: prepared.networkID, accountID: prepared.accountID,
+            source: prepared.source, action: prepared.action,
+            summary: prepared.summary, effects: prepared.effects,
+            riskFlags: prepared.riskFlags, contract: nil,
+            adapterID: prepared.adapterID,
+            budgetAssetID: prepared.budgetAssetID,
+            spendBaseUnits: prepared.spendBaseUnits,
+            maximumFeeBaseUnits: prepared.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: recheck.feeQuoteBaseUnits,
+            simulation: recheck.simulation,
+            simulationSucceeded: recheck.simulationSucceeded,
+            nonce: prepared.nonce, createdAt: prepared.createdAt,
+            expiresAt: prepared.expiresAt,
             policyDecision: prepared.policyDecision, policyID: prepared.policyID
         )
     }
@@ -1697,6 +2175,68 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         try rustTransactionCall(
             transaction: transaction, entropy: entropy, function: rustSignEVMTransaction
         )
+    }
+
+    private func rustPrepareSolana(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data
+    ) throws -> RustPreparedSolana {
+        try rustSolanaCall(
+            packet: packet, entropy: entropy,
+            function: rustPrepareSolanaNativeTransfer
+        )
+    }
+
+    private func rustSignSolana(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data
+    ) throws -> RustSignedSolana {
+        try rustSolanaCall(
+            packet: packet, entropy: entropy,
+            function: rustSignSolanaNativeTransfer
+        )
+    }
+
+    private func rustSolanaCall<T: Decodable>(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> T {
+        guard let recipient = packet.request.action.recipient,
+              let amount = packet.request.action.amountBaseUnits else {
+            throw signerError("The semantic SOL transfer is incomplete.")
+        }
+        var entropyHex = entropy.map { String(format: "%02x", $0) }.joined()
+        defer {
+            entropyHex.replaceSubrange(
+                entropyHex.startIndex..<entropyHex.endIndex, with: ""
+            )
+        }
+        let request = RustSolanaNativeTransfer(
+            feePayer: packet.feePayer, recipient: recipient,
+            recentBlockhash: packet.recentBlockhash,
+            amountBaseUnits: amount
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        guard var json = String(data: data, encoding: .utf8) else {
+            throw signerError("The SOL transfer could not be encoded.")
+        }
+        defer { json.replaceSubrange(json.startIndex..<json.endIndex, with: "") }
+        guard let pointer = entropyHex.withCString({ entropyPointer in
+            json.withCString { jsonPointer in function(entropyPointer, jsonPointer) }
+        }) else { throw signerError("The signing core is unavailable.") }
+        defer { rustFreeString(pointer) }
+        let result = Data(String(cString: pointer).utf8)
+        if let failure = try? JSONDecoder().decode(
+            WalletSignerErrorPayload.self, from: result
+        ) {
+            throw signerError(failure.error)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(T.self, from: result)
     }
 
     private func rustTransactionCall<T: Decodable>(
@@ -1735,6 +2275,15 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private func evmAddress() throws -> String {
         guard let address = try store.accounts().first(where: { $0.chain == .evm })?.address else {
             throw signerError("The EVM account is missing.")
+        }
+        return address
+    }
+
+    private func solanaAddress() throws -> String {
+        guard let address = try store.accounts().first(
+            where: { $0.chain == .solana }
+        )?.address else {
+            throw signerError("The Solana account is missing.")
         }
         return address
     }
@@ -1801,6 +2350,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         unlockedEntropy = nil
         activeSessionID = nil
         preparedIntents.removeAll(keepingCapacity: false)
+        preparedSolanaIntents.removeAll(keepingCapacity: false)
         activePolicies.removeAll(keepingCapacity: false)
         pendingPresenceIntents.removeAll(keepingCapacity: false)
         policyPresencePending = false

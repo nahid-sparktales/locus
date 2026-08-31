@@ -150,9 +150,10 @@ one Ethereum, Solana, and Sui account.
 Mainnet is default-denied. A short-lived signed manifest can enable only code
 already reviewed in the build, only in counsel-approved regions, and only when
 its hashed audit/operational evidence satisfies the invited-canary or GA gate.
-The checked-in manifest enables nothing. Solana/Sui transaction builders,
-multichain token/NFT adapters, full swaps, external wallets, and WalletConnect
-remain closed until their implementation and evidence gates pass.
+The checked-in manifest enables nothing. A reviewed native-SOL builder is
+implemented but remains mainnet-gated; Solana token/NFT/versioned-message and
+all Sui adapters, full swaps, external wallets, and WalletConnect remain closed
+until their implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

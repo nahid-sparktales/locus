@@ -173,8 +173,11 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
             "${manifest_file}" 2>/dev/null || true)"
         evidence_hash="$(/usr/bin/plutil -extract manifest.evidenceIndexSHA256 raw -o - \
             "${manifest_file}" 2>/dev/null || true)"
+        enabled_networks="$(/usr/bin/plutil -extract manifest.enabledNetworkIDs json -o - \
+            "${manifest_file}" 2>/dev/null || true)"
         /bin/rm -f "${manifest_file}"
-        [[ "${manifest_schema}" == "2" && "${#evidence_hash}" == "64" ]] || {
+        [[ "${manifest_schema}" == "2" && "${#evidence_hash}" == "64" \
+            && "${enabled_networks}" == \[*\] ]] || {
             echo "error: wallet release requires a schema-v2 evidence-bound manifest" >&2
             exit 1
         }
@@ -207,9 +210,20 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
             exit 1
         fi
         /bin/rm -f "${review_file}"
-        for provider_key in \
-            LocusWalletAlchemyEthereumMainnetRPCURL \
-            LocusWalletQuickNodeEthereumMainnetRPCURL
+        provider_keys=()
+        if [[ "${enabled_networks}" == *'"eip155:1"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemyEthereumMainnetRPCURL
+                LocusWalletQuickNodeEthereumMainnetRPCURL
+            )
+        fi
+        if [[ "${enabled_networks}" == *'"solana:mainnet-beta"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemySolanaMainnetRPCURL
+                LocusWalletQuickNodeSolanaMainnetRPCURL
+            )
+        fi
+        for provider_key in "${provider_keys[@]}"
         do
             provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
                 "${info_plist}" 2>/dev/null || true)"

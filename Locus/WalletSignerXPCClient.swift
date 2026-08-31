@@ -36,7 +36,9 @@ final class XPCWalletSignerClient: WalletSignerClient {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let rpcClients: [String: WalletEVMProviderCoordinator]
+    private let solanaRPCClients: [String: WalletSolanaProviderCoordinator]
     private var preparationPackets: [String: WalletEVMPreparationPacket] = [:]
+    private var solanaPreparationPackets: [String: WalletSolanaPreparationPacket] = [:]
 
     init(bundle: Bundle = .main) {
         var clients: [String: WalletEVMProviderCoordinator] = [:]
@@ -52,6 +54,19 @@ final class XPCWalletSignerClient: WalletSignerClient {
             clients[network.id] = coordinator
         }
         rpcClients = clients
+        var solanaClients: [String: WalletSolanaProviderCoordinator] = [:]
+        for network in [
+            WalletNetworkCatalog.solanaMainnet,
+            WalletNetworkCatalog.solanaDevnet,
+        ] {
+            guard let configuration = WalletSolanaProviderConfiguration.bundled(
+                network: network, bundle: bundle
+            ), let coordinator = try? WalletSolanaProviderCoordinator(
+                network: network, configuration: configuration
+            ) else { continue }
+            solanaClients[network.id] = coordinator
+        }
+        solanaRPCClients = solanaClients
         let serviceURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("XPCServices", isDirectory: true)
@@ -134,94 +149,162 @@ final class XPCWalletSignerClient: WalletSignerClient {
         contract: WalletContractRegistryEntry?
     ) async throws -> WalletPreparedTransaction {
         let accounts = try await listAccounts()
-        guard let account = accounts.first(where: {
-            $0.id == request.accountID && $0.chain == .evm
-        }) else {
-            throw WalletGateway.Error.invalidArguments("The selected EVM account does not exist in Locus Vault.")
-        }
-        let encodedContract: WalletEncodedContractCall?
-        if let contract {
-            let encodingRequest = WalletContractEncodingRequest(
-                action: request.action, registryEntry: contract,
-                accountID: request.accountID
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: request.networkID),
+              let account = accounts.first(where: {
+                  $0.id == request.accountID && $0.chain == descriptor.chain
+                      && $0.networkIDs.contains(request.networkID)
+              }) else {
+            throw WalletGateway.Error.invalidArguments(
+                "The selected chain account does not exist in Locus Vault."
             )
-            let requestData = try authorized(encodingRequest, source: request.source)
-            encodedContract = try await call { proxy, reply in
-                proxy.encodeEVMContract(requestData, reply: reply)
+        }
+        switch descriptor.chain {
+        case .evm:
+            let encodedContract: WalletEncodedContractCall?
+            if let contract {
+                let encodingRequest = WalletContractEncodingRequest(
+                    action: request.action, registryEntry: contract,
+                    accountID: request.accountID
+                )
+                let requestData = try authorized(
+                    encodingRequest, source: request.source
+                )
+                encodedContract = try await call { proxy, reply in
+                    proxy.encodeEVMContract(requestData, reply: reply)
+                }
+            } else {
+                encodedContract = nil
             }
-        } else {
-            encodedContract = nil
+            let rpc = try rpcClient(for: request.networkID)
+            let packet = try await rpc.prepare(
+                request: request, fromAddress: account.address,
+                contract: contract, encodedContract: encodedContract
+            )
+            let data = try authorized(packet, source: request.source)
+            let transaction: WalletPreparedTransaction = try await call { proxy, reply in
+                proxy.prepareEVM(data, reply: reply)
+            }
+            preparationPackets[transaction.id] = packet
+            return transaction
+        case .solana:
+            guard contract == nil else {
+                throw WalletGateway.Error.invalidArguments(
+                    "Solana transactions do not use an EVM contract registry entry."
+                )
+            }
+            let rpc = try solanaRPCClient(for: request.networkID)
+            let packet = try await rpc.prepare(
+                request: request, feePayer: account.address
+            )
+            let data = try authorized(packet, source: request.source)
+            let transaction: WalletPreparedTransaction = try await call { proxy, reply in
+                proxy.prepareSolana(data, reply: reply)
+            }
+            solanaPreparationPackets[transaction.id] = packet
+            return transaction
+        case .sui:
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed Sui transaction builder is not active."
+            )
         }
-        let rpc = try rpcClient(for: request.networkID)
-        let packet = try await rpc.prepare(
-            request: request,
-            fromAddress: account.address,
-            contract: contract,
-            encodedContract: encodedContract
-        )
-        let data = try authorized(packet, source: request.source)
-        let transaction: WalletPreparedTransaction = try await call { proxy, reply in
-            proxy.prepareEVM(data, reply: reply)
-        }
-        preparationPackets[transaction.id] = packet
-        return transaction
     }
 
     func simulate(intentID: String) async throws -> WalletPreparedTransaction {
-        guard let packet = preparationPackets[intentID] else {
-            throw WalletGateway.Error.intentNotFound
+        if let packet = preparationPackets[intentID] {
+            let rpc = try rpcClient(for: packet.request.networkID)
+            let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
+            let data = try authorized(recheck, source: packet.request.source)
+            return try await call { proxy, reply in proxy.simulateEVM(data, reply: reply) }
         }
-        let rpc = try rpcClient(for: packet.request.networkID)
-        let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
-        let data = try authorized(recheck, source: packet.request.source)
-        return try await call { proxy, reply in proxy.simulateEVM(data, reply: reply) }
+        if let packet = solanaPreparationPackets[intentID] {
+            let rpc = try solanaRPCClient(for: packet.request.networkID)
+            let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
+            let data = try authorized(recheck, source: packet.request.source)
+            return try await call { proxy, reply in
+                proxy.simulateSolana(data, reply: reply)
+            }
+        }
+        throw WalletGateway.Error.intentNotFound
     }
 
     func confirmExecution(intentID: String) async throws {
-        guard let packet = preparationPackets[intentID] else {
-            throw WalletGateway.Error.intentNotFound
+        if let packet = preparationPackets[intentID] {
+            let request = try authorized(intentID, source: packet.request.source)
+            let _: WalletPreparedTransaction = try await call { proxy, reply in
+                proxy.confirmEVM(request, reply: reply)
+            }
+            return
         }
-        let request = try authorized(intentID, source: packet.request.source)
-        let _: WalletPreparedTransaction = try await call { proxy, reply in
-            proxy.confirmEVM(request, reply: reply)
+        if let packet = solanaPreparationPackets[intentID] {
+            let request = try authorized(intentID, source: packet.request.source)
+            let _: WalletPreparedTransaction = try await call { proxy, reply in
+                proxy.confirmSolana(request, reply: reply)
+            }
+            return
         }
+        throw WalletGateway.Error.intentNotFound
     }
 
     func execute(intentID: String) async throws -> [String: Any] {
-        guard let packet = preparationPackets[intentID] else {
-            throw WalletGateway.Error.intentNotFound
-        }
-        let rpc = try rpcClient(for: packet.request.networkID)
-        let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
-        let request = try authorized(recheck, source: packet.request.source)
-        let signed: WalletEVMSignedTransaction = try await call { proxy, reply in
-            proxy.executeEVM(request, reply: reply)
-        }
-        // The intent is consumed as soon as signed bytes cross the XPC boundary.
-        // A broadcast failure must never make the same intent signable again.
-        preparationPackets[intentID] = nil
-        let broadcastHash: String
-        do {
-            broadcastHash = try await rpc.broadcast(rawTransaction: signed.rawTransaction)
-        } catch {
-            throw WalletGateway.Error.broadcastUnknown(
-                transactionHash: signed.transactionHash,
-                message: error.localizedDescription
+        if let packet = preparationPackets[intentID] {
+            let rpc = try rpcClient(for: packet.request.networkID)
+            let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
+            let request = try authorized(recheck, source: packet.request.source)
+            let signed: WalletEVMSignedTransaction = try await call { proxy, reply in
+                proxy.executeEVM(request, reply: reply)
+            }
+            preparationPackets[intentID] = nil
+            let broadcastHash: String
+            do {
+                broadcastHash = try await rpc.broadcast(
+                    rawTransaction: signed.rawTransaction
+                )
+            } catch {
+                throw WalletGateway.Error.broadcastUnknown(
+                    transactionHash: signed.transactionHash,
+                    message: error.localizedDescription
+                )
+            }
+            guard broadcastHash.caseInsensitiveCompare(
+                signed.transactionHash
+            ) == .orderedSame else {
+                throw WalletGateway.Error.broadcastUnknown(
+                    transactionHash: signed.transactionHash,
+                    message: "The provider returned a transaction hash that does not match the signed bytes."
+                )
+            }
+            return Self.submissionResult(
+                intentID: intentID, networkID: packet.request.networkID,
+                transactionHash: broadcastHash
             )
         }
-        guard broadcastHash.caseInsensitiveCompare(signed.transactionHash) == .orderedSame else {
-            throw WalletGateway.Error.broadcastUnknown(
-                transactionHash: signed.transactionHash,
-                message: "The provider returned a transaction hash that does not match the signed bytes."
+        if let packet = solanaPreparationPackets[intentID] {
+            let rpc = try solanaRPCClient(for: packet.request.networkID)
+            let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
+            let request = try authorized(recheck, source: packet.request.source)
+            let signed: WalletSolanaSignedTransaction = try await call { proxy, reply in
+                proxy.executeSolana(request, reply: reply)
+            }
+            solanaPreparationPackets[intentID] = nil
+            let transactionID: String
+            do {
+                transactionID = try await rpc.broadcast(
+                    signedTransaction: signed.signedTransaction,
+                    transactionID: signed.transactionID,
+                    minimumContextSlot: packet.contextSlot
+                )
+            } catch {
+                throw WalletGateway.Error.broadcastUnknown(
+                    transactionHash: signed.transactionID,
+                    message: error.localizedDescription
+                )
+            }
+            return Self.submissionResult(
+                intentID: intentID, networkID: packet.request.networkID,
+                transactionHash: transactionID
             )
         }
-        return [
-            "text": "Submitted \(packet.request.networkID) transaction \(broadcastHash)",
-            "intent_id": intentID,
-            "transaction_hash": broadcastHash,
-            "network_id": packet.request.networkID,
-            "status": "submitted",
-        ]
+        throw WalletGateway.Error.intentNotFound
     }
 
     func activatePolicy(_ policy: WalletSessionPolicy) async throws -> [WalletActivePolicyStatus] {
@@ -247,8 +330,23 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any {
-        let rpc = try rpcClient(for: networkID)
-        return try await rpc.publicRead(method: method, params: params)
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID) else {
+            throw WalletGateway.Error.invalidArguments("The wallet network is unknown.")
+        }
+        switch descriptor.chain {
+        case .evm:
+            return try await rpcClient(for: networkID).publicRead(
+                method: method, params: params
+            )
+        case .solana:
+            return try await solanaRPCClient(for: networkID).publicRead(
+                method: method, params: params
+            )
+        case .sui:
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed Sui provider is not active."
+            )
+        }
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
@@ -259,24 +357,48 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let assetID = arguments["asset_id"] as? String
                 ?? WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID
                 ?? "\(networkID)/slip44:60"
+            guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID) else {
+                throw WalletGateway.Error.invalidArguments("The wallet network is unknown.")
+            }
             let accounts = try await listAccounts()
             guard let account = accounts.first(where: {
-                $0.id == accountID && $0.chain == .evm && $0.networkIDs.contains(networkID)
+                $0.id == accountID && $0.chain == descriptor.chain
+                    && $0.networkIDs.contains(networkID)
             }) else {
-                throw WalletGateway.Error.invalidArguments("Select the Locus Vault EVM account.")
+                throw WalletGateway.Error.invalidArguments(
+                    "Select the matching Locus Vault chain account."
+                )
             }
-            let rpc = try rpcClient(for: networkID)
             let balance: String
-            if assetID == WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID {
-                balance = try await rpc.balance(address: account.address)
-            } else {
-                guard let identity = WalletEVMAssetIdentity.parse(assetID),
-                      identity.networkID == networkID else {
-                    throw WalletGateway.Error.invalidArguments(
-                        "The requested asset ID is not canonical for this network."
+            switch descriptor.chain {
+            case .evm:
+                let rpc = try rpcClient(for: networkID)
+                if assetID == descriptor.nativeAssetID {
+                    balance = try await rpc.balance(address: account.address)
+                } else {
+                    guard let identity = WalletEVMAssetIdentity.parse(assetID),
+                          identity.networkID == networkID else {
+                        throw WalletGateway.Error.invalidArguments(
+                            "The requested asset ID is not canonical for this network."
+                        )
+                    }
+                    balance = try await rpc.assetBalance(
+                        identity: identity, address: account.address
                     )
                 }
-                balance = try await rpc.assetBalance(identity: identity, address: account.address)
+            case .solana:
+                guard assetID == descriptor.nativeAssetID else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "SPL token balance adapters are not active yet."
+                    )
+                }
+                balance = try await solanaRPCClient(for: networkID).balance(
+                    address: account.address
+                )
+            case .sui:
+                throw WalletGateway.Error.invalidArguments(
+                    "The reviewed Sui provider is not active."
+                )
             }
             return [
                 "text": "\(assetID) balance: \(balance) base units",
@@ -355,6 +477,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
     func lock() {
         sessionID = nil
         preparationPackets.removeAll()
+        solanaPreparationPackets.removeAll()
         guard isAvailable else { return }
         do {
             let proxy = try remoteProxy()
@@ -382,6 +505,31 @@ final class XPCWalletSignerClient: WalletSignerClient {
             )
         }
         return rpc
+    }
+
+    private func solanaRPCClient(
+        for networkID: String
+    ) throws -> WalletSolanaProviderCoordinator {
+        guard let rpc = solanaRPCClients[networkID] else {
+            throw WalletGateway.Error.invalidArguments(
+                "No reviewed Solana provider is configured for \(networkID)."
+            )
+        }
+        return rpc
+    }
+
+    private static func submissionResult(
+        intentID: String,
+        networkID: String,
+        transactionHash: String
+    ) -> [String: Any] {
+        [
+            "text": "Submitted \(networkID) transaction \(transactionHash)",
+            "intent_id": intentID,
+            "transaction_hash": transactionHash,
+            "network_id": networkID,
+            "status": "submitted",
+        ]
     }
 
     private func authorized<Payload: Codable & Equatable & Sendable>(
@@ -457,6 +605,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         connection = nil
         sessionID = nil
         preparationPackets.removeAll()
+        solanaPreparationPackets.removeAll()
         invalidationHandler?()
     }
 }
