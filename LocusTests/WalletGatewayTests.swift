@@ -600,6 +600,55 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSignedReviewManifestRequiresCanonicalSuiObjectIdentity() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let objectID = "0x" + String(repeating: "a", count: 64)
+        let asset = WalletAsset(
+            canonicalID: "sui:mainnet/object:\(objectID)",
+            networkID: WalletNetworkCatalog.suiMainnet.id,
+            chain: .sui, kind: .collectible, reference: objectID,
+            name: "Reviewed Object", symbol: "OBJECT", decimals: 0,
+            trust: .curated, manifestRevision: 4
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(registry.assets, [asset])
+        XCTAssertEqual(
+            WalletSuiObjectIdentity.parse(asset.canonicalID)?.objectID,
+            objectID
+        )
+
+        let uppercase = objectID.uppercased().replacingOccurrences(of: "0X", with: "0x")
+        let malformed = WalletAsset(
+            canonicalID: "sui:mainnet/object:\(uppercase)",
+            networkID: asset.networkID, chain: asset.chain,
+            kind: asset.kind, reference: uppercase,
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: asset.trust, manifestRevision: asset.manifestRevision
+        )
+        let invalid = WalletReviewManifest(
+            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [malformed], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        XCTAssertThrowsError(try WalletReviewRegistry(
+            signedManifest: signedReview(invalid, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        ))
+    }
+
     func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
         let store = try WalletPublicStore(path: ":memory:")
         let record = WalletActivityRecord(
@@ -1275,6 +1324,95 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSuiGraphQLDiscoversOnlyValidatedNonCoinOwnedObjects() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "8", count: 64)
+        let objectID = "0x" + String(repeating: "9", count: 64)
+        let coinID = "0x" + String(repeating: "a", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 11, count: 32))
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let query = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(query.contains("hasPublicTransfer"))
+            XCTAssertFalse(query.contains("objectBcs"))
+            XCTAssertFalse(query.contains("display"))
+            return try self.suiOwnedObjectsResponse(
+                owner: owner,
+                objects: [
+                    self.suiObjectJSON(
+                        objectID: objectID, owner: owner, version: 42,
+                        digest: digest, moveType: "0x1234::artifact::ARTIFACT",
+                        hasPublicTransfer: true
+                    ),
+                    self.suiObjectJSON(
+                        objectID: coinID, owner: owner, version: 43,
+                        digest: WalletSolanaBase58.encode(Data(repeating: 12, count: 32)),
+                        moveType: "0x2::coin::Coin<0x2::sui::SUI>",
+                        hasPublicTransfer: true
+                    ),
+                ],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        let objects = try await client.ownedObjects(owner: owner)
+        XCTAssertEqual(objects.count, 1)
+        XCTAssertEqual(objects[0].identity.objectID, objectID)
+        XCTAssertEqual(objects[0].version, 42)
+        XCTAssertEqual(objects[0].digest, digest)
+        XCTAssertTrue(objects[0].hasPublicTransfer)
+    }
+
+    func testSuiGraphQLRejectsMisownedAndDuplicateObjects() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "b", count: 64)
+        let wrongOwner = "0x" + String(repeating: "c", count: 64)
+        let objectID = "0x" + String(repeating: "d", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 13, count: 32))
+        let misowned = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiOwnedObjectsResponse(
+                owner: owner,
+                objects: [self.suiObjectJSON(
+                    objectID: objectID, owner: wrongOwner, version: 1,
+                    digest: digest, moveType: "0x1234::artifact::ARTIFACT",
+                    hasPublicTransfer: false
+                )],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        do {
+            _ = try await misowned.ownedObjects(owner: owner)
+            XCTFail("An object attributed to another owner must fail discovery.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("misowned"))
+        }
+
+        let duplicate = makeSuiGraphQLClient(now: now) { _ in
+            let object = self.suiObjectJSON(
+                objectID: objectID, owner: owner, version: 1,
+                digest: digest, moveType: "0x1234::artifact::ARTIFACT",
+                hasPublicTransfer: true
+            )
+            return try self.suiOwnedObjectsResponse(
+                owner: owner, objects: [object, object],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        do {
+            _ = try await duplicate.ownedObjects(owner: owner)
+            XCTFail("Duplicate Sui object IDs must fail discovery.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicate"))
+        }
+    }
+
     func testGatewayRefreshesCanonicalNativeSuiSnapshot() async throws {
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
@@ -1348,6 +1486,46 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(snapshot.balanceBaseUnits, "1007")
         XCTAssertEqual(snapshot.symbol, "COIN")
         XCTAssertEqual(snapshot.freshness, .current)
+    }
+
+    func testGatewayQuarantinesSuiObjectWithoutRemoteMetadata() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "e", count: 64)
+        let objectID = "0x" + String(repeating: "f", count: 64)
+        let assetID = "sui:testnet/object:\(objectID)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID,
+            "asset_kind": WalletAssetKind.collectible.rawValue,
+            "reference": objectID, "object_id": objectID,
+            "object_version": UInt64(77),
+            "object_digest": WalletSolanaBase58.encode(Data(repeating: 17, count: 32)),
+            "move_type": "0x1234::artifact::ARTIFACT",
+            "has_public_transfer": false,
+            "balance_base_units": "1", "decimals": 0,
+        ]]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let asset = try XCTUnwrap(gateway.assets.first(where: { $0.id == assetID }))
+        XCTAssertEqual(asset.kind, .collectible)
+        XCTAssertEqual(asset.trust, .quarantined)
+        XCTAssertEqual(asset.name, "Unknown Sui object")
+        XCTAssertEqual(asset.symbol, "ARTIFACT")
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        XCTAssertEqual(
+            gateway.accountSnapshots.first(where: { $0.assetID == assetID })?.balanceBaseUnits,
+            "1"
+        )
     }
 
     func testSolanaCanonicalNativeMessageUsesStrictBase58AndReviewedShape() throws {
@@ -2495,6 +2673,58 @@ final class WalletGatewayTests: XCTestCase {
                     "address": address,
                     "balances": [
                         "nodes": nodes,
+                        "pageInfo": [
+                            "hasNextPage": hasNextPage,
+                            "endCursor": cursorValue,
+                        ],
+                    ],
+                ],
+            ],
+        ])
+    }
+
+    private func suiObjectJSON(
+        objectID: String,
+        owner: String,
+        version: Int,
+        digest: String,
+        moveType: String,
+        hasPublicTransfer: Bool
+    ) -> [String: Any] {
+        [
+            "address": objectID,
+            "version": version,
+            "digest": digest,
+            "hasPublicTransfer": hasPublicTransfer,
+            "contents": ["type": ["repr": moveType]],
+            "owner": [
+                "__typename": "AddressOwner",
+                "address": ["address": owner],
+            ],
+        ]
+    }
+
+    private func suiOwnedObjectsResponse(
+        chainIdentifier: String = WalletSuiChainIdentity.testnetBase58,
+        owner: String,
+        timestamp: String = "2026-08-31T12:00:00Z",
+        objects: [[String: Any]],
+        hasNextPage: Bool,
+        endCursor: String?
+    ) throws -> Data {
+        let cursorValue: Any = endCursor.map { $0 as Any } ?? NSNull()
+        return try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": chainIdentifier,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": timestamp,
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                ],
+                "address": [
+                    "address": owner,
+                    "objects": [
+                        "nodes": objects,
                         "pageInfo": [
                             "hasNextPage": hasNextPage,
                             "endCursor": cursorValue,

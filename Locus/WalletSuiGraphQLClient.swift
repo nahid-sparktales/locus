@@ -79,6 +79,9 @@ actor WalletSuiGraphQLClient {
     private static let balancePageSize = 100
     private static let maximumBalancePages = 100
     private static let maximumBalances = balancePageSize * maximumBalancePages
+    private static let objectPageSize = 100
+    private static let maximumObjectPages = 50
+    private static let maximumObjects = objectPageSize * maximumObjectPages
 
     private static let networkStatusQuery = """
     query LocusSuiNetworkStatus {
@@ -132,6 +135,39 @@ actor WalletSuiGraphQLClient {
             totalBalance
             coinBalance
             addressBalance
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+    """
+
+    private static let ownedObjectsQuery = """
+    query LocusSuiOwnedObjects(
+      $address: SuiAddress!
+      $first: Int!
+      $after: String
+      $checkpoint: UInt53
+    ) {
+      chainIdentifier
+      checkpoint(sequenceNumber: $checkpoint) {
+        sequenceNumber
+        timestamp
+        epoch { epochId referenceGasPrice }
+      }
+      address(address: $address, atCheckpoint: $checkpoint) {
+        address
+        objects(first: $first, after: $after) {
+          nodes {
+            address
+            version
+            digest
+            hasPublicTransfer
+            contents { type { repr } }
+            owner {
+              __typename
+              ... on AddressOwner { address { address } }
+            }
           }
           pageInfo { hasNextPage endCursor }
         }
@@ -305,6 +341,88 @@ actor WalletSuiGraphQLClient {
         throw WalletRPCError.invalidResponse("Sui balance pagination was truncated")
     }
 
+    func ownedObjects(owner: String) async throws -> [WalletSuiOwnedObject] {
+        guard Self.isCanonicalAddress(owner) else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui object discovery requires a canonical 32-byte owner address."
+            )
+        }
+        var after: String?
+        var seenCursors: Set<String> = []
+        var seenObjectIDs: Set<String> = []
+        var expectedStatus: WalletSuiNetworkStatus?
+        var results: [WalletSuiOwnedObject] = []
+        for _ in 0..<Self.maximumObjectPages {
+            let checkpointValue: Any = expectedStatus.map {
+                $0.checkpointSequence as Any
+            } ?? NSNull()
+            let data = try await query(
+                document: Self.ownedObjectsQuery,
+                variables: [
+                    "address": owner,
+                    "first": Self.objectPageSize,
+                    "after": after ?? NSNull(),
+                    "checkpoint": checkpointValue,
+                ]
+            )
+            let status = try parseNetworkStatus(data)
+            if let expectedStatus, expectedStatus != status {
+                throw WalletRPCError.invalidResponse(
+                    "Sui object pagination changed checkpoint evidence"
+                )
+            }
+            expectedStatus = status
+            guard let addressObject = data["address"] as? [String: Any],
+                  addressObject["address"] as? String == owner,
+                  let connection = addressObject["objects"] as? [String: Any],
+                  let nodes = connection["nodes"] as? [[String: Any]],
+                  nodes.count <= Self.objectPageSize,
+                  let pageInfo = connection["pageInfo"] as? [String: Any],
+                  let hasNextPage = pageInfo["hasNextPage"] as? Bool else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned malformed object pagination evidence"
+                )
+            }
+            for node in nodes {
+                guard let object = Self.parseOwnedObject(
+                    node, networkID: network.id, owner: owner
+                ), seenObjectIDs.insert(object.identity.objectID).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned a malformed, misowned, or duplicate object"
+                    )
+                }
+                if !Self.isCoinObjectType(object.moveType) {
+                    results.append(object)
+                }
+            }
+            guard results.count <= Self.maximumObjects else {
+                throw WalletRPCError.invalidResponse("Sui returned too many owned objects")
+            }
+            if !hasNextPage {
+                guard pageInfo["endCursor"] == nil
+                        || pageInfo["endCursor"] is NSNull
+                        || pageInfo["endCursor"] is String else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned malformed terminal object pagination evidence"
+                    )
+                }
+                return results.sorted {
+                    $0.identity.canonicalID < $1.identity.canonicalID
+                }
+            }
+            guard let cursor = pageInfo["endCursor"] as? String,
+                  !cursor.isEmpty, cursor.utf8.count <= 1_024,
+                  cursor.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x20 }),
+                  seenCursors.insert(cursor).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned invalid or repeated object pagination"
+                )
+            }
+            after = cursor
+        }
+        throw WalletRPCError.invalidResponse("Sui object pagination was truncated")
+    }
+
     private func query(
         document: String,
         variables: [String: Any]
@@ -386,12 +504,7 @@ actor WalletSuiGraphQLClient {
     }
 
     private static func isCanonicalAddress(_ value: String) -> Bool {
-        value.count == 66 && value.hasPrefix("0x")
-            && value == value.lowercased()
-            && value.utf8.dropFirst(2).allSatisfy {
-                (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
-                    || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0)
-            }
+        WalletSuiAddress.isCanonical(value)
     }
 
     private static func canonicalBaseUnits(_ value: Any?) -> String? {
@@ -419,6 +532,43 @@ actor WalletSuiGraphQLClient {
             totalBalance: total, coinBalance: coins,
             addressBalance: accumulator
         )
+    }
+
+    private static func parseOwnedObject(
+        _ value: [String: Any],
+        networkID: String,
+        owner: String
+    ) -> WalletSuiOwnedObject? {
+        guard let objectID = value["address"] as? String,
+              WalletSuiAddress.isCanonical(objectID),
+              let version = unsigned53(value["version"]),
+              let digest = value["digest"] as? String,
+              WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
+              let hasPublicTransfer = value["hasPublicTransfer"] as? Bool,
+              let contents = value["contents"] as? [String: Any],
+              let type = contents["type"] as? [String: Any],
+              let moveType = type["repr"] as? String,
+              isSafeMoveTypeLabel(moveType),
+              let ownerValue = value["owner"] as? [String: Any],
+              ownerValue["__typename"] as? String == "AddressOwner",
+              let ownerAddress = ownerValue["address"] as? [String: Any],
+              ownerAddress["address"] as? String == owner else { return nil }
+        return WalletSuiOwnedObject(
+            identity: WalletSuiObjectIdentity(
+                networkID: networkID, objectID: objectID
+            ),
+            version: version, digest: digest,
+            moveType: moveType, hasPublicTransfer: hasPublicTransfer
+        )
+    }
+
+    private static func isSafeMoveTypeLabel(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 1_024 && !value.contains("/")
+            && value.unicodeScalars.allSatisfy { $0.isASCII && $0.value >= 0x21 }
+    }
+
+    private static func isCoinObjectType(_ value: String) -> Bool {
+        value.hasPrefix("0x2::coin::Coin<") && value.hasSuffix(">")
     }
 
     private static func unsigned53(_ value: Any?) -> UInt64? {
@@ -513,6 +663,14 @@ actor WalletSuiProviderCoordinator {
         catch {
             guard let fallback else { throw error }
             return try await fallback.balances(owner: owner)
+        }
+    }
+
+    func ownedObjects(owner: String) async throws -> [WalletSuiOwnedObject] {
+        do { return try await primary.ownedObjects(owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.ownedObjects(owner: owner)
         }
     }
 

@@ -1078,8 +1078,7 @@ final class WalletGateway: ObservableObject {
         case .solana:
             WalletSolanaBase58.decode(value, exactLength: 32) != nil
         case .sui:
-            value.count == 66 && value.hasPrefix("0x")
-                && value.dropFirst(2).allSatisfy(\.isHexDigit)
+            WalletSuiAddress.isCanonical(value)
         }
     }
 
@@ -1605,15 +1604,58 @@ final class WalletGateway: ObservableObject {
             return [:]
         }
         var balances: [String: String] = [:]
-        var seenTypes: Set<String> = []
+        var seenAssetIDs: Set<String> = []
         for row in rows {
             guard let assetID = row["asset_id"] as? String,
+                  let kindValue = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: kindValue),
+                  seenAssetIDs.insert(assetID).inserted else { continue }
+            if kind == .nft || kind == .collectible {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      row["reference"] as? String == identity.objectID,
+                      row["object_id"] as? String == identity.objectID,
+                      let version = row["object_version"] as? UInt64,
+                      version <= 9_007_199_254_740_991,
+                      let digest = row["object_digest"] as? String,
+                      WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
+                      let moveType = row["move_type"] as? String,
+                      !moveType.isEmpty, moveType.utf8.count <= 1_024,
+                      !moveType.contains("/"),
+                      moveType.unicodeScalars.allSatisfy({
+                          $0.isASCII && $0.value >= 0x21
+                      }),
+                      row["has_public_transfer"] is Bool,
+                      row["balance_base_units"] as? String == "1",
+                      row["decimals"] as? Int == 0 else { continue }
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .sui, known.networkID == networkID,
+                          known.reference == identity.objectID,
+                          (known.kind == .nft || known.kind == .collectible) else {
+                        continue
+                    }
+                } else {
+                    let typeName = moveType.components(separatedBy: "::").last
+                        ?? "OBJECT"
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .sui, kind: .collectible,
+                        reference: identity.objectID,
+                        name: "Unknown Sui object",
+                        symbol: String(typeName.prefix(32)), decimals: 0,
+                        trust: .quarantined, manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+                balances["\(accountID):\(networkID):\(assetID)"] = "1"
+                continue
+            }
+            guard kind == .fungibleToken,
                   let identity = WalletSuiAssetIdentity.parse(assetID),
                   identity.networkID == networkID,
-                  row["asset_kind"] as? String == WalletAssetKind.fungibleToken.rawValue,
                   row["reference"] as? String == identity.coinType,
                   row["coin_type"] as? String == identity.coinType,
-                  seenTypes.insert(identity.coinType).inserted,
                   let rawTotal = row["balance_base_units"] as? String,
                   let total = WalletBaseUnits.normalize(rawTotal), total == rawTotal,
                   let rawCoins = row["coin_balance_base_units"] as? String,

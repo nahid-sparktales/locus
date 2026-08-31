@@ -367,6 +367,46 @@ struct WalletSuiBalance: Codable, Equatable, Sendable {
     let addressBalance: String
 }
 
+enum WalletSuiAddress {
+    static func isCanonical(_ value: String) -> Bool {
+        value.count == 66 && value.hasPrefix("0x")
+            && value == value.lowercased()
+            && value.utf8.dropFirst(2).allSatisfy {
+                (48...57).contains($0) || (97...102).contains($0)
+            }
+    }
+}
+
+struct WalletSuiObjectIdentity: Codable, Equatable, Sendable {
+    let networkID: String
+    let objectID: String
+
+    var canonicalID: String { "\(networkID)/object:\(objectID)" }
+
+    static func parse(_ value: String) -> Self? {
+        let components = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 2 else { return nil }
+        let networkID = String(components[0])
+        let prefix = "object:"
+        let suffix = String(components[1])
+        guard suffix.hasPrefix(prefix),
+              let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.chain == .sui else { return nil }
+        let objectID = String(suffix.dropFirst(prefix.count))
+        guard WalletSuiAddress.isCanonical(objectID) else { return nil }
+        let identity = Self(networkID: networkID, objectID: objectID)
+        return identity.canonicalID == value ? identity : nil
+    }
+}
+
+struct WalletSuiOwnedObject: Codable, Equatable, Sendable {
+    let identity: WalletSuiObjectIdentity
+    let version: UInt64
+    let digest: String
+    let moveType: String
+    let hasPublicTransfer: Bool
+}
+
 enum WalletSolanaCollectibleStandard: String, Codable, Sendable {
     case tokenMetadata = "token-metadata"
     case core
@@ -673,14 +713,20 @@ struct WalletReviewRegistry: Sendable {
                 return false
             }
         }
-        guard let identity = WalletSuiAssetIdentity.parse(asset.id),
-              identity.networkID == network.id,
-              identity.coinType == reference,
-              asset.kind == .fungibleToken,
-              let decimals = asset.decimals, (0...255).contains(decimals) else {
-            return false
+        if let identity = WalletSuiAssetIdentity.parse(asset.id) {
+            guard identity.networkID == network.id,
+                  identity.coinType == reference,
+                  asset.kind == .fungibleToken,
+                  let decimals = asset.decimals, (0...255).contains(decimals) else {
+                return false
+            }
+            return identity.coinType != WalletSuiAssetIdentity.nativeCoinType
         }
-        return identity.coinType != WalletSuiAssetIdentity.nativeCoinType
+        guard let identity = WalletSuiObjectIdentity.parse(asset.id),
+              identity.networkID == network.id,
+              identity.objectID == reference,
+              (asset.kind == .nft || asset.kind == .collectible) else { return false }
+        return asset.decimals == nil || asset.decimals == 0
     }
 
     private static func validContract(

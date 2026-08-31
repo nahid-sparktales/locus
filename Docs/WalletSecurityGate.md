@@ -113,6 +113,12 @@ signing adapter.
   Unknown Coins are public metadata in SQLite quarantine, never implicit signing
   authority. Signed review manifests must bind network, Coin type, decimals,
   name, and symbol exactly before a Coin can be curated.
+- Read-only Sui object discovery pins every page to its first checkpoint and
+  requires an exact address owner, canonical object ID, UInt53 version, Base58
+  digest, bounded ASCII Move type, and public-transfer flag. Coin objects are
+  excluded from the collectible path. BCS contents, display metadata, and
+  remote media do not cross the provider boundary; every new object begins in
+  quarantine, and discovery creates no transfer or Move-call authority.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -128,8 +134,8 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui transaction builders, signing, provider execution, Coin transfers, object/NFT and
-  activity adapters, gRPC execution, and localnet suites;
+  Sui transaction builders, signing, provider execution, Coin and object/NFT
+  transfers, activity adapters, gRPC execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

@@ -153,6 +153,14 @@ func isCanonicalSuiCoinType(_ value: String) -> Bool {
     }
 }
 
+func isCanonicalSuiAddress(_ value: String) -> Bool {
+    value.count == 66 && value.hasPrefix("0x")
+        && value == value.lowercased()
+        && value.utf8.dropFirst(2).allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
+        }
+}
+
 func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
     guard !asset.canonicalID.isEmpty,
           !asset.networkID.isEmpty,
@@ -180,6 +188,12 @@ func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
     if asset.kind == "native" {
         return asset.canonicalID == "\(asset.networkID)/coin:\(nativeType)"
             && asset.reference == nil && asset.decimals == 9
+    }
+    if asset.kind == "nft" || asset.kind == "collectible" {
+        guard let objectID = asset.reference else { return false }
+        return isCanonicalSuiAddress(objectID)
+            && asset.canonicalID == "\(asset.networkID)/object:\(objectID)"
+            && (asset.decimals == nil || asset.decimals == 0)
     }
     guard let coinType = asset.reference,
           coinType != nativeType,

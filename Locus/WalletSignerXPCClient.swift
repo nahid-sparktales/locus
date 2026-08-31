@@ -482,7 +482,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 let balances = try await suiRPCClient(for: networkID).balances(
                     owner: account.address
                 )
-                let rows: [[String: Any]] = balances.map { item in
+                let objects = try await suiRPCClient(for: networkID).ownedObjects(
+                    owner: account.address
+                )
+                var rows: [[String: Any]] = balances.map { item in
                     [
                         "asset_id": item.identity.canonicalID,
                         "asset_kind": WalletAssetKind.fungibleToken.rawValue,
@@ -493,8 +496,31 @@ final class XPCWalletSignerClient: WalletSignerClient {
                         "address_balance_base_units": item.addressBalance,
                     ]
                 }
+                rows.append(contentsOf: objects.map { item in
+                    [
+                        "asset_id": item.identity.canonicalID,
+                        "asset_kind": WalletAssetKind.collectible.rawValue,
+                        "reference": item.identity.objectID,
+                        "object_id": item.identity.objectID,
+                        "object_version": item.version,
+                        "object_digest": item.digest,
+                        "move_type": item.moveType,
+                        "has_public_transfer": item.hasPublicTransfer,
+                        "balance_base_units": "1",
+                        "decimals": 0,
+                    ]
+                })
+                guard rows.count <= 10_000 else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "The Sui asset snapshot exceeded the wallet boundary."
+                    )
+                }
+                rows.sort {
+                    ($0["asset_id"] as? String ?? "")
+                        < ($1["asset_id"] as? String ?? "")
+                }
                 return [
-                    "text": "Loaded \(rows.count) Sui Coin balances.",
+                    "text": "Loaded \(rows.count) Sui Coins and owned objects.",
                     "account_id": account.id,
                     "network_id": networkID,
                     "assets": rows,

@@ -162,13 +162,16 @@ stale checkpoints and partial GraphQL results, and reconcile coin-object and
 balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
 bounded, checkpoint-stable pagination and canonical Move marker types; unknown
 Coins enter quarantine until the user or a signed review manifest trusts them.
+Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
+owner, object ID, version, digest, type, and public-transfer evidence. They enter
+Collectibles quarantine without BCS contents, display metadata, or remote media.
 Solana token
 sends use the signer-derived recipient associated token account, creating it
 idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui object discovery and transaction/signing adapters, full swaps,
-external wallets, and
-WalletConnect remain closed until their implementation and evidence gates pass.
+versioned messages, Sui object transfers and transaction/signing adapters, full
+swaps, external wallets, and WalletConnect remain closed until their
+implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),
