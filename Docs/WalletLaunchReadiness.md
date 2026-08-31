@@ -21,11 +21,12 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Strict SPL and Token-2022 account discovery with raw base-unit balances,
   program/mint/owner validation, signed curation, and unknown-mint quarantine.
 - [x] Classic SPL `TransferChecked` with independently rebuilt signer message,
-  verified existing source/destination token accounts, exact confirmation,
-  simulation recheck, and signer-owned token rules.
+  signer-derived recipient associated token account, exact idempotent creation
+  when unallocated, simulation recheck, and signer-owned token rules.
+- [x] Solana associated-token-account derivation and exact idempotent creation.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
-- [ ] Solana associated-token-account creation, reviewed Token-2022 extension
-  transfers, and NFT/compressed-collectible implementation complete.
+- [ ] Solana reviewed Token-2022 extension transfers and
+  NFT/compressed-collectible implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.

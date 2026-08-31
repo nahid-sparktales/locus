@@ -152,11 +152,12 @@ already reviewed in the build, only in counsel-approved regions, and only when
 its hashed audit/operational evidence satisfies the invited-canary or GA gate.
 The checked-in manifest enables nothing. Reviewed native-SOL and classic SPL
 `TransferChecked` builders plus quarantined SPL/Token-2022 balance discovery are
-implemented, while mainnet signing remains gated. Classic SPL sends currently
-require an already initialized, provider-verified recipient token account.
-Token-2022 transfers, automatic associated-token-account creation,
-NFTs/versioned messages, all Sui adapters, full swaps, external wallets, and
-WalletConnect remain closed until their implementation and evidence gates pass.
+implemented, while mainnet signing remains gated. Classic SPL sends use the
+signer-derived recipient associated token account, creating it idempotently
+through an exact reviewed instruction when it is still unallocated.
+Token-2022 transfers, NFTs/versioned messages, all Sui adapters, full swaps,
+external wallets, and WalletConnect remain closed until their implementation
+and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

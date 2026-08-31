@@ -64,6 +64,11 @@ private func rustSignSolanaSPLTransfer(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_derive_solana_associated_token_json")
+private func rustDeriveSolanaAssociatedToken(
+    _ requestJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_encode_contract_call_json")
 private func rustEncodeContractCall(_ requestJSON: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -138,9 +143,22 @@ private struct RustSolanaSPLTransfer: Encodable {
     let destinationTokenAccount: String
     let recipientOwner: String
     let tokenProgramID: String
+    let associatedTokenProgramID: String
+    let createDestinationAssociatedAccount: Bool
     let recentBlockhash: String
     let amountBaseUnits: String
     let decimals: UInt8
+}
+
+private struct RustSolanaAssociatedTokenRequest: Encodable {
+    let owner: String
+    let mint: String
+    let tokenProgramID: String
+}
+
+private struct RustSolanaAssociatedTokenAddress: Decodable {
+    let address: String
+    let bump: UInt8
 }
 
 private struct StoredEVMIntent {
@@ -730,6 +748,47 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 reply(self.encoded(intent.prepared))
             } catch {
                 reply(self.error("Solana preparation failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    func deriveSolanaAssociatedToken(
+        _ request: Data,
+        reply: @escaping (Data) -> Void
+    ) {
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSolanaAssociatedTokenRequest> =
+                    try self.authorized(request)
+                guard self.unlockedEntropy != nil else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                let value = authorized.payload
+                guard let descriptor = WalletNetworkCatalog.descriptor(
+                    id: value.networkID
+                ), descriptor.chain == .solana,
+                   Self.isSolanaAddress(value.owner),
+                   Self.isSolanaAddress(value.mint),
+                   value.tokenProgramID == WalletSolanaTokenProgram.spl.programID else {
+                    throw self.signerError(
+                        "The associated-token request is outside classic SPL."
+                    )
+                }
+                try self.authorizeNetwork(
+                    descriptor.id, chain: .solana,
+                    capability: .fungibleTokenTransfer
+                )
+                let derived = try self.rustAssociatedTokenAddress(
+                    owner: value.owner, mint: value.mint,
+                    tokenProgramID: value.tokenProgramID
+                )
+                reply(self.encoded(WalletSolanaAssociatedTokenAddress(
+                    address: derived.address, bump: derived.bump
+                )))
+            } catch {
+                reply(self.error(
+                    "Associated-token derivation failed: \(error.localizedDescription)"
+                ))
             }
         }
     }
@@ -1452,8 +1511,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
         guard let account, account.address == packet.feePayer,
               Self.isSolanaAddress(recipient), recipient != account.address,
-              packet.instructions.count == 1,
-              let instruction = packet.instructions.first,
+              (1...2).contains(packet.instructions.count),
+              let instruction = packet.instructions.last,
               instruction.programID == WalletSolanaTokenProgram.spl.programID,
               instruction.adapterID == WalletReviewedAdapters.solanaSPLTransferChecked,
               instruction.semanticOperation
@@ -1475,13 +1534,20 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                   "mint": mint,
                   "source_token_account": source,
               ],
-              Self.isSolanaAddress(source), Self.isSolanaAddress(destination),
-              Set([
-                  account.address, source, mint, destination,
-                  recipient,
-                  WalletSolanaTokenProgram.spl.programID,
-              ]).count == 6 else {
+              Self.isSolanaAddress(source), Self.isSolanaAddress(destination) else {
             throw signerError("The requested SPL account roles are invalid.")
+        }
+        let createsDestinationAssociatedAccount = packet.instructions.count == 2
+        var distinctAddresses = [
+            account.address, source, mint, destination, recipient,
+            WalletSolanaTokenProgram.spl.programID,
+        ]
+        if createsDestinationAssociatedAccount {
+            distinctAddresses.append(Self.solanaSystemProgramID)
+            distinctAddresses.append(Self.solanaAssociatedTokenProgramID)
+        }
+        guard Set(distinctAddresses).count == distinctAddresses.count else {
+            throw signerError("The requested SPL account roles are not distinct.")
         }
         let expectedAccounts = [
             WalletSolanaResolvedAccount(
@@ -1501,9 +1567,66 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 lookupTableAddress: nil, lookupTableSlot: nil
             ),
         ]
+        if createsDestinationAssociatedAccount {
+            let derived = try rustAssociatedTokenAddress(
+                owner: recipient, mint: mint,
+                tokenProgramID: WalletSolanaTokenProgram.spl.programID
+            )
+            guard derived.address == destination,
+                  let creation = packet.instructions.first,
+                  creation.programID == Self.solanaAssociatedTokenProgramID,
+                  creation.adapterID
+                    == WalletReviewedAdapters.solanaAssociatedTokenCreateIdempotent,
+                  creation.semanticOperation
+                    == "create_associated_token_account_idempotent",
+                  creation.accounts == [
+                    WalletSolanaResolvedAccount(
+                        address: account.address, isSigner: true, isWritable: true,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                    WalletSolanaResolvedAccount(
+                        address: destination, isSigner: false, isWritable: true,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                    WalletSolanaResolvedAccount(
+                        address: recipient, isSigner: false, isWritable: false,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                    WalletSolanaResolvedAccount(
+                        address: mint, isSigner: false, isWritable: false,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                    WalletSolanaResolvedAccount(
+                        address: Self.solanaSystemProgramID,
+                        isSigner: false, isWritable: false,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                    WalletSolanaResolvedAccount(
+                        address: WalletSolanaTokenProgram.spl.programID,
+                        isSigner: false, isWritable: false,
+                        lookupTableAddress: nil, lookupTableSlot: nil
+                    ),
+                  ],
+                  creation.canonicalArguments == [
+                    "associated_token_account": destination,
+                    "destination_owner": recipient,
+                    "mint": mint,
+                    "token_program_id": WalletSolanaTokenProgram.spl.programID,
+                  ] else {
+                throw signerError(
+                    "The associated-token account does not match the signer-derived reviewed instruction."
+                )
+            }
+            try authorizeReviewedAdapter(
+                WalletReviewedAdapters.solanaAssociatedTokenCreateIdempotent,
+                networkID: packet.request.networkID
+            )
+        }
         let resolvedDigest = Self.solanaSPLResolvedAccountsDigest(
             feePayer: account.address, sourceTokenAccount: source, mint: mint,
-            destinationTokenAccount: destination, recipientOwner: recipient
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            createsDestinationAssociatedAccount:
+                createsDestinationAssociatedAccount
         )
         guard instruction.accounts == expectedAccounts,
               packet.resolvedAccountsDigest == resolvedDigest else {
@@ -2049,6 +2172,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
 
     private static let solanaSystemProgramID =
         "11111111111111111111111111111111"
+    private static let solanaAssociatedTokenProgramID =
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 
     private static func isSolanaAddress(_ value: String) -> Bool {
         WalletSolanaBase58.decode(value, exactLength: 32) != nil
@@ -2072,13 +2197,16 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         sourceTokenAccount: String,
         mint: String,
         destinationTokenAccount: String,
-        recipientOwner: String
+        recipientOwner: String,
+        createsDestinationAssociatedAccount: Bool = false
     ) -> String {
         let tokenProgram = WalletSolanaTokenProgram.spl.programID
-        let value = Data(
+        var description =
             "legacy|\(tokenProgram)|\(feePayer):signer:writable|\(sourceTokenAccount):nonsigner:writable|\(mint):nonsigner:readonly|\(destinationTokenAccount):nonsigner:writable|owner:\(recipientOwner)"
-                .utf8
-        )
+        if createsDestinationAssociatedAccount {
+            description += "|create_ata:\(solanaAssociatedTokenProgramID)"
+        }
+        let value = Data(description.utf8)
         return "sha256:" + SHA256.hash(data: value).map {
             String(format: "%02x", $0)
         }.joined()
@@ -2392,8 +2520,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) throws -> T {
         guard let recipient = packet.request.action.recipient,
               let amount = packet.request.action.amountBaseUnits,
-              packet.instructions.count == 1,
-              let arguments = packet.instructions.first?.canonicalArguments,
+              (1...2).contains(packet.instructions.count),
+              let arguments = packet.instructions.last?.canonicalArguments,
               let source = arguments["source_token_account"],
               let mint = arguments["mint"],
               let destination = arguments["destination_token_account"],
@@ -2406,12 +2534,43 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             mint: mint, destinationTokenAccount: destination,
             recipientOwner: recipient,
             tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            associatedTokenProgramID: Self.solanaAssociatedTokenProgramID,
+            createDestinationAssociatedAccount: packet.instructions.count == 2,
             recentBlockhash: packet.recentBlockhash,
             amountBaseUnits: amount, decimals: decimals
         )
         return try rustSolanaCall(
             request: request, entropy: entropy, function: function
         )
+    }
+
+    private func rustAssociatedTokenAddress(
+        owner: String,
+        mint: String,
+        tokenProgramID: String
+    ) throws -> RustSolanaAssociatedTokenAddress {
+        let request = RustSolanaAssociatedTokenRequest(
+            owner: owner, mint: mint, tokenProgramID: tokenProgramID
+        )
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        guard var json = String(data: data, encoding: .utf8) else {
+            throw signerError("The associated-token request could not be encoded.")
+        }
+        defer { json.replaceSubrange(json.startIndex..<json.endIndex, with: "") }
+        guard let pointer = json.withCString({ rustDeriveSolanaAssociatedToken($0) })
+        else { throw signerError("The signing core is unavailable.") }
+        defer { rustFreeString(pointer) }
+        let result = Data(String(cString: pointer).utf8)
+        if let failure = try? JSONDecoder().decode(
+            WalletSignerErrorPayload.self, from: result
+        ) {
+            throw signerError(failure.error)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(RustSolanaAssociatedTokenAddress.self, from: result)
     }
 
     private func rustSolanaCall<Request: Encodable, Result: Decodable>(

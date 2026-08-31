@@ -192,9 +192,31 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     "Solana transactions do not use an EVM contract registry entry."
                 )
             }
+            let recipientAssociatedTokenAddress: String?
+            if request.action.type == .fungibleTokenTransfer,
+               let assetID = request.action.assetID,
+               let identity = WalletSolanaAssetIdentity.parse(assetID),
+               identity.networkID == request.networkID,
+               identity.program == .spl,
+               let owner = request.action.recipient {
+                let derivation = WalletSolanaAssociatedTokenRequest(
+                    networkID: request.networkID, owner: owner,
+                    mint: identity.mint,
+                    tokenProgramID: identity.program.programID
+                )
+                let data = try authorized(derivation, source: request.source)
+                let result: WalletSolanaAssociatedTokenAddress = try await call {
+                    proxy, reply in
+                    proxy.deriveSolanaAssociatedToken(data, reply: reply)
+                }
+                recipientAssociatedTokenAddress = result.address
+            } else {
+                recipientAssociatedTokenAddress = nil
+            }
             let rpc = try solanaRPCClient(for: request.networkID)
             let packet = try await rpc.prepare(
-                request: request, feePayer: account.address
+                request: request, feePayer: account.address,
+                recipientAssociatedTokenAddress: recipientAssociatedTokenAddress
             )
             let data = try authorized(packet, source: request.source)
             let transaction: WalletPreparedTransaction = try await call { proxy, reply in

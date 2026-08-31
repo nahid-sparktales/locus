@@ -14,6 +14,7 @@ actual="$(/usr/bin/nm -gU "${binary}" \
     | /usr/bin/sort -u)"
 expected="$(/usr/bin/printf '%s\n' \
     locus_wallet_derive_accounts_json \
+    locus_wallet_derive_solana_associated_token_json \
     locus_wallet_encode_contract_call_json \
     locus_wallet_generate_vault_json \
     locus_wallet_prepare_evm_transaction_json \

@@ -1034,6 +1034,40 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSolanaCanonicalAssociatedTokenCreationMatchesIndependentSignerFixture() throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let destination = "DUJre3jPyHZAAuoWaaqRQgJ6DjyKTaXVXKMH3bpLV8Kb"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let transfer = try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "123456789",
+            decimals: 6, createsDestinationAssociatedAccount: true
+        )
+        XCTAssertEqual(transfer.message.count, 320)
+        XCTAssertEqual(transfer.unsignedTransaction.count, 385)
+        XCTAssertEqual(
+            transfer.canonicalMessageDigest,
+            "sha256:25ad6ed5b9995274e83214731f90361f3873880a34f656adae5b9ce20c928ca8"
+        )
+        XCTAssertTrue(transfer.createsDestinationAssociatedAccount)
+        XCTAssertEqual(transfer.associatedTokenCreationAccounts.count, 6)
+        XCTAssertEqual(
+            transfer.resolvedAccountsDigest,
+            WalletSolanaCanonicalSPLTransfer.resolvedDigest(
+                feePayer: payer, sourceTokenAccount: source, mint: mint,
+                destinationTokenAccount: destination,
+                recipientOwner: recipient,
+                tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+                createsDestinationAssociatedAccount: true
+            )
+        )
+    }
+
     func testSolanaAssetIdentityIsCanonicalAndProgramScoped() {
         let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
         let legacy = "solana:devnet/spl:\(mint)"
@@ -1120,11 +1154,12 @@ final class WalletGatewayTests: XCTestCase {
         let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
         let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
         let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
-        let destination = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let destination = "DUJre3jPyHZAAuoWaaqRQgJ6DjyKTaXVXKMH3bpLV8Kb"
         let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
         let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
         let assetID = "solana:devnet/spl:\(mint)"
         var sourceAmount = "999999999"
+        var destinationOccupied = false
         let client = makeSolanaRPCClient { request in
             let object = try XCTUnwrap(
                 try JSONSerialization.jsonObject(
@@ -1137,22 +1172,36 @@ final class WalletGatewayTests: XCTestCase {
             case "getGenesisHash":
                 result = WalletNetworkCatalog.solanaDevnet.identity.value
             case "getAccountInfo":
-                result = [
-                    "context": ["slot": 42],
-                    "value": [
-                        "data": [
-                            "program": "spl-token",
-                            "parsed": [
-                                "type": "mint",
-                                "info": ["decimals": 6, "isInitialized": true],
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let address = try XCTUnwrap(params[0] as? String)
+                if address == mint {
+                    result = [
+                        "context": ["slot": 42],
+                        "value": [
+                            "data": [
+                                "program": "spl-token",
+                                "parsed": [
+                                    "type": "mint",
+                                    "info": ["decimals": 6, "isInitialized": true],
+                                ],
+                                "space": 82,
                             ],
+                            "executable": false, "lamports": 1_461_600,
+                            "owner": WalletSolanaTokenProgram.spl.programID,
                             "space": 82,
                         ],
-                        "executable": false, "lamports": 1_461_600,
-                        "owner": WalletSolanaTokenProgram.spl.programID,
-                        "space": 82,
-                    ],
-                ]
+                    ]
+                } else {
+                    XCTAssertEqual(address, destination)
+                    let configuration = try XCTUnwrap(params[1] as? [String: Any])
+                    XCTAssertEqual(configuration["encoding"] as? String, "base64")
+                    result = [
+                        "context": ["slot": 42],
+                        "value": destinationOccupied
+                            ? (["owner": "attacker"] as Any)
+                            : (NSNull() as Any),
+                    ]
+                }
             case "getTokenAccountsByOwner":
                 let params = try XCTUnwrap(object["params"] as? [Any])
                 let owner = try XCTUnwrap(params[0] as? String)
@@ -1167,10 +1216,7 @@ final class WalletGatewayTests: XCTestCase {
                         amount: sourceAmount, decimals: 6, programID: programID
                     )]
                 } else if owner == recipient {
-                    values = [self.solanaTokenAccountJSON(
-                        address: destination, mint: mint, owner: recipient,
-                        amount: "0", decimals: 6, programID: programID
-                    )]
+                    values = []
                 } else {
                     values = []
                 }
@@ -1210,15 +1256,22 @@ final class WalletGatewayTests: XCTestCase {
             ),
             maximumFeeBaseUnits: "6000"
         )
-        let packet = try await client.prepare(request: request, feePayer: payer)
+        let packet = try await client.prepare(
+            request: request, feePayer: payer,
+            recipientAssociatedTokenAddress: destination
+        )
         XCTAssertEqual(packet.canonicalMessageDigest,
-                       "sha256:1e22ab87cedf350790b6bc80e98799dfe043aa04d0e7e1374b9e98b1a3390c7f")
-        XCTAssertEqual(packet.instructions.count, 1)
+                       "sha256:25ad6ed5b9995274e83214731f90361f3873880a34f656adae5b9ce20c928ca8")
+        XCTAssertEqual(packet.instructions.count, 2)
         XCTAssertEqual(
             packet.instructions[0].adapterID,
+            WalletReviewedAdapters.solanaAssociatedTokenCreateIdempotent
+        )
+        XCTAssertEqual(
+            packet.instructions[1].adapterID,
             WalletReviewedAdapters.solanaSPLTransferChecked
         )
-        XCTAssertEqual(packet.instructions[0].canonicalArguments["decimals"], "6")
+        XCTAssertEqual(packet.instructions[1].canonicalArguments["decimals"], "6")
         let recheck = try await client.recheck(intentID: "spl-intent", packet: packet)
         XCTAssertEqual(recheck.resolvedAccountsDigest, packet.resolvedAccountsDigest)
 
@@ -1228,6 +1281,18 @@ final class WalletGatewayTests: XCTestCase {
             XCTFail("A substituted or depleted SPL source account must be rejected.")
         } catch WalletRPCError.simulation(let message) {
             XCTAssertTrue(message.contains("evidence changed"))
+        }
+
+        sourceAmount = "999999999"
+        destinationOccupied = true
+        do {
+            _ = try await client.prepare(
+                request: request, feePayer: payer,
+                recipientAssociatedTokenAddress: destination
+            )
+            XCTFail("An occupied unverified associated address must be rejected.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("already occupied"))
         }
     }
 

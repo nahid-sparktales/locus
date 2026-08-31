@@ -296,6 +296,8 @@ enum WalletReviewedAdapters {
     static let ethereumNativeTransfer = "native-eth-transfer-v1"
     static let solanaNativeTransfer = "solana-system-transfer-v1"
     static let solanaSPLTransferChecked = "solana-spl-transfer-checked-v1"
+    static let solanaAssociatedTokenCreateIdempotent =
+        "solana-associated-token-create-idempotent-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
@@ -303,6 +305,7 @@ enum WalletReviewedAdapters {
         "uniswap-universal-router-v2-exact-in-v1"
     static let staticallySupportedIDs: Set<String> = [
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
+        solanaAssociatedTokenCreateIdempotent,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]
@@ -765,6 +768,18 @@ struct WalletSolanaSignedTransaction: Codable, Equatable, Sendable {
     let signedTransaction: String
 }
 
+struct WalletSolanaAssociatedTokenRequest: Codable, Equatable, Sendable {
+    let networkID: String
+    let owner: String
+    let mint: String
+    let tokenProgramID: String
+}
+
+struct WalletSolanaAssociatedTokenAddress: Codable, Equatable, Sendable {
+    let address: String
+    let bump: UInt8
+}
+
 struct WalletSuiObjectReference: Codable, Equatable, Sendable {
     let objectID: String
     let version: UInt64
@@ -899,6 +914,9 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     func simulateSolana(_ request: Data, reply: @escaping (Data) -> Void)
     func confirmSolana(_ request: Data, reply: @escaping (Data) -> Void)
     func executeSolana(_ request: Data, reply: @escaping (Data) -> Void)
+    func deriveSolanaAssociatedToken(
+        _ request: Data, reply: @escaping (Data) -> Void
+    )
     func prepareSui(_ request: Data, reply: @escaping (Data) -> Void)
     func simulateSui(_ request: Data, reply: @escaping (Data) -> Void)
     func confirmSui(_ request: Data, reply: @escaping (Data) -> Void)

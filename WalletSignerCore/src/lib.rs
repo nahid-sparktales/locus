@@ -91,9 +91,24 @@ struct SolanaSplTransferRequest {
     destination_token_account: String,
     recipient_owner: String,
     token_program_id: String,
+    associated_token_program_id: String,
+    create_destination_associated_account: bool,
     recent_blockhash: String,
     amount_base_units: String,
     decimals: u8,
+}
+
+#[derive(Deserialize)]
+struct SolanaAssociatedTokenRequest {
+    owner: String,
+    mint: String,
+    token_program_id: String,
+}
+
+#[derive(Serialize)]
+struct SolanaAssociatedTokenAddress {
+    address: String,
+    bump: u8,
 }
 
 #[derive(Serialize)]
@@ -383,11 +398,36 @@ fn canonical_solana_blockhash(value: &str) -> Result<Vec<u8>, &'static str> {
     Ok(blockhash)
 }
 
+fn derive_solana_associated_token_address(
+    owner: &str,
+    mint: &str,
+    token_program_id: &str,
+) -> Result<SolanaAssociatedTokenAddress, &'static str> {
+    const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+    if token_program_id != SPL_TOKEN_PROGRAM {
+        return Err("associated-token derivation is reviewed for classic SPL only");
+    }
+    let owner = canonical_solana_pubkey(owner)?;
+    let mint = canonical_solana_pubkey(mint)?;
+    let token_program = canonical_solana_pubkey(token_program_id)?;
+    let associated_program = canonical_solana_pubkey(ASSOCIATED_TOKEN_PROGRAM)?;
+    let (address, bump) = Pubkey::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &associated_program,
+    );
+    Ok(SolanaAssociatedTokenAddress {
+        address: address.to_string(),
+        bump,
+    })
+}
+
 fn build_solana_spl_message(
     request: &SolanaSplTransferRequest,
     signing_key: &SigningKey,
 ) -> Result<Vec<u8>, &'static str> {
     const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
     if request.token_program_id != SPL_TOKEN_PROGRAM {
         return Err("only the classic SPL Token Program is reviewed");
     }
@@ -397,6 +437,10 @@ fn build_solana_spl_message(
     let destination = canonical_solana_pubkey(&request.destination_token_account)?;
     let recipient_owner = canonical_solana_pubkey(&request.recipient_owner)?;
     let token_program = canonical_solana_pubkey(&request.token_program_id)?;
+    if request.associated_token_program_id != ASSOCIATED_TOKEN_PROGRAM {
+        return Err("unexpected associated token program");
+    }
+    let associated_token_program = canonical_solana_pubkey(&request.associated_token_program_id)?;
     let expected_payer = Pubkey::new_from_array(signing_key.verifying_key().to_bytes());
     let distinct = [
         payer,
@@ -405,11 +449,22 @@ fn build_solana_spl_message(
         destination,
         recipient_owner,
         token_program,
+        associated_token_program,
     ]
     .into_iter()
     .collect::<std::collections::HashSet<_>>();
-    if payer != expected_payer || distinct.len() != 6 {
+    if payer != expected_payer || distinct.len() != 7 {
         return Err("SPL account roles do not match the reviewed transfer");
+    }
+    if request.create_destination_associated_account {
+        let expected = derive_solana_associated_token_address(
+            &request.recipient_owner,
+            &request.mint,
+            &request.token_program_id,
+        )?;
+        if expected.address != request.destination_token_account {
+            return Err("destination is not the recipient associated token account");
+        }
     }
     let amount = request
         .amount_base_units
@@ -420,21 +475,67 @@ fn build_solana_spl_message(
     }
     let blockhash = canonical_solana_blockhash(&request.recent_blockhash)?;
 
-    // Legacy message with exactly one SPL Token TransferChecked instruction.
-    // Message order: payer, source, destination, mint, program. The instruction
-    // account order is source, mint, destination, authority.
-    let mut message = vec![1, 0, 2];
-    encode_shortvec(5, &mut message);
-    message.extend_from_slice(payer.as_array());
-    message.extend_from_slice(source.as_array());
-    message.extend_from_slice(destination.as_array());
-    message.extend_from_slice(mint.as_array());
-    message.extend_from_slice(token_program.as_array());
-    message.extend_from_slice(&blockhash);
-    encode_shortvec(1, &mut message);
-    message.push(4);
-    encode_shortvec(4, &mut message);
-    message.extend_from_slice(&[1, 3, 2, 0]);
+    let mut message;
+    if request.create_destination_associated_account {
+        let system_program = Pubkey::new_from_array([0_u8; 32]);
+        if [
+            payer,
+            source,
+            destination,
+            recipient_owner,
+            mint,
+            system_program,
+            token_program,
+            associated_token_program,
+        ]
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+            != 8
+        {
+            return Err("associated-token account roles overlap");
+        }
+        // Accounts: payer, source, destination ATA, recipient owner, mint,
+        // System Program, Token Program, Associated Token Program.
+        message = vec![1, 0, 5];
+        encode_shortvec(8, &mut message);
+        for account in [
+            payer,
+            source,
+            destination,
+            recipient_owner,
+            mint,
+            system_program,
+            token_program,
+            associated_token_program,
+        ] {
+            message.extend_from_slice(account.as_array());
+        }
+        message.extend_from_slice(&blockhash);
+        encode_shortvec(2, &mut message);
+        // CreateIdempotent: payer, ATA, owner, mint, System, Token.
+        message.push(7);
+        encode_shortvec(6, &mut message);
+        message.extend_from_slice(&[0, 2, 3, 4, 5, 6]);
+        encode_shortvec(1, &mut message);
+        message.push(1);
+        // TransferChecked: source, mint, destination, authority.
+        message.push(6);
+        encode_shortvec(4, &mut message);
+        message.extend_from_slice(&[1, 4, 2, 0]);
+    } else {
+        // Accounts: payer, source, destination, mint, Token Program.
+        message = vec![1, 0, 2];
+        encode_shortvec(5, &mut message);
+        for account in [payer, source, destination, mint, token_program] {
+            message.extend_from_slice(account.as_array());
+        }
+        message.extend_from_slice(&blockhash);
+        encode_shortvec(1, &mut message);
+        message.push(4);
+        encode_shortvec(4, &mut message);
+        message.extend_from_slice(&[1, 3, 2, 0]);
+    }
     encode_shortvec(10, &mut message);
     message.push(12);
     message.extend_from_slice(&amount.to_le_bytes());
@@ -631,6 +732,43 @@ pub extern "C" fn locus_wallet_sign_solana_native_transfer_json(
         })
     })();
     entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Derive the canonical classic SPL associated token address for an owner and
+/// mint. This returns public account metadata only and grants no signing
+/// authority.
+///
+/// # Safety
+/// `request_json` must point to live NUL-terminated UTF-8 JSON for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn locus_wallet_derive_solana_associated_token_json(
+    request_json: *const c_char,
+) -> *mut c_char {
+    if request_json.is_null() {
+        return json_pointer(&ErrorResponse {
+            error: "missing associated-token request",
+        });
+    }
+    // SAFETY: The signer owns this NUL-terminated request for the call.
+    let bytes = unsafe { CStr::from_ptr(request_json) }.to_bytes();
+    if bytes.len() > 4 * 1024 {
+        return json_pointer(&ErrorResponse {
+            error: "associated-token request is too large",
+        });
+    }
+    let result = (|| {
+        let request: SolanaAssociatedTokenRequest =
+            serde_json::from_slice(bytes).map_err(|_| "invalid associated-token request JSON")?;
+        derive_solana_associated_token_address(
+            &request.owner,
+            &request.mint,
+            &request.token_program_id,
+        )
+    })();
     match result {
         Ok(value) => json_pointer(&value),
         Err(error) => json_pointer(&ErrorResponse { error }),
@@ -982,6 +1120,8 @@ mod tests {
                 "destination_token_account": Pubkey::new_from_array([4_u8; 32]).to_string(),
                 "recipient_owner": Pubkey::new_from_array([5_u8; 32]).to_string(),
                 "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "recent_blockhash": Pubkey::new_from_array([9_u8; 32]).to_string(),
                 "amount_base_units": "123456789",
                 "decimals": 6
@@ -1048,30 +1188,40 @@ mod tests {
                 "fee_payer": payer, "source_token_account": source, "mint": mint,
                 "destination_token_account": destination, "recipient_owner": recipient,
                 "token_program_id": token_2022, "recent_blockhash": blockhash,
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "amount_base_units": "1", "decimals": 6
             }),
             serde_json::json!({
                 "fee_payer": payer, "source_token_account": source, "mint": mint,
                 "destination_token_account": destination, "recipient_owner": recipient,
                 "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "recent_blockhash": blockhash, "amount_base_units": "0", "decimals": 6
             }),
             serde_json::json!({
                 "fee_payer": foreign, "source_token_account": source, "mint": mint,
                 "destination_token_account": destination, "recipient_owner": recipient,
                 "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
             }),
             serde_json::json!({
                 "fee_payer": payer, "source_token_account": source, "mint": mint,
                 "destination_token_account": destination, "recipient_owner": payer,
                 "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
             }),
             serde_json::json!({
                 "fee_payer": payer, "source_token_account": source, "mint": mint,
                 "destination_token_account": source, "recipient_owner": recipient,
                 "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": false,
                 "recent_blockhash": blockhash, "amount_base_units": "1", "decimals": 6
             }),
         ];
@@ -1089,6 +1239,68 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    #[test]
+    fn solana_associated_token_derivation_and_create_message_are_deterministic() {
+        let owner = Pubkey::new_from_array([5_u8; 32]).to_string();
+        let mint = Pubkey::new_from_array([3_u8; 32]).to_string();
+        let derived = derive_solana_associated_token_address(
+            &owner,
+            &mint,
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        )
+        .unwrap();
+        assert_eq!(
+            derived.address,
+            "DUJre3jPyHZAAuoWaaqRQgJ6DjyKTaXVXKMH3bpLV8Kb"
+        );
+        assert_eq!(derived.bump, 255);
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(
+            serde_json::json!({
+                "fee_payer": "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+                "source_token_account": Pubkey::new_from_array([2_u8; 32]).to_string(),
+                "mint": mint,
+                "destination_token_account": derived.address,
+                "recipient_owner": owner,
+                "token_program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": true,
+                "recent_blockhash": Pubkey::new_from_array([9_u8; 32]).to_string(),
+                "amount_base_units": "123456789",
+                "decimals": 6
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let pointer =
+            locus_wallet_prepare_solana_spl_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["canonical_message_digest"],
+            "sha256:25ad6ed5b9995274e83214731f90361f3873880a34f656adae5b9ce20c928ca8"
+        );
+
+        let mut substituted: serde_json::Value =
+            serde_json::from_str(request.to_str().unwrap()).unwrap();
+        substituted["destination_token_account"] =
+            Pubkey::new_from_array([4_u8; 32]).to_string().into();
+        let substituted = CString::new(substituted.to_string()).unwrap();
+        let pointer =
+            locus_wallet_prepare_solana_spl_transfer_json(entropy.as_ptr(), substituted.as_ptr());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        assert!(json.contains("not the recipient associated token account"));
     }
 
     #[test]
