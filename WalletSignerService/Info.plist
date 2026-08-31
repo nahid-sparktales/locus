@@ -24,6 +24,8 @@
     <string>$(LOCUS_WALLET_CAPABILITY_PUBLIC_KEY)</string>
     <key>LocusWalletCapabilityManifestBase64</key>
     <string>$(LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64)</string>
+    <key>LocusWalletReviewManifestBase64</key>
+    <string>$(LOCUS_WALLET_REVIEW_MANIFEST_BASE64)</string>
     <key>XPCService</key>
     <dict>
         <key>ServiceType</key>

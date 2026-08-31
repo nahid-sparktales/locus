@@ -88,6 +88,24 @@ struct WalletAsset: Codable, Equatable, Identifiable, Sendable {
     var isVisibleByDefault: Bool { trust == .curated || trust == .userTrusted }
 }
 
+/// A provider-normalized public activity item. Provider-specific response
+/// shapes are discarded before this value reaches the wallet UI or database.
+struct WalletEVMIndexedTransfer: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let transactionHash: String
+    let blockNumber: String
+    let occurredAt: Date
+    let from: String
+    let to: String
+    let assetID: String
+    let amountBaseUnits: String
+    let assetKind: WalletAssetKind
+    let assetReference: String?
+    let assetName: String
+    let assetSymbol: String
+    let assetDecimals: Int?
+}
+
 enum WalletProviderKind: String, Codable, CaseIterable, Sendable {
     case alchemy
     case quickNode = "quicknode"
@@ -145,6 +163,220 @@ struct WalletCapabilityManifest: Codable, Equatable, Sendable {
 struct WalletSignedCapabilityManifest: Codable, Equatable, Sendable {
     let manifest: WalletCapabilityManifest
     let signatureBase64: String
+}
+
+/// The release-reviewed public trust roots for assets, contracts, explorers,
+/// and transaction adapters. Runtime code hashes and ABIs remain signer-bound;
+/// this manifest only identifies the exact public metadata reviewed for a
+/// release. It can never contain wallet secrets or transaction bytes.
+struct WalletReviewManifest: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let revision: Int
+    let issuedAt: Date
+    let expiresAt: Date
+    let assets: [WalletAsset]
+    let evmContracts: [WalletContractRegistryEntry]
+    let explorerTemplates: [String: String]
+    let adapterIDs: Set<String>
+}
+
+struct WalletSignedReviewManifest: Codable, Equatable, Sendable {
+    let manifest: WalletReviewManifest
+    let signatureBase64: String
+}
+
+enum WalletReviewManifestError: LocalizedError, Equatable {
+    case malformed
+    case invalidSignature
+    case expired
+    case broaderThanBundledReview
+
+    var errorDescription: String? {
+        switch self {
+        case .malformed: "The wallet review manifest is malformed."
+        case .invalidSignature: "The wallet review manifest signature is invalid."
+        case .expired: "The wallet review manifest has expired."
+        case .broaderThanBundledReview:
+            "A remote wallet manifest attempted to broaden the bundled review set."
+        }
+    }
+}
+
+/// Validates the release review manifest and applies emergency updates with
+/// intersection-only semantics. Remote data can remove a compromised asset,
+/// contract, explorer, or adapter, but cannot introduce or alter one.
+struct WalletReviewRegistry: Sendable {
+    let manifest: WalletReviewManifest
+
+    init(
+        signedManifest: WalletSignedReviewManifest,
+        publicKey: Curve25519.Signing.PublicKey,
+        now: Date = Date()
+    ) throws {
+        let candidate = signedManifest.manifest
+        guard Self.isStructurallyValid(candidate, now: now) else {
+            throw WalletReviewManifestError.malformed
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let payload = try encoder.encode(candidate)
+        guard let signature = Data(base64Encoded: signedManifest.signatureBase64),
+              publicKey.isValidSignature(signature, for: payload) else {
+            throw WalletReviewManifestError.invalidSignature
+        }
+        guard candidate.expiresAt > now else { throw WalletReviewManifestError.expired }
+        manifest = candidate
+    }
+
+    private init(manifest: WalletReviewManifest) {
+        self.manifest = manifest
+    }
+
+    var assets: [WalletAsset] { manifest.assets }
+    var evmContracts: [WalletContractRegistryEntry] { manifest.evmContracts }
+
+    func restricted(
+        by remote: WalletSignedReviewManifest,
+        publicKey: Curve25519.Signing.PublicKey,
+        now: Date = Date()
+    ) throws -> WalletReviewRegistry {
+        let restriction = try WalletReviewRegistry(
+            signedManifest: remote, publicKey: publicKey, now: now
+        ).manifest
+        guard restriction.revision >= manifest.revision else {
+            throw WalletReviewManifestError.malformed
+        }
+        let requestedAssets = Dictionary(
+            uniqueKeysWithValues: restriction.assets.map { ($0.id, $0) }
+        )
+        let requestedContracts = Dictionary(
+            uniqueKeysWithValues: restriction.evmContracts.map { ($0.id, $0) }
+        )
+        let assets = manifest.assets.filter { asset in
+            requestedAssets[asset.id].map { Self.sameAssetAuthority(asset, $0) } == true
+        }
+        let contracts = manifest.evmContracts.filter { entry in
+            requestedContracts[entry.id] == entry
+        }
+        let explorers = manifest.explorerTemplates.filter { networkID, template in
+            restriction.explorerTemplates[networkID] == template
+        }
+        let adapters = manifest.adapterIDs.intersection(restriction.adapterIDs)
+        return WalletReviewRegistry(manifest: WalletReviewManifest(
+            schemaVersion: manifest.schemaVersion,
+            revision: restriction.revision,
+            issuedAt: max(manifest.issuedAt, restriction.issuedAt),
+            expiresAt: min(manifest.expiresAt, restriction.expiresAt),
+            assets: assets, evmContracts: contracts,
+            explorerTemplates: explorers, adapterIDs: adapters
+        ))
+    }
+
+    func containsExactContract(_ entry: WalletContractRegistryEntry) -> Bool {
+        manifest.adapterIDs.contains(entry.reviewedAdapterID ?? "")
+            && manifest.evmContracts.contains(entry)
+    }
+
+    private static func isStructurallyValid(
+        _ manifest: WalletReviewManifest,
+        now: Date
+    ) -> Bool {
+        guard manifest.schemaVersion == 1, manifest.revision > 0,
+              manifest.issuedAt <= now,
+              manifest.expiresAt > manifest.issuedAt,
+              manifest.expiresAt.timeIntervalSince(manifest.issuedAt) <= 31 * 24 * 60 * 60,
+              manifest.assets.count <= 10_000,
+              manifest.evmContracts.count <= 2_000,
+              manifest.explorerTemplates.count <= WalletNetworkCatalog.all.count,
+              manifest.adapterIDs.isSubset(of: WalletReviewedAdapters.staticallySupportedIDs),
+              Set(manifest.assets.map(\.id)).count == manifest.assets.count,
+              Set(manifest.evmContracts.map(\.id)).count == manifest.evmContracts.count,
+              Set(manifest.evmContracts.map {
+                  "\($0.networkID):\($0.checksumAddress.lowercased())"
+              }).count == manifest.evmContracts.count,
+              manifest.assets.allSatisfy({ validAsset($0, revision: manifest.revision) }),
+              manifest.evmContracts.allSatisfy({ entry in
+                  validContract(entry, manifest: manifest)
+              }) else { return false }
+        return manifest.explorerTemplates.allSatisfy { networkID, template in
+            WalletNetworkCatalog.descriptor(id: networkID)?.explorerTransactionURLTemplate
+                == template
+        }
+    }
+
+    private static func validAsset(_ asset: WalletAsset, revision: Int) -> Bool {
+        guard asset.trust == .curated, asset.manifestRevision == revision,
+              let network = WalletNetworkCatalog.descriptor(id: asset.networkID),
+              network.chain == asset.chain,
+              !asset.name.isEmpty, asset.name.count <= 128,
+              !asset.symbol.isEmpty, asset.symbol.count <= 32 else { return false }
+        if asset.kind == .native {
+            return asset.id == network.nativeAssetID && asset.reference == nil
+                && asset.decimals == network.nativeDecimals
+        }
+        guard let reference = asset.reference else { return false }
+        if network.chain == .evm {
+            guard let identity = WalletEVMAssetIdentity.parse(asset.id),
+                  identity.networkID == network.id,
+                  identity.contractAddress.caseInsensitiveCompare(reference) == .orderedSame else {
+                return false
+            }
+            switch identity.standard {
+            case .erc20:
+                return asset.kind == .fungibleToken && identity.tokenID == nil
+                    && asset.decimals.map { (0...255).contains($0) } == true
+            case .erc721:
+                return (asset.kind == .nft || asset.kind == .collectible)
+                    && (asset.decimals == nil || asset.decimals == 0)
+            case .erc1155:
+                return (asset.kind == .nft || asset.kind == .collectible)
+                    && identity.tokenID != nil
+                    && (asset.decimals == nil || asset.decimals == 0)
+            }
+        }
+        return !reference.isEmpty && reference.count <= 512
+            && asset.decimals.map { (0...255).contains($0) } != false
+    }
+
+    private static func validContract(
+        _ entry: WalletContractRegistryEntry,
+        manifest: WalletReviewManifest
+    ) -> Bool {
+        guard WalletNetworkCatalog.descriptor(id: entry.networkID)?.chain == .evm,
+              entry.checksumAddress.count == 42,
+              entry.checksumAddress.hasPrefix("0x"),
+              entry.checksumAddress.dropFirst(2).allSatisfy(\.isHexDigit),
+              entry.runtimeCodeHash.count == 66,
+              entry.runtimeCodeHash.hasPrefix("0x"),
+              entry.runtimeCodeHash.dropFirst(2).allSatisfy(\.isHexDigit),
+              entry.abiDigest.hasPrefix("sha256:"), entry.abiDigest.count == 71,
+              entry.abiDigest.dropFirst(7).utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte)
+              }),
+              entry.permittedFunctions.count == entry.permittedSelectors.count,
+              !entry.permittedFunctions.isEmpty,
+              entry.permittedSelectors.allSatisfy({ selector in
+                  selector.count == 10 && selector.hasPrefix("0x")
+                      && selector.dropFirst(2).allSatisfy(\.isHexDigit)
+              }),
+              let adapterID = WalletReviewedAdapters.validatedID(for: entry),
+              manifest.adapterIDs.contains(adapterID),
+              entry.verifiedAt <= manifest.issuedAt else { return false }
+        return true
+    }
+
+    private static func sameAssetAuthority(_ lhs: WalletAsset, _ rhs: WalletAsset) -> Bool {
+        lhs.canonicalID == rhs.canonicalID
+            && lhs.networkID == rhs.networkID
+            && lhs.chain == rhs.chain
+            && lhs.kind == rhs.kind
+            && lhs.reference == rhs.reference
+            && lhs.name == rhs.name
+            && lhs.symbol == rhs.symbol
+            && lhs.decimals == rhs.decimals
+            && lhs.trust == rhs.trust
+    }
 }
 
 enum WalletLaunchGateError: LocalizedError, Equatable {

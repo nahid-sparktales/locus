@@ -286,10 +286,53 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 "balance_base_units": balance,
             ]
         case "wallet_get_activity":
-            return [
-                "text": "Submitted Locus Vault transactions are available in Wallet Settings. The configured RPC does not expose indexed account history.",
-                "activity": [],
+            let accountID = arguments["account_id"] as? String
+            let networkID = arguments["network_id"] as? String
+                ?? WalletGateway.ethereumMainnetNetworkID
+            let accounts = try await listAccounts()
+            guard let account = accounts.first(where: {
+                $0.id == accountID && $0.chain == .evm && $0.networkIDs.contains(networkID)
+            }) else {
+                throw WalletGateway.Error.invalidArguments("Select the Locus Vault EVM account.")
+            }
+            let coordinator = try rpcClient(for: networkID)
+            let indexed = try await coordinator.indexedTransfers(address: account.address)
+            let headResponse = try? await coordinator.publicRead(
+                method: "eth_blockNumber", params: []
+            )
+            let activity: [[String: Any]] = indexed.map { transfer in
+                var value: [String: Any] = [
+                    "id": transfer.id,
+                    "transaction_hash": transfer.transactionHash,
+                    "block_number": transfer.blockNumber,
+                    "occurred_at": transfer.occurredAt.timeIntervalSince1970,
+                    "from": transfer.from,
+                    "to": transfer.to,
+                    "asset_id": transfer.assetID,
+                    "amount_base_units": transfer.amountBaseUnits,
+                    "asset_kind": transfer.assetKind.rawValue,
+                    "asset_name": transfer.assetName,
+                    "asset_symbol": transfer.assetSymbol,
+                ]
+                if let reference = transfer.assetReference {
+                    value["asset_reference"] = reference
+                }
+                if let decimals = transfer.assetDecimals {
+                    value["asset_decimals"] = decimals
+                }
+                return value
+            }
+            var result: [String: Any] = [
+                "text": "Loaded \(indexed.count) indexed account activity records.",
+                "account_id": account.id,
+                "network_id": networkID,
+                "activity": activity,
             ]
+            if let headHex = headResponse as? String,
+               let headBlock = WalletEthereumQuantity.hexToDecimal(headHex) {
+                result["head_block_number"] = headBlock
+            }
+            return result
         default:
             throw WalletGateway.Error.invalidArguments("Unsupported read-only wallet operation.")
         }

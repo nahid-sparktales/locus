@@ -162,6 +162,15 @@ final class WalletPublicStore: @unchecked Sendable {
         }
     }
 
+    func deleteActivity(id: String) throws {
+        try locked {
+            let statement = try prepare("DELETE FROM activity WHERE id = ?")
+            defer { sqlite3_finalize(statement) }
+            try bind(id, at: 1, in: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw stepError() }
+        }
+    }
+
     func migrateLegacyActivities(_ records: [WalletActivityRecord]) throws {
         guard !records.isEmpty else { return }
         try execute("BEGIN IMMEDIATE")

@@ -183,6 +183,22 @@ actor WalletEVMProviderCoordinator {
         }
     }
 
+    func indexedTransfers(
+        address: String,
+        limit: Int = 250
+    ) async throws -> [WalletEVMIndexedTransfer] {
+        do {
+            return try await primary.indexedTransfers(
+                provider: primaryEndpoint.provider, address: address, limit: limit
+            )
+        } catch {
+            guard let fallback, let fallbackEndpoint else { throw error }
+            return try await fallback.indexedTransfers(
+                provider: fallbackEndpoint.provider, address: address, limit: limit
+            )
+        }
+    }
+
     func verifyContract(
         _ draft: WalletContractRegistryDraft
     ) async throws -> WalletContractRegistryEntry {

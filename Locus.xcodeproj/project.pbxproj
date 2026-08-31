@@ -2202,6 +2202,7 @@
 				LIBRARY_SEARCH_PATHS = "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release";
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
+				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;
@@ -2230,6 +2231,7 @@
 				LIBRARY_SEARCH_PATHS = "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release";
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
+				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;
@@ -2353,6 +2355,7 @@
 				LIBRARY_SEARCH_PATHS = "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release";
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
+				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;

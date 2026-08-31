@@ -298,6 +298,10 @@ enum WalletReviewedAdapters {
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
     static let uniswapUniversalRouterV2ExactIn =
         "uniswap-universal-router-v2-exact-in-v1"
+    static let staticallySupportedIDs: Set<String> = [
+        erc20, erc721SafeTransfer, erc1155SafeTransfer,
+        uniswapUniversalRouterV2ExactIn,
+    ]
 
     private struct FunctionShape: Equatable {
         let inputs: [String]

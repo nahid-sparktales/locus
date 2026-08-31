@@ -587,6 +587,7 @@ final class WalletGateway: ObservableObject {
     private let userDefaults: UserDefaults
     private let publicStore: WalletPublicStore?
     private let launchGate: WalletLaunchGate
+    private let reviewRegistry: WalletReviewRegistry?
     private let regionCode: String
     let buildSupportsWalletAlpha: Bool
     private var prepared: [String: WalletPreparedTransaction] = [:]
@@ -612,6 +613,7 @@ final class WalletGateway: ObservableObject {
          userDefaults: UserDefaults = .standard,
          publicStore: WalletPublicStore? = nil,
          launchGate: WalletLaunchGate? = nil,
+         reviewRegistry: WalletReviewRegistry? = nil,
          regionCode: String = Locale.current.region?.identifier ?? "ZZ",
          buildSupportsWalletAlpha: Bool = AppSettings.walletAlphaSupportedByCurrentBuild) {
         let signer = signer ?? WalletSignerClientFactory.make()
@@ -625,6 +627,7 @@ final class WalletGateway: ObservableObject {
         self.launchGate = launchGate
             ?? Self.loadBundledLaunchGate()
             ?? (try! WalletLaunchGate())
+        self.reviewRegistry = reviewRegistry ?? Self.loadBundledReviewRegistry()
         self.regionCode = regionCode.uppercased()
         self.buildSupportsWalletAlpha = buildSupportsWalletAlpha
         let legacyWalletEnabled = buildSupportsWalletAlpha
@@ -637,11 +640,16 @@ final class WalletGateway: ObservableObject {
         status = signer.isAvailable ? .locked : .securityReviewRequired
         if let data = userDefaults.data(forKey: registryDefaultsKey),
            let registry = try? JSONDecoder().decode([WalletContractRegistryEntry].self, from: data) {
-            contractRegistry = registry.map(Self.sanitizedRegistryEntry)
-            if contractRegistry != registry,
-               let upgraded = try? JSONEncoder().encode(contractRegistry) {
+            let local = registry.map(Self.sanitizedRegistryEntry)
+            contractRegistry = Self.mergeReviewedContracts(
+                signed: self.reviewRegistry?.evmContracts ?? [], local: local
+            )
+            if local != registry,
+               let upgraded = try? JSONEncoder().encode(local) {
                 userDefaults.set(upgraded, forKey: registryDefaultsKey)
             }
+        } else {
+            contractRegistry = self.reviewRegistry?.evmContracts ?? []
         }
         if let data = userDefaults.data(forKey: policyTemplatesDefaultsKey),
            let templates = try? JSONDecoder().decode([WalletPolicyTemplate].self, from: data) {
@@ -664,8 +672,13 @@ final class WalletGateway: ObservableObject {
         }
         if let publicStore = self.publicStore {
             contacts = (try? publicStore.loadContacts()) ?? []
-            assets = (try? publicStore.loadAssets()) ?? []
+            let storedAssets = (try? publicStore.loadAssets()) ?? []
+            assets = Self.mergeReviewedAssets(
+                signed: self.reviewRegistry?.assets ?? [], stored: storedAssets
+            )
             connections = (try? publicStore.loadConnections()) ?? []
+        } else {
+            assets = self.reviewRegistry?.assets ?? []
         }
         signer.invalidationHandler = { [weak self] in self?.handleSignerInvalidation() }
         self.recoveryView.invalidationHandler = { [weak self] in
@@ -722,6 +735,57 @@ final class WalletGateway: ObservableObject {
             WalletSignedCapabilityManifest.self, from: manifestData
         ) else { return nil }
         return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func loadBundledReviewRegistry(
+        bundle: Bundle = .main
+    ) -> WalletReviewRegistry? {
+        let signerURL = bundle.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("XPCServices", isDirectory: true)
+            .appendingPathComponent("WalletSigner.xpc", isDirectory: true)
+        guard let signerBundle = Bundle(url: signerURL),
+              let publicKeyText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+              ) as? String,
+              let publicKeyData = Data(base64Encoded: publicKeyText),
+              let publicKey = try? Curve25519.Signing.PublicKey(
+                  rawRepresentation: publicKeyData
+              ),
+              let manifestText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletReviewManifestBase64"
+              ) as? String,
+              let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedReviewManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletReviewRegistry(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func mergeReviewedAssets(
+        signed: [WalletAsset], stored: [WalletAsset]
+    ) -> [WalletAsset] {
+        let signedIDs = Set(signed.map(\.id))
+        let userControlled = stored.filter {
+            $0.trust != .curated && !signedIDs.contains($0.id)
+        }
+        return signed + userControlled
+    }
+
+    private static func mergeReviewedContracts(
+        signed: [WalletContractRegistryEntry],
+        local: [WalletContractRegistryEntry]
+    ) -> [WalletContractRegistryEntry] {
+        let signedIDs = Set(signed.map(\.id))
+        let signedAddresses = Set(signed.map {
+            "\($0.networkID):\($0.checksumAddress.lowercased())"
+        })
+        return signed + local.filter {
+            !signedIDs.contains($0.id)
+                && !signedAddresses.contains("\($0.networkID):\($0.checksumAddress.lowercased())")
+        }
     }
 
     private static func sanitizedRegistryEntry(
@@ -1011,6 +1075,8 @@ final class WalletGateway: ObservableObject {
         guard uiFixtureHubState == nil else { return }
         guard signer.isAvailable else { return }
         var changed = false
+        var attemptedHeadNetworks: Set<String> = []
+        var headBlocks: [String: UInt64] = [:]
         let recordIDs = transactionHistory.filter {
             $0.state == .submitted || $0.state == .broadcastUnknown
         }.map(\.id)
@@ -1035,8 +1101,26 @@ final class WalletGateway: ObservableObject {
                 guard let receipt = result as? [String: Any],
                       let status = receipt["status"] as? String else { continue }
                 transactionHistory[index].state = status.lowercased() == "0x1" ? .confirmed : .failed
-                transactionHistory[index].finality = status.lowercased() == "0x1" ? .confirmed : .failed
                 transactionHistory[index].blockNumber = receipt["blockNumber"] as? String
+                if status.lowercased() == "0x1" {
+                    if !attemptedHeadNetworks.contains(original.networkID) {
+                        attemptedHeadNetworks.insert(original.networkID)
+                        let headResponse = try? await signer.browserRPC(
+                            networkID: original.networkID,
+                            method: "eth_blockNumber", params: []
+                        )
+                        if let head = headResponse as? String,
+                           let value = WalletEthereumQuantity.hexToUInt64(head) {
+                            headBlocks[original.networkID] = value
+                        }
+                    }
+                    transactionHistory[index].finality = Self.evmFinality(
+                        block: receipt["blockNumber"] as? String,
+                        head: headBlocks[original.networkID]
+                    )
+                } else {
+                    transactionHistory[index].finality = .failed
+                }
                 transactionHistory[index].detail = nil
                 changed = true
             } catch {
@@ -1048,7 +1132,200 @@ final class WalletGateway: ObservableObject {
                 changed = true
             }
         }
+        let evmNetworks = accounts.filter { $0.chain == .evm }.flatMap { account in
+            account.networkIDs.compactMap { networkID -> (WalletAccount, String)? in
+                WalletNetworkCatalog.descriptor(id: networkID)?.chain == .evm
+                    ? (account, networkID) : nil
+            }
+        }
+        for (account, networkID) in evmNetworks {
+            do {
+                let result = try await signer.performRead(
+                    tool: "wallet_get_activity",
+                    arguments: ["account_id": account.id, "network_id": networkID]
+                )
+                guard let rows = result["activity"] as? [[String: Any]], rows.count <= 500 else {
+                    continue
+                }
+                let indexedHead = (result["head_block_number"] as? String).flatMap(UInt64.init)
+                let existingByHash = Dictionary(
+                    grouping: transactionHistory, by: { $0.transactionHash.lowercased() }
+                )
+                var seenIndexedIDs: Set<String> = []
+                let indexed = rows.compactMap {
+                    indexedActivityRecord(
+                        $0, account: account, networkID: networkID,
+                        headBlock: indexedHead, existingByHash: existingByHash
+                    )
+                }.filter {
+                    seenIndexedIDs.insert($0.id).inserted
+                }
+                guard !indexed.isEmpty else { continue }
+                let indexedHashes = Set(indexed.map { $0.transactionHash.lowercased() })
+                let replacedIDs = transactionHistory.filter {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && indexedHashes.contains($0.transactionHash.lowercased())
+                }.map(\.id)
+                transactionHistory.removeAll {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && indexedHashes.contains($0.transactionHash.lowercased())
+                }
+                for id in replacedIDs { try? publicStore?.deleteActivity(id: id) }
+                transactionHistory.append(contentsOf: indexed)
+                quarantineDiscoveredAssets(from: rows, networkID: networkID)
+                changed = true
+            } catch {
+                continue
+            }
+        }
+        if changed {
+            transactionHistory.sort { $0.submittedAt > $1.submittedAt }
+            if transactionHistory.count > 500 {
+                let removed = transactionHistory.suffix(from: 500).map(\.id)
+                transactionHistory.removeLast(transactionHistory.count - 500)
+                for id in removed { try? publicStore?.deleteActivity(id: id) }
+            }
+        }
         if changed { persistActivity() }
+    }
+
+    private func indexedActivityRecord(
+        _ row: [String: Any],
+        account: WalletAccount,
+        networkID: String,
+        headBlock: UInt64?,
+        existingByHash: [String: [WalletActivityRecord]]
+    ) -> WalletActivityRecord? {
+        guard let rawID = row["id"] as? String,
+              !rawID.isEmpty, rawID.utf8.count <= 256,
+              let hash = row["transaction_hash"] as? String,
+              hash.count == 66, hash.hasPrefix("0x"),
+              hash.dropFirst(2).allSatisfy(\.isHexDigit),
+              let block = WalletBaseUnits.normalize(
+                  row["block_number"] as? String ?? ""
+              ),
+              let timestamp = row["occurred_at"] as? TimeInterval,
+              timestamp.isFinite, timestamp >= 0,
+              timestamp <= Date().addingTimeInterval(300).timeIntervalSince1970,
+              let from = row["from"] as? String, Self.validAddress(from, chain: .evm),
+              let to = row["to"] as? String, Self.validAddress(to, chain: .evm),
+              let assetID = row["asset_id"] as? String,
+              let amount = WalletBaseUnits.normalize(
+                  row["amount_base_units"] as? String ?? ""
+              ),
+              let kindValue = row["asset_kind"] as? String,
+              let kind = WalletAssetKind(rawValue: kindValue),
+              validIndexedAssetID(assetID, kind: kind, networkID: networkID) else {
+            return nil
+        }
+        let accountAddress = account.address.lowercased()
+        let normalizedFrom = from.lowercased()
+        let normalizedTo = to.lowercased()
+        let direction: WalletActivityDirection
+        if normalizedFrom == accountAddress && normalizedTo == accountAddress {
+            direction = .selfTransfer
+        } else if normalizedTo == accountAddress {
+            direction = .inbound
+        } else if normalizedFrom == accountAddress {
+            direction = .outbound
+        } else {
+            return nil
+        }
+        let symbol = sanitizedProviderLabel(
+            row["asset_symbol"], fallback: "Asset", limit: 32
+        )
+        let prior = existingByHash[hash.lowercased()]?.first
+        let actionKind: WalletActionKind = switch kind {
+        case .native: .nativeTransfer
+        case .fungibleToken: .fungibleTokenTransfer
+        case .nft, .collectible: .nftTransfer
+        }
+        let verb = switch direction {
+        case .inbound: "Received"
+        case .outbound: "Sent"
+        case .selfTransfer: "Moved"
+        }
+        return WalletActivityRecord(
+            id: "indexed:\(networkID):\(rawID)",
+            intentID: prior?.intentID ?? "indexed:\(rawID)",
+            transactionHash: hash.lowercased(), networkID: networkID,
+            accountID: account.id, summary: "\(verb) \(symbol)",
+            submittedAt: Date(timeIntervalSince1970: timestamp),
+            state: .confirmed, blockNumber: block, lastCheckedAt: Date(), detail: nil,
+            direction: direction, source: prior?.source, actionKind: actionKind,
+            assetID: assetID, amountBaseUnits: amount,
+            finality: Self.evmFinality(block: block, head: headBlock),
+            expiresAt: nil, replacedByTransactionHash: nil
+        )
+    }
+
+    private static func evmFinality(block: String?, head: UInt64?) -> WalletActivityFinality {
+        guard let block, let head else { return .confirmed }
+        let blockNumber = block.lowercased().hasPrefix("0x")
+            ? WalletEthereumQuantity.hexToUInt64(block) : UInt64(block)
+        guard let blockNumber else { return .confirmed }
+        guard head >= blockNumber else { return .confirmed }
+        return head - blockNumber >= 64 ? .finalized : .confirmed
+    }
+
+    private func quarantineDiscoveredAssets(
+        from rows: [[String: Any]],
+        networkID: String
+    ) {
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  assets.contains(where: { $0.id == assetID }) == false,
+                  let kindValue = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: kindValue), kind != .native,
+                  validIndexedAssetID(assetID, kind: kind, networkID: networkID),
+                  let reference = row["asset_reference"] as? String,
+                  Self.validAddress(reference, chain: .evm) else { continue }
+            let decimals = row["asset_decimals"] as? Int
+            guard decimals.map({ (0...255).contains($0) }) != false else { continue }
+            let asset = WalletAsset(
+                canonicalID: assetID, networkID: networkID, chain: .evm,
+                kind: kind, reference: reference.lowercased(),
+                name: sanitizedProviderLabel(
+                    row["asset_name"], fallback: "Unknown asset", limit: 128
+                ),
+                symbol: sanitizedProviderLabel(
+                    row["asset_symbol"], fallback: "UNKNOWN", limit: 32
+                ),
+                decimals: decimals, trust: .quarantined, manifestRevision: 0
+            )
+            assets.append(asset)
+            try? publicStore?.upsertAsset(asset)
+        }
+    }
+
+    private func validIndexedAssetID(
+        _ assetID: String,
+        kind: WalletAssetKind,
+        networkID: String
+    ) -> Bool {
+        if kind == .native {
+            return assetID == WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID
+        }
+        guard let identity = WalletEVMAssetIdentity.parse(assetID),
+              identity.networkID == networkID else { return false }
+        switch (kind, identity.standard) {
+        case (.fungibleToken, .erc20): return identity.tokenID == nil
+        case (.nft, .erc721), (.collectible, .erc721): return identity.tokenID != nil
+        case (.nft, .erc1155), (.collectible, .erc1155): return identity.tokenID != nil
+        default: return false
+        }
+    }
+
+    private func sanitizedProviderLabel(
+        _ value: Any?, fallback: String, limit: Int
+    ) -> String {
+        guard let value = value as? String else { return fallback }
+        let scalars = value.unicodeScalars.filter {
+            ($0.value >= 0x20 && $0.value != 0x7f) || $0.value == 0x09
+        }.prefix(limit)
+        let normalized = String(String.UnicodeScalarView(scalars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? fallback : normalized
     }
 
     var statusText: String {
@@ -1504,13 +1781,26 @@ final class WalletGateway: ObservableObject {
     func addContractRegistryEntry(_ draft: WalletContractRegistryDraft) async -> Bool {
         do {
             let entry = try await signer.verifyContract(draft)
+            if let signed = reviewRegistry?.evmContracts.first(where: {
+                $0.id == entry.id
+                    || ($0.networkID == entry.networkID
+                        && $0.checksumAddress.caseInsensitiveCompare(
+                            entry.checksumAddress
+                        ) == .orderedSame)
+            }) {
+                guard signed == entry else {
+                    throw Error.policyDenied(
+                        "A locally verified contract cannot replace signed release metadata."
+                    )
+                }
+                lastError = nil
+                return true
+            }
             let changed = contractRegistry.first(where: { $0.id == entry.id }).map { $0 != entry } ?? false
             contractRegistry.removeAll { $0.id == entry.id }
             contractRegistry.append(entry)
             contractRegistry.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
-            if let data = try? JSONEncoder().encode(contractRegistry) {
-                userDefaults.set(data, forKey: registryDefaultsKey)
-            }
+            persistLocalContractRegistry()
             if changed { await clearPolicies() }
             lastError = nil
             return true
@@ -1521,11 +1811,21 @@ final class WalletGateway: ObservableObject {
     }
 
     func removeContractRegistryEntry(id: String) async {
+        guard reviewRegistry?.evmContracts.contains(where: { $0.id == id }) != true else {
+            lastError = "Signed release contracts cannot be removed locally."
+            return
+        }
         contractRegistry.removeAll { $0.id == id }
-        if let data = try? JSONEncoder().encode(contractRegistry) {
+        persistLocalContractRegistry()
+        await clearPolicies()
+    }
+
+    private func persistLocalContractRegistry() {
+        let signedIDs = Set(reviewRegistry?.evmContracts.map(\.id) ?? [])
+        let local = contractRegistry.filter { !signedIDs.contains($0.id) }
+        if let data = try? JSONEncoder().encode(local) {
             userDefaults.set(data, forKey: registryDefaultsKey)
         }
-        await clearPolicies()
     }
 
     func isTransactionConfirmable(_ transaction: WalletPreparedTransaction) -> Bool {
@@ -1967,6 +2267,12 @@ final class WalletGateway: ObservableObject {
         guard adapterID == expectedAdapter else {
             throw Error.invalidArguments("The verified contract adapter does not match the asset standard.")
         }
+        if asset.trust == .curated,
+           reviewRegistry?.containsExactContract(entry) != true {
+            throw Error.invalidArguments(
+                "The curated asset contract is not present in the signed release review manifest."
+            )
+        }
         return entry
     }
 
@@ -2167,7 +2473,11 @@ final class WalletGateway: ObservableObject {
         )
         transactionHistory.removeAll { $0.id == record.id }
         transactionHistory.insert(record, at: 0)
-        if transactionHistory.count > 250 { transactionHistory.removeLast(transactionHistory.count - 250) }
+        if transactionHistory.count > 500 {
+            let removed = transactionHistory.suffix(from: 500).map(\.id)
+            transactionHistory.removeLast(transactionHistory.count - 500)
+            for id in removed { try? publicStore?.deleteActivity(id: id) }
+        }
         persistActivity()
     }
 

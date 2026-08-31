@@ -149,14 +149,16 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
         "${signer_info}" 2>/dev/null || true)"
     capability_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityManifestBase64' \
         "${signer_info}" 2>/dev/null || true)"
+    review_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewManifestBase64' \
+        "${signer_info}" 2>/dev/null || true)"
     if [[ "${wallet_release_channel}" == "disabled" ]]; then
-        [[ -z "${capability_key}" && -z "${capability_manifest}" ]] || {
-            echo "error: a wallet-disabled release must not embed a mainnet capability manifest" >&2
+        [[ -z "${capability_key}" && -z "${capability_manifest}" && -z "${review_manifest}" ]] || {
+            echo "error: a wallet-disabled release must not embed wallet manifests" >&2
             exit 1
         }
     else
-        [[ -n "${capability_key}" && -n "${capability_manifest}" ]] || {
-            echo "error: wallet ${wallet_release_channel} requires a signed capability manifest" >&2
+        [[ -n "${capability_key}" && -n "${capability_manifest}" && -n "${review_manifest}" ]] || {
+            echo "error: wallet ${wallet_release_channel} requires signed capability and review manifests" >&2
             exit 1
         }
         manifest_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-manifest.XXXXXX")"
@@ -182,6 +184,29 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
             echo "error: wallet ${wallet_release_channel} requires manifest stage ${expected_stage}" >&2
             exit 1
         }
+        review_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-review.XXXXXX")"
+        if ! /bin/echo -n "${review_manifest}" | /usr/bin/base64 -D > "${review_file}"; then
+            /bin/rm -f "${review_file}"
+            echo "error: embedded wallet review manifest is not valid base64" >&2
+            exit 1
+        fi
+        review_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
+            "${review_file}" 2>/dev/null || true)"
+        review_revision="$(/usr/bin/plutil -extract manifest.revision raw -o - \
+            "${review_file}" 2>/dev/null || true)"
+        [[ "${review_schema}" == "1" && "${review_revision}" -gt 0 ]] || {
+            /bin/rm -f "${review_file}"
+            echo "error: wallet release requires a signed schema-v1 review manifest" >&2
+            exit 1
+        }
+        if ! /usr/bin/xcrun swift "${repo_root}/Tools/SignWalletReviewManifest.swift" \
+            --verify "${review_file}" "${capability_key}" >/dev/null
+        then
+            /bin/rm -f "${review_file}"
+            echo "error: wallet release review manifest failed signature or structure verification" >&2
+            exit 1
+        fi
+        /bin/rm -f "${review_file}"
         for provider_key in \
             LocusWalletAlchemyEthereumMainnetRPCURL \
             LocusWalletQuickNodeEthereumMainnetRPCURL

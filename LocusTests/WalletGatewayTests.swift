@@ -63,6 +63,9 @@ private final class FakeWalletSigner: WalletSignerClient {
     var executionError: WalletGateway.Error?
     var browserRPCResponse: Any = "0x1"
     var balanceBaseUnits = "1234500000000000000"
+    var indexedActivityRows: [[String: Any]] = []
+    var indexedHeadBlock: String?
+    var accountAddress = "0xabc"
     var reportedVaultState: WalletVaultState?
 
     func signerStatus() async throws -> WalletSignerStatus {
@@ -91,7 +94,7 @@ private final class FakeWalletSigner: WalletSignerClient {
     }
 
     func listAccounts() async throws -> [WalletAccount] {
-        [WalletAccount(id: "account-1", chain: .evm, address: "0xabc", label: "EVM",
+        [WalletAccount(id: "account-1", chain: .evm, address: accountAddress, label: "EVM",
                        networkIDs: [WalletGateway.sepoliaNetworkID])]
     }
 
@@ -137,7 +140,12 @@ private final class FakeWalletSigner: WalletSignerClient {
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
-        ["text": "ok", "balance_base_units": balanceBaseUnits]
+        if tool == "wallet_get_activity" {
+            var result: [String: Any] = ["text": "indexed", "activity": indexedActivityRows]
+            if let indexedHeadBlock { result["head_block_number"] = indexedHeadBlock }
+            return result
+        }
+        return ["text": "ok", "balance_base_units": balanceBaseUnits]
     }
 
     func configureRPCURL(_ value: String) {}
@@ -358,6 +366,91 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSignedReviewManifestCuratesExactMetadataAndRemoteOnlyNarrowsIt() throws {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let contract = "0x1111111111111111111111111111111111111111"
+        let abi = #"[{"inputs":[{"type":"address"},{"type":"uint256"}],"name":"transfer","outputs":[{"type":"bool"}],"stateMutability":"nonpayable","type":"function"}]"#
+        let digest = "sha256:" + SHA256.hash(data: Data(abi.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let asset = WalletAsset(
+            canonicalID: "eip155:1/erc20:\(contract)", networkID: "eip155:1",
+            chain: .evm, kind: .fungibleToken, reference: contract,
+            name: "Reviewed Token", symbol: "RVT", decimals: 6,
+            trust: .curated, manifestRevision: 4
+        )
+        let entry = WalletContractRegistryEntry(
+            id: "erc20.reviewed", networkID: "eip155:1", checksumAddress: contract,
+            label: "Reviewed Token", normalizedABI: abi, abiDigest: digest,
+            runtimeCodeHash: "0x" + String(repeating: "a", count: 64),
+            permittedFunctions: ["transfer(address,uint256)"],
+            permittedSelectors: ["0xa9059cbb"],
+            reviewedAdapterID: WalletReviewedAdapters.erc20,
+            verifiedAt: issuedAt.addingTimeInterval(-60)
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(20 * 24 * 60 * 60),
+            assets: [asset], evmContracts: [entry],
+            explorerTemplates: [
+                "eip155:1": WalletNetworkCatalog.ethereumMainnet
+                    .explorerTransactionURLTemplate,
+            ],
+            adapterIDs: [WalletReviewedAdapters.erc20]
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: privateKey),
+            publicKey: privateKey.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(registry.assets, [asset])
+        XCTAssertTrue(registry.containsExactContract(entry))
+
+        let extra = WalletAsset(
+            canonicalID: "eip155:1/erc20:0x2222222222222222222222222222222222222222",
+            networkID: "eip155:1", chain: .evm, kind: .fungibleToken,
+            reference: "0x2222222222222222222222222222222222222222",
+            name: "Unbundled", symbol: "NEW", decimals: 18,
+            trust: .curated, manifestRevision: 5
+        )
+        let retained = WalletAsset(
+            canonicalID: asset.canonicalID, networkID: asset.networkID,
+            chain: asset.chain, kind: asset.kind, reference: asset.reference,
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: asset.trust, manifestRevision: 5
+        )
+        let restriction = WalletReviewManifest(
+            schemaVersion: 1, revision: 5,
+            issuedAt: issuedAt.addingTimeInterval(120),
+            expiresAt: issuedAt.addingTimeInterval(10 * 24 * 60 * 60),
+            assets: [retained, extra], evmContracts: [],
+            explorerTemplates: [:], adapterIDs: []
+        )
+        let narrowed = try registry.restricted(
+            by: signedReview(restriction, key: privateKey),
+            publicKey: privateKey.publicKey,
+            now: issuedAt.addingTimeInterval(180)
+        )
+        XCTAssertEqual(narrowed.assets.map(\.id), [asset.id])
+        XCTAssertTrue(narrowed.evmContracts.isEmpty)
+        XCTAssertFalse(narrowed.manifest.adapterIDs.contains(WalletReviewedAdapters.erc20))
+    }
+
+    func testUnsignedPersistedCuratedAssetIsNotTrustedAfterRestart() throws {
+        let store = try WalletPublicStore(path: ":memory:")
+        try store.upsertAsset(WalletAsset(
+            canonicalID: "eip155:1/erc20:0x1111111111111111111111111111111111111111",
+            networkID: "eip155:1", chain: .evm, kind: .fungibleToken,
+            reference: "0x1111111111111111111111111111111111111111",
+            name: "Spoofed Curated", symbol: "FAKE", decimals: 18,
+            trust: .curated, manifestRevision: 99
+        ))
+        let gateway = WalletGateway(
+            signer: FakeWalletSigner(), environment: [:], publicStore: store
+        )
+        XCTAssertTrue(gateway.assets.isEmpty)
+    }
+
     func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
         let store = try WalletPublicStore(path: ":memory:")
         let record = WalletActivityRecord(
@@ -474,7 +567,7 @@ final class WalletGatewayTests: XCTestCase {
             canonicalID: assetID, networkID: WalletGateway.sepoliaNetworkID,
             chain: .evm, kind: .fungibleToken, reference: contract,
             name: "Reviewed Token", symbol: "RVT", decimals: 6,
-            trust: .curated, manifestRevision: 1
+            trust: .userTrusted, manifestRevision: 1
         ))
         let abi = #"[{"type":"function","name":"transfer","stateMutability":"nonpayable","inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"type":"bool"}]}]"#
         let entry = WalletContractRegistryEntry(
@@ -665,6 +758,124 @@ final class WalletGatewayTests: XCTestCase {
         })
     }
 
+    func testAlchemyIndexedActivityNormalizesRawBaseUnitsWithoutFloatingPoint() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let contract = "0x1111111111111111111111111111111111111111"
+        let hash = "0x" + String(repeating: "b", count: 64)
+        let client = makeRPCClient { request in
+            let body = try walletRPCRequestBody(request)
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? Int)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            if method == "eth_chainId" {
+                result = "0xaa36a7"
+            } else {
+                let params = try XCTUnwrap(object["params"] as? [[String: Any]])
+                let inbound = params[0]["toAddress"] != nil
+                result = [
+                    "transfers": inbound ? [[
+                        "blockNum": "0x2a", "uniqueId": "\(hash):log:1",
+                        "hash": hash, "from": contract, "to": account,
+                        "asset": "TOK", "category": "erc20",
+                        "rawContract": [
+                            "value": "0x2a", "address": contract, "decimal": "0x6",
+                        ],
+                        "metadata": ["blockTimestamp": "2026-08-31T08:00:00Z"],
+                    ]] : [],
+                ]
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        let transfers = try await client.indexedTransfers(
+            provider: .alchemy, address: account
+        )
+        XCTAssertEqual(transfers.count, 1)
+        XCTAssertEqual(transfers[0].amountBaseUnits, "42")
+        XCTAssertEqual(transfers[0].blockNumber, "42")
+        XCTAssertEqual(
+            transfers[0].assetID,
+            "eip155:11155111/erc20:\(contract)"
+        )
+        XCTAssertEqual(transfers[0].assetDecimals, 6)
+    }
+
+    func testQuickNodeFallbackIndexesNativeHistoryWithoutGuessingContractStandards() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let recipient = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        let hash = "0x" + String(repeating: "d", count: 64)
+        let client = makeRPCClient { request in
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? Int)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any = method == "eth_chainId" ? "0xaa36a7" : [
+                "totalPages": 1,
+                "paginatedItems": [
+                    [
+                        "transactionHash": hash, "blockNumber": "42",
+                        "blockTimestamp": "1788153600", "fromAddress": account,
+                        "toAddress": recipient, "value": "1000",
+                    ],
+                    [
+                        "transactionHash": "0x" + String(repeating: "e", count: 64),
+                        "blockNumber": "43", "blockTimestamp": "1788153601",
+                        "fromAddress": account, "toAddress": recipient, "value": "1",
+                        "contractAddress": "0x1111111111111111111111111111111111111111",
+                    ],
+                ],
+            ]
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        let transfers = try await client.indexedTransfers(
+            provider: .quickNode, address: account
+        )
+        XCTAssertEqual(transfers.count, 1)
+        XCTAssertEqual(transfers[0].transactionHash, hash)
+        XCTAssertEqual(transfers[0].assetKind, .native)
+        XCTAssertEqual(transfers[0].amountBaseUnits, "1000")
+    }
+
+    func testIndexedInboundActivityIsPersistedAndUnknownAssetIsQuarantined() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountAddress = "0xabc0000000000000000000000000000000000000"
+        signer.indexedHeadBlock = "106"
+        let hash = "0x" + String(repeating: "c", count: 64)
+        let contract = "0x1111111111111111111111111111111111111111"
+        signer.indexedActivityRows = [[
+            "id": "\(hash):log:1", "transaction_hash": hash,
+            "block_number": "42", "occurred_at": 1_788_153_600.0,
+            "from": contract, "to": "0xabc0000000000000000000000000000000000000",
+            "asset_id": "eip155:11155111/erc20:\(contract)",
+            "amount_base_units": "42", "asset_kind": "fungible_token",
+            "asset_reference": contract, "asset_name": "Unknown Token<script>",
+            "asset_symbol": "TOK", "asset_decimals": 6,
+        ]]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        XCTAssertEqual(gateway.transactionHistory.count, 1)
+        XCTAssertEqual(gateway.transactionHistory[0].direction, .inbound)
+        XCTAssertEqual(gateway.transactionHistory[0].amountBaseUnits, "42")
+        XCTAssertEqual(gateway.transactionHistory[0].finality, .finalized)
+        XCTAssertEqual(gateway.assets.first?.trust, .quarantined)
+        XCTAssertFalse(try XCTUnwrap(store.loadAssets().first).isVisibleByDefault)
+    }
+
     func testRPCRejectsOversizedResponseBeforeParsing() async throws {
         let client = makeRPCClient { _ in Data(repeating: 0x20, count: 1_048_577) }
         do {
@@ -698,6 +909,19 @@ final class WalletGatewayTests: XCTestCase {
         configuration.protocolClasses = [WalletRPCURLProtocol.self]
         return WalletSepoliaRPCClient(
             endpoint: "https://wallet-rpc.test", session: URLSession(configuration: configuration)
+        )
+    }
+
+    private func signedReview(
+        _ manifest: WalletReviewManifest,
+        key: Curve25519.Signing.PrivateKey
+    ) throws -> WalletSignedReviewManifest {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let signature = try key.signature(for: encoder.encode(manifest))
+        return WalletSignedReviewManifest(
+            manifest: manifest, signatureBase64: signature.base64EncodedString()
         )
     }
 

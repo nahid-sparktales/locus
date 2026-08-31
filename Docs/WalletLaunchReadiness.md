@@ -12,12 +12,16 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Preview-vault rotation and recovery-only retention.
 - [x] Public SQLite store and network-scoped browser grants.
 - [x] Evidence-bound canary/GA manifest and default-deny packaging.
+- [x] Signed review manifests for curated assets, exact EVM contracts,
+  explorers, and compiled adapters, with intersection-only emergency updates.
+- [x] Indexed Ethereum inbound/outbound activity reconciliation and quarantine
+  for provider-discovered ERC-20/ERC-721/ERC-1155 assets.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana native/SPL/Token-2022/NFT/compressed-collectible implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
-- [ ] Signed asset/adapter/explorer manifests and quarantine/media sandbox complete.
+- [ ] Sandboxed collectible media and complete current-holdings discovery.
 
 ## Automated and adversarial verification
 

@@ -368,6 +368,27 @@ actor WalletSepoliaRPCClient {
         return decimal
     }
 
+    func indexedTransfers(
+        provider: WalletProviderKind,
+        address: String,
+        limit: Int = 250
+    ) async throws -> [WalletEVMIndexedTransfer] {
+        guard Self.isAddress(address), (1...500).contains(limit) else {
+            throw WalletGateway.Error.invalidArguments(
+                "The indexed activity request is malformed."
+            )
+        }
+        _ = try await verifiedChainID()
+        switch provider {
+        case .alchemy:
+            return try await alchemyTransfers(address: address, limit: limit)
+        case .quickNode:
+            return try await quickNodeNativeTransfers(address: address, limit: limit)
+        case .userDefined, .local:
+            throw WalletProviderCoordinatorError.noProvider(networkID)
+        }
+    }
+
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry {
         guard draft.networkID == networkID, Self.isAddress(draft.address),
               !draft.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.id.count <= 128,
@@ -454,6 +475,230 @@ actor WalletSepoliaRPCClient {
             throw WalletGateway.Error.invalidArguments("No runtime bytecode exists at that network address.")
         }
         return try await stringResult(method: "web3_sha3", params: [code]).lowercased()
+    }
+
+    private func alchemyTransfers(
+        address: String,
+        limit: Int
+    ) async throws -> [WalletEVMIndexedTransfer] {
+        var values: [WalletEVMIndexedTransfer] = []
+        for direction in ["fromAddress", "toAddress"] {
+            var pageKey: String?
+            repeat {
+                var parameters: [String: Any] = [
+                    "fromBlock": "0x0",
+                    "toBlock": "latest",
+                    direction: address,
+                    "category": ["external", "internal", "erc20", "erc721", "erc1155"],
+                    "withMetadata": true,
+                    "excludeZeroValue": false,
+                    "order": "desc",
+                    "maxCount": "0x64",
+                ]
+                if let pageKey { parameters["pageKey"] = pageKey }
+                let result = try await rpc(
+                    method: "alchemy_getAssetTransfers", params: [parameters]
+                )
+                guard let object = result as? [String: Any],
+                      let transfers = object["transfers"] as? [[String: Any]],
+                      transfers.count <= 100 else {
+                    throw WalletRPCError.invalidResponse(
+                        "alchemy_getAssetTransfers returned a malformed page"
+                    )
+                }
+                for transfer in transfers {
+                    values.append(contentsOf: Self.parseAlchemyTransfer(
+                        transfer, networkID: networkID
+                    ))
+                    if values.count >= limit * 2 { break }
+                }
+                pageKey = object["pageKey"] as? String
+                if pageKey?.isEmpty == true { pageKey = nil }
+                if pageKey?.count ?? 0 > 512 {
+                    throw WalletRPCError.invalidResponse(
+                        "alchemy_getAssetTransfers returned an invalid page key"
+                    )
+                }
+            } while pageKey != nil && values.count < limit * 2
+        }
+        return Self.deduplicated(values, limit: limit)
+    }
+
+    private func quickNodeNativeTransfers(
+        address: String,
+        limit: Int
+    ) async throws -> [WalletEVMIndexedTransfer] {
+        let native = WalletNetworkCatalog.descriptor(id: networkID)
+        var transfers: [WalletEVMIndexedTransfer] = []
+        var page = 1
+        var totalPages = 1
+        repeat {
+            let result = try await rpc(
+                method: "qn_getTransactionsByAddress",
+                params: [["address": address, "page": page, "perPage": min(limit, 100)]]
+            )
+            guard let object = result as? [String: Any],
+                  let items = object["paginatedItems"] as? [[String: Any]],
+                  items.count <= 100 else {
+                throw WalletRPCError.invalidResponse(
+                    "qn_getTransactionsByAddress returned a malformed page"
+                )
+            }
+            if let count = object["totalPages"] as? NSNumber,
+               CFGetTypeID(count) != CFBooleanGetTypeID() {
+                totalPages = min(max(1, count.intValue), 5)
+            }
+            transfers.append(contentsOf: items.compactMap { item -> WalletEVMIndexedTransfer? in
+                guard item["contractAddress"] == nil
+                        || (item["contractAddress"] as? String)?.isEmpty == true,
+                      let hash = Self.validHash(item["transactionHash"]),
+                      let block = Self.normalizedBlock(item["blockNumber"]),
+                      let from = item["fromAddress"] as? String, Self.isAddress(from),
+                      let to = item["toAddress"] as? String, Self.isAddress(to),
+                      let amount = Self.normalizedProviderAmount(item["value"]),
+                      let date = Self.providerDate(item["blockTimestamp"]) else { return nil }
+                return WalletEVMIndexedTransfer(
+                    id: "\(hash):native", transactionHash: hash,
+                    blockNumber: block, occurredAt: date,
+                    from: from.lowercased(), to: to.lowercased(),
+                    assetID: native?.nativeAssetID ?? "\(networkID)/slip44:60",
+                    amountBaseUnits: amount, assetKind: .native,
+                    assetReference: nil, assetName: native?.displayName ?? "Native asset",
+                    assetSymbol: native?.nativeSymbol ?? "ETH",
+                    assetDecimals: native?.nativeDecimals
+                )
+            })
+            page += 1
+        } while page <= totalPages && transfers.count < limit
+        return Self.deduplicated(transfers, limit: limit)
+    }
+
+    private static func parseAlchemyTransfer(
+        _ item: [String: Any],
+        networkID: String
+    ) -> [WalletEVMIndexedTransfer] {
+        guard let hash = validHash(item["hash"]),
+              let block = normalizedBlock(item["blockNum"]),
+              let from = item["from"] as? String, isAddress(from),
+              let to = item["to"] as? String, isAddress(to),
+              let category = item["category"] as? String,
+              let date = providerDate((item["metadata"] as? [String: Any])?["blockTimestamp"])
+        else { return [] }
+        let raw = item["rawContract"] as? [String: Any] ?? [:]
+        let contract = (raw["address"] as? String)?.lowercased()
+        let symbol = sanitizedMetadata(item["asset"], fallback: "UNKNOWN", limit: 32)
+        let unique = sanitizedMetadata(item["uniqueId"], fallback: hash, limit: 256)
+        let native = WalletNetworkCatalog.descriptor(id: networkID)
+        if category == "external" || category == "internal" {
+            guard let amount = normalizedProviderAmount(raw["value"]) else { return [] }
+            return [WalletEVMIndexedTransfer(
+                id: unique, transactionHash: hash, blockNumber: block,
+                occurredAt: date, from: from.lowercased(), to: to.lowercased(),
+                assetID: native?.nativeAssetID ?? "\(networkID)/slip44:60",
+                amountBaseUnits: amount, assetKind: .native,
+                assetReference: nil, assetName: native?.displayName ?? "Native asset",
+                assetSymbol: native?.nativeSymbol ?? symbol,
+                assetDecimals: native?.nativeDecimals
+            )]
+        }
+        guard let contract, isAddress(contract) else { return [] }
+        if category == "erc20" {
+            guard let amount = normalizedProviderAmount(raw["value"]) else { return [] }
+            let decimals = normalizedProviderInteger(raw["decimal"]).flatMap(Int.init)
+            return [WalletEVMIndexedTransfer(
+                id: unique, transactionHash: hash, blockNumber: block,
+                occurredAt: date, from: from.lowercased(), to: to.lowercased(),
+                assetID: "\(networkID)/erc20:\(contract)",
+                amountBaseUnits: amount, assetKind: .fungibleToken,
+                assetReference: contract, assetName: "Unknown token",
+                assetSymbol: symbol, assetDecimals: decimals
+            )]
+        }
+        if category == "erc721" {
+            guard let tokenID = normalizedProviderInteger(
+                item["tokenId"] ?? item["erc721TokenId"]
+            ) else { return [] }
+            return [WalletEVMIndexedTransfer(
+                id: unique, transactionHash: hash, blockNumber: block,
+                occurredAt: date, from: from.lowercased(), to: to.lowercased(),
+                assetID: "\(networkID)/erc721:\(contract)/\(tokenID)",
+                amountBaseUnits: "1", assetKind: .nft,
+                assetReference: contract, assetName: "Unknown collectible",
+                assetSymbol: symbol, assetDecimals: nil
+            )]
+        }
+        if category == "erc1155",
+           let metadata = item["erc1155Metadata"] as? [[String: Any]],
+           metadata.count <= 100 {
+            return metadata.enumerated().compactMap { index, value in
+                guard let tokenID = normalizedProviderInteger(value["tokenId"]),
+                      let amount = normalizedProviderAmount(value["value"]) else { return nil }
+                return WalletEVMIndexedTransfer(
+                    id: "\(unique):\(index)", transactionHash: hash,
+                    blockNumber: block, occurredAt: date,
+                    from: from.lowercased(), to: to.lowercased(),
+                    assetID: "\(networkID)/erc1155:\(contract)/\(tokenID)",
+                    amountBaseUnits: amount, assetKind: .nft,
+                    assetReference: contract, assetName: "Unknown collectible",
+                    assetSymbol: symbol, assetDecimals: nil
+                )
+            }
+        }
+        return []
+    }
+
+    private static func deduplicated(
+        _ values: [WalletEVMIndexedTransfer],
+        limit: Int
+    ) -> [WalletEVMIndexedTransfer] {
+        var seen: Set<String> = []
+        return values.sorted { $0.occurredAt > $1.occurredAt }.filter {
+            seen.insert($0.id).inserted
+        }.prefix(limit).map { $0 }
+    }
+
+    private static func validHash(_ value: Any?) -> String? {
+        guard let value = value as? String, value.count == 66,
+              value.hasPrefix("0x"), value.dropFirst(2).allSatisfy(\.isHexDigit) else {
+            return nil
+        }
+        return value.lowercased()
+    }
+
+    private static func normalizedBlock(_ value: Any?) -> String? {
+        normalizedProviderInteger(value)
+    }
+
+    private static func normalizedProviderAmount(_ value: Any?) -> String? {
+        normalizedProviderInteger(value)
+    }
+
+    private static func normalizedProviderInteger(_ value: Any?) -> String? {
+        guard let text = value as? String else { return nil }
+        if text.lowercased().hasPrefix("0x") {
+            return WalletEthereumQuantity.hexToDecimal(text)
+        }
+        return WalletBaseUnits.normalize(text)
+    }
+
+    private static func providerDate(_ value: Any?) -> Date? {
+        guard let value = value as? String, value.count <= 64 else { return nil }
+        if let seconds = TimeInterval(value), seconds >= 0 {
+            return Date(timeIntervalSince1970: seconds)
+        }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func sanitizedMetadata(
+        _ value: Any?, fallback: String, limit: Int
+    ) -> String {
+        guard let value = value as? String else { return fallback }
+        let sanitized = value.unicodeScalars.filter {
+            ($0.value >= 0x20 && $0.value != 0x7f) || $0.value == 0x09
+        }.prefix(limit)
+        let result = String(String.UnicodeScalarView(sanitized))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? fallback : result
     }
 
     private func checksumAddress(_ value: String) async throws -> String {
