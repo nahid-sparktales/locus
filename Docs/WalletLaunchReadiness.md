@@ -41,11 +41,15 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Read-only Sui owned-object discovery with checkpoint-pinned pagination,
   exact address owner/object ID/version/digest/type/public-transfer evidence,
   Coin-object exclusion, signed curation, and metadata-free quarantine.
+- [x] Finalized Sui transaction and owner Coin-balance activity through a
+  checkpoint-pinned GraphQL connection, with exact transaction/effects digest,
+  sender, status, timestamp, checkpoint, signed-delta, owner, and Coin-type
+  validation; failed, duplicate, unstable, or truncated evidence fails closed.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui gRPC/GraphQL native transfer, Coin transfer, object/NFT transfer, activity,
-  simulation, execution, and finality implementation complete.
+- [ ] Sui gRPC/GraphQL native transfer, Coin transfer, object/NFT transfer,
+  object-effect activity, simulation, execution, and finality implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.

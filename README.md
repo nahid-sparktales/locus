@@ -165,6 +165,11 @@ Coins enter quarantine until the user or a signed review manifest trusts them.
 Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
 owner, object ID, version, digest, type, and public-transfer evidence. They enter
 Collectibles quarantine without BCS contents, display metadata, or remote media.
+Finalized Sui transaction activity is likewise read through the checkpoint-bound
+GraphQL path. It records only validated transaction effects and owner-specific
+SUI or Coin balance changes; unknown Coin types remain quarantined, failed
+effects cannot claim balance changes, and opaque BCS or Move-call data is not
+accepted.
 Solana token
 sends use the signer-derived recipient associated token account, creating it
 idempotently through an exact reviewed instruction when it is still

@@ -1413,6 +1413,132 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSuiGraphQLIndexesFinalizedOwnerCoinChangesWithoutOpaqueData() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let sender = "0x" + String(repeating: "2", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 21, count: 32))
+        let coinType = "0x1234::example::COIN"
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let query = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(query.contains("relation: AFFECTED"))
+            XCTAssertTrue(query.contains("balanceChanges(first: 100)"))
+            XCTAssertFalse(query.lowercased().contains("bcs"))
+            XCTAssertFalse(query.contains("display"))
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["address"] as? String, owner)
+            XCTAssertEqual(variables["first"] as? Int, 50)
+            XCTAssertTrue(variables["after"] is NSNull)
+            XCTAssertTrue(variables["checkpoint"] is NSNull)
+            return try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: sender,
+                    balanceChanges: [
+                        self.suiBalanceChangeJSON(
+                            owner: owner,
+                            coinType: WalletSuiAssetIdentity.nativeCoinType,
+                            amount: "25"
+                        ),
+                        self.suiBalanceChangeJSON(
+                            owner: owner, coinType: coinType, amount: "-9"
+                        ),
+                    ]
+                )]
+            )
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 2)
+        XCTAssertTrue(activity.allSatisfy {
+            $0.transactionDigest == digest && $0.checkpointSequence == 123_455
+                && $0.sender == sender && $0.successful
+        })
+        let native = try XCTUnwrap(activity.first {
+            $0.identity?.coinType == WalletSuiAssetIdentity.nativeCoinType
+        })
+        XCTAssertEqual(native.amountBaseUnits, "25")
+        XCTAssertEqual(native.isInbound, true)
+        let coin = try XCTUnwrap(activity.first { $0.identity?.coinType == coinType })
+        XCTAssertEqual(coin.amountBaseUnits, "9")
+        XCTAssertEqual(coin.isInbound, false)
+    }
+
+    func testSuiGraphQLRejectsAmbiguousBalanceChangeEvidence() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "3", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 22, count: 32))
+        let repeated = self.suiBalanceChangeJSON(
+            owner: owner, coinType: "0x1234::example::COIN", amount: "1"
+        )
+        let duplicate = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner,
+                    balanceChanges: [repeated, repeated]
+                )]
+            )
+        }
+        do {
+            _ = try await duplicate.activity(owner: owner)
+            XCTFail("A repeated Coin type must fail the entire Sui transaction.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("repeated"))
+        }
+
+        let truncated = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner,
+                    balanceChanges: [repeated], hasMoreBalanceChanges: true
+                )]
+            )
+        }
+        do {
+            _ = try await truncated.activity(owner: owner)
+            XCTFail("Unresolved nested balance-change pages must fail closed.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("effects"))
+        }
+    }
+
+    func testSuiGraphQLRejectsFailedTransactionWithBalanceChanges() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "4", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 23, count: 32))
+        let client = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, status: "FAILURE",
+                    balanceChanges: [self.suiBalanceChangeJSON(
+                        owner: owner,
+                        coinType: WalletSuiAssetIdentity.nativeCoinType,
+                        amount: "-1"
+                    )]
+                )]
+            )
+        }
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("Failed Sui effects must not report owner balance changes.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("failed"))
+        }
+    }
+
     func testGatewayRefreshesCanonicalNativeSuiSnapshot() async throws {
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
@@ -1526,6 +1652,86 @@ final class WalletGatewayTests: XCTestCase {
             gateway.accountSnapshots.first(where: { $0.assetID == assetID })?.balanceBaseUnits,
             "1"
         )
+    }
+
+    func testGatewayPersistsFinalizedSuiActivityAndQuarantinesUnknownCoin() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "5", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 24, count: 32))
+        let coinType = "0x1234::example::COIN"
+        let coinID = "sui:testnet/coin:\(coinType)"
+        let timestamp = Date().addingTimeInterval(-30).timeIntervalSince1970
+        signer.indexedActivityRows = [
+            [
+                "id": "\(digest):native", "transaction_hash": digest,
+                "block_number": "123455", "occurred_at": timestamp,
+                "status": "confirmed", "owner": signer.accountAddress,
+                "sender": "0x" + String(repeating: "6", count: 64),
+                "asset_id": WalletNetworkCatalog.suiTestnet.nativeAssetID,
+                "asset_reference": WalletSuiAssetIdentity.nativeCoinType,
+                "asset_kind": WalletAssetKind.native.rawValue,
+                "amount_base_units": "25", "direction": "inbound",
+            ],
+            [
+                "id": "\(digest):coin", "transaction_hash": digest,
+                "block_number": "123455", "occurred_at": timestamp,
+                "status": "confirmed", "owner": signer.accountAddress,
+                "sender": signer.accountAddress,
+                "asset_id": coinID, "asset_reference": coinType,
+                "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                "amount_base_units": "9", "direction": "outbound",
+            ],
+        ]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        XCTAssertEqual(gateway.transactionHistory.count, 2)
+        XCTAssertTrue(gateway.transactionHistory.allSatisfy {
+            $0.transactionHash == digest && $0.finality == .finalized
+                && $0.state == .confirmed
+        })
+        XCTAssertEqual(
+            gateway.transactionHistory.first(where: { $0.assetID == coinID })?.direction,
+            .outbound
+        )
+        let quarantined = try XCTUnwrap(gateway.assets.first { $0.id == coinID })
+        XCTAssertEqual(quarantined.trust, .quarantined)
+        XCTAssertFalse(try XCTUnwrap(
+            store.loadAssets().first { $0.id == coinID }
+        ).isVisibleByDefault)
+    }
+
+    func testGatewayRejectsEntireSuiActivityBatchOnOwnerSubstitution() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "7", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 25, count: 32))
+        let timestamp = Date().addingTimeInterval(-30).timeIntervalSince1970
+        let valid: [String: Any] = [
+            "id": "valid", "transaction_hash": digest,
+            "block_number": "123455", "occurred_at": timestamp,
+            "status": "confirmed", "owner": signer.accountAddress,
+        ]
+        var substituted = valid
+        substituted["id"] = "substituted"
+        substituted["owner"] = "0x" + String(repeating: "8", count: 64)
+        signer.indexedActivityRows = [valid, substituted]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        XCTAssertTrue(gateway.transactionHistory.isEmpty)
     }
 
     func testSolanaCanonicalNativeMessageUsesStrictBase58AndReviewedShape() throws {
@@ -2725,6 +2931,77 @@ final class WalletGatewayTests: XCTestCase {
                     "address": owner,
                     "objects": [
                         "nodes": objects,
+                        "pageInfo": [
+                            "hasNextPage": hasNextPage,
+                            "endCursor": cursorValue,
+                        ],
+                    ],
+                ],
+            ],
+        ])
+    }
+
+    private func suiBalanceChangeJSON(
+        owner: String,
+        coinType: String,
+        amount: String
+    ) -> [String: Any] {
+        [
+            "owner": ["address": owner],
+            "coinType": ["repr": coinType],
+            "amount": amount,
+        ]
+    }
+
+    private func suiActivityTransactionJSON(
+        digest: String,
+        sender: String?,
+        status: String = "SUCCESS",
+        timestamp: String = "2026-08-31T12:00:00Z",
+        checkpointSequence: Int = 123_455,
+        balanceChanges: [[String: Any]],
+        hasMoreBalanceChanges: Bool = false
+    ) -> [String: Any] {
+        let senderValue: Any = sender.map {
+            ["address": $0] as [String: Any]
+        } ?? NSNull()
+        return [
+            "digest": digest,
+            "sender": senderValue,
+            "effects": [
+                "digest": digest,
+                "status": status,
+                "timestamp": timestamp,
+                "checkpoint": ["sequenceNumber": checkpointSequence],
+                "balanceChanges": [
+                    "nodes": balanceChanges,
+                    "pageInfo": ["hasNextPage": hasMoreBalanceChanges],
+                ],
+            ],
+        ]
+    }
+
+    private func suiActivityResponse(
+        chainIdentifier: String = WalletSuiChainIdentity.testnetBase58,
+        owner: String,
+        checkpointTimestamp: String = "2026-08-31T12:00:00Z",
+        transactions: [[String: Any]],
+        hasNextPage: Bool = false,
+        endCursor: String? = nil
+    ) throws -> Data {
+        let cursorValue: Any = endCursor.map { $0 as Any } ?? NSNull()
+        return try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": chainIdentifier,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": checkpointTimestamp,
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                ],
+                "address": [
+                    "address": owner,
+                    "transactions": [
+                        "nodes": transactions,
                         "pageInfo": [
                             "hasNextPage": hasNextPage,
                             "endCursor": cursorValue,

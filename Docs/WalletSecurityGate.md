@@ -119,6 +119,14 @@ signing adapter.
   excluded from the collectible path. BCS contents, display metadata, and
   remote media do not cross the provider boundary; every new object begins in
   quarantine, and discovery creates no transfer or Move-call authority.
+- Finalized Sui activity pins every page to the first verified checkpoint and
+  requires matching transaction/effects digests, a canonical sender when one is
+  present, a bounded timestamp and checkpoint, terminal nested balance-change
+  pagination, canonical signed integer deltas, exact owner identity, and one
+  change per Coin type. Failed effects with balance changes, duplicate digests
+  or Coin types, unstable pages, and truncated results fail closed. Only public
+  activity metadata enters SQLite; unknown Coins remain quarantined and no BCS,
+  Move-call, or signing authority is exposed.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -135,7 +143,7 @@ until their implementation and evidence gates pass:
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
   Sui transaction builders, signing, provider execution, Coin and object/NFT
-  transfers, activity adapters, gRPC execution, and localnet suites;
+  transfers, object-effect activity, gRPC execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

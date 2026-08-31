@@ -618,11 +618,57 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let accountID = arguments["account_id"] as? String
             let networkID = arguments["network_id"] as? String
                 ?? WalletGateway.ethereumMainnetNetworkID
+            guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
+                  descriptor.chain == .evm || descriptor.chain == .sui else {
+                throw WalletGateway.Error.invalidArguments(
+                    "Indexed activity is active only for reviewed EVM and Sui providers."
+                )
+            }
             let accounts = try await listAccounts()
             guard let account = accounts.first(where: {
-                $0.id == accountID && $0.chain == .evm && $0.networkIDs.contains(networkID)
+                $0.id == accountID && $0.chain == descriptor.chain
+                    && $0.networkIDs.contains(networkID)
             }) else {
-                throw WalletGateway.Error.invalidArguments("Select the Locus Vault EVM account.")
+                throw WalletGateway.Error.invalidArguments(
+                    "Select the matching Locus Vault chain account."
+                )
+            }
+            if descriptor.chain == .sui {
+                let indexed = try await suiRPCClient(for: networkID).activity(
+                    owner: account.address
+                )
+                let rows: [[String: Any]] = indexed.map { item in
+                    var row: [String: Any] = [
+                        "id": item.id,
+                        "transaction_hash": item.transactionDigest,
+                        "block_number": String(item.checkpointSequence),
+                        "occurred_at": item.occurredAt.timeIntervalSince1970,
+                        "status": item.successful ? "confirmed" : "failed",
+                        "owner": account.address,
+                    ]
+                    if let sender = item.sender { row["sender"] = sender }
+                    if let identity = item.identity,
+                       let amount = item.amountBaseUnits,
+                       let inbound = item.isInbound {
+                        row["asset_id"] = identity.canonicalID
+                        row["asset_reference"] = identity.coinType
+                        row["asset_kind"] = identity.coinType
+                            == WalletSuiAssetIdentity.nativeCoinType
+                            ? WalletAssetKind.native.rawValue
+                            : WalletAssetKind.fungibleToken.rawValue
+                        row["amount_base_units"] = amount
+                        row["direction"] = inbound
+                            ? WalletActivityDirection.inbound.rawValue
+                            : WalletActivityDirection.outbound.rawValue
+                    }
+                    return row
+                }
+                return [
+                    "text": "Loaded \(rows.count) finalized Sui activity records.",
+                    "account_id": account.id,
+                    "network_id": networkID,
+                    "activity": rows,
+                ]
             }
             let coordinator = try rpcClient(for: networkID)
             let indexed = try await coordinator.indexedTransfers(address: account.address)
