@@ -29,6 +29,7 @@ DOMAIN_HANDLER_ALLOWLIST = {
     "chat_transport.py": set(),
     "continuity.py": set(),
     "evaluations.py": set(),
+    "event_triggers.py": set(),
     "extensions.py": set(),
     "knowledge.py": set(),
     "providers.py": set(),

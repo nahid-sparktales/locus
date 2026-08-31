@@ -2987,6 +2987,33 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
     }
 
+    func testEventAutomationsExposeConnectorSetupAndTriggerHistory() {
+        let destination = anyElement("sidebar.activity")
+        XCTAssertTrue(destination.waitForExistence(timeout: 3))
+        destination.click()
+        XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))
+
+        let eventTriggers = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR title == %@", "Event Triggers", "Event Triggers")
+        ).firstMatch
+        XCTAssertTrue(eventTriggers.waitForExistence(timeout: 3))
+        eventTriggers.click()
+        XCTAssertTrue(anyElement("eventAutomations.center").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Delivery History"].exists)
+
+        let addConnection = anyElement("eventAutomations.addConnection")
+        XCTAssertTrue(addConnection.waitForExistence(timeout: 3))
+        // The automation center is a SwiftUI overlay; macOS can expose its
+        // menu button as visible but non-hittable even though AppKit accepts a
+        // pointer at the same frame.
+        addConnection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        let webhook = app.menuItems["Signed Webhook"].firstMatch
+        XCTAssertTrue(webhook.waitForExistence(timeout: 3))
+        webhook.click()
+        XCTAssertTrue(app.staticTexts["Connect Signed Webhook"].waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("eventAutomations.webhookSecurityNote").exists)
+    }
+
     func testTranscriptScrollsContinuouslyAcrossToolAndReasoningBlocks() {
         relaunchWithScrollFixture()
 

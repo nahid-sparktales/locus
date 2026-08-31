@@ -427,6 +427,7 @@ class AgentCore:
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.wallet_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.connector_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
         self._suppress_turn_done = False
@@ -3424,6 +3425,14 @@ class AgentCore:
                         result = "Error: the Locus Vault is unavailable."
                     else:
                         result = self.wallet_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "connector":
+                    connection_id = str(tc.arguments.get("connection_id") or "")
+                    if not self.tool_registry.connector_tool_allowed(tc.name, connection_id):
+                        result = "Error: this connector or operation is not allowed."
+                    elif self.connector_executor is None:
+                        result = "Error: connector actions are unavailable."
+                    else:
+                        result = self.connector_executor(tc.name, tc.arguments, call_id)
                 else:
                     result = (
                         execute_tool(tc.name, tc.arguments, self.tool_ctx)

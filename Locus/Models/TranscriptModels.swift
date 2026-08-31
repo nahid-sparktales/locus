@@ -114,6 +114,7 @@ struct HistoryMessage: Codable {
     let phase: AssistantPhase?
     let itemID: String?
     let runID: String?
+    let eventTrigger: EventTranscriptContext?
 
     var teamRunID: String? { runID }
 
@@ -123,6 +124,7 @@ struct HistoryMessage: Codable {
         case itemID = "item_id"
         case runID = "run_id"
         case legacyTeamRunID = "team_run_id"
+        case eventTrigger = "event_trigger"
     }
 
     // A single null-content tool message must not fail an entire resume.
@@ -137,6 +139,9 @@ struct HistoryMessage: Codable {
         itemID = try? container.decodeIfPresent(String.self, forKey: .itemID)
         runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
             ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
+        eventTrigger = try? container.decodeIfPresent(
+            EventTranscriptContext.self, forKey: .eventTrigger
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -149,6 +154,7 @@ struct HistoryMessage: Codable {
         try container.encodeIfPresent(phase, forKey: .phase)
         try container.encodeIfPresent(itemID, forKey: .itemID)
         try container.encodeIfPresent(runID, forKey: .runID)
+        try container.encodeIfPresent(eventTrigger, forKey: .eventTrigger)
     }
 }
 
@@ -343,6 +349,10 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Links a request to its durable run. Ordinary Solo rows remain unchanged
     /// because their activity panel stays hidden until delegation begins.
     var runID: String?
+    /// Present on an automation-created user turn. Kept out of provider
+    /// history and used only to render trusted configuration separately from
+    /// untrusted external content.
+    var eventTrigger: EventTranscriptContext?
     var teamRunID: String? {
         get { runID }
         set { runID = newValue }
@@ -356,6 +366,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         case id, kind, text, assistantPhase, sourceItemID
         case reasoningText, reasoningSections, isStreaming, tool, completion, historyIndex
         case runID = "run_id"
+        case eventTrigger
         case legacyRunID = "runID"
         case legacyTeamRunID = "teamRunID"
     }
@@ -372,6 +383,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil,
         runID: String? = nil,
+        eventTrigger: EventTranscriptContext? = nil,
         teamRunID: String? = nil,
         historyIndex: Int? = nil
     ) {
@@ -386,6 +398,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.tool = tool
         self.completion = completion
         self.runID = runID ?? teamRunID
+        self.eventTrigger = eventTrigger
         self.historyIndex = historyIndex
     }
 
@@ -404,6 +417,9 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         runID = try container.decodeIfPresent(String.self, forKey: .runID)
             ?? container.decodeIfPresent(String.self, forKey: .legacyRunID)
             ?? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID)
+        eventTrigger = try container.decodeIfPresent(
+            EventTranscriptContext.self, forKey: .eventTrigger
+        )
         historyIndex = try container.decodeIfPresent(Int.self, forKey: .historyIndex)
     }
 
@@ -422,6 +438,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(tool, forKey: .tool)
         try container.encodeIfPresent(completion, forKey: .completion)
         try container.encodeIfPresent(runID, forKey: .runID)
+        try container.encodeIfPresent(eventTrigger, forKey: .eventTrigger)
         try container.encodeIfPresent(historyIndex, forKey: .historyIndex)
     }
 

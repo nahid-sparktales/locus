@@ -43,6 +43,8 @@
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
+	<key>LocusGoogleOAuthClientID</key>
+	<string>$(LOCUS_GOOGLE_OAUTH_CLIENT_ID)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

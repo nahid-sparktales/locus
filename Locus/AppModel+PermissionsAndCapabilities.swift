@@ -436,6 +436,13 @@ extension AppModel {
         ])
     }
 
+    func sendConnectorCapability(to transport: BackendService) {
+        _ = transport.send([
+            "type": "set_connector_control",
+            "capability": eventAutomations.connectorCapability(),
+        ])
+    }
+
     func refreshWalletCapabilities() {
         sendWalletCapability(to: backend)
         for runtime in taskWorkers.values {
