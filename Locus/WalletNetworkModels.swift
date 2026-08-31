@@ -302,6 +302,71 @@ struct WalletSolanaTokenAccount: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Canonical identity for a Sui fungible asset. The GraphQL `MoveType.repr`
+/// form intentionally becomes part of the public asset ID so a balance can
+/// never be rebound to a different marker type or network.
+struct WalletSuiAssetIdentity: Codable, Equatable, Sendable {
+    static let nativeCoinType = "0x2::sui::SUI"
+
+    let networkID: String
+    let coinType: String
+
+    var canonicalID: String { "\(networkID)/coin:\(coinType)" }
+
+    static func parse(_ value: String) -> Self? {
+        let components = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 2 else { return nil }
+        let networkID = String(components[0])
+        let prefix = "coin:"
+        let suffix = String(components[1])
+        guard suffix.hasPrefix(prefix),
+              let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.chain == .sui else { return nil }
+        let coinType = String(suffix.dropFirst(prefix.count))
+        guard isCanonicalCoinType(coinType) else { return nil }
+        let identity = Self(networkID: networkID, coinType: coinType)
+        return identity.canonicalID == value ? identity : nil
+    }
+
+    static func isCanonicalCoinType(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 512,
+              value.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x21 }),
+              !value.contains("/"), !value.contains("<"), !value.contains(">") else {
+            return false
+        }
+        let components = value.components(separatedBy: "::")
+        guard components.count == 3 else { return false }
+        let address = components[0]
+        guard address.hasPrefix("0x"), (3...66).contains(address.count),
+              address == address.lowercased() else { return false }
+        let hex = address.dropFirst(2)
+        guard !hex.isEmpty, hex.count <= 64,
+              hex.first != "0" || hex.count == 1,
+              hex.utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte)
+              }) else { return false }
+        return components.dropFirst().allSatisfy(isMoveIdentifier)
+    }
+
+    private static func isMoveIdentifier(_ value: String) -> Bool {
+        guard let first = value.utf8.first,
+              first == 95 || (65...90).contains(first) || (97...122).contains(first) else {
+            return false
+        }
+        return value.utf8.dropFirst().allSatisfy { byte in
+            byte == 95 || (48...57).contains(byte)
+                || (65...90).contains(byte) || (97...122).contains(byte)
+        }
+    }
+}
+
+struct WalletSuiBalance: Codable, Equatable, Sendable {
+    let identity: WalletSuiAssetIdentity
+    let totalBalance: String
+    let coinBalance: String
+    let addressBalance: String
+}
+
 enum WalletSolanaCollectibleStandard: String, Codable, Sendable {
     case tokenMetadata = "token-metadata"
     case core
@@ -608,8 +673,14 @@ struct WalletReviewRegistry: Sendable {
                 return false
             }
         }
-        return !reference.isEmpty && reference.count <= 512
-            && asset.decimals.map { (0...255).contains($0) } != false
+        guard let identity = WalletSuiAssetIdentity.parse(asset.id),
+              identity.networkID == network.id,
+              identity.coinType == reference,
+              asset.kind == .fungibleToken,
+              let decimals = asset.decimals, (0...255).contains(decimals) else {
+            return false
+        }
+        return identity.coinType != WalletSuiAssetIdentity.nativeCoinType
     }
 
     private static func validContract(

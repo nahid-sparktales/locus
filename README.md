@@ -159,11 +159,15 @@ media is never promoted as a wallet image. Sui native balances now use the
 [current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
 full Base58 genesis checkpoint digest, reject
 stale checkpoints and partial GraphQL results, and reconcile coin-object and
-balance-accumulator totals before updating Wallet Hub. Solana token
+balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
+bounded, checkpoint-stable pagination and canonical Move marker types; unknown
+Coins enter quarantine until the user or a signed review manifest trusts them.
+Solana token
 sends use the signer-derived recipient associated token account, creating it
 idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui transaction/signing adapters, full swaps, external wallets, and
+versioned messages, Sui object discovery and transaction/signing adapters, full swaps,
+external wallets, and
 WalletConnect remain closed until their implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the

@@ -1444,11 +1444,11 @@ final class WalletGateway: ObservableObject {
         do {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
-            var discoveredSolanaBalances: [String: String] = [:]
-            for account in publicAccounts where account.chain == .solana {
+            var discoveredAssetBalances: [String: String] = [:]
+            for account in publicAccounts where account.chain != .evm {
                 for networkID in account.networkIDs where WalletNetworkCatalog.descriptor(
                     id: networkID
-                )?.chain == .solana {
+                )?.chain == account.chain {
                     guard let result = try? await signer.performRead(
                         tool: "wallet_get_assets",
                         arguments: [
@@ -1457,16 +1457,21 @@ final class WalletGateway: ObservableObject {
                         ]
                     ), let rows = result["assets"] as? [[String: Any]],
                        rows.count <= 10_000 else { continue }
-                    discoveredSolanaBalances.merge(
-                        reconcileSolanaAssets(
+                    let reconciled = account.chain == .solana
+                        ? reconcileSolanaAssets(
                             rows, accountID: account.id, networkID: networkID
-                        ), uniquingKeysWith: { _, latest in latest }
+                        )
+                        : reconcileSuiAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        )
+                    discoveredAssetBalances.merge(
+                        reconciled, uniquingKeysWith: { _, latest in latest }
                     )
                 }
             }
             synchronizeAccountSnapshots(with: publicAccounts)
             for snapshot in accountSnapshots {
-                if let discovered = discoveredSolanaBalances[snapshot.id] {
+                if let discovered = discoveredAssetBalances[snapshot.id] {
                     guard let index = accountSnapshots.firstIndex(where: {
                         $0.id == snapshot.id
                     }) else { continue }
@@ -1587,6 +1592,56 @@ final class WalletGateway: ObservableObject {
                 try? publicStore?.upsertAsset(asset)
             }
             balances["\(accountID):\(networkID):\(assetID)"] = balance
+        }
+        return balances
+    }
+
+    private func reconcileSuiAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui else {
+            return [:]
+        }
+        var balances: [String: String] = [:]
+        var seenTypes: Set<String> = []
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  let identity = WalletSuiAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  row["asset_kind"] as? String == WalletAssetKind.fungibleToken.rawValue,
+                  row["reference"] as? String == identity.coinType,
+                  row["coin_type"] as? String == identity.coinType,
+                  seenTypes.insert(identity.coinType).inserted,
+                  let rawTotal = row["balance_base_units"] as? String,
+                  let total = WalletBaseUnits.normalize(rawTotal), total == rawTotal,
+                  let rawCoins = row["coin_balance_base_units"] as? String,
+                  let coins = WalletBaseUnits.normalize(rawCoins), coins == rawCoins,
+                  let rawAccumulator = row["address_balance_base_units"] as? String,
+                  let accumulator = WalletBaseUnits.normalize(rawAccumulator),
+                  accumulator == rawAccumulator,
+                  WalletBaseUnits.add(coins, accumulator) == total else { continue }
+            if identity.coinType != WalletSuiAssetIdentity.nativeCoinType {
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .sui, known.networkID == networkID,
+                          known.reference == identity.coinType,
+                          known.kind == .fungibleToken else { continue }
+                } else {
+                    let typeName = identity.coinType.components(separatedBy: "::").last
+                        ?? "COIN"
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .sui, kind: .fungibleToken,
+                        reference: identity.coinType,
+                        name: "Unknown Sui Coin", symbol: String(typeName.prefix(32)),
+                        decimals: nil, trust: .quarantined, manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = total
         }
         return balances
     }

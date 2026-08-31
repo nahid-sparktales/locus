@@ -106,6 +106,13 @@ signing adapter.
   stale response, and requires `totalBalance` to equal the exact sum of coin
   objects and the address balance accumulator. This path exports no Sui signing
   or generic GraphQL authority.
+- Sui Coin discovery accepts only a bounded connection whose pages all carry
+  identical network, checkpoint, epoch, and reference-gas evidence. Coin marker
+  types use a strict canonical Move identity with no generic nesting; duplicate,
+  malformed, inconsistent, repeated-cursor, or truncated results fail closed.
+  Unknown Coins are public metadata in SQLite quarantine, never implicit signing
+  authority. Signed review manifests must bind network, Coin type, decimals,
+  name, and symbol exactly before a Coin can be curated.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -121,7 +128,7 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui transaction builders, signing, provider execution, Coin/object/NFT and
+  Sui transaction builders, signing, provider execution, Coin transfers, object/NFT and
   activity adapters, gRPC execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;

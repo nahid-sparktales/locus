@@ -552,6 +552,54 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSignedReviewManifestRequiresCanonicalSuiCoinIdentity() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let coinType = "0x1234::example::COIN"
+        let asset = WalletAsset(
+            canonicalID: "sui:mainnet/coin:\(coinType)",
+            networkID: WalletNetworkCatalog.suiMainnet.id,
+            chain: .sui, kind: .fungibleToken, reference: coinType,
+            name: "Reviewed Coin", symbol: "COIN", decimals: 6,
+            trust: .curated, manifestRevision: 3
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 3, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(registry.assets, [asset])
+        XCTAssertEqual(
+            WalletSuiAssetIdentity.parse(asset.canonicalID)?.coinType,
+            coinType
+        )
+
+        let malformed = WalletAsset(
+            canonicalID: "sui:mainnet/coin:0x01234::example::COIN",
+            networkID: asset.networkID, chain: asset.chain,
+            kind: asset.kind, reference: "0x01234::example::COIN",
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: asset.trust, manifestRevision: asset.manifestRevision
+        )
+        let invalid = WalletReviewManifest(
+            schemaVersion: 1, revision: 3, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [malformed], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        XCTAssertThrowsError(try WalletReviewRegistry(
+            signedManifest: signedReview(invalid, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        ))
+    }
+
     func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
         let store = try WalletPublicStore(path: ":memory:")
         let record = WalletActivityRecord(
@@ -1028,6 +1076,18 @@ final class WalletGatewayTests: XCTestCase {
             WalletNetworkCatalog.suiMainnet.identity.value,
             WalletSuiChainIdentity.mainnetBase58
         )
+        XCTAssertEqual(
+            WalletSuiAssetIdentity.parse(
+                "sui:mainnet/coin:0x1234::example::COIN"
+            )?.coinType,
+            "0x1234::example::COIN"
+        )
+        XCTAssertNil(WalletSuiAssetIdentity.parse(
+            "sui:mainnet/coin:0x01234::example::COIN"
+        ))
+        XCTAssertNil(WalletSuiAssetIdentity.parse(
+            "sui:mainnet/coin:0x1234::example::Coin<0x2::sui::SUI>"
+        ))
     }
 
     func testSuiGraphQLBindsChainCheckpointAndBothBalanceStores() async throws {
@@ -1131,6 +1191,90 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSuiGraphQLDiscoversCanonicalCoinBalancesAcrossStablePages() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let address = "0x" + String(repeating: "5", count: 64)
+        let coinType = "0x1234::example::COIN"
+        var requests = 0
+        let client = makeSuiGraphQLClient(now: now) { request in
+            requests += 1
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let variables = try XCTUnwrap(object["variables"] as? [String: Any])
+            XCTAssertEqual(variables["address"] as? String, address)
+            XCTAssertEqual(variables["first"] as? Int, 100)
+            if requests == 1 {
+                XCTAssertTrue(variables["after"] is NSNull)
+                XCTAssertTrue(variables["checkpoint"] is NSNull)
+                return try self.suiBalancesResponse(
+                    address: address,
+                    balances: [
+                        (WalletSuiAssetIdentity.nativeCoinType, "10", "8", "2"),
+                    ],
+                    hasNextPage: true, endCursor: "page-2"
+                )
+            }
+            XCTAssertEqual(variables["after"] as? String, "page-2")
+            XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+            return try self.suiBalancesResponse(
+                address: address,
+                balances: [(coinType, "1007", "1000", "7")],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        let balances = try await client.balances(owner: address)
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(Set(balances.map(\.identity.coinType)), Set([
+            WalletSuiAssetIdentity.nativeCoinType, coinType,
+        ]))
+        XCTAssertEqual(
+            balances.first(where: { $0.identity.coinType == coinType })?.totalBalance,
+            "1007"
+        )
+    }
+
+    func testSuiGraphQLRejectsDuplicateAndNoncanonicalCoinTypes() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let address = "0x" + String(repeating: "6", count: 64)
+        let duplicate = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiBalancesResponse(
+                address: address,
+                balances: [
+                    ("0x1234::example::COIN", "1", "1", "0"),
+                    ("0x1234::example::COIN", "2", "2", "0"),
+                ],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        do {
+            _ = try await duplicate.balances(owner: address)
+            XCTFail("Duplicate Sui Coin types must fail the entire discovery response.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicate"))
+        }
+
+        let generic = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiBalancesResponse(
+                address: address,
+                balances: [("0x2::coin::Coin<0x2::sui::SUI>", "1", "1", "0")],
+                hasNextPage: false, endCursor: nil
+            )
+        }
+        do {
+            _ = try await generic.balances(owner: address)
+            XCTFail("Unreviewed generic Move marker types must remain outside discovery.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("malformed"))
+        }
+    }
+
     func testGatewayRefreshesCanonicalNativeSuiSnapshot() async throws {
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
@@ -1150,6 +1294,59 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(snapshot.networkID, WalletNetworkCatalog.suiTestnet.id)
         XCTAssertEqual(snapshot.assetID, WalletNetworkCatalog.suiTestnet.nativeAssetID)
         XCTAssertEqual(snapshot.balanceBaseUnits, "1234567890")
+        XCTAssertEqual(snapshot.freshness, .current)
+    }
+
+    func testGatewayQuarantinesSuiCoinUntilExplicitTrust() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "7", count: 64)
+        let coinType = "0x1234::example::COIN"
+        let assetID = "sui:testnet/coin:\(coinType)"
+        signer.discoveredAssetRows = [
+            [
+                "asset_id": WalletNetworkCatalog.suiTestnet.nativeAssetID,
+                "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                "reference": WalletSuiAssetIdentity.nativeCoinType,
+                "coin_type": WalletSuiAssetIdentity.nativeCoinType,
+                "balance_base_units": "45",
+                "coin_balance_base_units": "40",
+                "address_balance_base_units": "5",
+            ],
+            [
+                "asset_id": assetID,
+                "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                "reference": coinType, "coin_type": coinType,
+                "balance_base_units": "1007",
+                "coin_balance_base_units": "1000",
+                "address_balance_base_units": "7",
+            ],
+        ]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        XCTAssertEqual(
+            gateway.accountSnapshots.first(where: {
+                $0.assetID == WalletNetworkCatalog.suiTestnet.nativeAssetID
+            })?.balanceBaseUnits,
+            "45"
+        )
+        XCTAssertEqual(gateway.assets.first(where: { $0.id == assetID })?.trust, .quarantined)
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(
+            gateway.accountSnapshots.first(where: { $0.assetID == assetID })
+        )
+        XCTAssertEqual(snapshot.balanceBaseUnits, "1007")
+        XCTAssertEqual(snapshot.symbol, "COIN")
         XCTAssertEqual(snapshot.freshness, .current)
     }
 
@@ -2254,8 +2451,8 @@ final class WalletGatewayTests: XCTestCase {
                 "checkpoint": [
                     "sequenceNumber": 123_456,
                     "timestamp": timestamp,
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
                 ],
-                "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
                 "address": [
                     "address": address,
                     "balance": [
@@ -2263,6 +2460,45 @@ final class WalletGatewayTests: XCTestCase {
                         "totalBalance": total,
                         "coinBalance": coins,
                         "addressBalance": accumulator,
+                    ],
+                ],
+            ],
+        ])
+    }
+
+    private func suiBalancesResponse(
+        chainIdentifier: String = WalletSuiChainIdentity.testnetBase58,
+        address: String,
+        timestamp: String = "2026-08-31T12:00:00Z",
+        balances: [(String, String, String, String)],
+        hasNextPage: Bool,
+        endCursor: String?
+    ) throws -> Data {
+        let nodes: [[String: Any]] = balances.map { item in
+            [
+                "coinType": ["repr": item.0],
+                "totalBalance": item.1,
+                "coinBalance": item.2,
+                "addressBalance": item.3,
+            ]
+        }
+        let cursorValue: Any = endCursor.map { $0 as Any } ?? NSNull()
+        return try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": chainIdentifier,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": timestamp,
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                ],
+                "address": [
+                    "address": address,
+                    "balances": [
+                        "nodes": nodes,
+                        "pageInfo": [
+                            "hasNextPage": hasNextPage,
+                            "endCursor": cursorValue,
+                        ],
                     ],
                 ],
             ],

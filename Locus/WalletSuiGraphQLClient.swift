@@ -72,25 +72,33 @@ actor WalletSuiGraphQLClient {
     static let mainnetDefaultEndpoint = "https://graphql.mainnet.sui.io/graphql"
     static let testnetDefaultEndpoint = "https://graphql.testnet.sui.io/graphql"
 
-    private static let nativeCoinType = "0x2::sui::SUI"
     private static let maximumRequestBytes = 16 * 1_024
     private static let maximumResponseBytes = 1_048_576
     private static let maximumCheckpointAge: TimeInterval = 15 * 60
     private static let maximumFutureDrift: TimeInterval = 2 * 60
+    private static let balancePageSize = 100
+    private static let maximumBalancePages = 100
+    private static let maximumBalances = balancePageSize * maximumBalancePages
 
     private static let networkStatusQuery = """
     query LocusSuiNetworkStatus {
       chainIdentifier
-      checkpoint { sequenceNumber timestamp }
-      epoch { epochId referenceGasPrice }
+      checkpoint {
+        sequenceNumber
+        timestamp
+        epoch { epochId referenceGasPrice }
+      }
     }
     """
 
     private static let accountOverviewQuery = """
     query LocusSuiAccountOverview($address: SuiAddress!, $coinType: String!) {
       chainIdentifier
-      checkpoint { sequenceNumber timestamp }
-      epoch { epochId referenceGasPrice }
+      checkpoint {
+        sequenceNumber
+        timestamp
+        epoch { epochId referenceGasPrice }
+      }
       address(address: $address) {
         address
         balance(coinType: $coinType) {
@@ -98,6 +106,34 @@ actor WalletSuiGraphQLClient {
           totalBalance
           coinBalance
           addressBalance
+        }
+      }
+    }
+    """
+
+    private static let balancesQuery = """
+    query LocusSuiBalances(
+      $address: SuiAddress!
+      $first: Int!
+      $after: String
+      $checkpoint: UInt53
+    ) {
+      chainIdentifier
+      checkpoint(sequenceNumber: $checkpoint) {
+        sequenceNumber
+        timestamp
+        epoch { epochId referenceGasPrice }
+      }
+      address(address: $address, atCheckpoint: $checkpoint) {
+        address
+        balances(first: $first, after: $after) {
+          nodes {
+            coinType { repr }
+            totalBalance
+            coinBalance
+            addressBalance
+          }
+          pageInfo { hasNextPage endCursor }
         }
       }
     }
@@ -148,40 +184,125 @@ actor WalletSuiGraphQLClient {
         return try parseNetworkStatus(data)
     }
 
-    func balance(address: String) async throws -> String {
-        try await accountOverview(address: address).totalBalance
+    func balance(
+        address: String,
+        coinType: String = WalletSuiAssetIdentity.nativeCoinType
+    ) async throws -> String {
+        try await accountOverview(address: address, coinType: coinType).totalBalance
     }
 
-    func accountOverview(address: String) async throws -> WalletSuiAccountOverview {
+    func accountOverview(
+        address: String,
+        coinType: String = WalletSuiAssetIdentity.nativeCoinType
+    ) async throws -> WalletSuiAccountOverview {
         guard Self.isCanonicalAddress(address) else {
             throw WalletGateway.Error.invalidArguments(
                 "The Sui balance request requires a canonical 32-byte address."
             )
         }
+        guard WalletSuiAssetIdentity.isCanonicalCoinType(coinType) else {
+            throw WalletGateway.Error.invalidArguments(
+                "The Sui balance request requires a canonical Coin marker type."
+            )
+        }
         let data = try await query(
             document: Self.accountOverviewQuery,
-            variables: ["address": address, "coinType": Self.nativeCoinType]
+            variables: ["address": address, "coinType": coinType]
         )
         let status = try parseNetworkStatus(data)
         guard let addressObject = data["address"] as? [String: Any],
               let reportedAddress = addressObject["address"] as? String,
               reportedAddress == address,
               let balance = addressObject["balance"] as? [String: Any],
-              let coinType = balance["coinType"] as? [String: Any],
-              coinType["repr"] as? String == Self.nativeCoinType,
-              let total = Self.canonicalBaseUnits(balance["totalBalance"]),
-              let coins = Self.canonicalBaseUnits(balance["coinBalance"]),
-              let accumulator = Self.canonicalBaseUnits(balance["addressBalance"]),
-              WalletBaseUnits.add(coins, accumulator) == total else {
+              let parsed = Self.parseBalance(balance, networkID: network.id),
+              parsed.identity.coinType == coinType else {
             throw WalletRPCError.invalidResponse(
-                "Sui returned inconsistent native balance evidence"
+                "Sui returned inconsistent Coin balance evidence"
             )
         }
         return WalletSuiAccountOverview(
             network: status, address: reportedAddress,
-            coinType: Self.nativeCoinType, totalBalance: total,
-            coinBalance: coins, addressBalance: accumulator
+            coinType: coinType, totalBalance: parsed.totalBalance,
+            coinBalance: parsed.coinBalance,
+            addressBalance: parsed.addressBalance
         )
+    }
+
+    func balances(owner: String) async throws -> [WalletSuiBalance] {
+        guard Self.isCanonicalAddress(owner) else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui asset discovery requires a canonical 32-byte owner address."
+            )
+        }
+        var after: String?
+        var seenCursors: Set<String> = []
+        var seenTypes: Set<String> = []
+        var expectedStatus: WalletSuiNetworkStatus?
+        var results: [WalletSuiBalance] = []
+        for _ in 0..<Self.maximumBalancePages {
+            let checkpointValue: Any = expectedStatus.map {
+                $0.checkpointSequence as Any
+            } ?? NSNull()
+            let data = try await query(
+                document: Self.balancesQuery,
+                variables: [
+                    "address": owner,
+                    "first": Self.balancePageSize,
+                    "after": after ?? NSNull(),
+                    "checkpoint": checkpointValue,
+                ]
+            )
+            let status = try parseNetworkStatus(data)
+            if let expectedStatus, expectedStatus != status {
+                throw WalletRPCError.invalidResponse(
+                    "Sui balance pagination changed checkpoint evidence"
+                )
+            }
+            expectedStatus = status
+            guard let addressObject = data["address"] as? [String: Any],
+                  addressObject["address"] as? String == owner,
+                  let connection = addressObject["balances"] as? [String: Any],
+                  let nodes = connection["nodes"] as? [[String: Any]],
+                  nodes.count <= Self.balancePageSize,
+                  let pageInfo = connection["pageInfo"] as? [String: Any],
+                  let hasNextPage = pageInfo["hasNextPage"] as? Bool else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned malformed balance pagination evidence"
+                )
+            }
+            for node in nodes {
+                guard let balance = Self.parseBalance(node, networkID: network.id),
+                      seenTypes.insert(balance.identity.coinType).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned a malformed or duplicate Coin balance"
+                    )
+                }
+                results.append(balance)
+            }
+            guard results.count <= Self.maximumBalances else {
+                throw WalletRPCError.invalidResponse("Sui returned too many Coin balances")
+            }
+            if !hasNextPage {
+                guard pageInfo["endCursor"] == nil
+                        || pageInfo["endCursor"] is NSNull
+                        || pageInfo["endCursor"] is String else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned malformed terminal pagination evidence"
+                    )
+                }
+                return results.sorted { $0.identity.canonicalID < $1.identity.canonicalID }
+            }
+            guard let cursor = pageInfo["endCursor"] as? String,
+                  !cursor.isEmpty, cursor.utf8.count <= 1_024,
+                  cursor.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x20 }),
+                  seenCursors.insert(cursor).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned invalid or repeated balance pagination"
+                )
+            }
+            after = cursor
+        }
+        throw WalletRPCError.invalidResponse("Sui balance pagination was truncated")
     }
 
     private func query(
@@ -240,7 +361,7 @@ actor WalletSuiGraphQLClient {
               let timestampText = checkpoint["timestamp"] as? String,
               timestampText.count <= 64,
               let timestamp = Self.date(timestampText),
-              let epoch = data["epoch"] as? [String: Any],
+              let epoch = checkpoint["epoch"] as? [String: Any],
               let epochID = Self.unsigned53(epoch["epochId"]),
               let gasPrice = Self.canonicalBaseUnits(epoch["referenceGasPrice"]),
               gasPrice != "0" else {
@@ -278,6 +399,26 @@ actor WalletSuiGraphQLClient {
               let normalized = WalletBaseUnits.normalize(value),
               normalized == value else { return nil }
         return value
+    }
+
+    private static func parseBalance(
+        _ value: [String: Any],
+        networkID: String
+    ) -> WalletSuiBalance? {
+        guard let coinType = value["coinType"] as? [String: Any],
+              let representation = coinType["repr"] as? String,
+              WalletSuiAssetIdentity.isCanonicalCoinType(representation),
+              let total = canonicalBaseUnits(value["totalBalance"]),
+              let coins = canonicalBaseUnits(value["coinBalance"]),
+              let accumulator = canonicalBaseUnits(value["addressBalance"]),
+              WalletBaseUnits.add(coins, accumulator) == total else { return nil }
+        return WalletSuiBalance(
+            identity: WalletSuiAssetIdentity(
+                networkID: networkID, coinType: representation
+            ),
+            totalBalance: total, coinBalance: coins,
+            addressBalance: accumulator
+        )
     }
 
     private static func unsigned53(_ value: Any?) -> UInt64? {
@@ -356,6 +497,22 @@ actor WalletSuiProviderCoordinator {
         catch {
             guard let fallback else { throw error }
             return try await fallback.balance(address: address)
+        }
+    }
+
+    func balance(address: String, coinType: String) async throws -> String {
+        do { return try await primary.balance(address: address, coinType: coinType) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.balance(address: address, coinType: coinType)
+        }
+    }
+
+    func balances(owner: String) async throws -> [WalletSuiBalance] {
+        do { return try await primary.balances(owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.balances(owner: owner)
         }
     }
 

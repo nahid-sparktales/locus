@@ -124,6 +124,35 @@ func isCanonicalSolanaAddress(_ value: String) -> Bool {
     return decoded.count == 32 && encodeBase58(Array(decoded)) == value
 }
 
+func isCanonicalSuiCoinType(_ value: String) -> Bool {
+    guard !value.isEmpty, value.utf8.count <= 512,
+          value.unicodeScalars.allSatisfy({ $0.isASCII && $0.value >= 0x21 }),
+          !value.contains("/"), !value.contains("<"), !value.contains(">") else {
+        return false
+    }
+    let components = value.components(separatedBy: "::")
+    guard components.count == 3 else { return false }
+    let address = components[0]
+    guard address.hasPrefix("0x"), (3...66).contains(address.count),
+          address == address.lowercased() else { return false }
+    let hex = address.dropFirst(2)
+    guard !hex.isEmpty, hex.count <= 64,
+          hex.first != "0" || hex.count == 1,
+          hex.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+        return false
+    }
+    return components.dropFirst().allSatisfy { component in
+        guard let first = component.utf8.first,
+              first == 95 || (65...90).contains(first) || (97...122).contains(first) else {
+            return false
+        }
+        return component.utf8.dropFirst().allSatisfy {
+            $0 == 95 || (48...57).contains($0)
+                || (65...90).contains($0) || (97...122).contains($0)
+        }
+    }
+}
+
 func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
     guard !asset.canonicalID.isEmpty,
           !asset.networkID.isEmpty,
@@ -135,16 +164,32 @@ func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
           asset.trust == "curated", asset.manifestRevision == revision else {
         return false
     }
-    guard asset.chain == "solana" else { return true }
+    if asset.chain == "solana" {
+        if asset.kind == "native" {
+            return asset.canonicalID == "\(asset.networkID)/slip44:501"
+                && asset.reference == nil && asset.decimals == 9
+        }
+        guard let mint = asset.reference, isCanonicalSolanaAddress(mint),
+              asset.canonicalID == "\(asset.networkID)/spl:\(mint)"
+                || asset.canonicalID == "\(asset.networkID)/token2022:\(mint)",
+              let decimals = asset.decimals else { return false }
+        return asset.kind == "fungible_token" || decimals == 0
+    }
+    guard asset.chain == "sui" else { return true }
+    let nativeType = "0x2::sui::SUI"
     if asset.kind == "native" {
-        return asset.canonicalID == "\(asset.networkID)/slip44:501"
+        return asset.canonicalID == "\(asset.networkID)/coin:\(nativeType)"
             && asset.reference == nil && asset.decimals == 9
     }
-    guard let mint = asset.reference, isCanonicalSolanaAddress(mint),
-          asset.canonicalID == "\(asset.networkID)/spl:\(mint)"
-            || asset.canonicalID == "\(asset.networkID)/token2022:\(mint)",
-          let decimals = asset.decimals else { return false }
-    return asset.kind == "fungible_token" || decimals == 0
+    guard let coinType = asset.reference,
+          coinType != nativeType,
+          isCanonicalSuiCoinType(coinType),
+          asset.canonicalID == "\(asset.networkID)/coin:\(coinType)",
+          asset.kind == "fungible_token",
+          let decimals = asset.decimals, (0...255).contains(decimals) else {
+        return false
+    }
+    return true
 }
 
 func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {

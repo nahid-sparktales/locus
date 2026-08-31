@@ -437,14 +437,20 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     )
                 }
             case .sui:
-                guard assetID == descriptor.nativeAssetID else {
-                    throw WalletGateway.Error.invalidArguments(
-                        "Only the canonical native SUI balance is active."
+                let coordinator = try suiRPCClient(for: networkID)
+                if assetID == descriptor.nativeAssetID {
+                    balance = try await coordinator.balance(address: account.address)
+                } else {
+                    guard let identity = WalletSuiAssetIdentity.parse(assetID),
+                          identity.networkID == networkID else {
+                        throw WalletGateway.Error.invalidArguments(
+                            "The requested Sui asset ID is not canonical for this network."
+                        )
+                    }
+                    balance = try await coordinator.balance(
+                        address: account.address, coinType: identity.coinType
                     )
                 }
-                balance = try await suiRPCClient(for: networkID).balance(
-                    address: account.address
-                )
             }
             return [
                 "text": "\(assetID) balance: \(balance) base units",
@@ -457,14 +463,42 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let accountID = arguments["account_id"] as? String
             let networkID = arguments["network_id"] as? String
                 ?? WalletNetworkCatalog.solanaDevnet.id
+            guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
+                  descriptor.chain == .solana || descriptor.chain == .sui else {
+                throw WalletGateway.Error.invalidArguments(
+                    "Asset discovery is active only for reviewed Solana and Sui providers."
+                )
+            }
             let accounts = try await listAccounts()
             guard let account = accounts.first(where: {
-                $0.id == accountID && $0.chain == .solana
+                $0.id == accountID && $0.chain == descriptor.chain
                     && $0.networkIDs.contains(networkID)
             }) else {
                 throw WalletGateway.Error.invalidArguments(
-                    "Select the matching Locus Vault Solana account."
+                    "Select the matching Locus Vault chain account."
                 )
+            }
+            if descriptor.chain == .sui {
+                let balances = try await suiRPCClient(for: networkID).balances(
+                    owner: account.address
+                )
+                let rows: [[String: Any]] = balances.map { item in
+                    [
+                        "asset_id": item.identity.canonicalID,
+                        "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                        "reference": item.identity.coinType,
+                        "coin_type": item.identity.coinType,
+                        "balance_base_units": item.totalBalance,
+                        "coin_balance_base_units": item.coinBalance,
+                        "address_balance_base_units": item.addressBalance,
+                    ]
+                }
+                return [
+                    "text": "Loaded \(rows.count) Sui Coin balances.",
+                    "account_id": account.id,
+                    "network_id": networkID,
+                    "assets": rows,
+                ]
             }
             let coordinator = try solanaRPCClient(for: networkID)
             let tokenAccounts = try await coordinator.tokenAccounts(

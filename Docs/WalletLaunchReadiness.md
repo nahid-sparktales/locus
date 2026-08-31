@@ -35,10 +35,13 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   genesis-digest verification, bounded/error-free response envelopes, fresh
   checkpoint and epoch/gas evidence, and exact reconciliation of coin-object
   plus balance-accumulator holdings.
+- [x] Read-only Sui Coin discovery with canonical non-generic Move marker types,
+  stable bounded pagination, exact two-store balance reconciliation, signed
+  curation, and default quarantine for unknown assets.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui gRPC/GraphQL native transfer, curated Coin, object/NFT, activity,
+- [ ] Sui gRPC/GraphQL native transfer, Coin transfer, object/NFT, activity,
   simulation, execution, and finality implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
