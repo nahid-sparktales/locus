@@ -495,6 +495,8 @@ final class AppModel: ObservableObject {
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
     @Published var notebookPresented = false
+    /// A workspace file opened for reading in the large viewer sheet.
+    @Published var fileViewerRequest: WorkspaceFileViewerRequest?
     @Published var rememberConfirmationText: String?
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false
@@ -10142,6 +10144,36 @@ final class AppModel: ObservableObject {
                 return
             }
         }
+    }
+
+    /// Reveals the terminal and types the command into the shell, configuring
+    /// it for the active workspace first so a cold terminal starts in the
+    /// right directory.
+    func runCommandInTerminal(_ command: String) {
+        terminal.configure(
+            workspacePath: workspacePath,
+            shell: settings.terminalShell,
+            loginShell: settings.terminalLoginShell
+        )
+        selectInspectorTab(.terminal)
+        terminal.run(command: command)
+    }
+
+    /// Opens a workspace file in the large read-only viewer sheet. The path is
+    /// re-contained at activation, same as `openWorkspaceReference`.
+    func openFileViewer(path relativePath: String, location: WorkspacePreviewLocation? = nil) {
+        guard let url = MarkdownLinkPolicy.containedWorkspaceFileURL(
+            relativePath,
+            workspacePath: workspacePath
+        ), FileManager.default.fileExists(atPath: url.path) else {
+            showToast("That file is no longer available in this workspace")
+            return
+        }
+        fileViewerRequest = WorkspaceFileViewerRequest(
+            url: url,
+            relativePath: relativePath,
+            location: location
+        )
     }
 
     func prefillSessionSuggestion(_ suggestion: String) {

@@ -1063,14 +1063,34 @@ enum NativeCodeTextRenderer {
 /// Fenced code rendered as a native macOS code card. Diff fences receive
 /// per-line add/remove treatment; all other languages retain exact whitespace
 /// and scroll horizontally without forcing the conversation itself sideways.
+/// Handed down by the workspace so a shell code block in the transcript can
+/// offer Run. Surfaces without a terminal (sheets, notes) leave it nil and
+/// the button stays hidden.
+private struct RunInTerminalActionKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var runInTerminalAction: ((String) -> Void)? {
+        get { self[RunInTerminalActionKey.self] }
+        set { self[RunInTerminalActionKey.self] = newValue }
+    }
+}
+
 struct CodeBlockView: View {
     let language: String?
     let code: String
     var density: MarkdownRenderDensity = .regular
     var selectionStore: TranscriptSelectionStore? = nil
     var selectionSpan: TranscriptSelectionSpan? = nil
+    @Environment(\.runInTerminalAction) private var runInTerminal
     @State private var copied = false
     @State private var collapsed = false
+    @State private var sentToTerminal = false
+
+    private static let shellLanguages: Set<String> = [
+        "bash", "sh", "zsh", "shell", "shellscript", "fish",
+    ]
 
     private var lines: [String] { LongOutputPolicy.codeLines(code) }
 
@@ -1083,7 +1103,14 @@ struct CodeBlockView: View {
         return lines.prefix(LongOutputPolicy.codePreviewLineCount).joined(separator: "\n")
     }
 
+    private var isShell: Bool {
+        Self.shellLanguages.contains(
+            (language ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
+    }
+
     private var displayLanguage: String {
+        if isShell { return "Terminal" }
         let value = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? "Code" : value.capitalized
     }
@@ -1092,10 +1119,16 @@ struct CodeBlockView: View {
         language?.lowercased() == "diff" || DiffDetector.isDiff(code)
     }
 
+    private var headerSymbol: String {
+        if isDiff { return "plusminus" }
+        if isShell { return "terminal" }
+        return "chevron.left.forwardslash.chevron.right"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
-                Image(systemName: isDiff ? "plusminus" : "chevron.left.forwardslash.chevron.right")
+                Image(systemName: headerSymbol)
                     .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                 Text(displayLanguage)
@@ -1124,6 +1157,31 @@ struct CodeBlockView: View {
                             : "Collapse \(lines.count)-line code block"
                     )
                     .accessibilityIdentifier("message.codeBlock.collapse")
+                }
+                if isShell, let runInTerminal {
+                    Button {
+                        runInTerminal(code)
+                        sentToTerminal = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.6))
+                            sentToTerminal = false
+                        }
+                    } label: {
+                        Label(
+                            sentToTerminal ? "Sent" : "Run",
+                            systemImage: sentToTerminal ? "checkmark" : "play.fill"
+                        )
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(sentToTerminal ? LocusTheme.success : LocusTheme.muted)
+                        .padding(.horizontal, 7)
+                        .frame(height: 24)
+                        .background(LocusTheme.white.opacity(0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.locus())
+                    .help("Run in the workspace terminal")
+                    .accessibilityLabel("Run code block in the terminal")
+                    .accessibilityIdentifier("message.codeBlock.run")
                 }
                 Button {
                     NSPasteboard.general.clearContents()

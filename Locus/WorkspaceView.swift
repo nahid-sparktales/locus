@@ -2334,6 +2334,12 @@ private struct ConversationView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
                 .background { TranscriptSelectionScope() }
+                // Like the selection scope, the bridge must live inside the
+                // scroll content: from the ScrollView's own background the
+                // anchor is a sibling of the platform scroll view, so
+                // `enclosingScrollView` is nil and streaming output is never
+                // followed.
+                .background { TranscriptScrollBridge(coordinator: scrollCoordinator) }
                 .frame(maxWidth: 780)
                 .padding(.horizontal, 24)
                 .padding(.top, model.blocks.isEmpty ? 0 : 24)
@@ -2341,9 +2347,6 @@ private struct ConversationView: View {
                 .frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("conversation.scroll")
-            .background {
-                TranscriptScrollBridge(coordinator: scrollCoordinator)
-            }
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
@@ -2368,7 +2371,12 @@ private struct ConversationView: View {
                     .accessibilityIdentifier("conversation.jumpToLatest")
                 }
             }
-            .onChange(of: model.blocks.count) {
+            .onChange(of: model.blocks.count) { oldCount, newCount in
+                // Sending a message re-engages following even after the
+                // reader scrolled up, so the reply streams into view.
+                if newCount > oldCount, model.blocks.last?.kind == .user {
+                    scrollCoordinator.jumpToLatest()
+                }
                 scrollCoordinator.contentMayHaveChanged()
             }
             .onChange(of: model.transcriptSearchSelection) {
@@ -2392,6 +2400,9 @@ private struct ConversationView: View {
             }
             .onChange(of: model.thinkingVisibility) { _, _ in
                 configureSelection(for: items)
+            }
+            .environment(\.runInTerminalAction) { [weak model] command in
+                model?.runCommandInTerminal(command)
             }
         }
     }
@@ -3070,6 +3081,18 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
 
 private final class TranscriptScrollAnchorView: NSView {
     weak var transcriptCoordinator: TranscriptScrollCoordinator?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        // The async hop lets SwiftUI finish inserting this view into the
+        // scroll view's document hierarchy before the coordinator resolves
+        // `enclosingScrollView`.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.transcriptCoordinator?.attach(from: self)
+        }
+    }
 }
 
 /// ⌘F search over the current conversation. Matches whole blocks (tool cards
