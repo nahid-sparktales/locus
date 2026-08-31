@@ -55,6 +55,12 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   object ID/version/digest, canonical 40-byte Coin BCS, embedded UID, raw u64
   balance, stable pagination, and reconciliation with the checkpoint's total
   coin-object balance. Fragmented funds remain unsignable in this subset.
+- [x] Non-broadcasting GraphQL simulation for signer-built native SUI transfer
+  bytes. The provider must return the exact transaction and effects digests,
+  selected gas object, successful terminal balance changes, and a complete gas
+  cost summary; recipient credit and sender debit are recomputed exactly and
+  bounded by the reviewed maximum fee. XPC signing remains closed pending the
+  signer-owned staged intent and independent recheck.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.

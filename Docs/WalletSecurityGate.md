@@ -141,6 +141,14 @@ signing adapter.
   balance sum to equal the checkpoint's coin-object balance. Selection chooses
   the smallest sufficient single coin, breaking ties by object ID. It never
   invents a merge command or spends the address balance accumulator.
+- Native SUI dry-runs accept only canonical Base64 transaction bytes already
+  produced by the isolated builder and send them through GraphQL
+  `simulateTransaction` with checks enabled and provider gas selection disabled.
+  Locus verifies a matching transaction digest, successful effects digest,
+  exact selected gas-object ID, terminal two-party SUI balance changes, and the
+  complete gas-cost formula. Recipient credit must equal the reviewed amount;
+  sender debit must equal amount plus the computed fee, which must remain within
+  the reviewed maximum. This read-only path cannot execute or sign a transaction.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.

@@ -175,7 +175,12 @@ until simulation, effect recheck, and execution land. Provider coin selection
 is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
 owner, raw balance, and aggregate coin-object balance before choosing one
 deterministic sufficient gas coin; fragmented or accumulator-only funds are not
-silently widened into a different transaction shape.
+silently widened into a different transaction shape. The provider can now
+dry-run signer-built native-transfer bytes without broadcasting: Locus requires
+the exact transaction/effects digests, selected gas object, recipient credit,
+sender debit, and computed gas fee to match the reviewed transfer. This still
+does not expose Sui signing through XPC; staged intent ownership and a fresh
+effect recheck remain required first.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,

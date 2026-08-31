@@ -310,6 +310,27 @@ enum WalletBaseUnits {
         return a.reversed().map(String.init).joined()
     }
 
+    static func subtract(_ lhs: String, _ rhs: String) -> String? {
+        guard let left = normalize(lhs), let right = normalize(rhs),
+              compare(left, right) != .orderedAscending else { return nil }
+        var a = left.reversed().map { Int(String($0))! }
+        let b = right.reversed().map { Int(String($0))! }
+        var borrow = 0
+        for index in 0..<a.count {
+            var digit = a[index] - borrow - (index < b.count ? b[index] : 0)
+            if digit < 0 {
+                digit += 10
+                borrow = 1
+            } else {
+                borrow = 0
+            }
+            a[index] = digit
+        }
+        guard borrow == 0 else { return nil }
+        while a.count > 1, a.last == 0 { a.removeLast() }
+        return a.reversed().map(String.init).joined()
+    }
+
     static func multiply(_ lhs: String, _ rhs: String) -> String? {
         guard let left = normalize(lhs), let right = normalize(rhs) else { return nil }
         if left == "0" || right == "0" { return "0" }

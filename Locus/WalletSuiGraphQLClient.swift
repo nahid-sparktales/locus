@@ -51,6 +51,27 @@ struct WalletSuiGasCoinSelection: Equatable, Sendable {
     let requiredBalanceBaseUnits: String
 }
 
+struct WalletSuiGasCostSummary: Equatable, Sendable {
+    let computationCost: String
+    let storageCost: String
+    let storageRebate: String
+    let nonRefundableStorageFee: String
+    let actualFeeBaseUnits: String
+}
+
+struct WalletSuiNativeTransferSimulation: Equatable, Sendable {
+    let network: WalletSuiNetworkStatus
+    let transactionDigest: String
+    let effectsDigest: String
+    let sender: String
+    let recipient: String
+    let amountBaseUnits: String
+    let senderDebitBaseUnits: String
+    let recipientCreditBaseUnits: String
+    let gasObjectID: String
+    let gas: WalletSuiGasCostSummary
+}
+
 struct WalletSuiProviderConfiguration: Sendable {
     let primary: WalletProviderEndpoint
     let fallback: WalletProviderEndpoint?
@@ -123,6 +144,46 @@ actor WalletSuiGraphQLClient {
     private static let activityPageSize = 50
     private static let maximumActivityPages = 10
     private static let balanceChangesPerTransaction = 100
+
+    private static let nativeTransferSimulationQuery = """
+    query LocusSuiSimulateNativeTransfer($transaction: JSON!) {
+      chainIdentifier
+      checkpoint {
+        sequenceNumber
+        timestamp
+        epoch { epochId referenceGasPrice }
+      }
+      simulateTransaction(
+        transaction: $transaction
+        checksEnabled: true
+        doGasSelection: false
+      ) {
+        effects {
+          digest
+          effectsDigest
+          status
+          executionError { message }
+          gasEffects {
+            gasObject { address }
+            gasSummary {
+              computationCost
+              storageCost
+              storageRebate
+              nonRefundableStorageFee
+            }
+          }
+          balanceChanges(first: 3) {
+            nodes {
+              owner { address }
+              coinType { repr }
+              amount
+            }
+            pageInfo { hasNextPage }
+          }
+        }
+      }
+    }
+    """
 
     private static let networkStatusQuery = """
     query LocusSuiNetworkStatus {
@@ -664,6 +725,116 @@ actor WalletSuiGraphQLClient {
         )
     }
 
+    func simulateNativeTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String,
+        gasObjectID: String
+    ) async throws -> WalletSuiNativeTransferSimulation {
+        guard let transaction = Data(base64Encoded: transactionBCS),
+              !transaction.isEmpty, transaction.count <= Self.maximumRequestBytes / 2,
+              transaction.base64EncodedString() == transactionBCS,
+              WalletSolanaBase58.decode(expectedTransactionDigest, exactLength: 32) != nil,
+              Self.isCanonicalAddress(sender), Self.isCanonicalAddress(recipient),
+              sender != recipient, Self.isCanonicalAddress(gasObjectID),
+              let amount = Self.canonicalUInt64(amountBaseUnits), amount != "0",
+              let maximumFee = Self.canonicalUInt64(maximumFeeBaseUnits),
+              maximumFee != "0" else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui simulation requires canonical signer-built transaction evidence."
+            )
+        }
+        let data = try await query(
+            document: Self.nativeTransferSimulationQuery,
+            variables: ["transaction": ["bcs": ["value": transactionBCS]]]
+        )
+        let status = try parseNetworkStatus(data)
+        guard let simulation = data["simulateTransaction"] as? [String: Any],
+              let effects = simulation["effects"] as? [String: Any],
+              effects["digest"] as? String == expectedTransactionDigest,
+              let effectsDigest = effects["effectsDigest"] as? String,
+              WalletSolanaBase58.decode(effectsDigest, exactLength: 32) != nil,
+              effects["status"] as? String == "SUCCESS",
+              effects["executionError"] == nil || effects["executionError"] is NSNull,
+              let gasEffects = effects["gasEffects"] as? [String: Any],
+              let gasObject = gasEffects["gasObject"] as? [String: Any],
+              gasObject["address"] as? String == gasObjectID,
+              let summary = gasEffects["gasSummary"] as? [String: Any],
+              let computation = Self.canonicalUInt53BaseUnits(summary["computationCost"]),
+              let storage = Self.canonicalUInt53BaseUnits(summary["storageCost"]),
+              let rebate = Self.canonicalUInt53BaseUnits(summary["storageRebate"]),
+              let nonRefundable = Self.canonicalUInt53BaseUnits(
+                  summary["nonRefundableStorageFee"]
+              ),
+              // Sui defines the sender charge as computation + storage - rebate.
+              // The non-refundable portion is already excluded from that rebate.
+              let gross = WalletBaseUnits.add(computation, storage),
+              let actualFee = WalletBaseUnits.subtract(gross, rebate),
+              actualFee != "0", WalletBaseUnits.lessThanOrEqual(actualFee, maximumFee),
+              let changes = effects["balanceChanges"] as? [String: Any],
+              let nodes = changes["nodes"] as? [[String: Any]], nodes.count == 2,
+              let pageInfo = changes["pageInfo"] as? [String: Any],
+              pageInfo["hasNextPage"] as? Bool == false else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation did not return exact successful native-transfer effects"
+            )
+        }
+        var senderDebit: String?
+        var recipientCredit: String?
+        for node in nodes {
+            guard let owner = node["owner"] as? [String: Any],
+                  let address = owner["address"] as? String,
+                  address == sender || address == recipient,
+                  let coinType = node["coinType"] as? [String: Any],
+                  coinType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+                  let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui simulation returned an unexpected balance change"
+                )
+            }
+            if address == sender, signed.hasPrefix("-") {
+                guard senderDebit == nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation duplicated the sender debit"
+                    )
+                }
+                senderDebit = String(signed.dropFirst())
+            } else if address == recipient, !signed.hasPrefix("-") {
+                guard recipientCredit == nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation duplicated the recipient credit"
+                    )
+                }
+                recipientCredit = signed
+            } else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui simulation reversed a native-transfer balance change"
+                )
+            }
+        }
+        guard let senderDebit, let recipientCredit,
+              recipientCredit == amount,
+              WalletBaseUnits.add(amount, actualFee) == senderDebit else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation changed the reviewed amount or gas debit"
+            )
+        }
+        return WalletSuiNativeTransferSimulation(
+            network: status, transactionDigest: expectedTransactionDigest,
+            effectsDigest: effectsDigest, sender: sender, recipient: recipient,
+            amountBaseUnits: amount, senderDebitBaseUnits: senderDebit,
+            recipientCreditBaseUnits: recipientCredit, gasObjectID: gasObjectID,
+            gas: WalletSuiGasCostSummary(
+                computationCost: computation, storageCost: storage,
+                storageRebate: rebate, nonRefundableStorageFee: nonRefundable,
+                actualFeeBaseUnits: actualFee
+            )
+        )
+    }
+
     func activity(owner: String) async throws -> [WalletSuiIndexedActivity] {
         guard Self.isCanonicalAddress(owner) else {
             throw WalletGateway.Error.invalidArguments(
@@ -1084,6 +1255,10 @@ actor WalletSuiGraphQLClient {
         return number.uint64Value
     }
 
+    private static func canonicalUInt53BaseUnits(_ value: Any?) -> String? {
+        unsigned53(value).map(String.init)
+    }
+
     private static func date(_ value: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1198,6 +1373,37 @@ actor WalletSuiProviderCoordinator {
             guard let fallback else { throw error }
             return try await fallback.selectNativeGasCoin(
                 owner: owner, requiredBalanceBaseUnits: requiredBalanceBaseUnits
+            )
+        }
+    }
+
+    func simulateNativeTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String,
+        gasObjectID: String
+    ) async throws -> WalletSuiNativeTransferSimulation {
+        do {
+            return try await primary.simulateNativeTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient,
+                amountBaseUnits: amountBaseUnits,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObjectID: gasObjectID
+            )
+        } catch {
+            guard let fallback else { throw error }
+            return try await fallback.simulateNativeTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient,
+                amountBaseUnits: amountBaseUnits,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObjectID: gasObjectID
             )
         }
     }
