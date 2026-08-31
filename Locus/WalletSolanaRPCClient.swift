@@ -498,6 +498,34 @@ actor WalletSolanaRPCClient {
     private let session: URLSession
     private var nextID = 1
 
+    private struct SignatureEvidence: Sendable {
+        let signature: String
+        let slot: UInt64
+        let blockTime: UInt64?
+        let successful: Bool
+    }
+
+    private struct ParsedAccountKey: Sendable {
+        let address: String
+        let signer: Bool
+        let writable: Bool
+    }
+
+    private struct TokenBalanceEvidence: Sendable {
+        let accountIndex: Int
+        let identity: WalletSolanaAssetIdentity
+        let owner: String?
+        let amountBaseUnits: String
+        let decimals: Int
+    }
+
+    private struct DecodedActivityInstruction: Sendable {
+        let path: String
+        let programID: String
+        let accounts: [String]?
+        let data: Data?
+    }
+
     init(
         network: WalletNetworkDescriptor,
         endpoint: String,
@@ -1388,6 +1416,561 @@ actor WalletSolanaRPCClient {
         return collected.sorted { $0.id < $1.id }
     }
 
+    /// Returns the newest bounded finalized transaction history. Every fetched
+    /// signature produces a transaction-level record. Exact owner balance
+    /// deltas and the narrow standalone Core instruction are additional effects;
+    /// unknown instructions are never guessed into a transfer standard.
+    func activity(owner: String) async throws -> [WalletSolanaIndexedActivity] {
+        guard WalletSolanaBase58.decode(owner, exactLength: 32) != nil else {
+            throw WalletGateway.Error.invalidArguments(
+                "The Solana owner address is malformed."
+            )
+        }
+        _ = try await verifiedGenesisHash()
+        let pageLimit = 100
+        let maximumSignatures = 500
+        var before: String?
+        var evidence: [SignatureEvidence] = []
+        var seen: Set<String> = []
+        var previousSlot: UInt64?
+        while evidence.count < maximumSignatures {
+            var configuration: [String: Any] = [
+                "commitment": "finalized",
+                "limit": min(pageLimit, maximumSignatures - evidence.count),
+            ]
+            if let before { configuration["before"] = before }
+            let result = try await rpc(
+                method: "getSignaturesForAddress", params: [owner, configuration]
+            )
+            guard let rows = result as? [Any], rows.count <= pageLimit else {
+                throw WalletRPCError.invalidResponse(
+                    "getSignaturesForAddress returned malformed or excessive data"
+                )
+            }
+            if rows.isEmpty { break }
+            for row in rows {
+                guard let value = row as? [String: Any], value.count <= 8,
+                      let signature = value["signature"] as? String,
+                      WalletSolanaBase58.decode(signature, exactLength: 64) != nil,
+                      let slot = Self.unsigned(value["slot"]),
+                      value["confirmationStatus"] as? String == "finalized",
+                      value.keys.contains("err"),
+                      let blockTime = Self.unsigned(value["blockTime"]),
+                      Self.validOptionalMemo(value["memo"]),
+                      previousSlot.map({ slot <= $0 }) != false,
+                      seen.insert(signature).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "finalized Solana signature evidence was malformed, duplicated, or reordered"
+                    )
+                }
+                previousSlot = slot
+                evidence.append(SignatureEvidence(
+                    signature: signature, slot: slot, blockTime: blockTime,
+                    successful: value["err"] is NSNull
+                ))
+            }
+            guard let cursor = evidence.last?.signature, cursor != before else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana activity pagination repeated its cursor"
+                )
+            }
+            before = cursor
+            if rows.count < pageLimit { break }
+        }
+
+        var indexed: [(Int, [WalletSolanaIndexedActivity])] = []
+        for start in stride(from: 0, to: evidence.count, by: 8) {
+            let end = min(start + 8, evidence.count)
+            let batch = Array(evidence[start..<end])
+            let results = try await withThrowingTaskGroup(
+                of: (Int, [WalletSolanaIndexedActivity]).self
+            ) { group in
+                for (offset, item) in batch.enumerated() {
+                    group.addTask {
+                        let records = try await self.activity(
+                            for: item, owner: owner
+                        )
+                        return (start + offset, records)
+                    }
+                }
+                var values: [(Int, [WalletSolanaIndexedActivity])] = []
+                for try await value in group { values.append(value) }
+                return values
+            }
+            indexed.append(contentsOf: results)
+        }
+        indexed.sort { $0.0 < $1.0 }
+        let records = indexed.flatMap(\.1)
+        guard records.count <= 16_500,
+              Set(records.map(\.id)).count == records.count else {
+            throw WalletRPCError.invalidResponse(
+                "Solana activity effects were excessive or duplicated"
+            )
+        }
+        guard records.count > 500 else { return records }
+        let transactions = indexed.compactMap { $0.1.first }
+        var bounded = transactions
+        for (_, group) in indexed {
+            for effect in group.dropFirst() where bounded.count < 500 {
+                bounded.append(effect)
+            }
+            if bounded.count == 500 { break }
+        }
+        return bounded
+    }
+
+    private func activity(
+        for evidence: SignatureEvidence,
+        owner: String
+    ) async throws -> [WalletSolanaIndexedActivity] {
+        let raw = try await rpc(method: "getTransaction", params: [
+            evidence.signature,
+            [
+                "commitment": "finalized", "encoding": "jsonParsed",
+                "maxSupportedTransactionVersion": 0,
+            ],
+        ])
+        guard let result = raw as? [String: Any], result.count <= 12,
+              Self.unsigned(result["slot"]) == evidence.slot,
+              let version = result["version"], Self.validTransactionVersion(version),
+              let transaction = result["transaction"] as? [String: Any],
+              transaction.count <= 4,
+              let signatures = transaction["signatures"] as? [String],
+              !signatures.isEmpty, signatures.count <= 64,
+              signatures.first == evidence.signature,
+              signatures.allSatisfy({
+                  WalletSolanaBase58.decode($0, exactLength: 64) != nil
+              }),
+              let message = transaction["message"] as? [String: Any],
+              message.count <= 8,
+              let accountRows = message["accountKeys"] as? [Any],
+              !accountRows.isEmpty, accountRows.count <= 256,
+              let meta = result["meta"] as? [String: Any], meta.count <= 24,
+              meta.keys.contains("err"),
+              (meta["err"] is NSNull) == evidence.successful,
+              let fee = Self.unsigned(meta["fee"]),
+              let occurredAt = Self.transactionDate(
+                  result["blockTime"], fallback: evidence.blockTime
+              ) else {
+            throw WalletRPCError.invalidResponse(
+                "getTransaction returned mismatched finalized evidence"
+            )
+        }
+        var accountKeys: [ParsedAccountKey] = []
+        var seenAccounts: Set<String> = []
+        for row in accountRows {
+            guard let value = row as? [String: Any], value.count <= 6,
+                  let address = value["pubkey"] as? String,
+                  WalletSolanaBase58.decode(address, exactLength: 32) != nil,
+                  let signer = value["signer"] as? Bool,
+                  let writable = value["writable"] as? Bool,
+                  let source = value["source"] as? String,
+                  source == "transaction" || source == "lookupTable",
+                  seenAccounts.insert(address).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "the finalized Solana account list was malformed"
+                )
+            }
+            accountKeys.append(ParsedAccountKey(
+                address: address, signer: signer, writable: writable
+            ))
+        }
+        guard let ownerIndex = accountKeys.firstIndex(where: {
+            $0.address == owner
+        }), accountKeys.first?.signer == true,
+           signatures.count == accountKeys.filter(\.signer).count,
+           let preBalances = Self.unsignedArray(meta["preBalances"]),
+           let postBalances = Self.unsignedArray(meta["postBalances"]),
+           preBalances.count == accountKeys.count,
+           postBalances.count == accountKeys.count,
+           Self.validActivityLogs(meta["logMessages"]) else {
+            throw WalletRPCError.invalidResponse(
+                "the finalized Solana balance or signer evidence was malformed"
+            )
+        }
+        let base = WalletSolanaIndexedActivity(
+            id: "\(evidence.signature):transaction",
+            signature: evidence.signature, slot: evidence.slot,
+            occurredAt: occurredAt, successful: evidence.successful,
+            owner: owner, feeBaseUnits: String(fee), direction: nil,
+            assetID: nil, assetKind: nil, assetReference: nil,
+            amountBaseUnits: nil
+        )
+        guard evidence.successful else { return [base] }
+
+        var effects: [WalletSolanaIndexedActivity] = [base]
+        let preNative = preBalances[ownerIndex]
+        let postNative = postBalances[ownerIndex]
+        if preNative != postNative {
+            let inbound = postNative > preNative
+            let amount = inbound ? postNative - preNative : preNative - postNative
+            effects.append(WalletSolanaIndexedActivity(
+                id: "\(evidence.signature):native",
+                signature: evidence.signature, slot: evidence.slot,
+                occurredAt: occurredAt, successful: true, owner: owner,
+                feeBaseUnits: String(fee),
+                direction: inbound ? .inbound : .outbound,
+                assetID: network.nativeAssetID, assetKind: .native,
+                assetReference: nil, amountBaseUnits: String(amount)
+            ))
+        }
+
+        let preTokens = try tokenBalanceEvidence(
+            meta["preTokenBalances"], accountCount: accountKeys.count
+        )
+        let postTokens = try tokenBalanceEvidence(
+            meta["postTokenBalances"], accountCount: accountKeys.count
+        )
+        effects.append(contentsOf: try tokenEffects(
+            pre: preTokens, post: postTokens, owner: owner,
+            signature: evidence.signature, slot: evidence.slot,
+            occurredAt: occurredAt, fee: String(fee)
+        ))
+        effects.append(contentsOf: try coreEffects(
+            message: message, meta: meta, accountKeys: accountKeys,
+            owner: owner, signature: evidence.signature, slot: evidence.slot,
+            occurredAt: occurredAt, fee: String(fee)
+        ))
+        guard effects.count <= 33 else {
+            throw WalletRPCError.invalidResponse(
+                "one Solana transaction produced excessive owner effects"
+            )
+        }
+        return effects
+    }
+
+    private func tokenBalanceEvidence(
+        _ raw: Any?,
+        accountCount: Int
+    ) throws -> [TokenBalanceEvidence] {
+        if raw == nil || raw is NSNull { return [] }
+        guard let rows = raw as? [Any], rows.count <= 256 else {
+            throw WalletRPCError.invalidResponse(
+                "Solana token-balance evidence was excessive"
+            )
+        }
+        var result: [TokenBalanceEvidence] = []
+        var seen: Set<Int> = []
+        for row in rows {
+            guard let value = row as? [String: Any], value.count <= 10,
+                  let rawIndex = Self.unsigned(value["accountIndex"]),
+                  rawIndex < UInt64(accountCount),
+                  let mint = value["mint"] as? String,
+                  WalletSolanaBase58.decode(mint, exactLength: 32) != nil,
+                  let tokenAmount = value["uiTokenAmount"] as? [String: Any],
+                  tokenAmount.count <= 8,
+                  let amount = tokenAmount["amount"] as? String,
+                  WalletBaseUnits.normalize(amount) == amount,
+                  UInt64(amount) != nil,
+                  let rawDecimals = Self.unsigned(tokenAmount["decimals"]),
+                  rawDecimals <= 255,
+                  seen.insert(Int(rawIndex)).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana token-balance evidence was malformed or duplicated"
+                )
+            }
+            let programID: String?
+            if value["programId"] == nil || value["programId"] is NSNull {
+                programID = nil
+            } else if let candidate = value["programId"] as? String,
+                      WalletSolanaBase58.decode(candidate, exactLength: 32) != nil {
+                programID = candidate
+            } else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana token-program evidence was malformed"
+                )
+            }
+            guard let program = WalletSolanaTokenProgram.allCases.first(where: {
+                $0.programID == programID
+            }) else {
+                // Preserve the transaction-level record, but do not infer an
+                // asset effect for an unreviewed token program.
+                continue
+            }
+            let tokenOwner: String?
+            if value["owner"] == nil || value["owner"] is NSNull {
+                tokenOwner = nil
+            } else if let owner = value["owner"] as? String,
+                      WalletSolanaBase58.decode(owner, exactLength: 32) != nil {
+                tokenOwner = owner
+            } else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana token-balance owner evidence was malformed"
+                )
+            }
+            result.append(TokenBalanceEvidence(
+                accountIndex: Int(rawIndex),
+                identity: WalletSolanaAssetIdentity(
+                    networkID: network.id, program: program, mint: mint
+                ),
+                owner: tokenOwner, amountBaseUnits: amount,
+                decimals: Int(rawDecimals)
+            ))
+        }
+        return result
+    }
+
+    private func tokenEffects(
+        pre: [TokenBalanceEvidence],
+        post: [TokenBalanceEvidence],
+        owner: String,
+        signature: String,
+        slot: UInt64,
+        occurredAt: Date,
+        fee: String
+    ) throws -> [WalletSolanaIndexedActivity] {
+        let preByIndex = Dictionary(uniqueKeysWithValues: pre.map {
+            ($0.accountIndex, $0)
+        })
+        let postByIndex = Dictionary(uniqueKeysWithValues: post.map {
+            ($0.accountIndex, $0)
+        })
+        for index in Set(preByIndex.keys).intersection(postByIndex.keys) {
+            guard preByIndex[index]?.identity == postByIndex[index]?.identity,
+                  preByIndex[index]?.decimals == postByIndex[index]?.decimals else {
+                throw WalletRPCError.invalidResponse(
+                    "a Solana token account changed mint, program, or decimals"
+                )
+            }
+        }
+        var identities: [String: WalletSolanaAssetIdentity] = [:]
+        var decimals: [String: Int] = [:]
+        var preTotals: [String: String] = [:]
+        var postTotals: [String: String] = [:]
+        for item in pre + post {
+            let id = item.identity.canonicalID
+            guard decimals[id] == nil || decimals[id] == item.decimals else {
+                throw WalletRPCError.invalidResponse(
+                    "one Solana mint reported conflicting decimals"
+                )
+            }
+            identities[id] = item.identity
+            decimals[id] = item.decimals
+        }
+        for item in pre where item.owner == owner {
+            let id = item.identity.canonicalID
+            guard let total = WalletBaseUnits.add(
+                preTotals[id] ?? "0", item.amountBaseUnits
+            ) else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana pre-token balances exceeded wallet arithmetic"
+                )
+            }
+            preTotals[id] = total
+        }
+        for item in post where item.owner == owner {
+            let id = item.identity.canonicalID
+            guard let total = WalletBaseUnits.add(
+                postTotals[id] ?? "0", item.amountBaseUnits
+            ) else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana post-token balances exceeded wallet arithmetic"
+                )
+            }
+            postTotals[id] = total
+        }
+        var effects: [WalletSolanaIndexedActivity] = []
+        for id in Set(preTotals.keys).union(postTotals.keys).sorted() {
+            let before = preTotals[id] ?? "0"
+            let after = postTotals[id] ?? "0"
+            guard before != after, let identity = identities[id] else { continue }
+            let inbound = WalletBaseUnits.compare(after, before) == .orderedDescending
+            guard let amount = inbound
+                    ? WalletBaseUnits.subtract(after, before)
+                    : WalletBaseUnits.subtract(before, after),
+                  amount != "0" else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana token delta could not be normalized"
+                )
+            }
+            effects.append(WalletSolanaIndexedActivity(
+                id: "\(signature):token:\(id)", signature: signature,
+                slot: slot, occurredAt: occurredAt, successful: true,
+                owner: owner, feeBaseUnits: fee,
+                direction: inbound ? .inbound : .outbound,
+                assetID: id, assetKind: .fungibleToken,
+                assetReference: identity.mint, amountBaseUnits: amount
+            ))
+        }
+        return effects
+    }
+
+    private func coreEffects(
+        message: [String: Any],
+        meta: [String: Any],
+        accountKeys: [ParsedAccountKey],
+        owner: String,
+        signature: String,
+        slot: UInt64,
+        occurredAt: Date,
+        fee: String
+    ) throws -> [WalletSolanaIndexedActivity] {
+        let instructions = try activityInstructions(message: message, meta: meta)
+        let accountMap = Dictionary(uniqueKeysWithValues: accountKeys.map {
+            ($0.address, $0)
+        })
+        var effects: [WalletSolanaIndexedActivity] = []
+        for instruction in instructions where
+            instruction.programID == WalletSolanaCanonicalCoreTransfer.coreProgramID {
+            guard instruction.data == Data([14, 0]),
+                  let accounts = instruction.accounts, accounts.count == 7,
+                  accountMap[instruction.programID] != nil,
+                  accounts.allSatisfy({ accountMap[$0] != nil }),
+                  accounts[1] == instruction.programID,
+                  accounts[3] == instruction.programID,
+                  accounts[5] == instruction.programID,
+                  accounts[6] == instruction.programID,
+                  let asset = accountMap[accounts[0]], asset.writable,
+                  let payer = accountMap[accounts[2]], payer.signer, payer.writable,
+                  let newOwner = accountMap[accounts[4]], !newOwner.writable else {
+                continue
+            }
+            let direction: WalletSolanaActivityDirection
+            if payer.address == owner && newOwner.address == owner {
+                direction = .selfTransfer
+            } else if newOwner.address == owner {
+                direction = .inbound
+            } else if payer.address == owner {
+                direction = .outbound
+            } else {
+                continue
+            }
+            let identity = WalletSolanaCollectibleIdentity(
+                networkID: network.id, standard: .core, address: asset.address
+            )
+            effects.append(WalletSolanaIndexedActivity(
+                id: "\(signature):core:\(instruction.path)", signature: signature,
+                slot: slot, occurredAt: occurredAt, successful: true,
+                owner: owner, feeBaseUnits: fee, direction: direction,
+                assetID: identity.canonicalID, assetKind: .collectible,
+                assetReference: identity.address, amountBaseUnits: "1"
+            ))
+        }
+        return effects
+    }
+
+    private func activityInstructions(
+        message: [String: Any],
+        meta: [String: Any]
+    ) throws -> [DecodedActivityInstruction] {
+        guard let top = message["instructions"] as? [Any], top.count <= 64 else {
+            throw WalletRPCError.invalidResponse(
+                "Solana transaction instructions were malformed or excessive"
+            )
+        }
+        var decoded: [DecodedActivityInstruction] = []
+        for (index, raw) in top.enumerated() {
+            decoded.append(try Self.activityInstruction(
+                raw, path: "top-\(index)"
+            ))
+        }
+        if meta["innerInstructions"] == nil || meta["innerInstructions"] is NSNull {
+            return decoded
+        }
+        guard let groups = meta["innerInstructions"] as? [Any], groups.count <= 64 else {
+            throw WalletRPCError.invalidResponse(
+                "Solana inner instructions were excessive"
+            )
+        }
+        var seenIndexes: Set<UInt64> = []
+        for group in groups {
+            guard let value = group as? [String: Any], value.count <= 4,
+                  let index = Self.unsigned(value["index"]),
+                  index < UInt64(top.count), seenIndexes.insert(index).inserted,
+                  let rows = value["instructions"] as? [Any], rows.count <= 128,
+                  decoded.count + rows.count <= 512 else {
+                throw WalletRPCError.invalidResponse(
+                    "Solana inner-instruction evidence was malformed"
+                )
+            }
+            for (offset, raw) in rows.enumerated() {
+                decoded.append(try Self.activityInstruction(
+                    raw, path: "inner-\(index)-\(offset)"
+                ))
+            }
+        }
+        return decoded
+    }
+
+    private static func activityInstruction(
+        _ raw: Any,
+        path: String
+    ) throws -> DecodedActivityInstruction {
+        guard let value = raw as? [String: Any], value.count <= 8,
+              let programID = value["programId"] as? String,
+              WalletSolanaBase58.decode(programID, exactLength: 32) != nil else {
+            throw WalletRPCError.invalidResponse(
+                "a parsed Solana instruction was malformed"
+            )
+        }
+        if let parsed = value["parsed"] as? [String: Any] {
+            guard parsed.count <= 8,
+                  let program = value["program"] as? String,
+                  !program.isEmpty, program.utf8.count <= 64 else {
+                throw WalletRPCError.invalidResponse(
+                    "a jsonParsed Solana instruction was malformed"
+                )
+            }
+            return DecodedActivityInstruction(
+                path: path, programID: programID, accounts: nil, data: nil
+            )
+        }
+        guard let accounts = value["accounts"] as? [String], accounts.count <= 64,
+              accounts.allSatisfy({
+                  WalletSolanaBase58.decode($0, exactLength: 32) != nil
+              }),
+              let encoded = value["data"] as? String,
+              encoded.utf8.count <= 2_048,
+              let data = encoded.isEmpty ? Data() : WalletSolanaBase58.decode(encoded),
+              data.count <= 1_232 else {
+            throw WalletRPCError.invalidResponse(
+                "a partially decoded Solana instruction was malformed"
+            )
+        }
+        return DecodedActivityInstruction(
+            path: path, programID: programID, accounts: accounts, data: data
+        )
+    }
+
+    private static func validOptionalMemo(_ value: Any?) -> Bool {
+        value == nil || value is NSNull
+            || (value as? String).map({ $0.utf8.count <= 512 }) == true
+    }
+
+    private static func validTransactionVersion(_ value: Any) -> Bool {
+        if value as? String == "legacy" { return true }
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.decimalValue == 0
+    }
+
+    private static func transactionDate(
+        _ raw: Any?,
+        fallback: UInt64?
+    ) -> Date? {
+        let value = unsigned(raw) ?? fallback
+        guard let value, value >= 1_232_000_000 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(value))
+        return date <= Date().addingTimeInterval(300) ? date : nil
+    }
+
+    private static func unsignedArray(_ value: Any?) -> [UInt64]? {
+        guard let rows = value as? [Any] else { return nil }
+        var result: [UInt64] = []
+        result.reserveCapacity(rows.count)
+        for row in rows {
+            guard let value = unsigned(row) else { return nil }
+            result.append(value)
+        }
+        return result
+    }
+
+    private static func validActivityLogs(_ value: Any?) -> Bool {
+        guard value != nil, !(value is NSNull) else { return true }
+        guard let logs = value as? [String], logs.count <= 1_000 else { return false }
+        return logs.allSatisfy { $0.utf8.count <= 1_024 }
+    }
+
     private func parseCollectible(
         _ value: Any,
         expectedOwner: String
@@ -2237,6 +2820,14 @@ actor WalletSolanaProviderCoordinator {
         catch {
             guard let fallback else { throw error }
             return try await fallback.collectibles(owner: owner)
+        }
+    }
+
+    func activity(owner: String) async throws -> [WalletSolanaIndexedActivity] {
+        do { return try await primary.activity(owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.activity(owner: owner)
         }
     }
 

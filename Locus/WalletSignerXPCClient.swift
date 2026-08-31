@@ -972,9 +972,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let networkID = arguments["network_id"] as? String
                 ?? WalletGateway.ethereumMainnetNetworkID
             guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
-                  descriptor.chain == .evm || descriptor.chain == .sui else {
+                  descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui else {
                 throw WalletGateway.Error.invalidArguments(
-                    "Indexed activity is active only for reviewed EVM and Sui providers."
+                    "Indexed activity is active only for reviewed wallet providers."
                 )
             }
             let accounts = try await listAccounts()
@@ -985,6 +986,41 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 throw WalletGateway.Error.invalidArguments(
                     "Select the matching Locus Vault chain account."
                 )
+            }
+            if descriptor.chain == .solana {
+                let indexed = try await solanaRPCClient(for: networkID).activity(
+                    owner: account.address
+                )
+                let rows: [[String: Any]] = indexed.map { item in
+                    var row: [String: Any] = [
+                        "id": item.id,
+                        "transaction_hash": item.signature,
+                        "block_number": String(item.slot),
+                        "occurred_at": item.occurredAt.timeIntervalSince1970,
+                        "status": item.successful ? "confirmed" : "failed",
+                        "owner": item.owner,
+                        "fee_base_units": item.feeBaseUnits,
+                    ]
+                    if let direction = item.direction,
+                       let assetID = item.assetID,
+                       let kind = item.assetKind,
+                       let amount = item.amountBaseUnits {
+                        row["direction"] = direction.rawValue
+                        row["asset_id"] = assetID
+                        row["asset_kind"] = kind.rawValue
+                        row["amount_base_units"] = amount
+                        if let reference = item.assetReference {
+                            row["asset_reference"] = reference
+                        }
+                    }
+                    return row
+                }
+                return [
+                    "text": "Loaded \(rows.count) finalized Solana activity records.",
+                    "account_id": account.id,
+                    "network_id": networkID,
+                    "activity": rows,
+                ]
             }
             if descriptor.chain == .sui {
                 let indexed = try await suiRPCClient(for: networkID).activity(

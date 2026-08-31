@@ -3007,6 +3007,104 @@ final class WalletGatewayTests: XCTestCase {
         ).isVisibleByDefault)
     }
 
+    func testGatewayPersistsFinalizedSolanaActivityAndQuarantinesUnknownAssets() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let signature = WalletSolanaBase58.encode(Data(repeating: 61, count: 64))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 62, count: 32))
+        let coreAsset = WalletSolanaBase58.encode(Data(repeating: 63, count: 32))
+        let tokenID = "solana:devnet/spl:\(mint)"
+        let coreID = "solana:devnet/nft:core:\(coreAsset)"
+        let timestamp = Date().addingTimeInterval(-30).timeIntervalSince1970
+        signer.indexedActivityRows = [
+            [
+                "id": "\(signature):transaction", "transaction_hash": signature,
+                "block_number": "123455", "occurred_at": timestamp,
+                "status": "confirmed", "owner": signer.accountAddress,
+                "fee_base_units": "5000",
+            ],
+            [
+                "id": "\(signature):token", "transaction_hash": signature,
+                "block_number": "123455", "occurred_at": timestamp,
+                "status": "confirmed", "owner": signer.accountAddress,
+                "fee_base_units": "5000", "asset_id": tokenID,
+                "asset_reference": mint,
+                "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                "amount_base_units": "40", "direction": "outbound",
+            ],
+            [
+                "id": "\(signature):core", "transaction_hash": signature,
+                "block_number": "123455", "occurred_at": timestamp,
+                "status": "confirmed", "owner": signer.accountAddress,
+                "fee_base_units": "5000", "asset_id": coreID,
+                "asset_reference": coreAsset,
+                "asset_kind": WalletAssetKind.collectible.rawValue,
+                "amount_base_units": "1", "direction": "inbound",
+            ],
+        ]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        XCTAssertEqual(gateway.transactionHistory.count, 3)
+        XCTAssertTrue(gateway.transactionHistory.allSatisfy {
+            $0.transactionHash == signature && $0.finality == .finalized
+                && $0.state == .confirmed
+        })
+        XCTAssertEqual(
+            gateway.transactionHistory.first(where: { $0.assetID == tokenID })?.direction,
+            .outbound
+        )
+        XCTAssertEqual(
+            gateway.transactionHistory.first(where: { $0.assetID == coreID })?.actionKind,
+            .nftTransfer
+        )
+        let token = try XCTUnwrap(gateway.assets.first { $0.id == tokenID })
+        let collectible = try XCTUnwrap(gateway.assets.first { $0.id == coreID })
+        XCTAssertEqual(token.trust, .quarantined)
+        XCTAssertEqual(collectible.trust, .quarantined)
+        XCTAssertEqual(collectible.kind, .collectible)
+        XCTAssertFalse(try XCTUnwrap(
+            store.loadAssets().first { $0.id == tokenID }
+        ).isVisibleByDefault)
+        XCTAssertFalse(try XCTUnwrap(
+            store.loadAssets().first { $0.id == coreID }
+        ).isVisibleByDefault)
+    }
+
+    func testGatewayRejectsEntireSolanaActivityBatchOnOwnerSubstitution() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let signature = WalletSolanaBase58.encode(Data(repeating: 64, count: 64))
+        let timestamp = Date().addingTimeInterval(-30).timeIntervalSince1970
+        let valid: [String: Any] = [
+            "id": "valid", "transaction_hash": signature,
+            "block_number": "123455", "occurred_at": timestamp,
+            "status": "confirmed", "owner": signer.accountAddress,
+            "fee_base_units": "5000",
+        ]
+        var substituted = valid
+        substituted["id"] = "substituted"
+        substituted["owner"] = WalletSolanaBase58.encode(Data(repeating: 65, count: 32))
+        signer.indexedActivityRows = [valid, substituted]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        XCTAssertTrue(gateway.transactionHistory.isEmpty)
+    }
+
     func testGatewayPersistsFinalizedSuiObjectActivityInQuarantine() async throws {
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
@@ -3548,6 +3646,332 @@ final class WalletGatewayTests: XCTestCase {
             XCTFail("A provider must not silently truncate collectible holdings.")
         } catch WalletRPCError.invalidResponse(let message) {
             XCTAssertTrue(message.contains("truncated"))
+        }
+    }
+
+    func testSolanaFinalizedActivityBindsSignatureBalancesTokensAndCore() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 8, count: 32))
+        let tokenAccount = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let asset = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let signature = WalletSolanaBase58.encode(Data(repeating: 42, count: 64))
+        let timestamp = UInt64(Date().addingTimeInterval(-60).timeIntervalSince1970)
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getSignaturesForAddress":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                XCTAssertEqual(params.first as? String, owner)
+                let configuration = try XCTUnwrap(params[1] as? [String: Any])
+                XCTAssertEqual(configuration["commitment"] as? String, "finalized")
+                XCTAssertEqual(configuration["limit"] as? Int, 100)
+                result = [[
+                    "signature": signature, "slot": 42,
+                    "blockTime": timestamp, "confirmationStatus": "finalized",
+                    "err": NSNull(), "memo": NSNull(),
+                ]]
+            case "getTransaction":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                XCTAssertEqual(params.first as? String, signature)
+                let configuration = try XCTUnwrap(params[1] as? [String: Any])
+                XCTAssertEqual(configuration["encoding"] as? String, "jsonParsed")
+                XCTAssertEqual(configuration["maxSupportedTransactionVersion"] as? Int, 0)
+                let accountKeys: [[String: Any]] = [
+                    ["pubkey": owner, "signer": true, "writable": true,
+                     "source": "transaction"],
+                    ["pubkey": recipient, "signer": false, "writable": false,
+                     "source": "transaction"],
+                    ["pubkey": tokenAccount, "signer": false, "writable": true,
+                     "source": "transaction"],
+                    ["pubkey": mint, "signer": false, "writable": false,
+                     "source": "transaction"],
+                    ["pubkey": WalletSolanaTokenProgram.spl.programID,
+                     "signer": false, "writable": false, "source": "transaction"],
+                    ["pubkey": asset, "signer": false, "writable": true,
+                     "source": "transaction"],
+                    ["pubkey": WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                     "signer": false, "writable": false, "source": "transaction"],
+                ]
+                let preToken: [[String: Any]] = [[
+                    "accountIndex": 2, "mint": mint, "owner": owner,
+                    "programId": WalletSolanaTokenProgram.spl.programID,
+                    "uiTokenAmount": ["amount": "100", "decimals": 6],
+                ]]
+                let postToken: [[String: Any]] = [[
+                    "accountIndex": 2, "mint": mint, "owner": owner,
+                    "programId": WalletSolanaTokenProgram.spl.programID,
+                    "uiTokenAmount": ["amount": "60", "decimals": 6],
+                ]]
+                result = [
+                    "slot": 42, "blockTime": timestamp, "version": "legacy",
+                    "transaction": [
+                        "signatures": [signature],
+                        "message": [
+                            "accountKeys": accountKeys,
+                            "instructions": [[
+                                "programId": WalletSolanaCanonicalCoreTransfer
+                                    .coreProgramID,
+                                "accounts": [
+                                    asset,
+                                    WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                                    owner,
+                                    WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                                    recipient,
+                                    WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                                    WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                                ],
+                                "data": WalletSolanaBase58.encode(Data([14, 0])),
+                            ]],
+                        ],
+                    ],
+                    "meta": [
+                        "err": NSNull(), "fee": 5_000,
+                        "preBalances": [1_000_000, 10, 20, 30, 1, 40, 1],
+                        "postBalances": [990_000, 10, 20, 30, 1, 40, 1],
+                        "preTokenBalances": preToken,
+                        "postTokenBalances": postToken,
+                        "innerInstructions": [], "logMessages": [],
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 4)
+        XCTAssertEqual(activity.first?.id, "\(signature):transaction")
+        XCTAssertEqual(
+            activity.first(where: { $0.assetID
+                == WalletNetworkCatalog.solanaDevnet.nativeAssetID
+            })?.amountBaseUnits,
+            "10000"
+        )
+        let tokenID = "solana:devnet/spl:\(mint)"
+        XCTAssertEqual(activity.first(where: { $0.assetID == tokenID })?.direction,
+                       .outbound)
+        XCTAssertEqual(activity.first(where: { $0.assetID == tokenID })?.amountBaseUnits,
+                       "40")
+        let coreID = "solana:devnet/nft:core:\(asset)"
+        XCTAssertEqual(activity.first(where: { $0.assetID == coreID })?.direction,
+                       .outbound)
+        XCTAssertEqual(activity.first(where: { $0.assetID == coreID })?.amountBaseUnits,
+                       "1")
+        XCTAssertTrue(activity.allSatisfy {
+            $0.signature == signature && $0.slot == 42 && $0.successful
+                && $0.feeBaseUnits == "5000"
+        })
+    }
+
+    func testSolanaActivityKeepsGenericRecordForUnreviewedTokenProgram() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let tokenAccount = WalletSolanaBase58.encode(Data(repeating: 44, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 45, count: 32))
+        let unknownProgram = WalletSolanaBase58.encode(Data(repeating: 46, count: 32))
+        let signature = WalletSolanaBase58.encode(Data(repeating: 47, count: 64))
+        let timestamp = UInt64(Date().addingTimeInterval(-60).timeIntervalSince1970)
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getSignaturesForAddress":
+                result = [[
+                    "signature": signature, "slot": 43,
+                    "blockTime": timestamp, "confirmationStatus": "finalized",
+                    "err": NSNull(), "memo": NSNull(),
+                ]]
+            case "getTransaction":
+                let balance: (String) -> [[String: Any]] = { amount in [[
+                    "accountIndex": 1, "mint": mint, "owner": owner,
+                    "programId": unknownProgram,
+                    "uiTokenAmount": ["amount": amount, "decimals": 0],
+                ]] }
+                result = [
+                    "slot": 43, "blockTime": timestamp, "version": "legacy",
+                    "transaction": [
+                        "signatures": [signature],
+                        "message": [
+                            "accountKeys": [
+                                ["pubkey": owner, "signer": true,
+                                 "writable": true, "source": "transaction"],
+                                ["pubkey": tokenAccount, "signer": false,
+                                 "writable": true, "source": "transaction"],
+                                ["pubkey": unknownProgram, "signer": false,
+                                 "writable": false, "source": "transaction"],
+                            ],
+                            "instructions": [],
+                        ],
+                    ],
+                    "meta": [
+                        "err": NSNull(), "fee": 5_000,
+                        "preBalances": [1_000_000, 10, 1],
+                        "postBalances": [1_000_000, 10, 1],
+                        "preTokenBalances": balance("100"),
+                        "postTokenBalances": balance("60"),
+                        "innerInstructions": [], "logMessages": [],
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 1)
+        XCTAssertEqual(activity.first?.id, "\(signature):transaction")
+        XCTAssertNil(activity.first?.assetID)
+    }
+
+    func testSolanaActivityCapPreservesEveryFetchedTransactionRecord() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let timestamp = UInt64(Date().addingTimeInterval(-60).timeIntervalSince1970)
+        let signatures = (0..<500).map { index in
+            var value = UInt64(index).bigEndian
+            var bytes = withUnsafeBytes(of: &value) { Data($0) }
+            bytes.append(Data(repeating: 48, count: 56))
+            return WalletSolanaBase58.encode(bytes)
+        }
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getSignaturesForAddress":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let configuration = try XCTUnwrap(params[1] as? [String: Any])
+                let before = configuration["before"] as? String
+                let start = before.flatMap {
+                    signatures.firstIndex(of: $0)
+                }.map { $0 + 1 } ?? 0
+                let limit = try XCTUnwrap(configuration["limit"] as? Int)
+                result = signatures.dropFirst(start).prefix(limit).enumerated().map {
+                    offset, signature in
+                    [
+                        "signature": signature,
+                        "slot": 1_000 - start - offset,
+                        "blockTime": timestamp,
+                        "confirmationStatus": "finalized",
+                        "err": NSNull(), "memo": NSNull(),
+                    ] as [String: Any]
+                }
+            case "getTransaction":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let signature = try XCTUnwrap(params.first as? String)
+                let index = try XCTUnwrap(signatures.firstIndex(of: signature))
+                result = [
+                    "slot": 1_000 - index, "blockTime": timestamp,
+                    "version": "legacy",
+                    "transaction": [
+                        "signatures": [signature],
+                        "message": [
+                            "accountKeys": [[
+                                "pubkey": owner, "signer": true,
+                                "writable": true, "source": "transaction",
+                            ]],
+                            "instructions": [],
+                        ],
+                    ],
+                    "meta": [
+                        "err": NSNull(), "fee": 1,
+                        "preBalances": [100], "postBalances": [99],
+                        "preTokenBalances": [], "postTokenBalances": [],
+                        "innerInstructions": [], "logMessages": [],
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 500)
+        XCTAssertEqual(Set(activity.map(\.signature)).count, 500)
+        XCTAssertTrue(activity.allSatisfy { $0.id.hasSuffix(":transaction") })
+    }
+
+    func testSolanaActivityRejectsDuplicateAndSubstitutedEvidence() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let signature = WalletSolanaBase58.encode(Data(repeating: 43, count: 64))
+        let timestamp = UInt64(Date().addingTimeInterval(-60).timeIntervalSince1970)
+        var duplicate = true
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getSignaturesForAddress":
+                let row: [String: Any] = [
+                    "signature": signature, "slot": 42, "blockTime": timestamp,
+                    "confirmationStatus": "finalized", "err": NSNull(),
+                    "memo": NSNull(),
+                ]
+                result = duplicate ? [row, row] : [row]
+            case "getTransaction":
+                result = [
+                    "slot": 41, "blockTime": timestamp, "version": "legacy",
+                    "transaction": [
+                        "signatures": [signature],
+                        "message": ["accountKeys": [], "instructions": []],
+                    ],
+                    "meta": [
+                        "err": NSNull(), "fee": 5_000,
+                        "preBalances": [], "postBalances": [],
+                        "preTokenBalances": [], "postTokenBalances": [],
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("Duplicate finalized signatures must reject the batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicated"))
+        }
+        duplicate = false
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("A transaction from another slot must reject the batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("mismatched finalized evidence"))
         }
     }
 

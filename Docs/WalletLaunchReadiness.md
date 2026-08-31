@@ -44,6 +44,13 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   transition in simulation, repeats evidence before signing, and never exposes
   NFT policy authority. Collection, plugin, compression, Token Metadata, and
   Bubblegum transfer shapes remain absent.
+- [x] Bounded finalized Solana activity through genesis-verified
+  `getSignaturesForAddress` pagination and exact `getTransaction` evidence.
+  Signature order, finality, slot, version, signer/account keys, balances, fees,
+  token program/mint/owner/decimals, and Core instruction accounts are checked;
+  every accepted transaction keeps a generic record, reviewed effects are
+  additive, unknown programs are not guessed, and unknown assets are
+  quarantined. Public SQLite retains the newest 500 normalized records.
 - [x] Read-only Sui GraphQL network health and native SUI balances with full
   genesis-digest verification, bounded/error-free response envelopes, fresh
   checkpoint and epoch/gas evidence, and exact reconciliation of coin-object
@@ -105,7 +112,9 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [ ] Solana transfer-altering Token-2022 extensions, Core collection/plugin
   variants, Token Metadata/programmable NFT transfers, and compressed-
   collectible transfer implementation complete. The standalone plugin-free
-  Core subset is implemented but not mainnet-enabled.
+  Core subset is implemented but not mainnet-enabled. Finalized legacy/v0
+  activity indexing is implemented; v1 decoding and versioned-message signing
+  remain closed.
 - [ ] Sui object creation/deletion activity, gRPC execution migration,
   multi-object Coin merge/object batching, and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object

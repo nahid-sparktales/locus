@@ -474,6 +474,30 @@ struct WalletSolanaCollectible: Codable, Equatable, Identifiable, Sendable {
     let delegated: Bool
 }
 
+/// A finalized Solana transaction or exact owner balance effect normalized from
+/// canonical RPC evidence. Unknown transaction shapes remain visible as a
+/// transaction-level record without being guessed into a transfer standard.
+enum WalletSolanaActivityDirection: String, Equatable, Sendable {
+    case inbound
+    case outbound
+    case selfTransfer = "self_transfer"
+}
+
+struct WalletSolanaIndexedActivity: Equatable, Identifiable, Sendable {
+    let id: String
+    let signature: String
+    let slot: UInt64
+    let occurredAt: Date
+    let successful: Bool
+    let owner: String
+    let feeBaseUnits: String
+    let direction: WalletSolanaActivityDirection?
+    let assetID: String?
+    let assetKind: WalletAssetKind?
+    let assetReference: String?
+    let amountBaseUnits: String?
+}
+
 enum WalletProviderKind: String, Codable, CaseIterable, Sendable {
     case alchemy
     case quickNode = "quicknode"

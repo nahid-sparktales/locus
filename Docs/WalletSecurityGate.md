@@ -129,6 +129,15 @@ signing adapter.
   transfers are not representable. The adapter is compiled for Solana devnet
   only; mainnet static authority remains absent until deployed upgradeable-
   program evidence is pinned and independently verified.
+- Finalized Solana activity verifies genesis before bounded
+  `getSignaturesForAddress` pagination and retrieves each signature with
+  finalized `getTransaction` evidence. Signature order, slot, status, legacy/v0
+  version, account privileges, fee, balances, token identity, and decoded Core
+  accounts are validated as one batch. Every accepted signature produces a
+  generic transaction record; exact owner balance effects and the narrow Core
+  shape are added without guessing unknown programs. Unknown SPL, Token-2022,
+  and Core identities are quarantined, and public SQLite retains only the newest
+  500 normalized records.
 - Read-only Sui native balances use GraphQL following the official
   [JSON-RPC migration guidance](https://github.com/MystenLabs/sui/blob/main/docs/content/develop/accessing-data/grpc/what-is-grpc.mdx).
   Every response carries the chain identifier in the same query as
@@ -243,8 +252,8 @@ until their implementation and evidence gates pass:
 - Solana transfer-altering Token-2022 extensions, Core collection/plugin
   variants, Token Metadata/programmable and compressed-collectible transfer
   adapters, remote-media rendering,
-  versioned-message and lookup-table
-  decoding, indexed history, priority fees, and local-validator coverage; all
+  versioned-message signing, v1 transaction decoding, priority fees, and
+  local-validator coverage; all
   Sui object creation/deletion activity, gRPC execution migration, multi-object
   transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
   activation remain gated;

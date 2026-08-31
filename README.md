@@ -178,7 +178,19 @@ simulation and the pre-sign recheck. The app and Rust signer independently
 rebuild the one `TransferV1` instruction; collection-backed, plugin-bearing,
 compressed, Token Metadata, programmable, and Bubblegum transfers remain
 read-only. This Core adapter remains testnet-only until an approved release pins
-and verifies the deployed upgradeable program evidence. Sui native balances now use the
+and verifies the deployed upgradeable program evidence. Finalized Solana
+activity is read from bounded
+[`getSignaturesForAddress`](https://solana.com/docs/rpc/http/getsignaturesforaddress)
+pages and exact
+[`getTransaction`](https://solana.com/docs/rpc/http/gettransaction) evidence
+after genesis verification. Each accepted signature remains visible as a
+transaction-level record; exact owner SOL and reviewed SPL/Token-2022 balance
+deltas and the narrow Core `TransferV1` shape are additive effects. Unknown
+programs are not guessed, while malformed, duplicate, reordered, wrong-slot,
+or owner-substituted evidence rejects the batch. The newest 500 normalized
+records are stored in public SQLite, and unknown token/Core identities enter
+quarantine.
+Sui native balances now use the
 [current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
 full Base58 genesis checkpoint digest, reject
 stale checkpoints and partial GraphQL results, and reconcile coin-object and
@@ -231,7 +243,8 @@ Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
 variants, Token Metadata and compressed-collectible transfers, versioned
-messages, Sui object creation/deletion activity and gRPC execution migration,
+message signing and v1 decoding, priority fees, Sui object creation/deletion
+activity and gRPC execution migration,
 full swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass. Finalized Sui activity does record
 strict non-Coin ownership transitions for the tracked account, while validating
