@@ -300,6 +300,7 @@ enum WalletReviewedAdapters {
         "solana-token-2022-transfer-checked-v1"
     static let solanaAssociatedTokenCreateIdempotent =
         "solana-associated-token-create-idempotent-v1"
+    static let solanaCoreTransfer = "solana-mpl-core-transfer-v1"
     static let suiNativeTransfer = "sui-native-transfer-v1"
     static let suiCoinTransfer = "sui-coin-transfer-v1"
     static let suiObjectTransfer = "sui-object-transfer-v1"
@@ -312,6 +313,7 @@ enum WalletReviewedAdapters {
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
         solanaAssociatedTokenCreateIdempotent,
+        solanaCoreTransfer,
         suiNativeTransfer, suiCoinTransfer, suiObjectTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,

@@ -52,6 +52,7 @@ let supportedAdapterIDs: Set<String> = [
     "solana-spl-transfer-checked-v1",
     "solana-token-2022-transfer-checked-v1",
     "solana-associated-token-create-idempotent-v1",
+    "solana-mpl-core-transfer-v1",
     "sui-native-transfer-v1",
     "sui-coin-transfer-v1",
     "sui-object-transfer-v1",
@@ -179,6 +180,15 @@ func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
         if asset.kind == "native" {
             return asset.canonicalID == "\(asset.networkID)/slip44:501"
                 && asset.reference == nil && asset.decimals == 9
+        }
+        if asset.kind == "nft" || asset.kind == "collectible" {
+            guard let address = asset.reference,
+                  isCanonicalSolanaAddress(address),
+                  asset.canonicalID == "\(asset.networkID)/nft:core:\(address)",
+                  asset.decimals == nil || asset.decimals == 0 else {
+                return false
+            }
+            return true
         }
         guard let mint = asset.reference, isCanonicalSolanaAddress(mint),
               asset.canonicalID == "\(asset.networkID)/spl:\(mint)"

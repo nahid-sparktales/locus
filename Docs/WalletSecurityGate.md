@@ -21,11 +21,12 @@ interrupted, pending recovery state is cleared and signing authority locks.
 The signer exports typed EVM, Solana, and Sui protocol-v2 operations. Arbitrary
 digest signing, raw messages, opaque calldata, unresolved Solana instructions,
 and unknown Move calls are not exported authority. Implemented Solana builders
-accept only one canonical native transfer or one reviewed SPL/Token-2022
-`TransferChecked`, optionally preceded by one exact idempotent
-associated-token-account creation; other Solana and Sui transaction shapes stay
-fail-closed except the separately typed native SUI, single-object `Coin<T>`, and
-publicly transferable object subsets described below.
+accept only one canonical native transfer, one reviewed SPL/Token-2022
+`TransferChecked` optionally preceded by one exact idempotent associated-token-
+account creation, or one standalone plugin-free Metaplex Core `TransferV1`;
+other Solana and Sui transaction shapes stay fail-closed except the separately
+typed native SUI, single-object `Coin<T>`, and publicly transferable object
+subsets described below.
 
 ## Mainnet capability manifest
 
@@ -115,6 +116,19 @@ signing adapter.
   classified as raster images. SVG, HTML, script URLs, malformed items, and
   unknown interfaces are never promoted as trusted wallet content. No remote
   media URL currently crosses into the main-app asset store.
+- A Core collectible can be transferred only when its exact canonical identity
+  and the Core adapter are both present in the signed review manifest. Locus
+  ignores discovery claims for signing and reparses the live Core-owned
+  `AssetV1` bytes instead. Only an uncompressed standalone asset with no trailing
+  plugin registry is accepted; its owner, update authority, full data digest,
+  fee, blockhash, and exact post-simulation owner transition are rebound before
+  signing. Swift and Rust independently rebuild the seven-account `TransferV1`
+  sentinel shape with a `None` compression proof. The signer request rejects
+  unknown fields, no autonomous NFT policy exists, and collection-backed,
+  plugin-bearing, Token Metadata, programmable, and compressed collectible
+  transfers are not representable. The adapter is compiled for Solana devnet
+  only; mainnet static authority remains absent until deployed upgradeable-
+  program evidence is pinned and independently verified.
 - Read-only Sui native balances use GraphQL following the official
   [JSON-RPC migration guidance](https://github.com/MystenLabs/sui/blob/main/docs/content/develop/accessing-data/grpc/what-is-grpc.mdx).
   Every response carries the chain identifier in the same query as
@@ -226,8 +240,9 @@ signing adapter.
 The code intentionally does not claim GA. These capabilities stay disabled
 until their implementation and evidence gates pass:
 
-- Solana transfer-altering Token-2022 extensions,
-  NFT/compressed-collectible transfer adapters, remote-media rendering,
+- Solana transfer-altering Token-2022 extensions, Core collection/plugin
+  variants, Token Metadata/programmable and compressed-collectible transfer
+  adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
   Sui object creation/deletion activity, gRPC execution migration, multi-object

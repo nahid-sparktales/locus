@@ -64,6 +64,18 @@ private func rustSignSolanaSPLTransfer(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_prepare_solana_core_transfer_json")
+private func rustPrepareSolanaCoreTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("locus_wallet_sign_solana_core_transfer_json")
+private func rustSignSolanaCoreTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_prepare_sui_native_transfer_json")
 private func rustPrepareSuiNativeTransfer(
     _ entropyHex: UnsafePointer<CChar>,
@@ -201,6 +213,13 @@ private struct RustSolanaSPLTransfer: Encodable {
     let recentBlockhash: String
     let amountBaseUnits: String
     let decimals: UInt8
+}
+
+private struct RustSolanaCoreTransfer: Encodable {
+    let feePayer: String
+    let asset: String
+    let recipient: String
+    let recentBlockhash: String
 }
 
 private struct RustSolanaAssociatedTokenRequest: Encodable {
@@ -877,6 +896,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     )
                 case .fungibleTokenTransfer:
                     intent = try self.prepareSolanaSPLTransfer(
+                        packet: packet, entropy: entropy
+                    )
+                case .nftTransfer:
+                    intent = try self.prepareSolanaCoreTransfer(
                         packet: packet, entropy: entropy
                     )
                 default:
@@ -2148,6 +2171,156 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         )
     }
 
+    private func prepareSolanaCoreTransfer(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data
+    ) throws -> StoredSolanaIntent {
+        let action = packet.request.action
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+              identity.networkID == packet.request.networkID,
+              identity.standard == .core,
+              action.tokenID == identity.address,
+              action.amountBaseUnits == "1",
+              action.inputAssetID == nil, action.outputAssetID == nil,
+              action.minimumOutputBaseUnits == nil, action.adapterID == nil,
+              action.authorizationFormat == nil, action.metadataDigest == nil,
+              action.contractID == nil, action.function == nil,
+              action.arguments.isEmpty, action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              packet.version == .legacy,
+              packet.priorityFeeBaseUnits == "0",
+              packet.maximumFeeBaseUnits == packet.request.maximumFeeBaseUnits,
+              let fee = SignerUnsignedInteger.normalize(packet.feeQuoteBaseUnits),
+              SignerUnsignedInteger.lessThanOrEqual(
+                fee, packet.request.maximumFeeBaseUnits
+              ),
+              packet.lastValidBlockHeight > 0,
+              packet.simulationSucceeded,
+              abs(packet.observedAt.timeIntervalSinceNow) <= 30,
+              packet.instructions.count == 1,
+              let instruction = packet.instructions.first,
+              instruction.programID == Self.solanaCoreProgramID,
+              instruction.adapterID == WalletReviewedAdapters.solanaCoreTransfer,
+              instruction.semanticOperation == WalletActionKind.nftTransfer.rawValue,
+              let assetDataDigest = instruction.canonicalArguments[
+                "asset_data_digest"
+              ],
+              assetDataDigest.hasPrefix("sha256:"), assetDataDigest.count == 71,
+              assetDataDigest.dropFirst(7).utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte)
+              }) else {
+            throw signerError(
+                "The RPC evidence does not match a fresh reviewed Core transfer."
+            )
+        }
+        let account = try store.accounts().first {
+            $0.id == packet.request.accountID && $0.chain == .solana
+                && $0.networkIDs.contains(packet.request.networkID)
+        }
+        guard let account, account.address == packet.feePayer,
+              Self.isSolanaAddress(recipient), recipient != account.address,
+              identity.address != account.address, identity.address != recipient,
+              identity.address != Self.solanaCoreProgramID,
+              recipient != Self.solanaCoreProgramID else {
+            throw signerError("The requested Core account roles are invalid.")
+        }
+        let authorityKind = instruction.canonicalArguments[
+            "update_authority_kind"
+        ]
+        let authorityAddress = instruction.canonicalArguments[
+            "update_authority"
+        ]
+        guard (authorityKind == "none" && authorityAddress == "")
+                || (authorityKind == "address"
+                    && authorityAddress.map(Self.isSolanaAddress) == true) else {
+            throw signerError("The Core update-authority evidence is invalid.")
+        }
+        let expectedAccounts = [
+            WalletSolanaResolvedAccount(
+                address: account.address, isSigner: true, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: identity.address, isSigner: false, isWritable: true,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+            WalletSolanaResolvedAccount(
+                address: recipient, isSigner: false, isWritable: false,
+                lookupTableAddress: nil, lookupTableSlot: nil
+            ),
+        ]
+        let expectedArguments = [
+            "asset_data_digest": assetDataDigest,
+            "asset_id": assetID,
+            "collection": "none",
+            "compression": "none",
+            "plugins": "none",
+            "recipient": recipient,
+            "update_authority": authorityAddress ?? "",
+            "update_authority_kind": authorityKind ?? "",
+        ]
+        let resolvedDigest = Self.solanaCoreResolvedAccountsDigest(
+            feePayer: account.address, asset: identity.address,
+            recipient: recipient, assetDataDigest: assetDataDigest
+        )
+        guard instruction.accounts == expectedAccounts,
+              instruction.canonicalArguments == expectedArguments,
+              packet.resolvedAccountsDigest == resolvedDigest else {
+            throw signerError(
+                "The Core programs, privileges, or plugin-free asset evidence are outside the reviewed adapter."
+            )
+        }
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.solanaCoreTransfer,
+            networkID: packet.request.networkID
+        )
+        guard reviewRegistry?.assets.contains(where: {
+            $0.id == identity.canonicalID && $0.networkID == identity.networkID
+                && $0.chain == .solana
+                && ($0.kind == .nft || $0.kind == .collectible)
+                && $0.reference == identity.address
+                && ($0.decimals == nil || $0.decimals == 0)
+                && $0.trust == .curated
+        }) == true else {
+            throw signerError(
+                "The Core asset is absent from the signed review manifest."
+            )
+        }
+        let rust = try rustPrepareSolana(packet: packet, entropy: entropy)
+        guard rust.from == account.address,
+              rust.canonicalMessageDigest == packet.canonicalMessageDigest else {
+            throw signerError(
+                "The signer-rebuilt Core message differs from provider preparation."
+            )
+        }
+        let now = Date()
+        let intentID = UUID().uuidString.lowercased()
+        let prepared = WalletPreparedTransaction(
+            id: intentID, digest: rust.canonicalMessageDigest,
+            networkID: packet.request.networkID,
+            accountID: packet.request.accountID,
+            source: packet.request.source, action: action,
+            summary: "Send Core asset \(identity.address) to \(recipient)",
+            effects: [WalletDecodedEffect(
+                id: "\(intentID):core-transfer", kind: "nft_transfer",
+                assetID: assetID, amountBaseUnits: "1",
+                from: account.address, to: recipient, spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.solanaCoreTransfer,
+            budgetAssetID: assetID, spendBaseUnits: "1",
+            maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: fee, simulation: packet.simulation,
+            simulationSucceeded: true,
+            nonce: "\(packet.recentBlockhash):\(assetDataDigest)",
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "exact_confirmation_required", policyID: nil
+        )
+        return StoredSolanaIntent(packet: packet, prepared: prepared)
+    }
+
     private func prepareSolanaSPLTransfer(
         packet: WalletSolanaPreparationPacket,
         entropy: Data
@@ -2902,6 +3075,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         "11111111111111111111111111111111"
     private static let solanaAssociatedTokenProgramID =
         "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+    private static let solanaCoreProgramID =
+        "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
 
     private static func isSolanaAddress(_ value: String) -> Bool {
         WalletSolanaBase58.decode(value, exactLength: 32) != nil
@@ -2998,6 +3173,21 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             description += "|destination_exts:\(destinationExtensions.joined(separator: ","))"
         }
         let value = Data(description.utf8)
+        return "sha256:" + SHA256.hash(data: value).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+
+    private static func solanaCoreResolvedAccountsDigest(
+        feePayer: String,
+        asset: String,
+        recipient: String,
+        assetDataDigest: String
+    ) -> String {
+        let value = Data(
+            "legacy|\(solanaCoreProgramID)|\(feePayer):signer:writable|\(asset):nonsigner:writable|\(recipient):nonsigner:readonly|standalone:true|plugins:none|asset_data:\(assetDataDigest)"
+                .utf8
+        )
         return "sha256:" + SHA256.hash(data: value).map {
             String(format: "%02x", $0)
         }.joined()
@@ -3482,6 +3672,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 packet: packet, entropy: entropy,
                 function: rustPrepareSolanaSPLTransfer
             )
+        case .nftTransfer:
+            return try rustSolanaCoreCall(
+                packet: packet, entropy: entropy,
+                function: rustPrepareSolanaCoreTransfer
+            )
         default:
             throw signerError("The Solana signer adapter is unavailable.")
         }
@@ -3501,6 +3696,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             return try rustSolanaSPLCall(
                 packet: packet, entropy: entropy,
                 function: rustSignSolanaSPLTransfer
+            )
+        case .nftTransfer:
+            return try rustSolanaCoreCall(
+                packet: packet, entropy: entropy,
+                function: rustSignSolanaCoreTransfer
             )
         default:
             throw signerError("The Solana signer adapter is unavailable.")
@@ -3731,6 +3931,27 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             createDestinationAssociatedAccount: packet.instructions.count == 2,
             recentBlockhash: packet.recentBlockhash,
             amountBaseUnits: amount, decimals: decimals
+        )
+        return try rustSolanaCall(
+            request: request, entropy: entropy, function: function
+        )
+    }
+
+    private func rustSolanaCoreCall<T: Decodable>(
+        packet: WalletSolanaPreparationPacket,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> T {
+        guard let recipient = packet.request.action.recipient,
+              let assetID = packet.request.action.assetID,
+              let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+              identity.networkID == packet.request.networkID,
+              identity.standard == .core else {
+            throw signerError("The semantic Core transfer is incomplete.")
+        }
+        let request = RustSolanaCoreTransfer(
+            feePayer: packet.feePayer, asset: identity.address,
+            recipient: recipient, recentBlockhash: packet.recentBlockhash
         )
         return try rustSolanaCall(
             request: request, entropy: entropy, function: function

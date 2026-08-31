@@ -331,6 +331,110 @@ struct WalletSolanaCanonicalSPLTransfer: Equatable, Sendable {
     }
 }
 
+/// The first transferable Core subset is intentionally narrower than the
+/// program itself: one uncompressed, standalone AssetV1 account with no plugin
+/// registry, paid for and authorized by the vault owner. Collection accounts,
+/// compression proofs, remaining accounts, and caller-supplied instructions
+/// are not representable here.
+struct WalletSolanaCanonicalCoreTransfer: Equatable, Sendable {
+    static let coreProgramID = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+
+    let feePayer: String
+    let asset: String
+    let recipient: String
+    let recentBlockhash: String
+    let message: Data
+    let unsignedTransaction: Data
+    let canonicalMessageDigest: String
+    let resolvedAccountsDigest: String
+
+    init(
+        feePayer: String,
+        asset: String,
+        recipient: String,
+        recentBlockhash: String,
+        assetDataDigest: String
+    ) throws {
+        guard let payer = WalletSolanaBase58.decode(feePayer, exactLength: 32),
+              let assetBytes = WalletSolanaBase58.decode(asset, exactLength: 32),
+              let destination = WalletSolanaBase58.decode(recipient, exactLength: 32),
+              let core = WalletSolanaBase58.decode(Self.coreProgramID, exactLength: 32),
+              let blockhash = WalletSolanaBase58.decode(recentBlockhash, exactLength: 32),
+              Set([feePayer, asset, recipient, Self.coreProgramID]).count == 4,
+              assetDataDigest.hasPrefix("sha256:"), assetDataDigest.count == 71,
+              assetDataDigest.dropFirst(7).utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte)
+              }) else {
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed Core transfer requires distinct canonical accounts, a valid blockhash, and exact on-chain asset evidence."
+            )
+        }
+
+        // Legacy account order is fixed by this reviewed adapter rather than
+        // delegated to an SDK: payer, writable asset, recipient, Core program.
+        // Optional collection/authority/system/log-wrapper accounts all use the
+        // Core program sentinel. Payer therefore remains the resolved authority.
+        var message = Data([1, 0, 2])
+        message.append(Data([4]))
+        for account in [payer, assetBytes, destination, core] {
+            message.append(account)
+        }
+        message.append(blockhash)
+        message.append(Data([1]))
+        message.append(3)
+        message.append(Data([7]))
+        message.append(contentsOf: [1, 3, 0, 3, 2, 3, 3])
+        // TransferV1 discriminator 14 plus Borsh Option<CompressionProof>::None.
+        message.append(Data([2, 14, 0]))
+
+        var transaction = Data([1])
+        transaction.append(Data(repeating: 0, count: 64))
+        transaction.append(message)
+        self.feePayer = feePayer
+        self.asset = asset
+        self.recipient = recipient
+        self.recentBlockhash = recentBlockhash
+        self.message = message
+        unsignedTransaction = transaction
+        canonicalMessageDigest = Self.sha256(message)
+        resolvedAccountsDigest = Self.resolvedDigest(
+            feePayer: feePayer, asset: asset, recipient: recipient,
+            assetDataDigest: assetDataDigest
+        )
+    }
+
+    static func resolvedDigest(
+        feePayer: String,
+        asset: String,
+        recipient: String,
+        assetDataDigest: String
+    ) -> String {
+        sha256(Data(
+            "legacy|\(coreProgramID)|\(feePayer):signer:writable|\(asset):nonsigner:writable|\(recipient):nonsigner:readonly|standalone:true|plugins:none|asset_data:\(assetDataDigest)"
+                .utf8
+        ))
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        "sha256:" + SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+}
+
+struct WalletSolanaCoreAssetEvidence: Equatable, Sendable {
+    enum UpdateAuthority: Equatable, Sendable {
+        case none
+        case address(String)
+    }
+
+    let address: String
+    let owner: String
+    let updateAuthority: UpdateAuthority
+    let dataDigest: String
+    let slot: UInt64
+}
+
 private extension Data {
     mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
         var encoded = value.littleEndian
@@ -435,6 +539,10 @@ actor WalletSolanaRPCClient {
                 request: request, feePayer: feePayer,
                 recipientAssociatedTokenAddress: recipientAssociatedTokenAddress
             )
+        case .nftTransfer:
+            return try await prepareCoreTransfer(
+                request: request, feePayer: feePayer
+            )
         default:
             throw WalletGateway.Error.invalidArguments(
                 "That Solana semantic action has no reviewed provider adapter."
@@ -500,6 +608,105 @@ actor WalletSolanaRPCClient {
             recentBlockhash: latest.blockhash,
             lastValidBlockHeight: latest.lastValidBlockHeight,
             contextSlot: latest.contextSlot,
+            feePayer: feePayer, priorityFeeBaseUnits: "0",
+            feeQuoteBaseUnits: fee,
+            maximumFeeBaseUnits: request.maximumFeeBaseUnits,
+            canonicalMessageDigest: transaction.canonicalMessageDigest,
+            resolvedAccountsDigest: transaction.resolvedAccountsDigest,
+            instructions: [instruction], simulation: simulation,
+            simulationSucceeded: true, observedAt: Date()
+        )
+    }
+
+    private func prepareCoreTransfer(
+        request: WalletPrepareRequest,
+        feePayer: String
+    ) async throws -> WalletSolanaPreparationPacket {
+        let action = request.action
+        guard request.networkID == network.id,
+              action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+              identity.networkID == network.id, identity.standard == .core,
+              action.tokenID == identity.address,
+              action.amountBaseUnits == "1",
+              action.inputAssetID == nil, action.outputAssetID == nil,
+              action.minimumOutputBaseUnits == nil, action.adapterID == nil,
+              action.authorizationFormat == nil, action.metadataDigest == nil,
+              action.contractID == nil, action.function == nil,
+              action.arguments.isEmpty, action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              WalletSolanaBase58.decode(recipient, exactLength: 32) != nil,
+              recipient != feePayer else {
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed Core adapter accepts one canonical owner transfer only."
+            )
+        }
+        let genesisHash = try await verifiedGenesisHash()
+        let assetEvidence = try await coreAssetEvidence(
+            address: identity.address, expectedOwner: feePayer
+        )
+        let latest = try await latestBlockhash()
+        let transaction = try WalletSolanaCanonicalCoreTransfer(
+            feePayer: feePayer, asset: identity.address, recipient: recipient,
+            recentBlockhash: latest.blockhash,
+            assetDataDigest: assetEvidence.dataDigest
+        )
+        let fee = try await feeForMessage(transaction.message)
+        guard WalletBaseUnits.lessThanOrEqual(fee, request.maximumFeeBaseUnits) else {
+            throw WalletGateway.Error.policyDenied(
+                "The Solana network fee exceeds the requested fee ceiling."
+            )
+        }
+        let simulation = try await simulateCoreTransfer(
+            transaction.unsignedTransaction, asset: identity.address,
+            expectedOwner: recipient,
+            expectedUpdateAuthority: assetEvidence.updateAuthority
+        )
+        let authorityKind: String
+        let authorityAddress: String
+        switch assetEvidence.updateAuthority {
+        case .none:
+            authorityKind = "none"
+            authorityAddress = ""
+        case .address(let address):
+            authorityKind = "address"
+            authorityAddress = address
+        }
+        let instruction = WalletSolanaReviewedInstruction(
+            programID: WalletSolanaCanonicalCoreTransfer.coreProgramID,
+            adapterID: WalletReviewedAdapters.solanaCoreTransfer,
+            semanticOperation: WalletActionKind.nftTransfer.rawValue,
+            accounts: [
+                .init(
+                    address: feePayer, isSigner: true, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                .init(
+                    address: identity.address, isSigner: false, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                .init(
+                    address: recipient, isSigner: false, isWritable: false,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+            ],
+            canonicalArguments: [
+                "asset_data_digest": assetEvidence.dataDigest,
+                "asset_id": assetID,
+                "collection": "none",
+                "compression": "none",
+                "plugins": "none",
+                "recipient": recipient,
+                "update_authority": authorityAddress,
+                "update_authority_kind": authorityKind,
+            ]
+        )
+        return WalletSolanaPreparationPacket(
+            request: request, genesisHash: genesisHash, version: .legacy,
+            recentBlockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight,
+            contextSlot: max(latest.contextSlot, assetEvidence.slot),
             feePayer: feePayer, priorityFeeBaseUnits: "0",
             feeQuoteBaseUnits: fee,
             maximumFeeBaseUnits: request.maximumFeeBaseUnits,
@@ -708,6 +915,7 @@ actor WalletSolanaRPCClient {
         let unsignedTransaction: Data
         let canonicalDigest: String
         let resolvedDigest: String
+        var coreUpdateAuthority: WalletSolanaCoreAssetEvidence.UpdateAuthority? = nil
         switch packet.request.action.type {
         case .nativeTransfer:
             let transaction = try WalletSolanaCanonicalNativeTransfer(
@@ -884,6 +1092,83 @@ actor WalletSolanaRPCClient {
             unsignedTransaction = transaction.unsignedTransaction
             canonicalDigest = transaction.canonicalMessageDigest
             resolvedDigest = transaction.resolvedAccountsDigest
+        case .nftTransfer:
+            let action = packet.request.action
+            guard let assetID = action.assetID,
+                  let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+                  identity.networkID == network.id, identity.standard == .core,
+                  action.tokenID == identity.address,
+                  action.amountBaseUnits == "1",
+                  let recipient = action.recipient,
+                  packet.instructions.count == 1,
+                  let instruction = packet.instructions.first,
+                  instruction.programID
+                    == WalletSolanaCanonicalCoreTransfer.coreProgramID,
+                  instruction.adapterID
+                    == WalletReviewedAdapters.solanaCoreTransfer,
+                  instruction.semanticOperation
+                    == WalletActionKind.nftTransfer.rawValue,
+                  let assetDataDigest = instruction.canonicalArguments[
+                    "asset_data_digest"
+                  ] else {
+                throw WalletRPCError.simulation(
+                    "the reviewed Core transfer evidence is incomplete"
+                )
+            }
+            let current = try await coreAssetEvidence(
+                address: identity.address, expectedOwner: packet.feePayer
+            )
+            let authorityKind: String
+            let authorityAddress: String
+            switch current.updateAuthority {
+            case .none:
+                authorityKind = "none"
+                authorityAddress = ""
+            case .address(let address):
+                authorityKind = "address"
+                authorityAddress = address
+            }
+            let expectedAccounts = [
+                WalletSolanaResolvedAccount(
+                    address: packet.feePayer, isSigner: true, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                WalletSolanaResolvedAccount(
+                    address: identity.address, isSigner: false, isWritable: true,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+                WalletSolanaResolvedAccount(
+                    address: recipient, isSigner: false, isWritable: false,
+                    lookupTableAddress: nil, lookupTableSlot: nil
+                ),
+            ]
+            let expectedArguments = [
+                "asset_data_digest": current.dataDigest,
+                "asset_id": assetID,
+                "collection": "none",
+                "compression": "none",
+                "plugins": "none",
+                "recipient": recipient,
+                "update_authority": authorityAddress,
+                "update_authority_kind": authorityKind,
+            ]
+            guard current.dataDigest == assetDataDigest,
+                  instruction.accounts == expectedAccounts,
+                  instruction.canonicalArguments == expectedArguments else {
+                throw WalletRPCError.simulation(
+                    "the Core owner, authority, plugin boundary, or instruction roles changed"
+                )
+            }
+            let transaction = try WalletSolanaCanonicalCoreTransfer(
+                feePayer: packet.feePayer, asset: identity.address,
+                recipient: recipient, recentBlockhash: packet.recentBlockhash,
+                assetDataDigest: current.dataDigest
+            )
+            message = transaction.message
+            unsignedTransaction = transaction.unsignedTransaction
+            canonicalDigest = transaction.canonicalMessageDigest
+            resolvedDigest = transaction.resolvedAccountsDigest
+            coreUpdateAuthority = current.updateAuthority
         default:
             throw WalletRPCError.simulation("the Solana adapter is not reviewed")
         }
@@ -897,7 +1182,20 @@ actor WalletSolanaRPCClient {
         guard WalletBaseUnits.lessThanOrEqual(fee, packet.maximumFeeBaseUnits) else {
             throw WalletRPCError.simulation("the refreshed Solana fee exceeds its ceiling")
         }
-        let simulation = try await simulate(unsignedTransaction)
+        let simulation: String
+        if packet.request.action.type == .nftTransfer,
+           let assetID = packet.request.action.assetID,
+           let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+           let recipient = packet.request.action.recipient,
+           let coreUpdateAuthority {
+            simulation = try await simulateCoreTransfer(
+                unsignedTransaction, asset: identity.address,
+                expectedOwner: recipient,
+                expectedUpdateAuthority: coreUpdateAuthority
+            )
+        } else {
+            simulation = try await simulate(unsignedTransaction)
+        }
         return WalletSolanaRecheckPacket(
             intentID: intentID, genesisHash: genesisHash,
             currentBlockHeight: currentBlockHeight,
@@ -1397,6 +1695,141 @@ actor WalletSolanaRPCClient {
         }
     }
 
+    private func coreAssetEvidence(
+        address: String,
+        expectedOwner: String
+    ) async throws -> WalletSolanaCoreAssetEvidence {
+        guard WalletSolanaBase58.decode(address, exactLength: 32) != nil,
+              WalletSolanaBase58.decode(expectedOwner, exactLength: 32) != nil else {
+            throw WalletGateway.Error.invalidArguments(
+                "The Core asset or owner address is malformed."
+            )
+        }
+        let result = try await dictionaryResult(
+            method: "getAccountInfo",
+            params: [
+                address,
+                ["commitment": "confirmed", "encoding": "base64"],
+            ]
+        )
+        guard let context = result["context"] as? [String: Any],
+              let slot = Self.unsigned(context["slot"]),
+              let account = result["value"] as? [String: Any] else {
+            throw WalletRPCError.invalidResponse(
+                "getAccountInfo returned no Core asset evidence"
+            )
+        }
+        return try Self.parseCoreAssetAccount(
+            account, address: address, expectedOwner: expectedOwner, slot: slot
+        )
+    }
+
+    private static func parseCoreAssetAccount(
+        _ account: [String: Any],
+        address: String,
+        expectedOwner: String,
+        slot: UInt64
+    ) throws -> WalletSolanaCoreAssetEvidence {
+        guard account["owner"] as? String
+                == WalletSolanaCanonicalCoreTransfer.coreProgramID,
+              account["executable"] as? Bool == false,
+              let lamports = unsigned(account["lamports"]), lamports > 0,
+              let encoded = account["data"] as? [Any], encoded.count == 2,
+              encoded[1] as? String == "base64",
+              let base64 = encoded[0] as? String, base64.utf8.count <= 96 * 1_024,
+              let data = Data(base64Encoded: base64),
+              (43...65_536).contains(data.count),
+              data.base64EncodedString() == base64,
+              unsigned(account["space"]) == UInt64(data.count) else {
+            throw WalletRPCError.invalidResponse(
+                "The Core asset account envelope is malformed."
+            )
+        }
+        var offset = 0
+        func take(_ count: Int) -> Data? {
+            guard count >= 0, offset <= data.count,
+                  count <= data.count - offset else { return nil }
+            defer { offset += count }
+            return data.subdata(in: offset..<(offset + count))
+        }
+        func byte() -> UInt8? { take(1)?.first }
+        func littleEndianUInt32() -> UInt32? {
+            guard let bytes = take(4) else { return nil }
+            return bytes.enumerated().reduce(UInt32(0)) { partial, item in
+                partial | (UInt32(item.element) << UInt32(item.offset * 8))
+            }
+        }
+        // Key::AssetV1 is discriminator 1. HashedAssetV1 and every future
+        // account shape fail closed before any authority can be prepared.
+        guard byte() == 1, let ownerBytes = take(32) else {
+            throw WalletRPCError.invalidResponse(
+                "The account is not an uncompressed Core AssetV1."
+            )
+        }
+        let owner = WalletSolanaBase58.encode(ownerBytes)
+        guard owner == expectedOwner else {
+            throw WalletRPCError.invalidResponse(
+                "The Core asset is no longer owned by the selected account."
+            )
+        }
+        let updateAuthority: WalletSolanaCoreAssetEvidence.UpdateAuthority
+        switch byte() {
+        case 0:
+            updateAuthority = .none
+        case 1:
+            guard let authority = take(32) else {
+                throw WalletRPCError.invalidResponse(
+                    "The Core update authority is truncated."
+                )
+            }
+            updateAuthority = .address(WalletSolanaBase58.encode(authority))
+        case 2:
+            throw WalletRPCError.invalidResponse(
+                "Collection-backed Core assets remain read-only until collection plugins are independently verified."
+            )
+        default:
+            throw WalletRPCError.invalidResponse(
+                "The Core update-authority discriminator is unknown."
+            )
+        }
+        for maximumLength in [1_024, 4_096] {
+            guard let length = littleEndianUInt32(), length <= maximumLength,
+                  let text = take(Int(length)), String(data: text, encoding: .utf8) != nil else {
+                throw WalletRPCError.invalidResponse(
+                    "The Core on-chain string data is malformed or excessive."
+                )
+            }
+        }
+        switch byte() {
+        case 0:
+            break
+        case 1:
+            guard take(8) != nil else {
+                throw WalletRPCError.invalidResponse(
+                    "The Core sequence evidence is truncated."
+                )
+            }
+        default:
+            throw WalletRPCError.invalidResponse(
+                "The Core sequence discriminator is unknown."
+            )
+        }
+        // Any trailing byte is a plugin header/registry or an unknown future
+        // extension. Neither is silently treated as the simple transfer shape.
+        guard offset == data.count else {
+            throw WalletRPCError.invalidResponse(
+                "Plugin-bearing Core assets remain read-only in this adapter."
+            )
+        }
+        let digest = "sha256:" + SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
+        return WalletSolanaCoreAssetEvidence(
+            address: address, owner: owner, updateAuthority: updateAuthority,
+            dataDigest: digest, slot: slot
+        )
+    }
+
     func publicRead(method: String, params: [Any]) async throws -> Any {
         let allowed = Set([
             "getBalance", "getBlockHeight", "getGenesisHash", "getLatestBlockhash",
@@ -1533,6 +1966,60 @@ actor WalletSolanaRPCClient {
             return "Reviewed Solana simulation succeeded; \(units) compute units"
         }
         return "Reviewed Solana simulation succeeded"
+    }
+
+    private func simulateCoreTransfer(
+        _ unsignedTransaction: Data,
+        asset: String,
+        expectedOwner: String,
+        expectedUpdateAuthority: WalletSolanaCoreAssetEvidence.UpdateAuthority
+    ) async throws -> String {
+        let result = try await dictionaryResult(method: "simulateTransaction", params: [
+            unsignedTransaction.base64EncodedString(),
+            [
+                "accounts": ["addresses": [asset], "encoding": "base64"],
+                "commitment": "confirmed", "encoding": "base64",
+                "innerInstructions": true, "replaceRecentBlockhash": false,
+                "sigVerify": false,
+            ],
+        ])
+        guard let context = result["context"] as? [String: Any],
+              let slot = Self.unsigned(context["slot"]),
+              let value = result["value"] as? [String: Any],
+              value.keys.contains("err"), value["err"] is NSNull,
+              let accounts = value["accounts"] as? [Any], accounts.count == 1,
+              let account = accounts.first as? [String: Any] else {
+            throw WalletRPCError.simulation(
+                "the Core transfer did not return one successful post-state"
+            )
+        }
+        if let inner = value["innerInstructions"], !(inner is NSNull) {
+            guard let entries = inner as? [Any], entries.isEmpty else {
+                throw WalletRPCError.simulation(
+                    "the Core transfer produced unexpected inner instructions"
+                )
+            }
+        }
+        let evidence = try Self.parseCoreAssetAccount(
+            account, address: asset, expectedOwner: expectedOwner, slot: slot
+        )
+        guard evidence.updateAuthority == expectedUpdateAuthority else {
+            throw WalletRPCError.simulation(
+                "the Core transfer unexpectedly changed update authority"
+            )
+        }
+        let logs = (value["logs"] as? [String]) ?? []
+        guard logs.count <= 1_000,
+              logs.allSatisfy({ $0.utf8.count <= 1_024 }),
+              Self.unsigned(value["unitsConsumed"]).map({ $0 <= 1_400_000 }) != false else {
+            throw WalletRPCError.invalidResponse(
+                "Core simulation output exceeded wallet limits"
+            )
+        }
+        if let units = Self.unsigned(value["unitsConsumed"]) {
+            return "Reviewed Core owner transition succeeded; \(units) compute units"
+        }
+        return "Reviewed Core owner transition succeeded"
     }
 
     private func verifiedGenesisHash() async throws -> String {

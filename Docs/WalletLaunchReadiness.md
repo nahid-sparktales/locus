@@ -37,6 +37,13 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   Token Metadata, Core, and compressed Bubblegum holdings, with canonical
   identities, strict ownership/compression evidence, quarantine, bounded
   pagination, and active-media exclusion.
+- [x] Signed-manifest transfer of one uncompressed, standalone, plugin-free
+  Metaplex Core `AssetV1`. Preparation reparses the exact program-owned account,
+  binds owner/update-authority/data digest, rebuilds the sentinel-account
+  `TransferV1` message independently in Swift and Rust, proves the exact owner
+  transition in simulation, repeats evidence before signing, and never exposes
+  NFT policy authority. Collection, plugin, compression, Token Metadata, and
+  Bubblegum transfer shapes remain absent.
 - [x] Read-only Sui GraphQL network health and native SUI balances with full
   genesis-digest verification, bounded/error-free response envelopes, fresh
   checkpoint and epoch/gas evidence, and exact reconciliation of coin-object
@@ -95,8 +102,10 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
   token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
   transfer-based quarantine are implemented.
-- [ ] Solana transfer-altering Token-2022 extensions and reviewed
-  NFT/compressed-collectible transfer implementation complete.
+- [ ] Solana transfer-altering Token-2022 extensions, Core collection/plugin
+  variants, Token Metadata/programmable NFT transfers, and compressed-
+  collectible transfer implementation complete. The standalone plugin-free
+  Core subset is implemented but not mainnet-enabled.
 - [ ] Sui object creation/deletion activity, gRPC execution migration,
   multi-object Coin merge/object batching, and localnet coverage complete. The
   exact native, single-object curated Coin, and publicly transferable object

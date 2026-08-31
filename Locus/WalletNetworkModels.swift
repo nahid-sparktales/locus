@@ -989,7 +989,8 @@ enum WalletNetworkCatalog {
         nativeAssetID: "solana:devnet/slip44:501", nativeSymbol: "SOL", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://explorer.solana.com/tx/{transaction}?cluster=devnet",
         staticallyReviewedCapabilities: [
-            .nativeTransfer, .fungibleTokenTransfer, .autonomousPolicy,
+            .nativeTransfer, .fungibleTokenTransfer, .nftTransfer,
+            .autonomousPolicy,
         ]
     )
 

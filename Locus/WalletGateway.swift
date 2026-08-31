@@ -2839,9 +2839,15 @@ final class WalletGateway: ObservableObject {
                 )
             }
         case .nftTransfer:
-            if WalletNetworkCatalog.descriptor(
+            let chain = WalletNetworkCatalog.descriptor(
                 id: request.networkID
-            )?.chain == .sui {
+            )?.chain
+            if chain == .solana {
+                try validateReviewedSolanaCollectible(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else if chain == .sui {
                 try validateReviewedSuiObject(
                     for: request.action, networkID: request.networkID
                 )
@@ -2936,6 +2942,32 @@ final class WalletGateway: ObservableObject {
               asset.isVisibleByDefault else {
             throw Error.invalidArguments(
                 "The selected SPL token is not trusted for reviewed transfers."
+            )
+        }
+    }
+
+    private func validateReviewedSolanaCollectible(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+              identity.networkID == networkID, identity.standard == .core,
+              action.tokenID == identity.address,
+              action.amountBaseUnits == "1",
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .solana,
+              asset.kind == .nft || asset.kind == .collectible,
+              asset.reference == identity.address,
+              asset.decimals == nil || asset.decimals == 0,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true,
+              reviewRegistry?.containsAdapter(
+                WalletReviewedAdapters.solanaCoreTransfer
+              ) == true else {
+            throw Error.invalidArguments(
+                "The selected Core asset is not present in the signed asset and adapter manifest."
             )
         }
     }
@@ -3055,7 +3087,8 @@ final class WalletGateway: ObservableObject {
                 assetID: assetID, recipient: recipient, amountBaseUnits: amount
             )
         case .nftTransfer:
-            guard descriptor.chain == .evm || descriptor.chain == .sui,
+            guard descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui,
                   let assetID = nonempty(actionObject["asset_id"]),
                   let recipient = nonempty(actionObject["recipient"]),
                   Self.validAddress(recipient, chain: descriptor.chain),
@@ -3065,7 +3098,17 @@ final class WalletGateway: ObservableObject {
                 )
             }
             let tokenID: String
-            if descriptor.chain == .sui {
+            if descriptor.chain == .solana {
+                guard let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      identity.standard == .core,
+                      nonempty(actionObject["token_id"]) == identity.address else {
+                    throw Error.invalidArguments(
+                        "A Core transfer requires its canonical asset address as token_id."
+                    )
+                }
+                tokenID = identity.address
+            } else if descriptor.chain == .sui {
                 guard let identity = WalletSuiObjectIdentity.parse(assetID),
                       identity.networkID == networkID,
                       nonempty(actionObject["token_id"]) == identity.objectID else {

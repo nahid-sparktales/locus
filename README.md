@@ -150,9 +150,10 @@ one Ethereum, Solana, and Sui account.
 Mainnet is default-denied. A short-lived signed manifest can enable only code
 already reviewed in the build, only in counsel-approved regions, and only when
 its hashed audit/operational evidence satisfies the invited-canary or GA gate.
-The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL, and
-narrowly safe Token-2022 `TransferChecked` builders plus quarantined token and
-collectible discovery are implemented, while mainnet signing remains gated.
+The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL,
+narrowly safe Token-2022 `TransferChecked`, and standalone plugin-free Metaplex
+Core `TransferV1` builders plus quarantined token and collectible discovery are
+implemented, while mainnet signing remains gated.
 Ethereum ERC-20 holdings can be enumerated through Alchemy's bounded,
 chain-verified [Token API](https://www.alchemy.com/docs/data/token-api/token-api-endpoints/alchemy-get-token-balances)
 pages. Locus accepts only canonical contract addresses
@@ -169,7 +170,15 @@ URIs, images, collection data, and spam classifications are discarded before
 the wallet model sees the collectible.
 Digital Asset Standard responses for Metaplex Token Metadata, Core, and
 compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
-media is never promoted as a wallet image. Sui native balances now use the
+media is never promoted as a wallet image. A signed-manifest Core collectible
+can reach a separate exact-transfer path only after Locus reparses its current
+on-chain `AssetV1` account. The asset must be uncompressed, standalone,
+plugin-free, owned by the vault, and keep the same update authority through
+simulation and the pre-sign recheck. The app and Rust signer independently
+rebuild the one `TransferV1` instruction; collection-backed, plugin-bearing,
+compressed, Token Metadata, programmable, and Bubblegum transfers remain
+read-only. This Core adapter remains testnet-only until an approved release pins
+and verifies the deployed upgradeable program evidence. Sui native balances now use the
 [current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
 full Base58 genesis checkpoint digest, reject
 stale checkpoints and partial GraphQL results, and reconcile coin-object and
@@ -220,10 +229,11 @@ SUI fee. Arbitrary object BCS and Move calls never enter exported authority, and
 mainnet remains launch- and adapter-gated.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
-unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui object creation/deletion activity and gRPC execution
-migration, full swaps, external wallets, and WalletConnect remain closed until
-their implementation and evidence gates pass. Finalized Sui activity does record
+unallocated. Token-2022 transfer-altering extensions, Core collection/plugin
+variants, Token Metadata and compressed-collectible transfers, versioned
+messages, Sui object creation/deletion activity and gRPC execution migration,
+full swaps, external wallets, and WalletConnect remain closed until their
+implementation and evidence gates pass. Finalized Sui activity does record
 strict non-Coin ownership transitions for the tracked account, while validating
 and ignoring same-owner writes and gas/Coin object mutations.
 

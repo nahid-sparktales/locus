@@ -2093,6 +2093,88 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(signer.preparedContracts.last ?? nil)
     }
 
+    @MainActor
+    func testGatewayPreparesOnlySignedManifestCoreTransfer() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date().addingTimeInterval(-60)
+        let address = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 8, count: 32))
+        let identity = WalletSolanaCollectibleIdentity(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            standard: .core, address: address
+        )
+        let asset = WalletAsset(
+            canonicalID: identity.canonicalID, networkID: identity.networkID,
+            chain: .solana, kind: .collectible, reference: identity.address,
+            name: "Reviewed Core Asset", symbol: "CORE", decimals: nil,
+            trust: .curated, manifestRevision: 6
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 6, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: [WalletReviewedAdapters.solanaCoreTransfer]
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey
+        )
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.adapterID = WalletReviewedAdapters.solanaCoreTransfer
+        let suiteName = "WalletGatewayTests.core-object.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
+            publicStore: try WalletPublicStore(path: ":memory:"),
+            reviewRegistry: registry, buildSupportsWalletAlpha: true
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let valid = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": identity.networkID,
+                "account_id": "account-1",
+                "maximum_fee_base_units": "6000",
+                "action": [
+                    "type": WalletActionKind.nftTransfer.rawValue,
+                    "asset_id": identity.canonicalID,
+                    "token_id": identity.address,
+                    "recipient": recipient,
+                ],
+            ],
+            source: .human
+        )
+        XCTAssertNil(valid["error"])
+        XCTAssertEqual(signer.preparedRequests.last?.action.assetID, identity.canonicalID)
+        XCTAssertEqual(signer.preparedRequests.last?.action.amountBaseUnits, "1")
+        XCTAssertNil(signer.preparedContracts.last ?? nil)
+
+        let substituted = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": identity.networkID,
+                "account_id": "account-1",
+                "maximum_fee_base_units": "6000",
+                "action": [
+                    "type": WalletActionKind.nftTransfer.rawValue,
+                    "asset_id": identity.canonicalID,
+                    "token_id": recipient,
+                    "recipient": recipient,
+                ],
+            ],
+            source: .human
+        )
+        XCTAssertNotNil(substituted["error"])
+        XCTAssertEqual(signer.preparedRequests.count, 1)
+    }
+
     func testSuiNativeTransferSimulationBindsExactEffectsAndSignerBytes() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -3027,6 +3109,49 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSolanaCanonicalCoreMessageMatchesIndependentSignerShape() throws {
+        XCTAssertFalse(
+            WalletNetworkCatalog.solanaMainnet.staticallyReviewedCapabilities
+                .contains(.nftTransfer)
+        )
+        XCTAssertTrue(
+            WalletNetworkCatalog.solanaDevnet.staticallyReviewedCapabilities
+                .contains(.nftTransfer)
+        )
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let asset = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 8, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let evidenceDigest = "sha256:" + String(repeating: "a", count: 64)
+        let transfer = try WalletSolanaCanonicalCoreTransfer(
+            feePayer: payer, asset: asset, recipient: recipient,
+            recentBlockhash: blockhash, assetDataDigest: evidenceDigest
+        )
+        XCTAssertEqual(transfer.message.count, 177)
+        XCTAssertEqual(transfer.unsignedTransaction.count, 242)
+        XCTAssertEqual(Array(transfer.message.prefix(4)), [1, 0, 2, 4])
+        XCTAssertEqual(
+            Array(transfer.message[167..<174]),
+            [1, 3, 0, 3, 2, 3, 3]
+        )
+        XCTAssertEqual(Array(transfer.message.suffix(3)), [2, 14, 0])
+        XCTAssertEqual(
+            transfer.resolvedAccountsDigest,
+            WalletSolanaCanonicalCoreTransfer.resolvedDigest(
+                feePayer: payer, asset: asset, recipient: recipient,
+                assetDataDigest: evidenceDigest
+            )
+        )
+        XCTAssertThrowsError(try WalletSolanaCanonicalCoreTransfer(
+            feePayer: payer, asset: asset, recipient: asset,
+            recentBlockhash: blockhash, assetDataDigest: evidenceDigest
+        ))
+        XCTAssertThrowsError(try WalletSolanaCanonicalCoreTransfer(
+            feePayer: payer, asset: asset, recipient: recipient,
+            recentBlockhash: blockhash, assetDataDigest: "sha256:ABC"
+        ))
+    }
+
     func testSolanaCanonicalSPLMessageMatchesIndependentSignerFixture() throws {
         let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
         let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
@@ -3713,6 +3838,179 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSolanaProviderPreparesAndRechecksOnlyPluginFreeCoreAssets() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let asset = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 8, count: 32))
+        let authority = WalletSolanaBase58.encode(Data(repeating: 10, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let assetID = "solana:devnet/nft:core:\(asset)"
+        let before = try solanaCoreAssetData(owner: payer, updateAuthority: authority)
+        let after = try solanaCoreAssetData(owner: recipient, updateAuthority: authority)
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getAccountInfo":
+                result = [
+                    "context": ["slot": 44],
+                    "value": self.solanaCoreAccountJSON(data: before),
+                ]
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "blockhash": blockhash, "lastValidBlockHeight": 500,
+                    ],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 45],
+                    "value": [
+                        "err": NSNull(),
+                        "accounts": [self.solanaCoreAccountJSON(data: after)],
+                        "innerInstructions": [],
+                        "logs": ["Program CoREEN success"],
+                        "unitsConsumed": 4_000,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = 450
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nftTransfer(
+                assetID: assetID, tokenID: asset, recipient: recipient
+            ),
+            maximumFeeBaseUnits: "6000"
+        )
+        let packet = try await client.prepare(request: request, feePayer: payer)
+        XCTAssertEqual(packet.contextSlot, 44)
+        XCTAssertEqual(packet.instructions.count, 1)
+        XCTAssertEqual(
+            packet.instructions[0].adapterID,
+            WalletReviewedAdapters.solanaCoreTransfer
+        )
+        XCTAssertEqual(packet.instructions[0].canonicalArguments["plugins"], "none")
+        XCTAssertEqual(
+            packet.instructions[0].canonicalArguments["update_authority"],
+            authority
+        )
+        let recheck = try await client.recheck(intentID: "core-intent", packet: packet)
+        XCTAssertEqual(recheck.resolvedAccountsDigest, packet.resolvedAccountsDigest)
+        XCTAssertTrue(recheck.simulation.contains("owner transition succeeded"))
+    }
+
+    func testSolanaCoreProviderRejectsPluginsCollectionsAndChangedPostState() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let asset = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 8, count: 32))
+        let authority = WalletSolanaBase58.encode(Data(repeating: 10, count: 32))
+        let substitutedAuthority = WalletSolanaBase58.encode(
+            Data(repeating: 11, count: 32)
+        )
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let assetID = "solana:devnet/nft:core:\(asset)"
+        var before = try solanaCoreAssetData(owner: payer, updateAuthority: authority)
+        var after = try solanaCoreAssetData(owner: recipient, updateAuthority: authority)
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getAccountInfo":
+                result = [
+                    "context": ["slot": 44],
+                    "value": self.solanaCoreAccountJSON(data: before),
+                ]
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "blockhash": blockhash, "lastValidBlockHeight": 500,
+                    ],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 45],
+                    "value": [
+                        "err": NSNull(),
+                        "accounts": [self.solanaCoreAccountJSON(data: after)],
+                        "innerInstructions": [], "logs": [],
+                        "unitsConsumed": 4_000,
+                    ],
+                ]
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nftTransfer(
+                assetID: assetID, tokenID: asset, recipient: recipient
+            ),
+            maximumFeeBaseUnits: "6000"
+        )
+
+        before.append(1)
+        do {
+            _ = try await client.prepare(request: request, feePayer: payer)
+            XCTFail("A plugin-bearing Core account must remain read-only.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("Plugin-bearing"))
+        }
+
+        before = try solanaCoreAssetData(
+            owner: payer, updateAuthority: nil,
+            collection: WalletSolanaBase58.encode(Data(repeating: 12, count: 32))
+        )
+        do {
+            _ = try await client.prepare(request: request, feePayer: payer)
+            XCTFail("A collection-backed Core account must remain read-only.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("Collection-backed"))
+        }
+
+        before = try solanaCoreAssetData(owner: payer, updateAuthority: authority)
+        after = try solanaCoreAssetData(
+            owner: recipient, updateAuthority: substitutedAuthority
+        )
+        do {
+            _ = try await client.prepare(request: request, feePayer: payer)
+            XCTFail("A simulated update-authority substitution must be rejected.")
+        } catch WalletRPCError.simulation(let message) {
+            XCTAssertTrue(message.contains("changed update authority"))
+        }
+    }
+
     func testSolanaProviderBindsGenesisBlockhashFeeSimulationAndRecheck() async throws {
         let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
         let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
@@ -4040,6 +4338,54 @@ final class WalletGatewayTests: XCTestCase {
             .fungibleTokenTransfer
         )
         XCTAssertEqual(gateway.pendingConfirmation?.source, .human)
+    }
+
+    private func solanaCoreAssetData(
+        owner: String,
+        updateAuthority: String?,
+        collection: String? = nil
+    ) throws -> Data {
+        guard let ownerBytes = WalletSolanaBase58.decode(owner, exactLength: 32) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        var data = Data([1])
+        data.append(ownerBytes)
+        if let collection {
+            guard let collectionBytes = WalletSolanaBase58.decode(
+                collection, exactLength: 32
+            ) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            data.append(2)
+            data.append(collectionBytes)
+        } else if let updateAuthority {
+            guard let authorityBytes = WalletSolanaBase58.decode(
+                updateAuthority, exactLength: 32
+            ) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            data.append(1)
+            data.append(authorityBytes)
+        } else {
+            data.append(0)
+        }
+        for value in ["Core Asset", "https://metadata.example/core.json"] {
+            let bytes = Data(value.utf8)
+            var count = UInt32(bytes.count).littleEndian
+            Swift.withUnsafeBytes(of: &count) { data.append(contentsOf: $0) }
+            data.append(bytes)
+        }
+        data.append(0) // Borsh Option<u64>::None sequence number.
+        return data
+    }
+
+    private func solanaCoreAccountJSON(data: Data) -> [String: Any] {
+        [
+            "data": [data.base64EncodedString(), "base64"],
+            "executable": false, "lamports": 2_000_000,
+            "owner": WalletSolanaCanonicalCoreTransfer.coreProgramID,
+            "space": data.count,
+        ]
     }
 
     private func makeRPCClient(
