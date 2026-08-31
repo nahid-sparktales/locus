@@ -38,6 +38,11 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Read-only Sui Coin discovery with canonical non-generic Move marker types,
   stable bounded pagination, exact two-store balance reconciliation, signed
   curation, and default quarantine for unknown assets.
+- [x] Checkpoint-bound owned Coin-object discovery and deterministic single-
+  object selection for curated non-native Sui Coins. Exact generic object type,
+  owner, ID/version/digest, canonical 40-byte Coin BCS, embedded UID, raw u64
+  balance, pagination, and aggregate object-balance reconciliation are required;
+  fragmented or accumulator-only funds do not silently add merge commands.
 - [x] Read-only Sui owned-object discovery with checkpoint-pinned pagination,
   exact address owner/object ID/version/digest/type/public-transfer evidence,
   Coin-object exclusion, signed curation, and metadata-free quarantine.

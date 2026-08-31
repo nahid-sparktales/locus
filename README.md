@@ -162,6 +162,12 @@ stale checkpoints and partial GraphQL results, and reconcile coin-object and
 balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
 bounded, checkpoint-stable pagination and canonical Move marker types; unknown
 Coins enter quarantine until the user or a signed review manifest trusts them.
+For future curated Coin sends, Locus now enumerates the exact owned
+`Coin<T>` objects at one checkpoint, validates each object's BCS UID and raw
+balance, reconciles the object subtotal, and selects one deterministic
+sufficient object. Fragmented and accumulator-only balances remain unsendable
+until a separately reviewed merge shape exists; this milestone does not yet
+open Coin signing.
 Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
 owner, object ID, version, digest, type, and public-transfer evidence. They enter
 Collectibles quarantine without BCS contents, display metadata, or remote media.

@@ -113,6 +113,14 @@ signing adapter.
   Unknown Coins are public metadata in SQLite quarantine, never implicit signing
   authority. Signed review manifests must bind network, Coin type, decimals,
   name, and symbol exactly before a Coin can be curated.
+- Sui Coin-object preparation uses a separate checkpoint-bound path for one
+  exact non-native Coin type. Every object must have the exact
+  `0x2::coin::Coin<T>` wrapper, canonical address owner/ID/version/digest, and
+  canonical 40-byte BCS whose embedded UID matches the object ID. Enumerated
+  balances must equal the checkpoint's coin-object subtotal. Selection chooses
+  the smallest sufficient single object deterministically and rejects native
+  SUI, fragmented holdings, accumulator-only holdings, type substitution, and
+  any implicit merge expansion. No Coin signing authority is opened yet.
 - Read-only Sui object discovery pins every page to its first checkpoint and
   requires an exact address owner, canonical object ID, UInt53 version, Base58
   digest, bounded ASCII Move type, and public-transfer flag. Coin objects are

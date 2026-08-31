@@ -1559,6 +1559,122 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testSuiCoinObjectSelectionPinsTypeCheckpointAndRawBalance() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "9", count: 64)
+        let coinType = "0x1234::usdc::USDC"
+        let smallID = "0x" + String(repeating: "a", count: 64)
+        let selectedID = "0x" + String(repeating: "b", count: 64)
+        var requests = 0
+        let client = makeSuiGraphQLClient(now: now) { request in
+            requests += 1
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["coinType"] as? String, coinType)
+            XCTAssertEqual(
+                variables["objectType"] as? String,
+                "0x2::coin::Coin<\(coinType)>"
+            )
+            if requests == 1 {
+                XCTAssertTrue(variables["checkpoint"] is NSNull)
+                return try self.suiGasCoinsResponse(
+                    owner: owner, total: "307", coinsBalance: "300",
+                    accumulator: "7", coins: [self.suiGasCoinJSON(
+                        objectID: smallID, owner: owner, version: 4,
+                        digestByte: 51, balance: 100, coinType: coinType
+                    )], hasNextPage: true, endCursor: "coin-page-2",
+                    coinType: coinType
+                )
+            }
+            XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+            XCTAssertEqual(variables["after"] as? String, "coin-page-2")
+            return try self.suiGasCoinsResponse(
+                owner: owner, total: "307", coinsBalance: "300",
+                accumulator: "7", coins: [self.suiGasCoinJSON(
+                    objectID: selectedID, owner: owner, version: 5,
+                    digestByte: 52, balance: 200, coinType: coinType
+                )], hasNextPage: false, endCursor: nil, coinType: coinType
+            )
+        }
+        let selection = try await client.selectCoinObject(
+            owner: owner, coinType: coinType,
+            requiredBalanceBaseUnits: "150"
+        )
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(selection.object.reference.objectID, selectedID)
+        XCTAssertEqual(selection.object.reference.version, 5)
+        XCTAssertEqual(selection.object.reference.type, "0x2::coin::Coin<\(coinType)>")
+        XCTAssertEqual(selection.object.balanceBaseUnits, "200")
+        XCTAssertEqual(selection.snapshot.identity.coinType, coinType)
+        XCTAssertEqual(selection.snapshot.coinBalance, "300")
+        XCTAssertEqual(selection.snapshot.addressBalance, "7")
+    }
+
+    func testSuiCoinObjectSelectionRejectsTypeSubstitutionAndFragmentation() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "c", count: 64)
+        let coinType = "0x1234::usdc::USDC"
+        let firstID = "0x" + String(repeating: "d", count: 64)
+        let secondID = "0x" + String(repeating: "e", count: 64)
+        let wrongType = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiGasCoinsResponse(
+                owner: owner, total: "200", coinsBalance: "200",
+                accumulator: "0", coins: [self.suiGasCoinJSON(
+                    objectID: firstID, owner: owner, version: 1,
+                    digestByte: 53, balance: 200,
+                    coinType: "0x1234::fake::FAKE"
+                )], hasNextPage: false, endCursor: nil, coinType: coinType
+            )
+        }
+        do {
+            _ = try await wrongType.coinObjects(owner: owner, coinType: coinType)
+            XCTFail("A provider cannot substitute another Move Coin type.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("malformed"))
+        }
+
+        let fragmented = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiGasCoinsResponse(
+                owner: owner, total: "200", coinsBalance: "200",
+                accumulator: "0", coins: [
+                    self.suiGasCoinJSON(
+                        objectID: firstID, owner: owner, version: 1,
+                        digestByte: 54, balance: 100, coinType: coinType
+                    ),
+                    self.suiGasCoinJSON(
+                        objectID: secondID, owner: owner, version: 2,
+                        digestByte: 55, balance: 100, coinType: coinType
+                    ),
+                ], hasNextPage: false, endCursor: nil, coinType: coinType
+            )
+        }
+        do {
+            _ = try await fragmented.selectCoinObject(
+                owner: owner, coinType: coinType,
+                requiredBalanceBaseUnits: "150"
+            )
+            XCTFail("The first Coin-transfer subset must not add merge commands.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("No single reviewed"))
+        }
+        do {
+            _ = try await fragmented.coinObjects(
+                owner: owner, coinType: WalletSuiAssetIdentity.nativeCoinType
+            )
+            XCTFail("Native SUI must remain on the separately reviewed gas-coin path.")
+        } catch WalletGateway.Error.invalidArguments {
+            // Expected.
+        }
+    }
+
     func testSuiNativeTransferSimulationBindsExactEffectsAndSignerBytes() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -3304,7 +3420,8 @@ final class WalletGatewayTests: XCTestCase {
         owner: String,
         version: Int,
         digestByte: UInt8,
-        balance: UInt64
+        balance: UInt64,
+        coinType: String = WalletSuiAssetIdentity.nativeCoinType
     ) -> [String: Any] {
         let hexadecimal = objectID.dropFirst(2)
         var bcs = Data()
@@ -3321,7 +3438,7 @@ final class WalletGatewayTests: XCTestCase {
             "version": version,
             "digest": WalletSolanaBase58.encode(Data(repeating: digestByte, count: 32)),
             "contents": [
-                "type": ["repr": "0x2::coin::Coin<0x2::sui::SUI>"],
+                "type": ["repr": "0x2::coin::Coin<\(coinType)>"],
                 "bcs": bcs.base64EncodedString(),
             ],
             "owner": [
@@ -3340,7 +3457,8 @@ final class WalletGatewayTests: XCTestCase {
         accumulator: String,
         coins: [[String: Any]],
         hasNextPage: Bool,
-        endCursor: String?
+        endCursor: String?,
+        coinType: String = WalletSuiAssetIdentity.nativeCoinType
     ) throws -> Data {
         let cursorValue: Any = endCursor.map { $0 as Any } ?? NSNull()
         return try JSONSerialization.data(withJSONObject: [
@@ -3354,7 +3472,7 @@ final class WalletGatewayTests: XCTestCase {
                 "address": [
                     "address": owner,
                     "balance": [
-                        "coinType": ["repr": "0x2::sui::SUI"],
+                        "coinType": ["repr": coinType],
                         "totalBalance": total,
                         "coinBalance": coinsBalance,
                         "addressBalance": accumulator,

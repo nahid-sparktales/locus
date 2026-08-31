@@ -51,6 +51,29 @@ struct WalletSuiGasCoinSelection: Equatable, Sendable {
     let requiredBalanceBaseUnits: String
 }
 
+struct WalletSuiCoinObject: Equatable, Sendable {
+    let reference: WalletSuiObjectReference
+    let owner: String
+    let identity: WalletSuiAssetIdentity
+    let balanceBaseUnits: String
+}
+
+struct WalletSuiCoinObjectSnapshot: Equatable, Sendable {
+    let network: WalletSuiNetworkStatus
+    let owner: String
+    let identity: WalletSuiAssetIdentity
+    let totalBalance: String
+    let coinBalance: String
+    let addressBalance: String
+    let objects: [WalletSuiCoinObject]
+}
+
+struct WalletSuiCoinObjectSelection: Equatable, Sendable {
+    let snapshot: WalletSuiCoinObjectSnapshot
+    let object: WalletSuiCoinObject
+    let requiredBalanceBaseUnits: String
+}
+
 struct WalletSuiGasCostSummary: Codable, Equatable, Sendable {
     let computationCost: String
     let storageCost: String
@@ -752,6 +775,144 @@ actor WalletSuiGraphQLClient {
         )
     }
 
+    func coinObjects(
+        owner: String,
+        coinType: String
+    ) async throws -> WalletSuiCoinObjectSnapshot {
+        guard Self.isCanonicalAddress(owner),
+              WalletSuiAssetIdentity.isCanonicalCoinType(coinType),
+              coinType != WalletSuiAssetIdentity.nativeCoinType else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui Coin-object discovery requires a canonical non-native Coin type."
+            )
+        }
+        let objectType = "0x2::coin::Coin<\(coinType)>"
+        var after: String?
+        var seenCursors: Set<String> = []
+        var seenObjectIDs: Set<String> = []
+        var expectedStatus: WalletSuiNetworkStatus?
+        var expectedBalance: WalletSuiBalance?
+        var objects: [WalletSuiCoinObject] = []
+        for _ in 0..<Self.maximumGasCoinPages {
+            let checkpointValue: Any = expectedStatus.map {
+                $0.checkpointSequence as Any
+            } ?? NSNull()
+            let data = try await query(
+                document: Self.gasCoinsQuery,
+                variables: [
+                    "address": owner, "coinType": coinType,
+                    "objectType": objectType,
+                    "first": Self.gasCoinPageSize,
+                    "after": after ?? NSNull(),
+                    "checkpoint": checkpointValue,
+                ]
+            )
+            let status = try parseNetworkStatus(data)
+            if let expectedStatus, expectedStatus != status {
+                throw WalletRPCError.invalidResponse(
+                    "Sui Coin-object pagination changed checkpoint evidence"
+                )
+            }
+            expectedStatus = status
+            guard let addressObject = data["address"] as? [String: Any],
+                  addressObject["address"] as? String == owner,
+                  let balanceValue = addressObject["balance"] as? [String: Any],
+                  let balance = Self.parseBalance(balanceValue, networkID: network.id),
+                  balance.identity.coinType == coinType,
+                  let connection = addressObject["objects"] as? [String: Any],
+                  let nodes = connection["nodes"] as? [[String: Any]],
+                  nodes.count <= Self.gasCoinPageSize,
+                  let pageInfo = connection["pageInfo"] as? [String: Any],
+                  let hasNextPage = pageInfo["hasNextPage"] as? Bool else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned malformed Coin-object evidence"
+                )
+            }
+            if let expectedBalance, expectedBalance != balance {
+                throw WalletRPCError.invalidResponse(
+                    "Sui Coin-object pagination changed balance evidence"
+                )
+            }
+            expectedBalance = balance
+            for node in nodes {
+                guard let object = Self.parseCoinObject(
+                    node, networkID: network.id, owner: owner,
+                    coinType: coinType, objectType: objectType
+                ), seenObjectIDs.insert(object.reference.objectID).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui returned a malformed, misowned, or duplicate Coin object"
+                    )
+                }
+                objects.append(object)
+            }
+            guard objects.count <= Self.maximumGasCoins else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned too many Coin objects"
+                )
+            }
+            if !hasNextPage {
+                guard pageInfo["endCursor"] == nil
+                        || pageInfo["endCursor"] is NSNull
+                        || pageInfo["endCursor"] is String,
+                      let expectedStatus, let expectedBalance,
+                      Self.sumCoinObjectBalances(objects)
+                        == expectedBalance.coinBalance else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui Coin objects did not reconcile with checkpoint balance evidence"
+                    )
+                }
+                let identity = WalletSuiAssetIdentity(
+                    networkID: network.id, coinType: coinType
+                )
+                return WalletSuiCoinObjectSnapshot(
+                    network: expectedStatus, owner: owner, identity: identity,
+                    totalBalance: expectedBalance.totalBalance,
+                    coinBalance: expectedBalance.coinBalance,
+                    addressBalance: expectedBalance.addressBalance,
+                    objects: objects.sorted(by: Self.coinObjectOrder)
+                )
+            }
+            guard let cursor = pageInfo["endCursor"] as? String,
+                  !cursor.isEmpty, cursor.utf8.count <= 1_024,
+                  cursor.unicodeScalars.allSatisfy({
+                      $0.isASCII && $0.value >= 0x20
+                  }), seenCursors.insert(cursor).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned invalid or repeated Coin-object pagination"
+                )
+            }
+            after = cursor
+        }
+        throw WalletRPCError.invalidResponse(
+            "Sui Coin-object pagination was truncated"
+        )
+    }
+
+    func selectCoinObject(
+        owner: String,
+        coinType: String,
+        requiredBalanceBaseUnits: String
+    ) async throws -> WalletSuiCoinObjectSelection {
+        guard let required = Self.canonicalUInt64(requiredBalanceBaseUnits),
+              required != "0" else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui Coin selection requires a positive canonical u64 balance."
+            )
+        }
+        let snapshot = try await coinObjects(owner: owner, coinType: coinType)
+        guard let selected = snapshot.objects.first(where: {
+            WalletBaseUnits.lessThanOrEqual(required, $0.balanceBaseUnits)
+        }) else {
+            throw WalletRPCError.invalidResponse(
+                "No single reviewed Coin object can cover the transfer amount"
+            )
+        }
+        return WalletSuiCoinObjectSelection(
+            snapshot: snapshot, object: selected,
+            requiredBalanceBaseUnits: required
+        )
+    }
+
     func simulateNativeTransfer(
         transactionBCS: String,
         expectedTransactionDigest: String,
@@ -1141,6 +1302,25 @@ actor WalletSuiGraphQLClient {
         networkID: String,
         owner: String
     ) -> WalletSuiGasCoin? {
+        guard let object = parseCoinObject(
+            value, networkID: networkID, owner: owner,
+            coinType: WalletSuiAssetIdentity.nativeCoinType,
+            objectType: nativeCoinObjectType
+        ) else { return nil }
+        return WalletSuiGasCoin(
+            reference: object.reference, owner: object.owner,
+            coinType: object.identity.coinType,
+            balanceBaseUnits: object.balanceBaseUnits
+        )
+    }
+
+    private static func parseCoinObject(
+        _ value: [String: Any],
+        networkID: String,
+        owner: String,
+        coinType: String,
+        objectType: String
+    ) -> WalletSuiCoinObject? {
         guard let objectID = value["address"] as? String,
               let objectIDBytes = canonicalAddressBytes(objectID),
               let version = unsigned53(value["version"]), version > 0,
@@ -1148,7 +1328,7 @@ actor WalletSuiGraphQLClient {
               WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
               let contents = value["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              type["repr"] as? String == nativeCoinObjectType,
+              type["repr"] as? String == objectType,
               let encodedBCS = contents["bcs"] as? String,
               let bcs = Data(base64Encoded: encodedBCS), bcs.count == 40,
               bcs.base64EncodedString() == encodedBCS,
@@ -1161,12 +1341,15 @@ actor WalletSuiGraphQLClient {
         for (index, byte) in bcs.suffix(8).enumerated() {
             balance |= UInt64(byte) << UInt64(index * 8)
         }
-        return WalletSuiGasCoin(
+        return WalletSuiCoinObject(
             reference: WalletSuiObjectReference(
                 objectID: objectID, version: version, digest: digest,
-                type: nativeCoinObjectType
+                type: objectType
             ),
-            owner: owner, coinType: WalletSuiAssetIdentity.nativeCoinType,
+            owner: owner,
+            identity: WalletSuiAssetIdentity(
+                networkID: networkID, coinType: coinType
+            ),
             balanceBaseUnits: String(balance)
         )
     }
@@ -1197,9 +1380,28 @@ actor WalletSuiGraphQLClient {
         }
     }
 
+    private static func sumCoinObjectBalances(
+        _ objects: [WalletSuiCoinObject]
+    ) -> String? {
+        objects.reduce(Optional("0")) { total, object in
+            total.flatMap { WalletBaseUnits.add($0, object.balanceBaseUnits) }
+        }
+    }
+
     private static func gasCoinOrder(
         _ lhs: WalletSuiGasCoin,
         _ rhs: WalletSuiGasCoin
+    ) -> Bool {
+        switch WalletBaseUnits.compare(lhs.balanceBaseUnits, rhs.balanceBaseUnits) {
+        case .orderedAscending: true
+        case .orderedDescending: false
+        default: lhs.reference.objectID < rhs.reference.objectID
+        }
+    }
+
+    private static func coinObjectOrder(
+        _ lhs: WalletSuiCoinObject,
+        _ rhs: WalletSuiCoinObject
     ) -> Bool {
         switch WalletBaseUnits.compare(lhs.balanceBaseUnits, rhs.balanceBaseUnits) {
         case .orderedAscending: true
@@ -1450,6 +1652,37 @@ actor WalletSuiProviderCoordinator {
             guard let fallback else { throw error }
             return try await fallback.selectNativeGasCoin(
                 owner: owner, requiredBalanceBaseUnits: requiredBalanceBaseUnits
+            )
+        }
+    }
+
+    func coinObjects(
+        owner: String,
+        coinType: String
+    ) async throws -> WalletSuiCoinObjectSnapshot {
+        do {
+            return try await primary.coinObjects(owner: owner, coinType: coinType)
+        } catch {
+            guard let fallback else { throw error }
+            return try await fallback.coinObjects(owner: owner, coinType: coinType)
+        }
+    }
+
+    func selectCoinObject(
+        owner: String,
+        coinType: String,
+        requiredBalanceBaseUnits: String
+    ) async throws -> WalletSuiCoinObjectSelection {
+        do {
+            return try await primary.selectCoinObject(
+                owner: owner, coinType: coinType,
+                requiredBalanceBaseUnits: requiredBalanceBaseUnits
+            )
+        } catch {
+            guard let fallback else { throw error }
+            return try await fallback.selectCoinObject(
+                owner: owner, coinType: coinType,
+                requiredBalanceBaseUnits: requiredBalanceBaseUnits
             )
         }
     }
