@@ -19,11 +19,14 @@ except ModuleNotFoundError as error:  # pragma: no cover - CI and release Macs u
 
 EXPECTED_DIRECT = {
     "alloy": "2.4.1",
+    "base64": "0.22.1",
     "bip39": "2.2.2",
+    "bs58": "0.5.1",
     "ed25519-dalek": "3.0.0",
     "hex": "0.4.3",
     "serde": "1.0.228",
     "serde_json": "1.0.145",
+    "sha2": "0.10.9",
     "slip10_ed25519": "0.1.3",
     "solana-pubkey": "4.3.0",
     "sui-crypto": "0.3.1",
