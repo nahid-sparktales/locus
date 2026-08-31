@@ -148,6 +148,7 @@ extension AppModel {
             self.sendBrowserCapability(to: runtime.service)
             self.sendNotesCapability(to: runtime.service)
             self.sendWalletCapability(to: runtime.service)
+            self.sendConnectorCapability(to: runtime.service)
             self.syncPreferredPermissionMode(to: runtime.service)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
@@ -241,6 +242,7 @@ extension AppModel {
         sendBrowserCapability(to: runtime.service)
         sendNotesCapability(to: runtime.service)
         sendWalletCapability(to: runtime.service)
+        sendConnectorCapability(to: runtime.service)
         syncPreferredPermissionMode(to: runtime.service)
         syncBrowserProtectedSessions()
         return runtime
@@ -448,6 +450,11 @@ extension AppModel {
         }
         if type == "wallet_action_request" {
             runWalletAction(event, on: runtime.service)
+        }
+        if type == "connector_action_request" {
+            eventAutomations.handleAction(
+                event, workspacePath: runtime.workspacePath, on: runtime.service
+            )
         }
         if type == "error" {
             state = .failed

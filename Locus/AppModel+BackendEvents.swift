@@ -555,6 +555,14 @@ extension AppModel {
                 showToast("The Locus Vault signer is unavailable")
             }
 
+        case "connector_action_request":
+            eventAutomations.handleAction(
+                event, workspacePath: workspacePath, on: conversationBackend
+            )
+
+        case "connector_control_status":
+            break
+
         case "todo_update":
             if let raw = event["todos"] as? [[String: Any]] {
                 let updatedTodos = raw.compactMap { decode(TodoItem.self, from: $0) }

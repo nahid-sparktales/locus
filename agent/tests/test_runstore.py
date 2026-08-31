@@ -329,7 +329,7 @@ def test_current_schema_reopens_writable_without_reapplying_migrations(tmp_path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_meta WHERE singleton=1"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
 
 
 def test_schema_v4_migrates_a_v3_store_and_records_turn_usage(tmp_path) -> None:

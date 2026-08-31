@@ -306,6 +306,7 @@ final class AppModel: ObservableObject {
     let computerControl = ComputerControlService()
     let applicationContext = ApplicationContextService()
     let simulatorControl = SimulatorControlService()
+    let eventAutomations = EventAutomationModel()
     private var applicationContextBridge: AnyCancellable?
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
@@ -745,6 +746,7 @@ final class AppModel: ObservableObject {
                     self.announceBrowserCapability()
                     self.sendNotesCapability(to: self.backend)
                     self.sendWalletCapability(to: self.backend)
+                    self.sendConnectorCapability(to: self.backend)
                     self.syncPreferredPermissionMode(to: self.backend)
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
@@ -879,6 +881,35 @@ final class AppModel: ObservableObject {
         scheduleBridge = schedule.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        eventAutomations.configure(
+            backend: backend,
+            onQueuedRun: { [weak self] run in
+                guard let self,
+                      run.state == "queued",
+                      self.restoredQueuedRunIDs.insert(run.id).inserted else { return }
+                await self.dispatchPersistedQueuedRun(run)
+            },
+            canDispatchToSession: { [weak self] sessionID in
+                guard let self else { return false }
+                if let runtime = self.taskWorkers[sessionID],
+                   runtime.occupiesExecutionSlot || !runtime.queuedMessages.isEmpty {
+                    return false
+                }
+                if self.currentSessionID == sessionID,
+                   self.isBusy || self.hasPendingPermission || !self.queuedMessages.isEmpty {
+                    return false
+                }
+                return true
+            },
+            onCapabilityChanged: { [weak self] in
+                guard let self else { return }
+                self.sendConnectorCapability(to: self.backend)
+                for runtime in self.taskWorkers.values {
+                    self.sendConnectorCapability(to: runtime.service)
+                }
+            },
+            showMessage: { [weak self] message in self?.showToast(message) }
+        )
         providerAccountsModel.configure(
             backend: backend,
             persistenceEnabled: persistenceEnabled,

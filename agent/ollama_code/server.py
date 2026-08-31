@@ -427,6 +427,16 @@ def _run_user_turn(
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
+    existing_run = svc.run_store.run(run_id) if reserved_run_id else None
+    existing_manifest = (
+        existing_run.get("manifest")
+        if isinstance(existing_run, dict) and isinstance(existing_run.get("manifest"), dict)
+        else {}
+    )
+    run_manifest = {
+        **existing_manifest,
+        "solo_swarm": bool(solo_swarm_enabled and not just_chat),
+    }
     environment = "worktree" if svc.current_task is not None else "local"
     svc.run_store.start_run(
         run_id,
@@ -438,7 +448,7 @@ def _run_user_turn(
         request=text,
         state="running",
         run_kind="solo",
-        manifest={"solo_swarm": bool(solo_swarm_enabled and not just_chat)},
+        manifest=run_manifest,
         content_policy="metadata",
         execution_environment=environment,
     )
@@ -521,15 +531,30 @@ def _run_user_turn(
     svc.core.reset_system_message()
     completed = False
     try:
+        persisted_metadata: dict[str, Any] = {
+            "run_id": run_id,
+            **({"solo_swarm": True} if swarm is not None else {}),
+        }
+        if run_manifest.get("event_triggered") is True:
+            delivery_id = str(run_manifest.get("event_delivery_id") or "")
+            trigger_id = str(run_manifest.get("event_trigger_id") or "")
+            delivery = svc.run_store.event_delivery(delivery_id) if delivery_id else None
+            trigger = svc.run_store.event_trigger(trigger_id) if trigger_id else None
+            if isinstance(delivery, dict) and isinstance(trigger, dict):
+                persisted_metadata["event_trigger"] = {
+                    "trigger_id": trigger_id,
+                    "delivery_id": delivery_id,
+                    "source": str(delivery.get("source") or ""),
+                    "source_event_id": str(delivery.get("source_event_id") or ""),
+                    "instruction": str(trigger.get("instruction") or "")[:240_000],
+                    "event": delivery.get("event") or {},
+                }
         svc.core.run_turn(
             text,
             svc.decide,
             allow_tools=not just_chat,
             attachments=attachments,
-            persisted_user_metadata={
-                "run_id": run_id,
-                **({"solo_swarm": True} if swarm is not None else {}),
-            },
+            persisted_user_metadata=persisted_metadata,
         )
         completed = True
     except Exception:
@@ -2089,6 +2114,22 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         raw = msg.get("result")
         result = raw if isinstance(raw, dict) else {"error": "invalid wallet result"}
         svc.answer_wallet(request_id, result)
+    elif mtype == "set_connector_control":
+        if svc.busy:
+            _command_error(svc, "set_connector_control", "Wait for the active turn to finish.")
+            return
+        enabled = core.tool_registry.configure_connector_capability(msg.get("capability"))
+        core.connector_executor = svc.execute_connector if enabled else None
+        svc.queue_event({
+            "type": "connector_control_status",
+            "enabled": enabled,
+            "connection_count": len(core.tool_registry.connector_connections),
+        })
+    elif mtype == "connector_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid connector result"}
+        svc.answer_connector(request_id, result)
     elif mtype == "mcp_input_response":
         request_id = str(msg.get("request_id") or "")
         action = str(msg.get("action") or "cancel")
@@ -2109,6 +2150,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_all_browser_actions()
         svc.cancel_all_notes_actions()
         svc.cancel_all_wallet_actions()
+        svc.cancel_all_connector_actions()
         svc.cancel_dispatch_decisions()
         svc.cancel_all_mcp_inputs()
     elif mtype == "retry_last":

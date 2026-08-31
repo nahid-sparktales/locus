@@ -350,6 +350,19 @@ struct SessionSidebarView: View {
                     model.presentScheduleEditor(prompt: model.draftText)
                 }
 
+                secondaryButton(
+                    symbol: "bolt.badge.clock",
+                    title: "Watch for Event",
+                    help: "Turn this request into a draft event trigger",
+                    accessibilityLabel: "Watch for Event",
+                    identifier: "sidebar.eventTrigger"
+                ) {
+                    model.eventAutomations.presentEditor(
+                        targetSessionID: model.currentSessionID,
+                        naturalLanguageRequest: model.draftText
+                    )
+                }
+
                 activityButton
             }
         }

@@ -17,6 +17,7 @@ CAPABILITY_ENV = {
     "modern_mcp": "LOCUS_CAPABILITY_MODERN_MCP",
     "browser": "LOCUS_CAPABILITY_BROWSER",
     "transcript_search": "LOCUS_CAPABILITY_TRANSCRIPT_SEARCH",
+    "event_triggers": "LOCUS_CAPABILITY_EVENT_TRIGGERS",
 }
 
 

@@ -20,6 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .event_triggers import (
+    MAX_PENDING_PER_TRIGGER,
+    EventTriggerValidationError,
+    matches_trigger,
+    normalize_connection,
+    normalize_event,
+    normalize_trigger,
+    validate_filters_for_source,
+)
 from .schedules import (
     ScheduleValidationError,
     latest_due_occurrence,
@@ -28,7 +37,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -442,6 +451,112 @@ class RunStore:
                 )
                 connection.execute("UPDATE schema_meta SET version=8 WHERE singleton=1")
                 connection.commit()
+            if version < 9:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS connector_connections (
+                        id TEXT PRIMARY KEY,
+                        kind TEXT NOT NULL,
+                        display_name TEXT NOT NULL,
+                        public_config_json TEXT NOT NULL DEFAULT '{}',
+                        cursor_json TEXT NOT NULL DEFAULT '{}',
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        health TEXT NOT NULL DEFAULT 'disconnected',
+                        last_error TEXT,
+                        last_polled_at REAL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS event_triggers (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        connection_id TEXT NOT NULL REFERENCES connector_connections(id)
+                            ON DELETE RESTRICT,
+                        target_session_id TEXT NOT NULL,
+                        instruction TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        filters_json TEXT NOT NULL DEFAULT '{}',
+                        action_connection_ids_json TEXT NOT NULL DEFAULT '[]',
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        last_event_at REAL,
+                        last_run_id TEXT,
+                        last_error TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS event_triggers_connection_idx
+                        ON event_triggers(connection_id, enabled);
+                    CREATE INDEX IF NOT EXISTS event_triggers_session_idx
+                        ON event_triggers(target_session_id, enabled);
+                    CREATE TABLE IF NOT EXISTS event_deliveries (
+                        id TEXT PRIMARY KEY,
+                        trigger_id TEXT NOT NULL REFERENCES event_triggers(id) ON DELETE CASCADE,
+                        source_event_id TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        received_at REAL NOT NULL,
+                        occurred_at REAL NOT NULL,
+                        event_json TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        attempt INTEGER NOT NULL DEFAULT 0,
+                        session_id TEXT,
+                        run_id TEXT,
+                        error TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        UNIQUE(trigger_id, source_event_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS event_deliveries_pending_idx
+                        ON event_deliveries(state, received_at, created_at);
+                    CREATE INDEX IF NOT EXISTS event_deliveries_trigger_idx
+                        ON event_deliveries(trigger_id, received_at DESC);
+                    CREATE TABLE IF NOT EXISTS connector_action_receipts (
+                        idempotency_key TEXT PRIMARY KEY,
+                        event_delivery_id TEXT REFERENCES event_deliveries(id) ON DELETE SET NULL,
+                        tool_name TEXT NOT NULL,
+                        result_json TEXT NOT NULL DEFAULT '{}',
+                        created_at REAL NOT NULL
+                    );
+                    """
+                )
+                connection.execute("UPDATE schema_meta SET version=9 WHERE singleton=1")
+                connection.commit()
+            # Dispatch claims and run creation intentionally use separate
+            # transactions. A crash between them is therefore recoverable:
+            # link a run that was already created, otherwise make the event
+            # pending again because no model turn could have started.
+            connection.execute("BEGIN IMMEDIATE")
+            claims = connection.execute(
+                """
+                SELECT deliveries.id, deliveries.attempt, triggers.target_session_id
+                FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id
+                WHERE deliveries.state='claiming'
+                """
+            ).fetchall()
+            for claim in claims:
+                run_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"locus:event-delivery:{claim['id']}:{int(claim['attempt'] or 0)}",
+                ).hex
+                run_exists = connection.execute(
+                    "SELECT 1 FROM runs WHERE id=?", (run_id,)
+                ).fetchone() is not None
+                if run_exists:
+                    connection.execute(
+                        "UPDATE event_deliveries SET state='queued', run_id=?,"
+                        " session_id=?, error=NULL, updated_at=? WHERE id=?",
+                        (run_id, claim["target_session_id"], time.time(), claim["id"]),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE event_deliveries SET state='pending', run_id=NULL,"
+                        " session_id=NULL, error=NULL, updated_at=? WHERE id=?",
+                        (time.time(), claim["id"]),
+                    )
+            connection.commit()
 
     def upsert_mcp_task(
         self,
@@ -958,6 +1073,599 @@ class RunStore:
             "job_count": int(row["job_count"] or 0),
             "completed_job_count": int(row["completed_job_count"] or 0),
         } for row in rows]
+
+    # ------------------------------------------------------ event automations
+
+    @staticmethod
+    def _connector_connection_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "kind": row["kind"],
+            "display_name": row["display_name"],
+            "public_config": json.loads(row["public_config_json"] or "{}"),
+            "cursor": json.loads(row["cursor_json"] or "{}"),
+            "enabled": bool(row["enabled"]),
+            "health": row["health"],
+            "last_error": row["last_error"],
+            "last_polled_at": row["last_polled_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _event_trigger_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "connection_id": row["connection_id"],
+            "target_session_id": row["target_session_id"],
+            "instruction": row["instruction"],
+            "mode": row["mode"],
+            "filters": json.loads(row["filters_json"] or "{}"),
+            "action_connection_ids": json.loads(
+                row["action_connection_ids_json"] or "[]"
+            ),
+            "enabled": bool(row["enabled"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_event_at": row["last_event_at"],
+            "last_run_id": row["last_run_id"],
+            "last_error": row["last_error"],
+        }
+
+    @staticmethod
+    def _event_delivery_row(row: sqlite3.Row) -> dict[str, Any]:
+        run_state = row["run_state"] if "run_state" in row.keys() else None
+        state = row["state"]
+        if state == "queued" and run_state in TERMINAL_STATES:
+            state = run_state
+        return {
+            "id": row["id"],
+            "trigger_id": row["trigger_id"],
+            "source_event_id": row["source_event_id"],
+            "source": row["source"],
+            "received_at": row["received_at"],
+            "occurred_at": row["occurred_at"],
+            "event": json.loads(row["event_json"] or "{}"),
+            "state": state,
+            "run_state": run_state,
+            "attempt": int(row["attempt"] or 0),
+            "session_id": row["session_id"],
+            "run_id": row["run_id"],
+            "error": row["error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def connector_connections(self) -> list[dict[str, Any]]:
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM connector_connections WHERE deleted=0"
+                " ORDER BY enabled DESC, display_name COLLATE NOCASE"
+            ).fetchall()
+        return [self._connector_connection_row(row) for row in rows]
+
+    def connector_connection(self, connection_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM connector_connections WHERE id=? AND deleted=0", (connection_id,)
+            ).fetchone()
+        return self._connector_connection_row(row) if row is not None else None
+
+    def create_connector_connection(
+        self, value: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        try:
+            normalized = normalize_connection(value)
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        connection_id = str(value.get("id") or uuid.uuid4().hex)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", connection_id):
+            raise RunStoreError("connection id is invalid")
+        created = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO connector_connections(
+                        id, kind, display_name, public_config_json, cursor_json,
+                        enabled, health, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, 'disconnected', ?, ?)
+                    """,
+                    (
+                        connection_id, normalized["kind"], normalized["display_name"],
+                        _json(normalized["public_config"]), _json(normalized["cursor"]),
+                        int(normalized["enabled"]), created, created,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RunStoreError("a connector connection with that id already exists") from exc
+        return self.connector_connection(connection_id) or {"id": connection_id, **normalized}
+
+    def update_connector_connection(
+        self, connection_id: str, updates: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        existing = self.connector_connection(connection_id)
+        if existing is None:
+            raise RunStoreError("connector connection not found")
+        allowed = {"kind", "display_name", "public_config", "cursor", "enabled"}
+        unknown = set(updates) - allowed
+        if unknown:
+            raise RunStoreError(f"unknown connection field: {sorted(unknown)[0]}")
+        merged = {key: existing[key] for key in allowed}
+        merged.update(updates)
+        try:
+            normalized = normalize_connection(merged)
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        current = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE connector_connections SET kind=?, display_name=?,
+                    public_config_json=?, cursor_json=?, enabled=?, updated_at=?,
+                    last_error=CASE WHEN ? THEN NULL ELSE last_error END
+                WHERE id=?
+                """,
+                (
+                    normalized["kind"], normalized["display_name"],
+                    _json(normalized["public_config"]), _json(normalized["cursor"]),
+                    int(normalized["enabled"]), current,
+                    int(normalized["enabled"] and not existing["enabled"]), connection_id,
+                ),
+            )
+        return self.connector_connection(connection_id) or existing
+
+    def update_connector_cursor(
+        self, connection_id: str, cursor: dict[str, Any], *,
+        health: str = "connected", error: str = "", now: float | None = None,
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        existing = self.connector_connection(connection_id)
+        if existing is None:
+            raise RunStoreError("connector connection not found")
+        try:
+            normalized = normalize_connection({**existing, "cursor": cursor})
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        current = float(now if now is not None else time.time())
+        clean_health = " ".join(health.split())[:80] or "connected"
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE connector_connections SET cursor_json=?, health=?, last_error=?,
+                    last_polled_at=?, updated_at=? WHERE id=?
+                """,
+                (
+                    _json(normalized["cursor"]), clean_health, error[:4_000] or None,
+                    current, current, connection_id,
+                ),
+            )
+        return self.connector_connection(connection_id) or existing
+
+    def delete_connector_connection(self, connection_id: str) -> None:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE connector_connections SET enabled=0, deleted=1, updated_at=?"
+                " WHERE id=? AND deleted=0", (time.time(), connection_id,)
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("connector connection not found")
+            connection.execute(
+                "UPDATE event_triggers SET enabled=0, last_error=?, updated_at=?"
+                " WHERE connection_id=? AND deleted=0",
+                ("The source connection was removed.", time.time(), connection_id),
+            )
+
+    def event_triggers(self) -> list[dict[str, Any]]:
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM event_triggers WHERE deleted=0"
+                " ORDER BY enabled DESC, name COLLATE NOCASE"
+            ).fetchall()
+        return [self._event_trigger_row(row) for row in rows]
+
+    def event_trigger(self, trigger_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM event_triggers WHERE id=? AND deleted=0", (trigger_id,)
+            ).fetchone()
+        return self._event_trigger_row(row) if row is not None else None
+
+    def create_event_trigger(
+        self, value: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        try:
+            normalized = normalize_trigger(value)
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        source_connection = self.connector_connection(normalized["connection_id"])
+        if source_connection is None:
+            raise RunStoreError("connector connection not found")
+        try:
+            validate_filters_for_source(
+                str(source_connection["kind"]), normalized["filters"]
+            )
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        for action_id in normalized["action_connection_ids"]:
+            if self.connector_connection(action_id) is None:
+                raise RunStoreError(f"action connector connection not found: {action_id}")
+        trigger_id = str(value.get("id") or uuid.uuid4().hex)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", trigger_id):
+            raise RunStoreError("trigger id is invalid")
+        created = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO event_triggers(
+                        id, name, connection_id, target_session_id, instruction,
+                        mode, filters_json, action_connection_ids_json, enabled,
+                        created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        trigger_id, normalized["name"], normalized["connection_id"],
+                        normalized["target_session_id"], normalized["instruction"],
+                        normalized["mode"], _json(normalized["filters"]),
+                        _json(normalized["action_connection_ids"]),
+                        int(normalized["enabled"]), created, created,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RunStoreError("an event trigger with that id already exists") from exc
+        return self.event_trigger(trigger_id) or {"id": trigger_id, **normalized}
+
+    def update_event_trigger(
+        self, trigger_id: str, updates: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        existing = self.event_trigger(trigger_id)
+        if existing is None:
+            raise RunStoreError("event trigger not found")
+        allowed = {
+            "name", "connection_id", "target_session_id", "instruction", "mode",
+            "filters", "action_connection_ids", "enabled",
+        }
+        unknown = set(updates) - allowed
+        if unknown:
+            raise RunStoreError(f"unknown trigger field: {sorted(unknown)[0]}")
+        merged = {key: existing[key] for key in allowed}
+        merged.update(updates)
+        try:
+            normalized = normalize_trigger(merged)
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        source_connection = self.connector_connection(normalized["connection_id"])
+        if source_connection is None:
+            raise RunStoreError("connector connection not found")
+        try:
+            validate_filters_for_source(
+                str(source_connection["kind"]), normalized["filters"]
+            )
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        for action_id in normalized["action_connection_ids"]:
+            if self.connector_connection(action_id) is None:
+                raise RunStoreError(f"action connector connection not found: {action_id}")
+        current = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE event_triggers SET name=?, connection_id=?, target_session_id=?,
+                    instruction=?, mode=?, filters_json=?,
+                    action_connection_ids_json=?, enabled=?, updated_at=?,
+                    last_error=CASE WHEN ? THEN NULL ELSE last_error END
+                WHERE id=?
+                """,
+                (
+                    normalized["name"], normalized["connection_id"],
+                    normalized["target_session_id"], normalized["instruction"],
+                    normalized["mode"], _json(normalized["filters"]),
+                    _json(normalized["action_connection_ids"]), int(normalized["enabled"]),
+                    current, int(normalized["enabled"] and not existing["enabled"]),
+                    trigger_id,
+                ),
+            )
+        return self.event_trigger(trigger_id) or existing
+
+    def pause_event_trigger(self, trigger_id: str, reason: str) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE event_triggers SET enabled=0, last_error=?, updated_at=? WHERE id=?",
+                (reason.strip()[:4_000] or "The trigger needs attention.", time.time(), trigger_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("event trigger not found")
+        return self.event_trigger(trigger_id) or {}
+
+    def delete_event_trigger(self, trigger_id: str) -> None:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE event_triggers SET enabled=0, deleted=1, updated_at=?"
+                " WHERE id=? AND deleted=0",
+                (time.time(), trigger_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("event trigger not found")
+
+    def ingest_event(
+        self, connection_id: str, value: dict[str, Any], *, now: float | None = None
+    ) -> list[dict[str, Any]]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        connector = self.connector_connection(connection_id)
+        if connector is None:
+            raise RunStoreError("connector connection not found")
+        if not connector["enabled"]:
+            raise RunStoreError("connector connection is paused")
+        try:
+            event = normalize_event(value, source=str(connector["kind"]))
+        except EventTriggerValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        received = float(now if now is not None else time.time())
+        created_ids: list[str] = []
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT * FROM event_triggers"
+                " WHERE connection_id=? AND enabled=1 AND deleted=0"
+                " ORDER BY created_at, id",
+                (connection_id,),
+            ).fetchall()
+            matching = [row for row in rows if matches_trigger(
+                json.loads(row["filters_json"] or "{}"), event
+            )]
+            for row in matching:
+                existing = connection.execute(
+                    "SELECT id FROM event_deliveries WHERE trigger_id=? AND source_event_id=?",
+                    (row["id"], event["source_event_id"]),
+                ).fetchone()
+                if existing is not None:
+                    created_ids.append(str(existing["id"]))
+                    continue
+                pending = int(connection.execute(
+                    """
+                    SELECT COUNT(*) FROM event_deliveries AS deliveries
+                    LEFT JOIN runs ON runs.id=deliveries.run_id
+                    WHERE deliveries.trigger_id=? AND (
+                        deliveries.state IN ('pending', 'claiming') OR
+                        (deliveries.state='queued' AND (
+                            runs.state IS NULL OR runs.state NOT IN (
+                                'completed','failed','interrupted','cancelled','discarded'
+                            )
+                        ))
+                    )
+                    """,
+                    (row["id"],),
+                ).fetchone()[0])
+                if pending >= MAX_PENDING_PER_TRIGGER:
+                    connection.rollback()
+                    raise RunStoreError("event trigger queue is full")
+                delivery_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"locus:event:{row['id']}:{event['source_event_id']}",
+                ).hex
+                connection.execute(
+                    """
+                    INSERT INTO event_deliveries(
+                        id, trigger_id, source_event_id, source, received_at,
+                        occurred_at, event_json, state, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    """,
+                    (
+                        delivery_id, row["id"], event["source_event_id"], event["source"],
+                        received, event["occurred_at"], _json(event), received, received,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE event_triggers SET last_event_at=?, updated_at=? WHERE id=?",
+                    (received, received, row["id"]),
+                )
+                created_ids.append(delivery_id)
+            connection.commit()
+        return [item for delivery_id in created_ids if (
+            item := self.event_delivery(delivery_id)
+        ) is not None]
+
+    def event_deliveries(
+        self, *, trigger_id: str = "", state: str = "", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 500))
+        clauses: list[str] = []
+        values: list[Any] = []
+        if trigger_id:
+            clauses.append("deliveries.trigger_id=?")
+            values.append(trigger_id)
+        if state:
+            clauses.append("deliveries.state=?")
+            values.append(state)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT deliveries.*, runs.state AS run_state FROM event_deliveries AS deliveries"
+                " LEFT JOIN runs ON runs.id=deliveries.run_id" + where +
+                " ORDER BY deliveries.received_at DESC, deliveries.created_at DESC LIMIT ?",
+                (*values, bounded),
+            ).fetchall()
+        return [self._event_delivery_row(row) for row in rows]
+
+    def event_delivery(self, delivery_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT deliveries.*, runs.state AS run_state FROM event_deliveries AS deliveries"
+                " LEFT JOIN runs ON runs.id=deliveries.run_id WHERE deliveries.id=?",
+                (delivery_id,),
+            ).fetchone()
+        return self._event_delivery_row(row) if row is not None else None
+
+    def pending_event_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return list(reversed(self.event_deliveries(state="pending", limit=limit)))
+
+    def claim_event_delivery(
+        self, delivery_id: str, *, now: float | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        current = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT deliveries.*, triggers.target_session_id, triggers.enabled AS trigger_enabled,
+                    connections.enabled AS connection_enabled
+                FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id
+                JOIN connector_connections AS connections ON connections.id=triggers.connection_id
+                WHERE deliveries.id=?
+                """,
+                (delivery_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("event delivery not found")
+            if row["state"] != "pending":
+                raise RunStoreError("event delivery is not pending")
+            if not row["trigger_enabled"] or not row["connection_enabled"]:
+                raise RunStoreError("event trigger or connector is paused")
+            session_id = str(row["target_session_id"])
+            claiming = connection.execute(
+                """
+                SELECT deliveries.id FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id
+                WHERE triggers.target_session_id=? AND deliveries.state='claiming'
+                    AND deliveries.id<>? LIMIT 1
+                """,
+                (session_id, delivery_id),
+            ).fetchone()
+            if claiming is not None:
+                raise RunStoreError("the target chat is busy")
+            ahead = connection.execute(
+                """
+                SELECT deliveries.id FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id
+                WHERE triggers.target_session_id=? AND deliveries.state='pending'
+                ORDER BY deliveries.received_at, deliveries.created_at, deliveries.id LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if ahead is None or str(ahead["id"]) != delivery_id:
+                raise RunStoreError("another event is ahead of this delivery")
+            active = connection.execute(
+                "SELECT 1 FROM runs WHERE session_id=? AND state NOT IN"
+                " ('completed','failed','interrupted','cancelled','discarded') LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if active is not None:
+                raise RunStoreError("the target chat is busy")
+            attempt = int(row["attempt"] or 0)
+            run_id = uuid.uuid5(
+                uuid.NAMESPACE_URL, f"locus:event-delivery:{delivery_id}:{attempt}"
+            ).hex
+            connection.execute(
+                "UPDATE event_deliveries SET state='claiming', session_id=?,"
+                " updated_at=?, error=NULL WHERE id=?",
+                (session_id, current, delivery_id),
+            )
+            connection.commit()
+        trigger = self.event_trigger(str(row["trigger_id"]))
+        delivery = self.event_delivery(delivery_id)
+        assert trigger is not None and delivery is not None
+        return trigger, delivery, run_id
+
+    def finish_event_dispatch(
+        self, delivery_id: str, *, state: str, run_id: str = "", error: str = ""
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        if state not in {"queued", "failed"}:
+            raise RunStoreError("event dispatch state must be queued or failed")
+        current = time.time()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT trigger_id FROM event_deliveries WHERE id=?", (delivery_id,)
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("event delivery not found")
+            connection.execute(
+                "UPDATE event_deliveries SET state=?, run_id=?, error=?, updated_at=? WHERE id=?",
+                (state, run_id or None, error[:4_000] or None, current, delivery_id),
+            )
+            connection.execute(
+                "UPDATE event_triggers SET last_run_id=?, last_error=?, updated_at=? WHERE id=?",
+                (run_id or None, error[:4_000] or None, current, row["trigger_id"]),
+            )
+        return self.event_delivery(delivery_id) or {}
+
+    def retry_event_delivery(self, delivery_id: str) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        delivery = self.event_delivery(delivery_id)
+        if delivery is None:
+            raise RunStoreError("event delivery not found")
+        retryable = delivery["state"] in TERMINAL_STATES or delivery["state"] == "failed"
+        if not retryable:
+            raise RunStoreError("only stopped event deliveries can be retried")
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE event_deliveries SET state='pending', attempt=attempt+1,"
+                " run_id=NULL, session_id=NULL, error=NULL, updated_at=? WHERE id=?",
+                (time.time(), delivery_id),
+            )
+        return self.event_delivery(delivery_id) or {}
+
+    def connector_action_receipt(self, idempotency_key: str) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM connector_action_receipts WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "idempotency_key": row["idempotency_key"],
+            "event_delivery_id": row["event_delivery_id"],
+            "tool_name": row["tool_name"],
+            "result": json.loads(row["result_json"] or "{}"),
+            "created_at": row["created_at"],
+        }
+
+    def record_connector_action_receipt(
+        self, idempotency_key: str, *, event_delivery_id: str,
+        tool_name: str, result: dict[str, Any], now: float | None = None,
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", idempotency_key):
+            raise RunStoreError("idempotency key is invalid")
+        created = float(now if now is not None else time.time())
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO connector_action_receipts(
+                    idempotency_key, event_delivery_id, tool_name, result_json, created_at
+                ) VALUES(?, NULLIF(?, ''), ?, ?, ?)
+                """,
+                (
+                    idempotency_key, event_delivery_id, tool_name[:160],
+                    _json(sanitize_event(result)), created,
+                ),
+            )
+        return self.connector_action_receipt(idempotency_key) or {}
 
     # ---------------------------------------------------------- scheduled work
 
