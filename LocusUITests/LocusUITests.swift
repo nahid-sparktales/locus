@@ -284,6 +284,17 @@ final class LocusUITests: XCTestCase {
                element.elementType == .group || element.elementType == .other {
                 return true
             }
+            // A Help tag is the system's tooltip window. AppKit draws it, owns
+            // it, and exposes it as an undescribed element for as long as it
+            // is on screen; the control that summoned it carries the real
+            // label and is audited on its own. The hover above asks any tag to
+            // go away before the audit runs, but that races the tooltip delay,
+            // so on a slow runner a tag can still be up — an artifact of
+            // AppKit's chrome rather than a defect in the surface under test.
+            if issue.auditType == .sufficientElementDescription,
+               issue.element?.elementType == .helpTag {
+                return true
+            }
             // The macOS system menu bar container has no label by design;
             // every menu item inside it (Locus, File, Edit, and so on) keeps
             // its native accessible name and role.
