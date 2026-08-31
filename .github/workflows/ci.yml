@@ -1,8 +1,18 @@
 name: CI
 
+# A pull request used to be tested twice over: once for the branch push and
+# again for the pull_request event, two full suites racing on the same commit.
+# That doubled the ui job's exposure to a flaky wait without adding any signal,
+# because the pull_request run is the stricter of the pair — it diffs against
+# the PR base rather than the previous push. Branches are covered through their
+# pull request; main and release tags keep their own runs, and a branch without
+# a pull request can still be run by hand.
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   wallet-signer:
