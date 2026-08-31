@@ -3,22 +3,113 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
+private enum WalletHubSection: String, CaseIterable, Identifiable {
+    case portfolio = "Portfolio"
+    case activity = "Activity"
+    case send = "Send"
+    case receive = "Receive"
+    case swap = "Swap"
+    case collectibles = "Collectibles"
+    case connections = "Connections"
+    case agentRules = "Agent Rules"
+    case security = "Security"
+
+    var id: String { rawValue }
+}
+
+enum WalletSendEligibility {
+    static func supports(
+        snapshot: WalletAccountSnapshot,
+        assets: [WalletAsset]
+    ) -> Bool {
+        guard let network = WalletNetworkCatalog.descriptor(
+            id: snapshot.networkID
+        ), network.chain == snapshot.chain else { return false }
+        if snapshot.assetID == network.nativeAssetID {
+            return network.staticallyReviewedCapabilities.contains(.nativeTransfer)
+        }
+        guard let asset = assets.first(where: { $0.id == snapshot.assetID }),
+              asset.networkID == network.id, asset.chain == network.chain,
+              asset.isVisibleByDefault else { return false }
+        switch network.chain {
+        case .evm:
+            guard let identity = WalletEVMAssetIdentity.parse(asset.id),
+                  identity.networkID == network.id,
+                  asset.reference?.caseInsensitiveCompare(
+                      identity.contractAddress
+                  ) == .orderedSame else { return false }
+            switch identity.standard {
+            case .erc20:
+                return asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            case .erc721, .erc1155:
+                return (asset.kind == .nft || asset.kind == .collectible)
+                    && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+            }
+        case .solana:
+            if let identity = WalletSolanaAssetIdentity.parse(asset.id) {
+                return identity.networkID == network.id
+                    && asset.reference == identity.mint
+                    && asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            }
+            guard let identity = WalletSolanaCollectibleIdentity.parse(asset.id)
+            else { return false }
+            return identity.networkID == network.id
+                && identity.standard == .core
+                && asset.reference == identity.address
+                && (asset.kind == .nft || asset.kind == .collectible)
+                && asset.trust == .curated
+                && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+        case .sui:
+            if let identity = WalletSuiAssetIdentity.parse(asset.id) {
+                return identity.networkID == network.id
+                    && identity.coinType != WalletSuiAssetIdentity.nativeCoinType
+                    && asset.reference == identity.coinType
+                    && asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && asset.trust == .curated
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            }
+            guard let identity = WalletSuiObjectIdentity.parse(asset.id) else {
+                return false
+            }
+            return identity.networkID == network.id
+                && asset.reference == identity.objectID
+                && (asset.kind == .nft || asset.kind == .collectible)
+                && asset.trust == .curated
+                && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+        }
+    }
+}
+
 struct WalletSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gateway: WalletGateway
     @Binding var rpcURL: String
     @Binding var alphaEnabled: Bool
     @Binding var browserEnabled: Bool
-    @State private var recoveryPresented = false
     @State private var deletePresented = false
+    @State private var deleteRecoveryPresented = false
     @State private var policyPresented = false
     @State private var registryPresented = false
     @State private var contractPolicyEntry: WalletContractRegistryEntry?
+    @State private var tokenPolicySnapshot: WalletAccountSnapshot?
     @State private var receiveSnapshot: WalletAccountSnapshot?
+    @State private var sendSnapshot: WalletAccountSnapshot?
     @State private var alphaRiskPresented = false
     @State private var browserChangePresented = false
     @State private var requestedBrowserAccess = false
     @State private var advancedExpanded = false
+    @State private var selectedSection: WalletHubSection = .portfolio
 
     var body: some View {
         ScrollView {
@@ -30,13 +121,10 @@ struct WalletSettingsView: View {
                     alphaDisabledView
                 case .error:
                     errorView
-                case .setupRequired, .backupIncomplete, .locked, .ready:
+                case .setupRequired, .backupIncomplete, .rotationRequired, .locked, .ready:
                     enabledHeader
-                    accountCard
-                    activityCard
-                    spendingRulesCard
-                    connectionsCard
-                    advancedCard
+                    hubNavigation
+                    hubContent
                 }
             }
             .padding(24)
@@ -58,19 +146,23 @@ struct WalletSettingsView: View {
                 alphaEnabled = true
             }
         }
-        .sheet(isPresented: $recoveryPresented) {
-            if let creation = gateway.vaultCreation {
-                WalletVaultBackupSheet(gateway: gateway, creation: creation)
-            }
-        }
         .sheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
+        .sheet(isPresented: $deleteRecoveryPresented) {
+            WalletRecoveryVaultDeleteSheet(gateway: gateway)
+        }
         .sheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
         .sheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
         .sheet(item: $receiveSnapshot) { snapshot in
             WalletReceiveSheet(gateway: gateway, snapshot: snapshot)
         }
+        .sheet(item: $sendSnapshot) { snapshot in
+            WalletSendSheet(gateway: gateway, snapshot: snapshot)
+        }
         .sheet(item: $contractPolicyEntry) { entry in
             WalletContractPolicySheet(gateway: gateway, entry: entry)
+        }
+        .sheet(item: $tokenPolicySnapshot) { snapshot in
+            WalletSPLTokenPolicySheet(gateway: gateway, snapshot: snapshot)
         }
         .sheet(item: Binding(
             get: { gateway.pendingBrowserOriginGrant },
@@ -108,7 +200,7 @@ struct WalletSettingsView: View {
             ContentUnavailableView(
                 "Available in the Direct Download",
                 systemImage: "arrow.down.app",
-                description: Text("The private Sepolia alpha uses a separately signed wallet component that is not included in the Mac App Store build.")
+                description: Text("The self-custodial wallet uses separately signed signer and recovery components that are available only in the notarized direct download.")
             )
             .frame(maxWidth: .infinity, minHeight: 260)
             Text("No wallet setting can enable signing in this build.")
@@ -119,17 +211,17 @@ struct WalletSettingsView: View {
     }
 
     private var alphaDisabledView: some View {
-        WalletSectionCard(title: "Locus Vault Private Alpha", symbol: "wallet.bifold.fill") {
+        WalletSectionCard(title: "Locus Vault", symbol: "wallet.bifold.fill") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("A separate, limited-fund wallet for agent activity on Sepolia.")
+                Text("One recovery phrase. Ethereum, Solana, and Sui accounts.")
                     .font(.title3.weight(.semibold))
-                Text("Set up, receive test ETH, review every website transaction, and give the Locus agent narrow spending rules—all without Terminal activation.")
+                Text("Create or restore a self-custodial wallet, review human and connected-app transactions, and give the Locus agent narrowly capped rules.")
                     .font(.body)
                     .foregroundStyle(LocusTheme.textSecondary)
-                Label("Off by default · Sepolia only · no mainnet signing", systemImage: "checkmark.shield")
+                Label("Mainnet capabilities remain locked unless their signed audit, legal, and release gates pass", systemImage: "checkmark.shield")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(LocusTheme.success)
-                Button("Review Risks and Enable") { alphaRiskPresented = true }
+                Button("Review Security Model and Enable") { alphaRiskPresented = true }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
                     .controlSize(.large)
@@ -150,7 +242,7 @@ struct WalletSettingsView: View {
 
     private var enabledHeader: some View {
         HStack(spacing: 10) {
-            Label("Sepolia Private Alpha", systemImage: "testtube.2")
+            Label("Locus Vault", systemImage: "wallet.bifold.fill")
                 .font(.headline)
                 .foregroundStyle(LocusTheme.textPrimary)
             Text(gateway.statusText)
@@ -158,11 +250,150 @@ struct WalletSettingsView: View {
                 .foregroundStyle(gateway.hubState == .ready ? LocusTheme.success : LocusTheme.warning)
                 .accessibilityIdentifier("settings.wallet.status")
             Spacer()
-            Button("Turn Off Alpha", role: .destructive) {
+            Button("Turn Off Wallet", role: .destructive) {
                 browserEnabled = false
                 alphaEnabled = false
             }
             .accessibilityIdentifier("settings.wallet.disable-alpha")
+        }
+    }
+
+    private var hubNavigation: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(WalletHubSection.allCases) { section in
+                    Button(section.rawValue) { selectedSection = section }
+                        .buttonStyle(.bordered)
+                        .tint(selectedSection == section ? LocusTheme.ink : LocusTheme.textSecondary)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("wallet.hub.\(section.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hubContent: some View {
+        switch selectedSection {
+        case .portfolio:
+            accountCard
+        case .activity:
+            activityCard
+        case .send:
+            sendCard
+        case .receive:
+            receiveCard
+        case .swap:
+            gatedCapabilityCard(
+                title: "Swap", symbol: "arrow.left.arrow.right",
+                detail: "Exact-input swap adapters activate only after their reviewed route, slippage, fee, package or program, simulation, legal-region, and signed release gates pass."
+            )
+        case .collectibles:
+            collectiblesCard
+        case .connections:
+            connectionsCard
+        case .agentRules:
+            spendingRulesCard
+        case .security:
+            accountCard
+            advancedCard
+        }
+    }
+
+    private var sendCard: some View {
+        WalletSectionCard(title: "Send", symbol: "arrow.up.circle.fill") {
+            if gateway.accountSnapshots.isEmpty {
+                Text("Create or restore the vault before sending.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            } else {
+                Text("Prepare a semantic transfer, simulate it, review decoded effects, then approve the exact transaction in the isolated signer.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+                ForEach(gateway.accountSnapshots) { snapshot in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(snapshot.symbol).font(.headline)
+                            Text(networkName(snapshot.networkID))
+                                .font(.caption)
+                                .foregroundStyle(LocusTheme.textTertiary)
+                        }
+                        Spacer()
+                        if sendSupported(snapshot) {
+                            Button("Send") { sendSnapshot = snapshot }
+                                .buttonStyle(.borderedProminent)
+                                .tint(LocusTheme.ink)
+                                .disabled(gateway.status != .unlocked)
+                                .accessibilityIdentifier(
+                                    "wallet.send.open.\(snapshot.id)"
+                                )
+                        } else {
+                            Label("Release-gated", systemImage: "lock.shield")
+                                .font(.caption)
+                                .foregroundStyle(LocusTheme.warning)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var receiveCard: some View {
+        WalletSectionCard(title: "Receive", symbol: "arrow.down.circle.fill") {
+            ForEach(gateway.accountSnapshots) { snapshot in
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(networkName(snapshot.networkID)).font(.headline)
+                        Text(shortAddress(snapshot.address))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(LocusTheme.textSecondary)
+                    }
+                    Spacer()
+                    Button("Copy") { copy(snapshot.address) }
+                    Button("Show") { receiveSnapshot = snapshot }
+                }
+                if snapshot.id != gateway.accountSnapshots.last?.id { Divider() }
+            }
+        }
+    }
+
+    private func gatedCapabilityCard(title: String, symbol: String, detail: String) -> some View {
+        WalletSectionCard(title: title, symbol: symbol) {
+            Label("Release gate locked", systemImage: "lock.shield.fill")
+                .font(.headline)
+                .foregroundStyle(LocusTheme.warning)
+            Text(detail).foregroundStyle(LocusTheme.textSecondary)
+            Text("A remote manifest may disable this capability but cannot widen the authority compiled into this build.")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.textTertiary)
+        }
+    }
+
+    private var collectiblesCard: some View {
+        WalletSectionCard(title: "Collectibles", symbol: "photo.on.rectangle.angled") {
+            let collectibles = gateway.assets.filter { $0.kind == .nft || $0.kind == .collectible }
+            if collectibles.isEmpty {
+                Text("No reviewed collectibles discovered.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            }
+            ForEach(collectibles) { asset in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(asset.name).font(.headline)
+                        Text(asset.canonicalID)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(LocusTheme.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text(asset.trust == .quarantined ? "Quarantined" : "Trusted")
+                        .font(.caption.weight(.semibold))
+                    if asset.trust == .quarantined {
+                        Button("Trust") { gateway.trustQuarantinedAsset(id: asset.id) }
+                    }
+                }
+            }
+            Text("Unknown NFTs stay quarantined. Active HTML, SVG, and script content is never rendered as trusted wallet UI.")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.textTertiary)
         }
     }
 
@@ -173,12 +404,20 @@ struct WalletSettingsView: View {
                 setupRequiredContent
             case .backupIncomplete:
                 backupIncompleteContent
+            case .rotationRequired:
+                rotationRequiredContent
             default:
-                if let snapshot = evmSnapshot {
-                    accountContent(snapshot)
-                } else {
-                    Text("The Sepolia account will appear after vault setup completes.")
+                if gateway.accountSnapshots.isEmpty {
+                    Text("Your public accounts will appear after vault setup completes.")
                         .foregroundStyle(LocusTheme.textSecondary)
+                } else {
+                    ForEach(gateway.accountSnapshots) { snapshot in
+                        accountContent(snapshot)
+                        if snapshot.id != gateway.accountSnapshots.last?.id {
+                            Divider()
+                        }
+                    }
+                    sessionAuthorityContent
                 }
             }
             if let error = gateway.lastError, !error.isEmpty {
@@ -193,17 +432,20 @@ struct WalletSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Create a separate vault")
                 .font(.title3.weight(.semibold))
-            Text("Use a new recovery phrase and only limited Sepolia test funds. Never import an external wallet phrase.")
+            Text("Create a new 24-word phrase or restore the one production Locus Vault phrase you already backed up.")
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
             Button("Create Locus Vault") {
-                Task {
-                    if await gateway.beginVaultCreation() != nil { recoveryPresented = true }
-                }
+                Task { _ = await gateway.beginVaultCreation() }
             }
             .buttonStyle(.borderedProminent)
             .tint(LocusTheme.ink)
             .accessibilityIdentifier("settings.wallet.create")
+            Button("Restore from 24 Words") {
+                Task { _ = await gateway.beginVaultRestoration() }
+            }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("settings.wallet.restore")
         }
     }
 
@@ -213,18 +455,22 @@ struct WalletSettingsView: View {
                 .font(.title3.weight(.semibold))
             Text("The vault cannot be used until the requested recovery words are confirmed.")
                 .foregroundStyle(LocusTheme.textSecondary)
-            if gateway.vaultCreation != nil {
-                Button("Continue Backup") { recoveryPresented = true }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
-            } else {
-                Button("Restart Setup") {
-                    Task {
-                        await gateway.cancelVaultCreation()
-                        if await gateway.beginVaultCreation() != nil { recoveryPresented = true }
-                    }
-                }
+            ProgressView("The isolated recovery window owns phrase display and verification.")
+                .controlSize(.small)
+        }
+    }
+
+    private var rotationRequiredContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Rotate for Mainnet", systemImage: "arrow.triangle.2.circlepath.circle.fill")
+                .font(.title3.weight(.semibold))
+            Text("Your earlier preview vault remains encrypted and recovery-only. Mainnet signing stays disabled until you create and verify a new production recovery phrase.")
+                .foregroundStyle(LocusTheme.textSecondary)
+            Button("Create Production Recovery Phrase") {
+                Task { _ = await gateway.beginMainnetRotation() }
             }
+            .buttonStyle(.borderedProminent)
+            .tint(LocusTheme.ink)
         }
     }
 
@@ -237,7 +483,7 @@ struct WalletSettingsView: View {
                         .font(.system(.title, design: .rounded, weight: .semibold))
                         .contentTransition(.numericText())
                     HStack(spacing: 6) {
-                        Text("Sepolia")
+                        Text(networkName(snapshot.networkID))
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -254,7 +500,7 @@ struct WalletSettingsView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .accessibilityLabel("Refresh Sepolia balance")
+                .accessibilityLabel("Refresh \(networkName(snapshot.networkID)) balance")
             }
 
             HStack(spacing: 8) {
@@ -263,20 +509,29 @@ struct WalletSettingsView: View {
                     .foregroundStyle(LocusTheme.textSecondary)
                     .textSelection(.enabled)
                 Button("Copy") { copy(snapshot.address) }
-                Button("Receive") { receiveSnapshot = snapshot }
+                Button("Send") { sendSnapshot = snapshot }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
+                    .disabled(gateway.status != .unlocked || !sendSupported(snapshot))
+                Button("Receive") { receiveSnapshot = snapshot }
+                    .buttonStyle(.bordered)
                 Spacer()
             }
 
+        }
+    }
+
+    private var sessionAuthorityContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if gateway.status == .unlocked {
                 Button("Lock Vault") { model.lockWalletSession() }
                     .accessibilityIdentifier("settings.wallet.lock")
             } else if gateway.canAuthorizeSession {
-                Button("Unlock Vault") { Task { await model.authorizeWalletSession() } }
-                    .accessibilityIdentifier("settings.wallet.unlock")
+                Button("Unlock Vault") {
+                    Task { await model.authorizeWalletSession() }
+                }
+                .accessibilityIdentifier("settings.wallet.unlock")
             }
-
             Text(gateway.status == .locked
                 ? "Receiving remains available while locked. Signing authority, spending rules, prepared work, and website approvals are cleared."
                 : "Unlocked for this Locus session. Sleep, screen lock, quit, update, signer interruption, or manual lock clears authority.")
@@ -288,7 +543,7 @@ struct WalletSettingsView: View {
     private var activityCard: some View {
         WalletSectionCard(title: "Activity", symbol: "clock.arrow.circlepath") {
             if gateway.transactionHistory.isEmpty {
-                Text("No Sepolia transactions yet.")
+                Text("No wallet transactions yet.")
                     .font(.body)
                     .foregroundStyle(LocusTheme.textTertiary)
             } else {
@@ -311,8 +566,9 @@ struct WalletSettingsView: View {
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(LocusTheme.textSecondary)
                             Button("Copy Hash") { copy(item.transactionHash) }
-                            if let url = URL(string: "https://sepolia.etherscan.io/tx/\(item.transactionHash)") {
-                                Link("View on Etherscan", destination: url)
+                            if let url = WalletNetworkCatalog.descriptor(id: item.networkID)?
+                                .explorerURL(transactionID: item.transactionHash) {
+                                Link("View in Explorer", destination: url)
                             }
                         }
                         if let detail = item.detail, !detail.isEmpty {
@@ -341,16 +597,30 @@ struct WalletSettingsView: View {
                     .font(.body)
                     .foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
-                Button("New ETH Rule") { policyPresented = true }
+                Button("New Native Rule") { policyPresented = true }
                     .disabled(gateway.status != .unlocked)
+            }
+            ForEach(gateway.accountSnapshots.filter { snapshot in
+                snapshot.chain == .solana
+                    && WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .spl
+            }) { snapshot in
+                HStack {
+                    Text("\(snapshot.symbol) · \(networkName(snapshot.networkID))")
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    Button("New Token Rule") { tokenPolicySnapshot = snapshot }
+                        .disabled(gateway.status != .unlocked)
+                }
             }
             ForEach(gateway.activePolicyStatuses) { status in
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(policyLabel(status.policy)) → \(status.policy.allowedRecipients.sorted().joined(separator: ", "))")
                         .font(.headline)
                         .lineLimit(1)
-                    if status.policy.allowedAdapterIDs.contains("native-eth-transfer-v1") {
-                        Text("Used \(WalletAmountFormatter.ether(wei: status.spentBaseUnits) ?? status.spentBaseUnits) of \(WalletAmountFormatter.ether(wei: status.policy.maximumSessionBaseUnits) ?? status.policy.maximumSessionBaseUnits)")
+                    if let network = WalletNetworkCatalog.descriptor(
+                        id: status.policy.networkID
+                    ), status.policy.allowedAssetIDs == [network.nativeAssetID] {
+                        Text("Used \(WalletAmountFormatter.asset(baseUnits: status.spentBaseUnits, decimals: network.nativeDecimals, symbol: network.nativeSymbol) ?? status.spentBaseUnits) of \(WalletAmountFormatter.asset(baseUnits: status.policy.maximumSessionBaseUnits, decimals: network.nativeDecimals, symbol: network.nativeSymbol) ?? status.policy.maximumSessionBaseUnits)")
                             .font(.callout)
                             .accessibilityIdentifier("settings.wallet.rule.usage")
                     } else {
@@ -391,7 +661,7 @@ struct WalletSettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Browser Wallet Access")
                         .font(.headline)
-                    Text("Lets websites ask to see this Sepolia address. Every transaction still requires exact confirmation.")
+                    Text("Websites request address access separately for each enabled network. Every transaction still requires exact confirmation.")
                         .font(.callout)
                         .foregroundStyle(LocusTheme.textTertiary)
                 }
@@ -434,6 +704,8 @@ struct WalletSettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     advancedConnection
                     Divider()
+                    idleLockControl
+                    Divider()
                     advancedContracts
                     Divider()
                     advancedAddresses
@@ -442,12 +714,22 @@ struct WalletSettingsView: View {
                     Divider()
                     advancedDiagnostics
                     Divider()
+                    walletHelpAndDisclosures
+                    Divider()
                     Button("Delete Locus Vault", role: .destructive) { deletePresented = true }
                         .disabled(gateway.vaultState == .missing)
                         .accessibilityIdentifier("settings.wallet.delete")
                     Text("Deletion removes the encrypted vault from this Mac and requires the exact confirmation phrase. Receiving addresses are removed with it.")
                         .font(.caption)
                         .foregroundStyle(LocusTheme.textTertiary)
+                    if gateway.recoveryOnlyVaultAvailable {
+                        Button("Delete Earlier Recovery-Only Vault", role: .destructive) {
+                            deleteRecoveryPresented = true
+                        }
+                        Text("The prior encrypted vault is retained only for deliberate recovery until you explicitly delete it.")
+                            .font(.caption)
+                            .foregroundStyle(LocusTheme.textTertiary)
+                    }
                 }
                 .padding(.top, 14)
             } label: {
@@ -455,6 +737,28 @@ struct WalletSettingsView: View {
                     .font(.callout)
                     .foregroundStyle(LocusTheme.textSecondary)
             }
+        }
+    }
+
+    private var idleLockControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Automatic Lock").font(.headline)
+            Picker(
+                "Lock after inactivity",
+                selection: Binding(
+                    get: { gateway.idleLockMinutes },
+                    set: { gateway.configureIdleLock(minutes: $0) }
+                )
+            ) {
+                Text("5 minutes").tag(5)
+                Text("10 minutes").tag(10)
+                Text("15 minutes").tag(15)
+                Text("30 minutes").tag(30)
+            }
+            .pickerStyle(.segmented)
+            Text("Sleep, screen lock, quit, update, or signer interruption still locks immediately.")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.textTertiary)
         }
     }
 
@@ -475,6 +779,28 @@ struct WalletSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
         }
+    }
+
+    private var walletHelpAndDisclosures: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Help and Disclosures").font(.headline)
+            Link("Recovery guide", destination: walletDocumentURL("WalletRecoveryGuide.md"))
+            Link("Wallet terms", destination: walletDocumentURL("WalletTerms.md"))
+            Link("Wallet privacy", destination: walletDocumentURL("WalletPrivacy.md"))
+            Link("Provider disclosures", destination: walletDocumentURL("WalletProviderDisclosures.md"))
+            Link(
+                "Support",
+                destination: URL(string: "https://github.com/nahid-sparktales/locus/issues")!
+            )
+            Link(
+                "Report a security issue privately",
+                destination: URL(string: "https://github.com/nahid-sparktales/locus/security/advisories/new")!
+            )
+        }
+    }
+
+    private func walletDocumentURL(_ name: String) -> URL {
+        URL(string: "https://github.com/nahid-sparktales/locus/blob/main/Docs/\(name)")!
     }
 
     private var advancedContracts: some View {
@@ -520,15 +846,23 @@ struct WalletSettingsView: View {
 
     private var advancedAddresses: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Read-Only Multichain Addresses").font(.headline)
-            ForEach(gateway.accountSnapshots.filter { $0.chain != .evm }) { snapshot in
+            Text("Multichain Addresses").font(.headline)
+            ForEach(gateway.accountSnapshots.filter { snapshot in
+                guard snapshot.chain != .evm,
+                      let network = WalletNetworkCatalog.descriptor(
+                          id: snapshot.networkID
+                      ) else { return false }
+                return snapshot.assetID == network.nativeAssetID
+            }) { snapshot in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(snapshot.chain == .solana ? "Solana" : "Sui")
                         .font(.headline)
                     Text(snapshot.address)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
-                    Text("Public address only · signing unavailable")
+                    Text(snapshot.chain == .solana
+                        ? "SOL and trusted classic SPL transfers use reviewed signing"
+                        : "Public address only · signing release-gated")
                         .font(.caption)
                         .foregroundStyle(LocusTheme.warning)
                 }
@@ -552,7 +886,7 @@ struct WalletSettingsView: View {
                         .foregroundStyle(LocusTheme.textTertiary)
                 }
             }
-            Text("MetaMask Connect on Sepolia is the recommended next milestone after this alpha. Mainnet and native Solana/Sui signing remain separate audited projects.")
+            Text("Connectors and chain adapters remain unavailable until their signed capability, legal-region, and release gates are bundled in a notarized build.")
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
         }
@@ -560,7 +894,7 @@ struct WalletSettingsView: View {
 
     private var advancedDiagnostics: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Private Alpha Diagnostics").font(.headline)
+            Text("Wallet Reliability Diagnostics").font(.headline)
             Button("Copy Diagnostics") {
                 copy(gateway.diagnosticSnapshot().text())
             }
@@ -570,12 +904,21 @@ struct WalletSettingsView: View {
         }
     }
 
-    private var evmSnapshot: WalletAccountSnapshot? {
-        gateway.accountSnapshots.first { $0.chain == .evm }
+    private func balanceText(_ snapshot: WalletAccountSnapshot) -> String {
+        guard let balance = snapshot.balanceBaseUnits,
+              let network = WalletNetworkCatalog.descriptor(
+                  id: snapshot.networkID
+              ) else { return "Balance unavailable" }
+        let asset = gateway.assets.first { $0.id == snapshot.assetID }
+        return WalletAmountFormatter.asset(
+            baseUnits: balance,
+            decimals: asset.map { $0.decimals ?? 0 } ?? network.nativeDecimals,
+            symbol: snapshot.symbol
+        ) ?? "Balance unavailable"
     }
 
-    private func balanceText(_ snapshot: WalletAccountSnapshot) -> String {
-        snapshot.balanceBaseUnits.flatMap(WalletAmountFormatter.ether) ?? "Balance unavailable"
+    private func sendSupported(_ snapshot: WalletAccountSnapshot) -> Bool {
+        WalletSendEligibility.supports(snapshot: snapshot, assets: gateway.assets)
     }
 
     private func freshnessText(_ snapshot: WalletAccountSnapshot) -> String {
@@ -592,6 +935,10 @@ struct WalletSettingsView: View {
     private func shortAddress(_ address: String) -> String {
         guard address.count > 14 else { return address }
         return "\(address.prefix(8))…\(address.suffix(6))"
+    }
+
+    private func networkName(_ networkID: String) -> String {
+        WalletNetworkCatalog.descriptor(id: networkID)?.displayName ?? networkID
     }
 
     private func shortHash(_ hash: String) -> String {
@@ -611,9 +958,11 @@ struct WalletSettingsView: View {
 
     private func adapterLabel(_ adapterID: String) -> String {
         switch adapterID {
-        case "native-eth-transfer-v1": "Native ETH"
+        case WalletReviewedAdapters.ethereumNativeTransfer: "Native ETH"
+        case WalletReviewedAdapters.solanaNativeTransfer: "Native SOL"
         case WalletReviewedAdapters.erc20: "ERC-20"
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
             "Uniswap exact input"
         default: "Reviewed adapter"
         }
@@ -668,14 +1017,14 @@ private struct WalletAlphaRiskSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("Enable the Sepolia Private Alpha?", systemImage: "exclamationmark.shield.fill")
+            Label("Enable Locus Vault?", systemImage: "exclamationmark.shield.fill")
                 .font(.title2.weight(.bold))
-            Text("Locus Vault is experimental. Use it only with test assets you can afford to lose.")
+            Text("You—not Locus—are responsible for safeguarding the recovery phrase and reviewing every transaction.")
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
-            risk("Sepolia only", "Mainnet signing remains unavailable.")
+            risk("Mainnet is release-gated", "A signed manifest must prove that audit, legal, soak, incident, provider, notarization, and update-feed gates passed.")
             risk("Create a separate recovery phrase", "Do not reuse or import a MetaMask, Phantom, Slush, or other wallet phrase.")
-            risk("Keep funds limited", "Use small faucet amounts for alpha testing.")
+            risk("Start with limited funds", "Verify recovery and each chain address before increasing balances.")
             risk("Authorization stays narrow", "Enabling the feature does not bypass unlock, simulation, policy checks, or exact confirmation.")
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -705,6 +1054,209 @@ private struct WalletAlphaRiskSheet: View {
     }
 }
 
+private struct WalletSendSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let snapshot: WalletAccountSnapshot
+    @State private var recipient = ""
+    @State private var amount = ""
+    @State private var tokenID = ""
+    @State private var maximumFee = "0.01"
+    @State private var preparing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Send \(snapshot.symbol)")
+                .font(.title2.weight(.bold))
+            Label(networkName, systemImage: "network")
+                .font(.headline)
+            Text("From \(snapshot.address)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(LocusTheme.textTertiary)
+                .textSelection(.enabled)
+
+            field(
+                "Raw destination",
+                placeholder: snapshot.chain == .solana ? "Base58 address" : "0x…",
+                text: $recipient
+            )
+            if isNFT {
+                if let fixedTokenID {
+                    LabeledContent(fixedAssetIDLabel) {
+                        Text(fixedTokenID).font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    field("Token ID", placeholder: "0", text: $tokenID)
+                }
+            } else {
+                field("Amount (\(snapshot.symbol))", placeholder: "0.01", text: $amount)
+            }
+            field(
+                "Maximum network fee (\(network?.nativeSymbol ?? "native asset"))",
+                placeholder: "0.01", text: $maximumFee
+            )
+
+            Text("The exact raw destination, network, amount, maximum fee, decoded effects, and fresh simulation appear again before signing.")
+                .font(.callout)
+                .foregroundStyle(LocusTheme.textSecondary)
+
+            if !isTransferSupported {
+                Label("This asset does not have an active reviewed transfer path.", systemImage: "lock.shield")
+                    .font(.callout)
+                    .foregroundStyle(LocusTheme.warning)
+            }
+            if let error = gateway.lastError, !error.isEmpty {
+                Text(error).font(.callout).foregroundStyle(LocusTheme.dangerForeground)
+            }
+
+            Spacer()
+            HStack {
+                Button("Cancel", role: .cancel) { dismiss() }
+                Spacer()
+                Button(preparing ? "Preparing…" : "Review Transaction") {
+                    prepare()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(!isValid || preparing)
+                .accessibilityIdentifier("wallet.send.review")
+            }
+        }
+        .padding(24)
+        .frame(width: 520, height: 500)
+    }
+
+    private var networkName: String {
+        WalletNetworkCatalog.descriptor(id: snapshot.networkID)?.displayName ?? snapshot.networkID
+    }
+
+    private var network: WalletNetworkDescriptor? {
+        WalletNetworkCatalog.descriptor(id: snapshot.networkID)
+    }
+
+    private var asset: WalletAsset? {
+        gateway.assets.first { $0.id == snapshot.assetID }
+    }
+
+    private var assetIdentity: WalletEVMAssetIdentity? {
+        WalletEVMAssetIdentity.parse(snapshot.assetID)
+    }
+
+    private var solanaCollectibleIdentity: WalletSolanaCollectibleIdentity? {
+        WalletSolanaCollectibleIdentity.parse(snapshot.assetID)
+    }
+
+    private var suiObjectIdentity: WalletSuiObjectIdentity? {
+        WalletSuiObjectIdentity.parse(snapshot.assetID)
+    }
+
+    private var isNative: Bool { snapshot.assetID == network?.nativeAssetID }
+    private var isNFT: Bool {
+        assetIdentity?.standard == .erc721 || assetIdentity?.standard == .erc1155
+            || solanaCollectibleIdentity?.standard == .core
+            || suiObjectIdentity != nil
+    }
+
+    private var fixedTokenID: String? {
+        assetIdentity?.tokenID ?? solanaCollectibleIdentity?.address
+            ?? suiObjectIdentity?.objectID
+    }
+
+    private var fixedAssetIDLabel: String {
+        if suiObjectIdentity != nil { return "Object ID" }
+        if solanaCollectibleIdentity != nil { return "Asset address" }
+        return "Token ID"
+    }
+
+    private var isTransferSupported: Bool {
+        WalletSendEligibility.supports(
+            snapshot: snapshot, assets: gateway.assets
+        )
+    }
+
+    private var resolvedTokenID: String? {
+        fixedTokenID
+            ?? WalletBaseUnits.normalize(tokenID.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private var isValid: Bool {
+        let destination = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        let validDestination: Bool = switch snapshot.chain {
+        case .evm:
+            destination.count == 42 && destination.hasPrefix("0x")
+                && destination.dropFirst(2).allSatisfy(\.isHexDigit)
+        case .solana:
+            WalletSolanaBase58.decode(destination, exactLength: 32) != nil
+        case .sui:
+            WalletSuiAddress.isCanonical(destination)
+        }
+        guard validDestination, isTransferSupported,
+              WalletAmountFormatter.baseUnits(
+                  from: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines),
+                  decimals: network?.nativeDecimals ?? 0
+              ).map({ $0 != "0" }) == true else {
+            return false
+        }
+        if isNFT { return resolvedTokenID != nil }
+        let decimals = isNative ? (network?.nativeDecimals ?? 18) : (asset?.decimals ?? -1)
+        return WalletAmountFormatter.baseUnits(
+            from: amount.trimmingCharacters(in: .whitespacesAndNewlines), decimals: decimals
+        ).map { $0 != "0" } == true
+    }
+
+    private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.callout.weight(.semibold))
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func prepare() {
+        guard let feeUnits = WalletAmountFormatter.baseUnits(
+            from: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: network?.nativeDecimals ?? 0
+        ) else { return }
+        preparing = true
+        Task {
+            let destination = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ready: Bool
+            if isNative, let baseUnits = WalletAmountFormatter.baseUnits(
+                from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
+                decimals: network?.nativeDecimals ?? 18
+            ) {
+                ready = await gateway.prepareHumanNativeTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    recipient: destination, amountBaseUnits: baseUnits,
+                    maximumFeeBaseUnits: feeUnits
+                )
+            } else if !isNFT, !isNative, asset?.kind == .fungibleToken,
+                      let decimals = asset?.decimals,
+                      let baseUnits = WalletAmountFormatter.baseUnits(
+                          from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
+                          decimals: decimals
+                      ) {
+                ready = await gateway.prepareHumanFungibleTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    assetID: snapshot.assetID, recipient: destination,
+                    amountBaseUnits: baseUnits, maximumFeeBaseUnits: feeUnits
+                )
+            } else if isNFT, let resolvedTokenID {
+                ready = await gateway.prepareHumanNFTTransfer(
+                    networkID: snapshot.networkID, accountID: snapshot.accountID,
+                    assetID: snapshot.assetID, tokenID: resolvedTokenID,
+                    recipient: destination, maximumFeeBaseUnits: feeUnits
+                )
+            } else {
+                ready = false
+            }
+            preparing = false
+            if ready { dismiss() }
+        }
+    }
+}
+
 private struct WalletReceiveSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -714,16 +1266,30 @@ private struct WalletReceiveSheet: View {
         gateway.accountSnapshots.first(where: { $0.id == snapshot.id }) ?? snapshot
     }
 
+    private var network: WalletNetworkDescriptor? {
+        WalletNetworkCatalog.descriptor(id: currentSnapshot.networkID)
+    }
+
+    private var asset: WalletAsset? {
+        gateway.assets.first { $0.id == currentSnapshot.assetID }
+    }
+
+    private var receivePayload: String {
+        WalletReceiveURI.payload(
+            address: currentSnapshot.address, networkID: currentSnapshot.networkID
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
                 HStack {
-                    Label("Receive Sepolia ETH", systemImage: "arrow.down.circle.fill")
+                    Label("Receive \(currentSnapshot.symbol)", systemImage: "arrow.down.circle.fill")
                         .font(.title2.weight(.bold))
                     Spacer()
                     Button("Done") { dismiss() }
                 }
-                Text("Sepolia")
+                Text(network?.displayName ?? currentSnapshot.networkID)
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
@@ -734,7 +1300,7 @@ private struct WalletReceiveSheet: View {
                         .interpolation(.none)
                         .resizable()
                         .frame(width: 220, height: 220)
-                        .accessibilityLabel("QR code for the Sepolia account address")
+                        .accessibilityLabel("QR code for the \(network?.displayName ?? currentSnapshot.networkID) account address")
                 }
                 Text(currentSnapshot.address)
                     .font(.system(.body, design: .monospaced))
@@ -748,14 +1314,23 @@ private struct WalletReceiveSheet: View {
                         Task { await gateway.refreshAccountSnapshots() }
                     }
                 }
-                Text(currentSnapshot.balanceBaseUnits.flatMap(WalletAmountFormatter.ether)
+                Text(currentSnapshot.balanceBaseUnits.flatMap {
+                    WalletAmountFormatter.asset(
+                        baseUnits: $0,
+                        decimals: asset.map { $0.decimals ?? 0 }
+                            ?? (network?.nativeDecimals ?? 0),
+                        symbol: currentSnapshot.symbol
+                    )
+                }
                     ?? "Balance unavailable")
                     .font(.headline)
-                Link(
-                    "Find a Sepolia faucet on Ethereum.org",
-                    destination: URL(string: "https://ethereum.org/en/developers/docs/networks/#sepolia-testnets")!
-                )
-                Text("The QR is generated locally and encodes \(WalletReceiveURI.erc681(address: currentSnapshot.address)). No address is sent to a QR service.")
+                if currentSnapshot.networkID == WalletGateway.sepoliaNetworkID {
+                    Link(
+                        "Find a Sepolia faucet on Ethereum.org",
+                        destination: URL(string: "https://ethereum.org/en/developers/docs/networks/#sepolia-testnets")!
+                    )
+                }
+                Text("The QR is generated locally and encodes \(receivePayload). No address is sent to a QR service.")
                     .font(.caption)
                     .foregroundStyle(LocusTheme.textTertiary)
                     .multilineTextAlignment(.center)
@@ -768,7 +1343,7 @@ private struct WalletReceiveSheet: View {
 
     private var qrImage: NSImage? {
         let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(WalletReceiveURI.erc681(address: currentSnapshot.address).utf8)
+        filter.message = Data(receivePayload.utf8)
         filter.correctionLevel = "M"
         guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
               let image = CIContext().createCGImage(output, from: output.extent) else { return nil }
@@ -788,12 +1363,12 @@ private struct WalletBrowserOriginGrantSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("Allow this website to see your Sepolia address?", systemImage: "globe.badge.chevron.backward")
+            Label("Allow this website to see your \(networkName) address?", systemImage: "globe.badge.chevron.backward")
                 .font(.title2.weight(.bold))
             Text(request.origin)
                 .font(.system(.body, design: .monospaced))
                 .textSelection(.enabled)
-            Text("Connecting only shares the public Sepolia address. It does not authorize transactions; every transaction requires a separate exact confirmation.")
+            Text("Connecting shares only the public address for \(networkName). It does not authorize transactions; every transaction requires a separate exact confirmation.")
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
             Text("The connection ends when you navigate to another website, lock the vault, quit, or restart Locus.")
@@ -809,11 +1384,22 @@ private struct WalletBrowserOriginGrantSheet: View {
         }
         .padding(24).frame(width: 500).interactiveDismissDisabled()
     }
+
+    private var networkName: String {
+        WalletNetworkCatalog.descriptor(id: request.networkID)?.displayName ?? request.networkID
+    }
 }
 
 private struct WalletNativePolicySheet: View {
+    private struct PolicyOption: Identifiable {
+        let account: WalletAccount
+        let network: WalletNetworkDescriptor
+        var id: String { "\(account.id)|\(network.id)" }
+    }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
+    @State private var selectedOptionID = ""
     @State private var recipient = ""
     @State private var perTransaction = ""
     @State private var sessionCap = ""
@@ -827,17 +1413,23 @@ private struct WalletNativePolicySheet: View {
             Text("Create an Agent Spending Rule").font(.title2.weight(.bold))
             Text("This rule lives only inside the signer and disappears when the vault locks or Locus exits.")
                 .font(.body).foregroundStyle(LocusTheme.textSecondary)
-            field("Approved recipient", placeholder: "0x…", text: $recipient)
-            field("Maximum per transfer (ETH)", placeholder: "0.001", text: $perTransaction)
-            field("Total session allowance (ETH)", placeholder: "0.005", text: $sessionCap)
-            field("Maximum fee per transfer (ETH)", placeholder: "0.002", text: $feeCap)
+            Picker("Network", selection: $selectedOptionID) {
+                ForEach(options) { option in
+                    Text("\(option.network.displayName) · \(option.account.address.prefix(8))…")
+                        .tag(option.id)
+                }
+            }
+            field("Approved recipient", placeholder: recipientPlaceholder, text: $recipient)
+            field("Maximum per transfer (\(nativeSymbol))", placeholder: "0.001", text: $perTransaction)
+            field("Total session allowance (\(nativeSymbol))", placeholder: "0.005", text: $sessionCap)
+            field("Maximum fee per transfer (\(nativeSymbol))", placeholder: "0.002", text: $feeCap)
             field("Expires after (minutes, max 480)", placeholder: "30", text: $durationMinutes)
             Toggle("Save as a reusable template (authorization is never saved)", isOn: $saveTemplate)
                 .font(.callout)
             if saveTemplate {
-                field("Template name", placeholder: "Sepolia test allowance", text: $templateName)
+                field("Template name", placeholder: "Test network allowance", text: $templateName)
             }
-            Label("Only the reviewed native-ETH adapter can use this rule. Contracts and unlimited approvals cannot.", systemImage: "shield.lefthalf.filled")
+            Label("Only the reviewed native-transfer adapter for this exact account and network can use this rule. Contracts cannot.", systemImage: "shield.lefthalf.filled")
                 .font(.callout).foregroundStyle(LocusTheme.warning)
             HStack {
                 Button("Cancel") { dismiss() }
@@ -848,18 +1440,57 @@ private struct WalletNativePolicySheet: View {
             }
             if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
         }
-        .padding(24).frame(width: 520)
+        .padding(24).frame(width: 540)
+        .onAppear {
+            if selectedOptionID.isEmpty { selectedOptionID = options.first?.id ?? "" }
+        }
+    }
+
+    private var options: [PolicyOption] {
+        gateway.accounts.flatMap { account in
+            account.networkIDs.compactMap { networkID in
+                guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+                      network.chain == account.chain,
+                      network.chain == .evm || network.chain == .solana,
+                      network.staticallyReviewedCapabilities.contains(.autonomousPolicy)
+                else { return nil }
+                return PolicyOption(account: account, network: network)
+            }
+        }.sorted {
+            if $0.network.environment != $1.network.environment {
+                return $0.network.environment == .testnet
+            }
+            return $0.network.displayName < $1.network.displayName
+        }
+    }
+
+    private var selectedOption: PolicyOption? {
+        options.first { $0.id == selectedOptionID }
+    }
+
+    private var nativeSymbol: String { selectedOption?.network.nativeSymbol ?? "asset" }
+    private var recipientPlaceholder: String {
+        selectedOption?.network.chain == .solana ? "Base58 address" : "0x…"
     }
 
     private var valid: Bool {
-        guard let perTransactionWei = parsedETH(perTransaction),
-              let sessionCapWei = parsedETH(sessionCap),
-              parsedETH(feeCap) != nil else { return false }
-        return recipient.count == 42 && recipient.hasPrefix("0x")
-            && WalletBaseUnits.lessThanOrEqual(perTransactionWei, sessionCapWei)
+        guard let selectedOption,
+              let perTransactionUnits = parsedNative(perTransaction),
+              let sessionCapUnits = parsedNative(sessionCap),
+              parsedNative(feeCap) != nil else { return false }
+        let validRecipient = switch selectedOption.network.chain {
+        case .evm:
+            recipient.count == 42 && recipient.hasPrefix("0x")
+                && recipient.dropFirst(2).allSatisfy(\.isHexDigit)
+        case .solana:
+            WalletSolanaBase58.decode(recipient, exactLength: 32) != nil
+        case .sui:
+            false
+        }
+        return validRecipient
+            && WalletBaseUnits.lessThanOrEqual(perTransactionUnits, sessionCapUnits)
             && (Int(durationMinutes) ?? 0) > 0 && (Int(durationMinutes) ?? 0) <= 480
             && (!saveTemplate || !templateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && !gateway.accounts.filter { $0.chain == .evm }.isEmpty
     }
 
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
@@ -870,27 +1501,35 @@ private struct WalletNativePolicySheet: View {
     }
 
     private func activate() {
-        guard let account = gateway.accounts.first(where: { $0.chain == .evm }),
+        guard let selectedOption,
               let minutes = Int(durationMinutes),
-              let perTransactionWei = parsedETH(perTransaction),
-              let sessionCapWei = parsedETH(sessionCap),
-              let feeCapWei = parsedETH(feeCap) else { return }
+              let perTransactionUnits = parsedNative(perTransaction),
+              let sessionCapUnits = parsedNative(sessionCap),
+              let feeCapUnits = parsedNative(feeCap) else { return }
+        let network = selectedOption.network
+        let adapterID = network.chain == .solana
+            ? WalletReviewedAdapters.solanaNativeTransfer
+            : WalletReviewedAdapters.ethereumNativeTransfer
         let policy = WalletSessionPolicy(
-            id: UUID().uuidString.lowercased(), accountID: account.id,
-            networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: ["slip44:60"], allowedRecipients: [recipient],
-            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
-            maximumTransactionBaseUnits: perTransactionWei,
-            maximumSessionBaseUnits: sessionCapWei,
-            maximumFeeBaseUnits: feeCapWei,
-            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60))
+            id: UUID().uuidString.lowercased(), accountID: selectedOption.account.id,
+            networkID: network.id,
+            allowedAssetIDs: [network.nativeAssetID],
+            allowedRecipients: [recipient],
+            allowedContractIDs: [], allowedAdapterIDs: [adapterID],
+            maximumTransactionBaseUnits: perTransactionUnits,
+            maximumSessionBaseUnits: sessionCapUnits,
+            maximumFeeBaseUnits: feeCapUnits,
+            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60)),
+            allowedActionKinds: [.nativeTransfer]
         )
         let template = saveTemplate ? WalletPolicyTemplate(
                 id: UUID().uuidString.lowercased(),
                 name: templateName.trimmingCharacters(in: .whitespacesAndNewlines),
-                accountID: account.id, networkID: WalletGateway.sepoliaNetworkID,
-                recipient: recipient, maximumTransactionBaseUnits: perTransactionWei,
-                maximumSessionBaseUnits: sessionCapWei, maximumFeeBaseUnits: feeCapWei,
+                accountID: selectedOption.account.id, networkID: network.id,
+                recipient: recipient,
+                maximumTransactionBaseUnits: perTransactionUnits,
+                maximumSessionBaseUnits: sessionCapUnits,
+                maximumFeeBaseUnits: feeCapUnits,
                 durationMinutes: minutes
             ) : nil
         Task {
@@ -901,8 +1540,152 @@ private struct WalletNativePolicySheet: View {
         }
     }
 
-    private func parsedETH(_ value: String) -> String? {
-        WalletAmountFormatter.wei(fromEther: value.trimmingCharacters(in: .whitespacesAndNewlines))
+    private func parsedNative(_ value: String) -> String? {
+        guard let network = selectedOption?.network else { return nil }
+        return WalletAmountFormatter.baseUnits(
+            from: value.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: network.nativeDecimals
+        )
+    }
+}
+
+private struct WalletSPLTokenPolicySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    let snapshot: WalletAccountSnapshot
+    @State private var recipient = ""
+    @State private var perTransaction = ""
+    @State private var sessionCap = ""
+    @State private var feeCap = ""
+    @State private var durationMinutes = "30"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("Create a \(snapshot.symbol) Agent Rule")
+                .font(.title2.weight(.bold))
+            Text("This signer-owned rule is bound to this exact classic SPL mint, Solana account, recipient, amount caps, fee cap, and unlocked session.")
+                .font(.body)
+                .foregroundStyle(LocusTheme.textSecondary)
+            Text(snapshot.assetID)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(LocusTheme.textTertiary)
+                .textSelection(.enabled)
+            field("Approved recipient", placeholder: "Base58 address", text: $recipient)
+            field(
+                "Maximum per transfer (\(snapshot.symbol))",
+                placeholder: "1", text: $perTransaction
+            )
+            field(
+                "Total session allowance (\(snapshot.symbol))",
+                placeholder: "5", text: $sessionCap
+            )
+            field(
+                "Maximum fee per transfer (\(network?.nativeSymbol ?? "SOL"))",
+                placeholder: "0.00001", text: $feeCap
+            )
+            field(
+                "Expires after (minutes, max 480)",
+                placeholder: "30", text: $durationMinutes
+            )
+            Label("Token-2022, NFTs, approvals, swaps, and any other program remain outside this rule.", systemImage: "shield.lefthalf.filled")
+                .font(.callout)
+                .foregroundStyle(LocusTheme.warning)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Authorize Rule") { activate() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.ink)
+                    .disabled(!valid)
+            }
+            if let error = gateway.lastError {
+                Text(error).font(.callout).foregroundStyle(LocusTheme.coral)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+    }
+
+    private var network: WalletNetworkDescriptor? {
+        WalletNetworkCatalog.descriptor(id: snapshot.networkID)
+    }
+
+    private var asset: WalletAsset? {
+        gateway.assets.first { $0.id == snapshot.assetID }
+    }
+
+    private var tokenDecimals: Int? {
+        guard let asset, asset.isVisibleByDefault,
+              asset.kind == .fungibleToken,
+              WalletSolanaAssetIdentity.parse(asset.id)?.program == .spl else {
+            return nil
+        }
+        return asset.decimals
+    }
+
+    private var valid: Bool {
+        guard WalletSolanaBase58.decode(recipient, exactLength: 32) != nil,
+              let perTransactionUnits = parsedToken(perTransaction),
+              let sessionCapUnits = parsedToken(sessionCap),
+              parsedFee(feeCap) != nil,
+              let minutes = Int(durationMinutes), (1...480).contains(minutes)
+        else { return false }
+        return WalletBaseUnits.lessThanOrEqual(
+            perTransactionUnits, sessionCapUnits
+        )
+    }
+
+    private func field(
+        _ title: String,
+        placeholder: String,
+        text: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.callout.weight(.semibold))
+            TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func parsedToken(_ value: String) -> String? {
+        guard let tokenDecimals else { return nil }
+        return WalletAmountFormatter.baseUnits(
+            from: value.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: tokenDecimals
+        )
+    }
+
+    private func parsedFee(_ value: String) -> String? {
+        guard let network else { return nil }
+        return WalletAmountFormatter.baseUnits(
+            from: value.trimmingCharacters(in: .whitespacesAndNewlines),
+            decimals: network.nativeDecimals
+        )
+    }
+
+    private func activate() {
+        guard let minutes = Int(durationMinutes),
+              let perTransactionUnits = parsedToken(perTransaction),
+              let sessionCapUnits = parsedToken(sessionCap),
+              let feeCapUnits = parsedFee(feeCap) else { return }
+        let policy = WalletSessionPolicy(
+            id: UUID().uuidString.lowercased(),
+            accountID: snapshot.accountID, networkID: snapshot.networkID,
+            allowedAssetIDs: [snapshot.assetID],
+            allowedRecipients: [recipient], allowedContractIDs: [],
+            allowedAdapterIDs: [
+                WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .token2022
+                    ? WalletReviewedAdapters.solanaToken2022TransferChecked
+                    : WalletReviewedAdapters.solanaSPLTransferChecked,
+            ],
+            maximumTransactionBaseUnits: perTransactionUnits,
+            maximumSessionBaseUnits: sessionCapUnits,
+            maximumFeeBaseUnits: feeCapUnits,
+            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60)),
+            allowedActionKinds: [.fungibleTokenTransfer]
+        )
+        Task {
+            if await gateway.activatePolicy(policy) { dismiss() }
+        }
     }
 }
 
@@ -927,7 +1710,7 @@ private struct WalletContractPolicySheet: View {
                 .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
             Text("This authorization is bound to this registry ID, runtime code hash, adapter, token asset, counterparty, fee ceiling, and signer session.")
                 .font(.callout).foregroundStyle(LocusTheme.muted)
-            if entry.reviewedAdapterID == WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn {
+            if isSwapAdapter {
                 field("Input token address", placeholder: "0x…", text: $inputToken)
             }
             field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
@@ -955,7 +1738,9 @@ private struct WalletContractPolicySheet: View {
         switch entry.reviewedAdapterID {
         case WalletReviewedAdapters.erc20: "ERC-20 transfer / finite approval"
         case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
-            "Universal Router V2 exact-input"
+            "Universal Router legacy V2 exact-input"
+        case WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
+            "Universal Router V2/V3 exact-input"
         default: "Exact confirmation only"
         }
     }
@@ -969,7 +1754,19 @@ private struct WalletContractPolicySheet: View {
         if entry.reviewedAdapterID == WalletReviewedAdapters.erc20 {
             return "Unlimited approvals and any unrecognized side effect still require exact confirmation."
         }
-        return "Only one V2 exact-input command, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+        if entry.reviewedAdapterID
+            == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn {
+            return "Only one V2 or V3 exact-input command, canonical route and per-hop limits, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+        }
+        return "Only one legacy V2 exact-input command, a nonzero minimum output, the current account as recipient, and a 20-minute deadline are eligible."
+    }
+
+    private var isSwapAdapter: Bool {
+        guard let adapterID = entry.reviewedAdapterID else { return false }
+        return [
+            WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+        ].contains(adapterID)
     }
 
     private var assetAddress: String {
@@ -1014,7 +1811,8 @@ private struct WalletContractPolicySheet: View {
             allowedAdapterIDs: [adapterID],
             maximumTransactionBaseUnits: perTransaction,
             maximumSessionBaseUnits: sessionCap, maximumFeeBaseUnits: feeCap,
-            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60))
+            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60)),
+            allowedActionKinds: [.contractCall]
         )
         Task { if await gateway.activatePolicy(policy) { dismiss() } }
     }
@@ -1066,97 +1864,6 @@ private struct WalletContractRegistrySheet: View {
     }
 }
 
-private struct WalletVaultBackupSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var gateway: WalletGateway
-    let creation: WalletVaultCreation
-    @State private var confirming = false
-    @State private var answers: [Int: String] = [:]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(confirming ? "Confirm your recovery phrase" : "Write down these 24 words")
-                .font(.title2.weight(.bold))
-            Text(confirming
-                 ? "Enter the six requested words. Paste and clipboard actions are disabled."
-                 : "This is the only time Locus shows the phrase. Keep it offline and private.")
-                .font(.body).foregroundStyle(LocusTheme.muted)
-            if !confirming {
-                Text("This phrase belongs only to Locus Vault. Never enter a MetaMask, Phantom, Slush, or other wallet phrase here. Standard recovery paths: EVM m/44'/60'/0'/0/0 · Solana m/44'/501'/0'/0' · Sui m/44'/784'/0'/0'/0'.")
-                    .font(.callout).foregroundStyle(LocusTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if confirming {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(creation.verificationIndices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Word \(index + 1)").font(.callout.weight(.semibold))
-                            WalletNoPasteSecureField(text: Binding(
-                                get: { answers[index] ?? "" }, set: { answers[index] = $0 }
-                            )).frame(height: 24)
-                        }
-                    }
-                }
-            } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
-                    ForEach(Array(creation.words.enumerated()), id: \.offset) { index, word in
-                        HStack(spacing: 5) {
-                            Text("\(index + 1).").foregroundStyle(LocusTheme.textTertiary)
-                            Text(word).fontWeight(.semibold)
-                            Spacer()
-                        }
-                        .font(LocusType.monoCaption).padding(6)
-                        .background(LocusTheme.surfaceCard).clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-            HStack {
-                Button("Cancel", role: .cancel) { Task { await gateway.cancelVaultCreation(); dismiss() } }
-                Spacer()
-                if confirming {
-                    Button("Activate vault") {
-                        Task { if await gateway.confirmVaultBackup(wordsByIndex: answers) { dismiss() } }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(creation.verificationIndices.contains { (answers[$0] ?? "").isEmpty })
-                } else {
-                    Button("I saved all 24 words") { confirming = true }.buttonStyle(.borderedProminent)
-                }
-            }
-            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
-        }
-        .padding(22).frame(width: 620).interactiveDismissDisabled()
-    }
-}
-
-private struct WalletNoPasteSecureField: NSViewRepresentable {
-    @Binding var text: String
-    final class Field: NSSecureTextField {
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "v" { return true }
-            return super.performKeyEquivalent(with: event)
-        }
-    }
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var parent: WalletNoPasteSecureField
-        init(_ parent: WalletNoPasteSecureField) { self.parent = parent }
-        func controlTextDidChange(_ notification: Notification) {
-            if let field = notification.object as? NSTextField { parent.text = field.stringValue }
-        }
-    }
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeNSView(context: Context) -> Field {
-        let field = Field(); field.delegate = context.coordinator
-        field.isAutomaticTextCompletionEnabled = false
-        field.menu = NSMenu()
-        return field
-    }
-    func updateNSView(_ view: Field, context: Context) {
-        if view.stringValue != text { view.stringValue = text }
-        context.coordinator.parent = self
-    }
-}
-
 private struct WalletVaultDeleteSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -1178,6 +1885,34 @@ private struct WalletVaultDeleteSheet: View {
     }
 }
 
+private struct WalletRecoveryVaultDeleteSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var gateway: WalletGateway
+    @State private var confirmation = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Delete Recovery-Only Vault?").font(.title2.weight(.bold))
+            Text("This permanently removes the encrypted preview vault retained during mainnet rotation. It does not delete the active production vault.")
+                .font(.body).foregroundStyle(LocusTheme.muted)
+            TextField("Type DELETE RECOVERY VAULT", text: $confirmation)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Delete recovery vault", role: .destructive) {
+                    Task {
+                        if await gateway.deleteRecoveryVault(confirmation: confirmation) { dismiss() }
+                    }
+                }
+                .disabled(confirmation != "DELETE RECOVERY VAULT")
+            }
+        }
+        .padding(22)
+        .frame(width: 470)
+    }
+}
+
 private struct WalletTransactionConfirmationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -1191,7 +1926,7 @@ private struct WalletTransactionConfirmationSheet: View {
                         Label("Review Transaction", systemImage: "checkmark.shield.fill")
                             .font(.title2.weight(.bold))
                         Spacer()
-                        Text("Sepolia")
+                        Text(networkName)
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -1242,8 +1977,8 @@ private struct WalletTransactionConfirmationSheet: View {
                             detailRow("Nonce", transaction.nonce)
                             detailRow("Digest", transaction.digest)
                             detailRow("Spend (base units)", transaction.spendBaseUnits)
-                            detailRow("Fee quote (wei)", transaction.feeQuoteBaseUnits)
-                            detailRow("Fee ceiling (wei)", transaction.maximumFeeBaseUnits)
+                            detailRow("Fee quote (base units)", transaction.feeQuoteBaseUnits)
+                            detailRow("Fee ceiling (base units)", transaction.maximumFeeBaseUnits)
                             detailRow("Policy decision", transaction.policyDecision)
                             detailRow("Policy ID", transaction.policyID ?? "None")
                             detailRow("Expires", transaction.expiresAt.formatted(date: .abbreviated, time: .standard))
@@ -1258,7 +1993,7 @@ private struct WalletTransactionConfirmationSheet: View {
                                 }.joined(separator: "\n"))
                             } else {
                                 detailRow("Recipient", transaction.action.recipient ?? "Unknown")
-                                detailRow("Amount (wei)", transaction.action.amountBaseUnits ?? "0")
+                                detailRow("Amount (base units)", transaction.action.amountBaseUnits ?? "0")
                             }
                             detailRow("Decoded effects", transaction.effects.map {
                                 let destination = $0.spender.map { "spender \($0)" } ?? ($0.to ?? "unknown")
@@ -1283,8 +2018,16 @@ private struct WalletTransactionConfirmationSheet: View {
                 }
                 Spacer()
                 Button(confirmationTitle) {
-                    gateway.confirm(intentID: transaction.id)
-                    dismiss()
+                    if transaction.source.kind == .humanUI {
+                        Task {
+                            if await gateway.confirmAndExecuteHumanIntent(intentID: transaction.id) {
+                                dismiss()
+                            }
+                        }
+                    } else {
+                        gateway.confirm(intentID: transaction.id)
+                        dismiss()
+                    }
                 }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
@@ -1300,19 +2043,28 @@ private struct WalletTransactionConfirmationSheet: View {
     private var requester: String {
         switch transaction.source.kind {
         case .agent: "Requested by Locus agent"
-        case .browser: "Requested by \(transaction.source.origin ?? "unknown website")"
+        case .humanUI: "Requested in Wallet Hub"
+        case .browser, .embeddedBrowser:
+            "Requested by \(transaction.source.origin ?? "unknown website")"
+        case .walletConnectPeer:
+            "Requested by \(transaction.source.displayName ?? "WalletConnect peer")"
         }
     }
 
     private var actionTitle: String {
         if let amount = transaction.action.amountBaseUnits,
-           let formatted = WalletAmountFormatter.ether(wei: amount) {
+           let formatted = formattedSpend(amount) {
             return "Send \(formatted)"
         }
         if let contract = transaction.contract {
             return "Call \(contract.label)"
         }
         return transaction.summary
+    }
+
+    private var networkName: String {
+        WalletNetworkCatalog.descriptor(id: transaction.networkID)?.displayName
+            ?? transaction.networkID
     }
 
     private var destinationText: String {
@@ -1323,9 +2075,11 @@ private struct WalletTransactionConfirmationSheet: View {
     }
 
     private var feeText: String {
-        let formatted = WalletAmountFormatter.ether(wei: transaction.feeQuoteBaseUnits)
-            ?? "\(transaction.feeQuoteBaseUnits) wei"
-        return "\(formatted) · ceiling \(transaction.maximumFeeBaseUnits) wei"
+        let formatted = formattedNative(transaction.feeQuoteBaseUnits)
+            ?? "\(transaction.feeQuoteBaseUnits) base units"
+        let ceiling = formattedNative(transaction.maximumFeeBaseUnits)
+            ?? "\(transaction.maximumFeeBaseUnits) base units"
+        return "\(formatted) · ceiling \(ceiling)"
     }
 
     private var riskMessages: [String] {
@@ -1336,6 +2090,12 @@ private struct WalletTransactionConfirmationSheet: View {
             case .undecodableCall: "The contract call could not be fully decoded."
             case .codeHashMismatch: "The contract code no longer matches the reviewed registry entry."
             case .staleQuote: "The quoted contract action may be stale."
+            case .networkIdentityMismatch: "The provider reported a different network identity."
+            case .providerDisagreement: "Independent providers disagree about this transaction."
+            case .staleBlockhash: "The Solana blockhash has expired."
+            case .staleObjectVersion: "A Sui object changed after this transaction was reviewed."
+            case .lookupTableSubstitution: "A Solana address lookup table changed after review."
+            case .packageUpgrade: "A reviewed contract, program, or package changed after review."
             }
         }
         if messages.isEmpty {
@@ -1356,13 +2116,43 @@ private struct WalletTransactionConfirmationSheet: View {
 
     private var confirmationTitle: String {
         if let amount = transaction.action.amountBaseUnits,
-           let formatted = WalletAmountFormatter.ether(wei: amount) {
-            return "Confirm and Send \(formatted.replacingOccurrences(of: " ETH", with: "")) Sepolia ETH"
+           let formatted = formattedSpend(amount) {
+            return "Confirm and Send \(formatted)"
         }
         if let contract = transaction.contract {
-            return "Confirm \(contract.function) on Sepolia"
+            return "Confirm \(contract.function) on \(networkName)"
         }
-        return "Confirm Sepolia Transaction"
+        return "Confirm \(networkName) Transaction"
+    }
+
+    private func formattedNative(_ baseUnits: String) -> String? {
+        guard let network = WalletNetworkCatalog.descriptor(
+            id: transaction.networkID
+        ) else { return nil }
+        return WalletAmountFormatter.asset(
+            baseUnits: baseUnits, decimals: network.nativeDecimals,
+            symbol: network.nativeSymbol
+        )
+    }
+
+    private func formattedSpend(_ baseUnits: String) -> String? {
+        guard let network = WalletNetworkCatalog.descriptor(
+            id: transaction.networkID
+        ) else { return nil }
+        if transaction.budgetAssetID == network.nativeAssetID {
+            return WalletAmountFormatter.asset(
+                baseUnits: baseUnits, decimals: network.nativeDecimals,
+                symbol: network.nativeSymbol
+            )
+        }
+        guard let asset = gateway.assets.first(where: {
+            $0.id == transaction.budgetAssetID
+        }), let decimals = asset.decimals else {
+            return "\(baseUnits) token units"
+        }
+        return WalletAmountFormatter.asset(
+            baseUnits: baseUnits, decimals: decimals, symbol: asset.symbol
+        )
     }
 
     private func summaryStatus(

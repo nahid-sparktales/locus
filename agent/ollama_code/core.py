@@ -30,6 +30,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -333,7 +334,39 @@ class AgentCore:
         self.client: Any = OllamaClient(self.host)
         self.model: str = model or str(self.config.get("model") or "")
         if self.provider == "remote":
-            self._build_remote_client()
+            try:
+                self._build_remote_client()
+            except ValueError as error:
+                # A keyless plain-HTTP LAN endpoint is a legitimate saved
+                # state, and load_config may have injected an API key from the
+                # environment (OPENAI_API_KEY, HF_TOKEN, …) that this endpoint
+                # cannot lawfully use. Booting without the env key honours
+                # both rules; dying here would leave no UI path back. The key
+                # only ever lives in config at boot via that injection — disk
+                # never stores it — so dropping it loses nothing the app will
+                # not re-send.
+                #
+                # Only the key may be dropped, and only when the key is what
+                # the endpoint refuses: re-validating without it separates
+                # "this URL needs no key" from "this URL is unusable", so a
+                # malformed endpoint still raises its own error rather than
+                # an irrelevant note about a credential.
+                if not str(self.config.get("remote_api_key") or ""):
+                    raise
+                try:
+                    validate_remote_url(
+                        normalize_base_url(
+                            str(self.config.get("remote_base_url") or "")
+                        )
+                    )
+                except ValueError:
+                    raise error from None
+                print(
+                    f"warning: ignoring environment API key: {error}",
+                    file=sys.stderr,
+                )
+                self.config["remote_api_key"] = ""
+                self._build_remote_client()
         elif self.provider == "chatgpt":
             self.host = "chatgpt://managed"
             self.model = model or str(self.config.get("chatgpt_model") or "")

@@ -143,6 +143,7 @@ final class BrowserService: NSObject, ObservableObject {
         fileprivate var agentInteractionUntil = Date.distantPast
         fileprivate var pendingUserDownload = false
         fileprivate var walletOrigin: String?
+        fileprivate var walletNetworkID = WalletGateway.sepoliaNetworkID
         fileprivate var walletPendingRequestIDs: Set<String> = []
         fileprivate var walletRequestTimes: [Date] = []
 
@@ -2469,6 +2470,7 @@ extension BrowserService: WKNavigationDelegate {
                 let nextOrigin = Self.walletOrigin(for: url)
                 if let previous = tab.walletOrigin, previous != nextOrigin {
                     walletGateway?.revokeBrowserOrigin(previous)
+                    tab.walletNetworkID = WalletGateway.sepoliaNetworkID
                 }
                 tab.walletOrigin = nextOrigin
                 activityStore.recordVisit(
@@ -3287,7 +3289,9 @@ extension BrowserService: WKScriptMessageHandler {
         Task { @MainActor [weak self, weak webView] in
             guard let self, let webView else { return }
             defer { tab.walletPendingRequestIDs.remove(id) }
-            let response = await self.walletResponse(method: method, params: params, origin: origin)
+            let response = await self.walletResponse(
+                method: method, params: params, origin: origin, tab: tab
+            )
             guard Self.walletOrigin(for: webView.url) == origin else { return }
             self.sendWalletResponse(
                 response, requestID: id, origin: origin, tab: tab, webView: webView
@@ -3313,39 +3317,63 @@ extension BrowserService: WKScriptMessageHandler {
         }
     }
 
-    private func walletResponse(method: String, params: [Any], origin: String) async -> [String: Any] {
+    private func walletResponse(
+        method: String, params: [Any], origin: String, tab: Tab
+    ) async -> [String: Any] {
         guard let gateway = walletGateway else { return walletError(4900, "Locus Vault is unavailable.") }
         do {
             switch method {
             case "eth_requestAccounts":
-                guard let accounts = await gateway.requestBrowserAccounts(origin: origin) else {
+                guard let accounts = await gateway.requestBrowserAccounts(
+                    origin: origin, networkID: tab.walletNetworkID
+                ) else {
                     return walletError(4001, "The Locus Vault connection was rejected.")
                 }
                 emitWalletEvent("accountsChanged", value: accounts, origin: origin)
                 return ["result": accounts]
             case "eth_accounts":
-                return ["result": gateway.browserAccounts(origin: origin)]
+                return ["result": gateway.browserAccounts(
+                    origin: origin, networkID: tab.walletNetworkID
+                )]
             case "eth_chainId":
-                return ["result": "0xaa36a7"]
+                return ["result": tab.walletNetworkID == WalletGateway.ethereumMainnetNetworkID
+                    ? "0x1" : "0xaa36a7"]
             case "wallet_switchEthereumChain":
                 guard let object = params.first as? [String: Any],
-                      (object["chainId"] as? String)?.lowercased() == "0xaa36a7" else {
-                    return walletError(4902, "Only Sepolia is supported.")
+                      let chainID = (object["chainId"] as? String)?.lowercased() else {
+                    return walletError(-32602, "A chainId is required.")
                 }
+                let requestedNetwork: String
+                switch chainID {
+                case "0x1": requestedNetwork = WalletGateway.ethereumMainnetNetworkID
+                case "0xaa36a7": requestedNetwork = WalletGateway.sepoliaNetworkID
+                default: return walletError(4902, "That Ethereum network is not supported.")
+                }
+                guard gateway.canUseBrowserNetwork(requestedNetwork) else {
+                    return walletError(4902, "That network has not passed its signed release gate.")
+                }
+                tab.walletNetworkID = requestedNetwork
+                emitWalletEvent("chainChanged", value: chainID, origin: origin)
+                emitWalletEvent(
+                    "accountsChanged",
+                    value: gateway.browserAccounts(origin: origin, networkID: requestedNetwork),
+                    origin: origin
+                )
                 return ["result": NSNull()]
             case "eth_sendTransaction":
                 guard let transaction = params.first as? [String: Any] else {
                     return walletError(-32602, "A transaction object is required.")
                 }
                 return ["result": try await gateway.browserSendTransaction(
-                    origin: origin, transaction: transaction
+                    origin: origin, networkID: tab.walletNetworkID, transaction: transaction
                 )]
             case "personal_sign", "eth_sign", "eth_signTypedData", "eth_signTypedData_v3",
                  "eth_signTypedData_v4", "wallet_addEthereumChain":
                 return walletError(4200, "Locus Vault does not support message signing or chain addition.")
             default:
                 return ["result": try await gateway.browserReadRPC(
-                    origin: origin, method: method, params: params
+                    origin: origin, networkID: tab.walletNetworkID,
+                    method: method, params: params
                 )]
             }
         } catch {

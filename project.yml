@@ -107,12 +107,42 @@ targetTemplates:
         # set this in signing configuration after Google verification.
         LOCUS_GOOGLE_OAUTH_CLIENT_ID: ""
 targets:
+  WalletRecoveryService:
+    type: xpc-service
+    platform: macOS
+    sources:
+      - path: WalletRecoveryService
+      - path: Locus/WalletSignerProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.WalletRecovery
+        PRODUCT_NAME: WalletRecovery
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WalletRecoveryService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/WalletRecovery.entitlements
+        ENABLE_APP_SANDBOX: YES
+        APPLICATION_EXTENSION_API_ONLY: NO
+        SKIP_INSTALL: YES
+        ARCHS: arm64
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Development"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
+          ENABLE_HARDENED_RUNTIME: NO
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: 4X4RJA7GMD
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+          ENABLE_HARDENED_RUNTIME: YES
   WalletSignerService:
     type: xpc-service
     platform: macOS
     sources:
       - path: WalletSignerService
       - path: Locus/WalletSignerProtocol.swift
+      - path: Locus/WalletNetworkModels.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -142,6 +172,9 @@ targets:
         ARCHS: arm64
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
         OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
+        LOCUS_WALLET_CAPABILITY_PUBLIC_KEY: ""
+        LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64: ""
+        LOCUS_WALLET_REVIEW_MANIFEST_BASE64: ""
       configs:
         Debug:
           CODE_SIGN_STYLE: Manual
@@ -162,7 +195,22 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+        LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL: ""
+        LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL: ""
+        LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL: ""
+        LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL: ""
+        LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL: ""
+        LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL: ""
+        LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL: ""
+        LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL: ""
     dependencies:
+      - target: WalletRecoveryService
+        embed: true
+        codeSign: true
       - target: WalletSignerService
         embed: true
         codeSign: true

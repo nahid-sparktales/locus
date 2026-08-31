@@ -21,6 +21,7 @@ resources="${app}/Contents/Resources"
 info_plist="${app}/Contents/Info.plist"
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
+wallet_recovery="${app}/Contents/XPCServices/WalletRecovery.xpc"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
@@ -130,8 +131,120 @@ fi
     echo "error: direct-download release is missing WalletSigner.xpc" >&2
     exit 1
 }
+[[ -x "${wallet_recovery}/Contents/MacOS/WalletRecovery" ]] || {
+    echo "error: direct-download release is missing WalletRecovery.xpc" >&2
+    exit 1
+}
+if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    wallet_release_channel="${LOCUS_WALLET_RELEASE_CHANNEL:-disabled}"
+    case "${wallet_release_channel}" in
+        disabled|canary|ga) ;;
+        *)
+            echo "error: LOCUS_WALLET_RELEASE_CHANNEL must be disabled, canary, or ga" >&2
+            exit 1
+            ;;
+    esac
+    signer_info="${wallet_signer}/Contents/Info.plist"
+    capability_key="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityPublicKey' \
+        "${signer_info}" 2>/dev/null || true)"
+    capability_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityManifestBase64' \
+        "${signer_info}" 2>/dev/null || true)"
+    review_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewManifestBase64' \
+        "${signer_info}" 2>/dev/null || true)"
+    if [[ "${wallet_release_channel}" == "disabled" ]]; then
+        [[ -z "${capability_key}" && -z "${capability_manifest}" && -z "${review_manifest}" ]] || {
+            echo "error: a wallet-disabled release must not embed wallet manifests" >&2
+            exit 1
+        }
+    else
+        [[ -n "${capability_key}" && -n "${capability_manifest}" && -n "${review_manifest}" ]] || {
+            echo "error: wallet ${wallet_release_channel} requires signed capability and review manifests" >&2
+            exit 1
+        }
+        manifest_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-manifest.XXXXXX")"
+        if ! /bin/echo -n "${capability_manifest}" | /usr/bin/base64 -D > "${manifest_file}"; then
+            /bin/rm -f "${manifest_file}"
+            echo "error: embedded wallet capability manifest is not valid base64" >&2
+            exit 1
+        fi
+        manifest_stage="$(/usr/bin/plutil -extract manifest.releaseStage raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        manifest_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        evidence_hash="$(/usr/bin/plutil -extract manifest.evidenceIndexSHA256 raw -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        enabled_networks="$(/usr/bin/plutil -extract manifest.enabledNetworkIDs json -o - \
+            "${manifest_file}" 2>/dev/null || true)"
+        /bin/rm -f "${manifest_file}"
+        [[ "${manifest_schema}" == "2" && "${#evidence_hash}" == "64" \
+            && "${enabled_networks}" == \[*\] ]] || {
+            echo "error: wallet release requires a schema-v2 evidence-bound manifest" >&2
+            exit 1
+        }
+        expected_stage="invited_canary"
+        [[ "${wallet_release_channel}" == "ga" ]] && expected_stage="general_availability"
+        [[ "${manifest_stage}" == "${expected_stage}" ]] || {
+            echo "error: wallet ${wallet_release_channel} requires manifest stage ${expected_stage}" >&2
+            exit 1
+        }
+        review_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-review.XXXXXX")"
+        if ! /bin/echo -n "${review_manifest}" | /usr/bin/base64 -D > "${review_file}"; then
+            /bin/rm -f "${review_file}"
+            echo "error: embedded wallet review manifest is not valid base64" >&2
+            exit 1
+        fi
+        review_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
+            "${review_file}" 2>/dev/null || true)"
+        review_revision="$(/usr/bin/plutil -extract manifest.revision raw -o - \
+            "${review_file}" 2>/dev/null || true)"
+        [[ "${review_schema}" == "1" && "${review_revision}" -gt 0 ]] || {
+            /bin/rm -f "${review_file}"
+            echo "error: wallet release requires a signed schema-v1 review manifest" >&2
+            exit 1
+        }
+        if ! /usr/bin/xcrun swift "${repo_root}/Tools/SignWalletReviewManifest.swift" \
+            --verify "${review_file}" "${capability_key}" >/dev/null
+        then
+            /bin/rm -f "${review_file}"
+            echo "error: wallet release review manifest failed signature or structure verification" >&2
+            exit 1
+        fi
+        /bin/rm -f "${review_file}"
+        provider_keys=()
+        if [[ "${enabled_networks}" == *'"eip155:1"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemyEthereumMainnetRPCURL
+                LocusWalletQuickNodeEthereumMainnetRPCURL
+            )
+        fi
+        if [[ "${enabled_networks}" == *'"solana:mainnet-beta"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemySolanaMainnetRPCURL
+                LocusWalletQuickNodeSolanaMainnetRPCURL
+            )
+        fi
+        if [[ "${enabled_networks}" == *'"sui:mainnet"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemySuiMainnetGraphQLURL
+                LocusWalletQuickNodeSuiMainnetGraphQLURL
+            )
+        fi
+        for provider_key in "${provider_keys[@]}"
+        do
+            provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
+                "${info_plist}" 2>/dev/null || true)"
+            [[ "${provider_url}" == https://* ]] || {
+                echo "error: wallet ${wallet_release_channel} requires an HTTPS ${provider_key} endpoint" >&2
+                exit 1
+            }
+        done
+    fi
+fi
 # The independently sandboxed signer is sealed before the containing app so
 # the outer signature commits to its executable, identifier, and entitlements.
+/usr/bin/codesign --force --timestamp --options runtime \
+    --entitlements "${repo_root}/Config/WalletRecovery.entitlements" \
+    --sign "${identity}" "${wallet_recovery}"
 /usr/bin/codesign --force --timestamp --options runtime \
     --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
     --sign "${identity}" "${wallet_signer}"

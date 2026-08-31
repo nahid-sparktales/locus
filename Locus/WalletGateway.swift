@@ -1,3 +1,5 @@
+import AppKit
+import CryptoKit
 import Foundation
 
 enum WalletHubState: Equatable, Sendable {
@@ -5,6 +7,7 @@ enum WalletHubState: Equatable, Sendable {
     case alphaDisabled
     case setupRequired
     case backupIncomplete
+    case rotationRequired
     case locked
     case ready
     case error
@@ -60,10 +63,21 @@ struct WalletDiagnosticSnapshot: Codable, Equatable, Sendable {
 }
 
 enum WalletReceiveURI {
-    static let sepoliaChainID = "11155111"
-
-    static func erc681(address: String) -> String {
-        "ethereum:\(address)@\(sepoliaChainID)"
+    static func payload(address: String, networkID: String) -> String {
+        guard let network = WalletNetworkCatalog.descriptor(id: networkID) else {
+            return address
+        }
+        switch network.identity.kind {
+        case .eip155ChainID:
+            return "ethereum:\(address)@\(network.identity.value)"
+        case .solanaGenesisHash:
+            return "solana:\(address)"
+        case .suiChainIdentifier:
+            // Sui does not define a canonical payment URI. Encoding the raw
+            // address avoids inventing a scheme that another wallet may parse
+            // with different semantics.
+            return address
+        }
     }
 }
 
@@ -137,14 +151,20 @@ struct WalletPolicyTemplate: Codable, Equatable, Identifiable, Sendable {
     let durationMinutes: Int
 
     func policy() -> WalletSessionPolicy {
-        WalletSessionPolicy(
+        let descriptor = WalletNetworkCatalog.descriptor(id: networkID)
+        let assetID = descriptor?.nativeAssetID ?? "\(networkID)/slip44:60"
+        let adapterID = descriptor?.chain == .solana
+            ? WalletReviewedAdapters.solanaNativeTransfer
+            : WalletReviewedAdapters.ethereumNativeTransfer
+        return WalletSessionPolicy(
             id: UUID().uuidString.lowercased(), accountID: accountID, networkID: networkID,
-            allowedAssetIDs: ["slip44:60"], allowedRecipients: [recipient],
-            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
+            allowedAssetIDs: [assetID], allowedRecipients: [recipient],
+            allowedContractIDs: [], allowedAdapterIDs: [adapterID],
             maximumTransactionBaseUnits: maximumTransactionBaseUnits,
             maximumSessionBaseUnits: maximumSessionBaseUnits,
             maximumFeeBaseUnits: maximumFeeBaseUnits,
-            expiresAt: Date().addingTimeInterval(TimeInterval(durationMinutes * 60))
+            expiresAt: Date().addingTimeInterval(TimeInterval(durationMinutes * 60)),
+            allowedActionKinds: [.nativeTransfer]
         )
     }
 }
@@ -152,6 +172,12 @@ struct WalletPolicyTemplate: Codable, Equatable, Identifiable, Sendable {
 struct WalletBrowserOriginGrant: Identifiable, Equatable, Sendable {
     let id: UUID
     let origin: String
+    let networkID: String
+}
+
+private struct WalletBrowserOriginNetworkGrant: Hashable, Sendable {
+    let origin: String
+    let networkID: String
 }
 
 enum WalletActivityState: String, Codable, Equatable, Sendable {
@@ -159,6 +185,22 @@ enum WalletActivityState: String, Codable, Equatable, Sendable {
     case confirmed
     case failed
     case broadcastUnknown = "broadcast_unknown"
+}
+
+enum WalletActivityDirection: String, Codable, Equatable, Sendable {
+    case inbound
+    case outbound
+    case selfTransfer = "self_transfer"
+}
+
+enum WalletActivityFinality: String, Codable, Equatable, Sendable {
+    case pending
+    case confirmed
+    case finalized
+    case expired
+    case replaced
+    case uncertain
+    case failed
 }
 
 struct WalletActivityRecord: Codable, Equatable, Identifiable, Sendable {
@@ -173,6 +215,14 @@ struct WalletActivityRecord: Codable, Equatable, Identifiable, Sendable {
     var blockNumber: String?
     var lastCheckedAt: Date?
     var detail: String?
+    var direction: WalletActivityDirection? = nil
+    var source: WalletRequestSource? = nil
+    var actionKind: WalletActionKind? = nil
+    var assetID: String? = nil
+    var amountBaseUnits: String? = nil
+    var finality: WalletActivityFinality? = nil
+    var expiresAt: Date? = nil
+    var replacedByTransactionHash: String? = nil
 }
 
 enum WalletAmountFormatter {
@@ -180,7 +230,12 @@ enum WalletAmountFormatter {
     /// notation, signs, or non-ASCII digits. The returned string is canonical
     /// wei and is suitable for policy and signing payloads.
     static func wei(fromEther value: String) -> String? {
-        guard !value.isEmpty,
+        baseUnits(from: value, decimals: 18)
+    }
+
+    static func baseUnits(from value: String, decimals: Int) -> String? {
+        guard (0...255).contains(decimals),
+              !value.isEmpty,
               value.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }) else {
             return nil
         }
@@ -191,20 +246,27 @@ enum WalletAmountFormatter {
         guard !whole.isEmpty || !fraction.isEmpty,
               whole.utf8.allSatisfy({ (48...57).contains($0) }),
               fraction.utf8.allSatisfy({ (48...57).contains($0) }),
-              fraction.count <= 18 else { return nil }
-        let paddedFraction = fraction + String(repeating: "0", count: 18 - fraction.count)
+              fraction.count <= decimals else { return nil }
+        let paddedFraction = fraction + String(repeating: "0", count: decimals - fraction.count)
         return WalletBaseUnits.normalize((whole.isEmpty ? "0" : whole) + paddedFraction)
     }
 
     static func ether(wei: String) -> String? {
-        guard let normalized = WalletBaseUnits.normalize(wei) else { return nil }
-        let padded = String(repeating: "0", count: max(0, 19 - normalized.count)) + normalized
-        let split = padded.index(padded.endIndex, offsetBy: -18)
+        asset(baseUnits: wei, decimals: 18, symbol: "ETH")
+    }
+
+    static func asset(baseUnits: String, decimals: Int, symbol: String) -> String? {
+        guard (0...255).contains(decimals), let normalized = WalletBaseUnits.normalize(baseUnits)
+        else { return nil }
+        guard decimals > 0 else { return "\(normalized) \(symbol)" }
+        let padded = String(repeating: "0", count: max(0, decimals + 1 - normalized.count))
+            + normalized
+        let split = padded.index(padded.endIndex, offsetBy: -decimals)
         let whole = String(padded[..<split])
         let fraction = String(padded[split...]).replacingOccurrences(
             of: "0+$", with: "", options: .regularExpression
         )
-        return fraction.isEmpty ? "\(whole) ETH" : "\(whole).\(fraction) ETH"
+        return fraction.isEmpty ? "\(whole) \(symbol)" : "\(whole).\(fraction) \(symbol)"
     }
 }
 
@@ -245,6 +307,27 @@ enum WalletBaseUnits {
             carry = total / 10
         }
         if carry > 0 { a.append(carry) }
+        return a.reversed().map(String.init).joined()
+    }
+
+    static func subtract(_ lhs: String, _ rhs: String) -> String? {
+        guard let left = normalize(lhs), let right = normalize(rhs),
+              compare(left, right) != .orderedAscending else { return nil }
+        var a = left.reversed().map { Int(String($0))! }
+        let b = right.reversed().map { Int(String($0))! }
+        var borrow = 0
+        for index in 0..<a.count {
+            var digit = a[index] - borrow - (index < b.count ? b[index] : 0)
+            if digit < 0 {
+                digit += 10
+                borrow = 1
+            } else {
+                borrow = 0
+            }
+            a[index] = digit
+        }
+        guard borrow == 0 else { return nil }
+        while a.count > 1, a.last == 0 { a.removeLast() }
         return a.reversed().map(String.init).joined()
     }
 
@@ -305,13 +388,20 @@ enum WalletPolicyEngine {
         guard policy.accountID == transaction.accountID, policy.networkID == transaction.networkID else {
             return .requiresApproval("The account or network is outside the active policy.")
         }
+        if let allowedActionKinds = policy.allowedActionKinds,
+           !allowedActionKinds.contains(transaction.action.type) {
+            return .requiresApproval("The semantic action is outside the active policy.")
+        }
         guard policy.allowedAdapterIDs.contains(adapterID),
               policy.allowedAssetIDs.contains(transaction.budgetAssetID) else {
             return .requiresApproval("The asset or effect adapter is outside the active policy.")
         }
         let counterparties: [String]
         switch adapterID {
-        case "native-eth-transfer-v1":
+        case WalletReviewedAdapters.ethereumNativeTransfer,
+             WalletReviewedAdapters.solanaNativeTransfer,
+             WalletReviewedAdapters.solanaSPLTransferChecked,
+             WalletReviewedAdapters.solanaToken2022TransferChecked:
             counterparties = transaction.action.recipient.map { [$0] } ?? []
         case WalletReviewedAdapters.erc20:
             counterparties = transaction.effects.compactMap { effect in
@@ -321,14 +411,29 @@ enum WalletPolicyEngine {
                 }
                 return nil
             }
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
             counterparties = transaction.effects.filter {
                 $0.kind == "minimum_receive"
             }.compactMap(\.to)
-            guard transaction.action.arguments.count == 3,
-                  let deadline = UInt64(transaction.action.arguments[2].value),
+            guard transaction.action.type == .exactInputSwap,
+                  let route = transaction.action.swapRoute,
+                  let deadline = UInt64(route.deadlineUnixSeconds),
                   deadline >= UInt64(max(0, now.timeIntervalSince1970.rounded(.down))) else {
                 return .requiresApproval("The swap quote is stale.")
+            }
+            guard let maximumSlippage = policy.maximumSlippageBPS,
+                  (0...5_000).contains(maximumSlippage),
+                  route.slippageBPS <= maximumSlippage else {
+                return .requiresApproval("The swap slippage exceeds the policy limit.")
+            }
+            let outputs = transaction.effects.filter { $0.kind == "minimum_receive" }
+            guard let minimum = policy.minimumOutputBaseUnits,
+                  outputs.count == 1,
+                  WalletBaseUnits.lessThanOrEqual(
+                    minimum, outputs[0].amountBaseUnits
+                  ) else {
+                return .requiresApproval("The swap minimum output is below the policy floor.")
             }
         default:
             counterparties = []
@@ -368,10 +473,12 @@ protocol WalletSignerClient: AnyObject {
     var sessionID: String? { get }
     var invalidationHandler: (() -> Void)? { get set }
     func signerStatus() async throws -> WalletSignerStatus
-    func beginVaultCreation() async throws -> WalletVaultCreation
-    func confirmVaultBackup(_ confirmation: WalletBackupConfirmation) async throws -> WalletSignerStatus
-    func cancelVaultCreation() async throws -> WalletSignerStatus
+    func beginRecoveryCeremony(
+        mode: WalletRecoveryCeremonyMode
+    ) async throws -> WalletRecoveryCeremonyLaunch
+    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus
+    func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus
     func authorizeSession() async throws
     func listAccounts() async throws -> [WalletAccount]
     func prepare(
@@ -385,7 +492,7 @@ protocol WalletSignerClient: AnyObject {
     func listPolicies() async throws -> [WalletActivePolicyStatus]
     func clearPolicies() async throws
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry
-    func browserRPC(method: String, params: [Any]) async throws -> Any
+    func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any]
     func rpcHealth() async throws -> String
     func configureRPCURL(_ value: String)
@@ -398,12 +505,18 @@ final class UnavailableWalletSignerClient: WalletSignerClient {
     let sessionID: String? = nil
     var invalidationHandler: (() -> Void)?
     func signerStatus() async throws -> WalletSignerStatus { throw WalletGateway.Error.signerUnavailable }
-    func beginVaultCreation() async throws -> WalletVaultCreation { throw WalletGateway.Error.signerUnavailable }
-    func confirmVaultBackup(_ confirmation: WalletBackupConfirmation) async throws -> WalletSignerStatus {
+    func beginRecoveryCeremony(
+        mode: WalletRecoveryCeremonyMode
+    ) async throws -> WalletRecoveryCeremonyLaunch {
         throw WalletGateway.Error.signerUnavailable
     }
-    func cancelVaultCreation() async throws -> WalletSignerStatus { throw WalletGateway.Error.signerUnavailable }
+    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
+    func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus {
         throw WalletGateway.Error.signerUnavailable
     }
     func authorizeSession() async throws { throw WalletGateway.Error.signerUnavailable }
@@ -429,7 +542,7 @@ final class UnavailableWalletSignerClient: WalletSignerClient {
     func verifyContract(_ draft: WalletContractRegistryDraft) async throws -> WalletContractRegistryEntry {
         throw WalletGateway.Error.signerUnavailable
     }
-    func browserRPC(method: String, params: [Any]) async throws -> Any {
+    func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any {
         throw WalletGateway.Error.signerUnavailable
     }
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
@@ -466,16 +579,20 @@ final class WalletGateway: ObservableObject {
             case .policyDenied(let message): message
             case .approvalRequired(let message): message
             case .broadcastUnknown(let transactionHash, let message):
-                "The signed transaction \(transactionHash) may not have reached Sepolia: \(message)"
+                "The signed transaction \(transactionHash) has an uncertain broadcast state: \(message)"
             }
         }
     }
 
-    static let protocolVersion = 1
+    static let protocolVersion = 2
+    static let ethereumMainnetNetworkID = "eip155:1"
     static let sepoliaNetworkID = "eip155:11155111"
+    static let solanaMainnetNetworkID = "solana:mainnet-beta"
+    static let suiMainnetNetworkID = "sui:mainnet"
     private static let maximumPreparedIntents = 32
     static let allowedOperations = [
-        "wallet_list_accounts", "wallet_get_balance", "wallet_get_activity",
+        "wallet_list_accounts", "wallet_get_balance", "wallet_get_assets",
+        "wallet_get_activity",
         "wallet_prepare_transaction", "wallet_simulate_transaction",
         "wallet_execute_transaction", "wallet_lock",
     ]
@@ -485,7 +602,7 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var activePolicies: [WalletSessionPolicy] = []
     @Published private(set) var pendingConfirmation: WalletPreparedTransaction?
     @Published private(set) var vaultState: WalletVaultState = .missing
-    @Published private(set) var vaultCreation: WalletVaultCreation?
+    @Published private(set) var recoveryCeremonyActive = false
     @Published private(set) var rpcHealthText = "Not checked"
     @Published private(set) var lastError: String?
     @Published private(set) var transactionHistory: [WalletActivityRecord] = []
@@ -497,62 +614,224 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var approvedBrowserOrigins: [String] = []
     @Published private(set) var walletEnabled: Bool
     @Published private(set) var browserProviderEnabled: Bool
+    @Published private(set) var idleLockMinutes: Int
+    @Published private(set) var recoveryOnlyVaultAvailable = false
+    @Published private(set) var contacts: [WalletContact] = []
+    @Published private(set) var assets: [WalletAsset] = []
+    @Published private(set) var connections: [WalletConnectionRecord] = []
 
     private let signer: WalletSignerClient
+    private let recoveryView: WalletRecoveryViewClient
     private let userDefaults: UserDefaults
+    private let publicStore: WalletPublicStore?
+    private let launchGate: WalletLaunchGate
+    private let reviewRegistry: WalletReviewRegistry?
+    private let regionCode: String
     let buildSupportsWalletAlpha: Bool
     private var prepared: [String: WalletPreparedTransaction] = [:]
     private var confirmedIntentIDs: Set<String> = []
     private let registryDefaultsKey = "LocusWalletContractRegistryV1"
     private let policyTemplatesDefaultsKey = "LocusWalletPolicyTemplatesV1"
     private let activityDefaultsKey = "LocusWalletActivityV1"
-    private var browserOriginGrants: Set<String> = []
+    private let idleLockDefaultsKey = "LocusWalletIdleLockMinutesV2"
+    private var browserOriginGrants: Set<WalletBrowserOriginNetworkGrant> = []
     private var browserIntentOrigins: [String: String] = [:]
     private var browserGrantContinuation: CheckedContinuation<Bool, Never>?
     private var confirmationContinuations: [String: CheckedContinuation<Bool, Never>] = [:]
     private var uiFixtureHubState: WalletHubState?
+    private var idleLockTimer: Timer?
+    private var localActivityMonitor: Any?
+    private var activeRecoveryCeremonyID: String?
     var onBrowserAuthorizationNeeded: (() -> Void)?
     var onBrowserGrantsRevoked: ((String?) -> Void)?
 
     init(signer: WalletSignerClient? = nil,
+         recoveryView: WalletRecoveryViewClient? = nil,
          environment: [String: String] = ProcessInfo.processInfo.environment,
          userDefaults: UserDefaults = .standard,
+         publicStore: WalletPublicStore? = nil,
+         launchGate: WalletLaunchGate? = nil,
+         reviewRegistry: WalletReviewRegistry? = nil,
+         regionCode: String = Locale.current.region?.identifier ?? "ZZ",
          buildSupportsWalletAlpha: Bool = AppSettings.walletAlphaSupportedByCurrentBuild) {
         let signer = signer ?? WalletSignerClientFactory.make()
         self.signer = signer
+        self.recoveryView = recoveryView ?? WalletRecoveryViewClientFactory.make()
         self.userDefaults = userDefaults
+        self.publicStore = publicStore ?? Self.makeDefaultPublicStore(
+            environment: environment,
+            buildSupportsWallet: buildSupportsWalletAlpha
+        )
+        self.launchGate = launchGate
+            ?? Self.loadBundledLaunchGate()
+            ?? (try! WalletLaunchGate())
+        self.reviewRegistry = reviewRegistry ?? Self.loadBundledReviewRegistry()
+        self.regionCode = regionCode.uppercased()
         self.buildSupportsWalletAlpha = buildSupportsWalletAlpha
         let legacyWalletEnabled = buildSupportsWalletAlpha
             && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] == "1"
         walletEnabled = legacyWalletEnabled
         browserProviderEnabled = legacyWalletEnabled
             && environment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] == "1"
+        idleLockMinutes = min(30, max(5, userDefaults.integer(forKey: idleLockDefaultsKey)))
+        if userDefaults.object(forKey: idleLockDefaultsKey) == nil { idleLockMinutes = 5 }
         status = signer.isAvailable ? .locked : .securityReviewRequired
         if let data = userDefaults.data(forKey: registryDefaultsKey),
            let registry = try? JSONDecoder().decode([WalletContractRegistryEntry].self, from: data) {
-            contractRegistry = registry.map(Self.sanitizedRegistryEntry)
-            if contractRegistry != registry,
-               let upgraded = try? JSONEncoder().encode(contractRegistry) {
+            let local = registry.map(Self.sanitizedRegistryEntry)
+            contractRegistry = Self.mergeReviewedContracts(
+                signed: self.reviewRegistry?.evmContracts ?? [], local: local
+            )
+            if local != registry,
+               let upgraded = try? JSONEncoder().encode(local) {
                 userDefaults.set(upgraded, forKey: registryDefaultsKey)
             }
+        } else {
+            contractRegistry = self.reviewRegistry?.evmContracts ?? []
         }
         if let data = userDefaults.data(forKey: policyTemplatesDefaultsKey),
            let templates = try? JSONDecoder().decode([WalletPolicyTemplate].self, from: data) {
             savedPolicyTemplates = templates
         }
-        if let data = userDefaults.data(forKey: activityDefaultsKey),
-           let activity = try? JSONDecoder().decode([WalletActivityRecord].self, from: data) {
-            transactionHistory = Array(activity.prefix(250))
+        let legacyActivity = userDefaults.data(forKey: activityDefaultsKey).flatMap {
+            try? JSONDecoder().decode([WalletActivityRecord].self, from: $0)
+        } ?? []
+        if let publicStore = self.publicStore {
+            let stored = (try? publicStore.loadActivities(limit: 500)) ?? []
+            if stored.isEmpty, !legacyActivity.isEmpty,
+               (try? publicStore.migrateLegacyActivities(legacyActivity)) != nil {
+                transactionHistory = Array(legacyActivity.prefix(500))
+                userDefaults.removeObject(forKey: activityDefaultsKey)
+            } else {
+                transactionHistory = stored
+            }
+        } else {
+            transactionHistory = Array(legacyActivity.prefix(250))
+        }
+        if let publicStore = self.publicStore {
+            contacts = (try? publicStore.loadContacts()) ?? []
+            let storedAssets = (try? publicStore.loadAssets()) ?? []
+            assets = Self.mergeReviewedAssets(
+                signed: self.reviewRegistry?.assets ?? [], stored: storedAssets
+            )
+            connections = (try? publicStore.loadConnections()) ?? []
+        } else {
+            assets = self.reviewRegistry?.assets ?? []
         }
         signer.invalidationHandler = { [weak self] in self?.handleSignerInvalidation() }
+        self.recoveryView.invalidationHandler = { [weak self] in
+            self?.handleRecoveryInvalidation()
+        }
+        if buildSupportsWalletAlpha, environment["XCTestConfigurationFilePath"] == nil {
+            localActivityMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                           .scrollWheel, .mouseMoved]
+            ) { [weak self] event in
+                self?.noteUserActivity()
+                return event
+            }
+        }
         #if DEBUG
         configureUIFixture(environment: environment)
         #endif
     }
 
+    deinit {
+        idleLockTimer?.invalidate()
+        if let localActivityMonitor { NSEvent.removeMonitor(localActivityMonitor) }
+    }
+
+    private static func makeDefaultPublicStore(
+        environment: [String: String],
+        buildSupportsWallet: Bool
+    ) -> WalletPublicStore? {
+        guard buildSupportsWallet,
+              environment["XCTestConfigurationFilePath"] == nil,
+              environment["LOCUS_UI_TESTING"] != "1",
+              let url = try? WalletPublicStore.defaultURL() else { return nil }
+        return try? WalletPublicStore(url: url)
+    }
+
+    private static func loadBundledLaunchGate(bundle: Bundle = .main) -> WalletLaunchGate? {
+        let signerURL = bundle.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("XPCServices", isDirectory: true)
+            .appendingPathComponent("WalletSigner.xpc", isDirectory: true)
+        guard let signerBundle = Bundle(url: signerURL),
+              let publicKeyText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+              ) as? String,
+              let publicKeyData = Data(base64Encoded: publicKeyText),
+              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              let manifestText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletCapabilityManifestBase64"
+              ) as? String,
+              let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedCapabilityManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func loadBundledReviewRegistry(
+        bundle: Bundle = .main
+    ) -> WalletReviewRegistry? {
+        let signerURL = bundle.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("XPCServices", isDirectory: true)
+            .appendingPathComponent("WalletSigner.xpc", isDirectory: true)
+        guard let signerBundle = Bundle(url: signerURL),
+              let publicKeyText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+              ) as? String,
+              let publicKeyData = Data(base64Encoded: publicKeyText),
+              let publicKey = try? Curve25519.Signing.PublicKey(
+                  rawRepresentation: publicKeyData
+              ),
+              let manifestText = signerBundle.object(
+                  forInfoDictionaryKey: "LocusWalletReviewManifestBase64"
+              ) as? String,
+              let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedReviewManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletReviewRegistry(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func mergeReviewedAssets(
+        signed: [WalletAsset], stored: [WalletAsset]
+    ) -> [WalletAsset] {
+        let signedIDs = Set(signed.map(\.id))
+        let userControlled = stored.filter {
+            $0.trust != .curated && !signedIDs.contains($0.id)
+        }
+        return signed + userControlled
+    }
+
+    private static func mergeReviewedContracts(
+        signed: [WalletContractRegistryEntry],
+        local: [WalletContractRegistryEntry]
+    ) -> [WalletContractRegistryEntry] {
+        let signedIDs = Set(signed.map(\.id))
+        let signedAddresses = Set(signed.map {
+            "\($0.networkID):\($0.checksumAddress.lowercased())"
+        })
+        return signed + local.filter {
+            !signedIDs.contains($0.id)
+                && !signedAddresses.contains("\($0.networkID):\($0.checksumAddress.lowercased())")
+        }
+    }
+
     private static func sanitizedRegistryEntry(
         _ entry: WalletContractRegistryEntry
     ) -> WalletContractRegistryEntry {
+        if WalletReviewedAdapters.validatedID(for: entry) != nil {
+            return entry
+        }
         let reviewedAdapterID = WalletReviewedAdapters.classify(
             normalizedABI: entry.normalizedABI,
             permittedFunctions: entry.permittedFunctions
@@ -575,11 +854,37 @@ final class WalletGateway: ObservableObject {
 
     var capability: [String: Any]? {
         guard agentToolingAvailable, let sessionID = signer.sessionID else { return nil }
+        var supportedChains = [
+            Self.sepoliaNetworkID,
+            WalletNetworkCatalog.solanaDevnet.id,
+            WalletNetworkCatalog.suiTestnet.id,
+        ]
+        if (try? launchGate.authorize(
+            networkID: Self.ethereumMainnetNetworkID,
+            capability: .nativeTransfer,
+            regionCode: regionCode
+        )) != nil {
+            supportedChains.append(Self.ethereumMainnetNetworkID)
+        }
+        if (try? launchGate.authorize(
+            networkID: Self.solanaMainnetNetworkID,
+            capability: .nativeTransfer,
+            regionCode: regionCode
+        )) != nil {
+            supportedChains.append(Self.solanaMainnetNetworkID)
+        }
+        if (try? launchGate.authorize(
+            networkID: Self.suiMainnetNetworkID,
+            capability: .nativeTransfer,
+            regionCode: regionCode
+        )) != nil {
+            supportedChains.append(Self.suiMainnetNetworkID)
+        }
         return [
             "protocol_version": Self.protocolVersion,
             "signer_state": status.rawValue,
             "session_id": sessionID,
-            "supported_chains": [Self.sepoliaNetworkID],
+            "supported_chains": supportedChains,
             "allowed_operations": Self.allowedOperations,
         ]
     }
@@ -589,7 +894,13 @@ final class WalletGateway: ObservableObject {
     }
 
     var canCreateVault: Bool {
-        walletEnabled && signer.isAvailable && vaultState == .missing
+        walletEnabled && signer.isAvailable && recoveryView.isAvailable
+            && vaultState == .missing && !recoveryCeremonyActive
+    }
+
+    var canRotateForMainnet: Bool {
+        walletEnabled && signer.isAvailable && recoveryView.isAvailable
+            && vaultState == .rotationRequired && !recoveryCeremonyActive
     }
 
     var isExperimentalEnabled: Bool { walletEnabled }
@@ -603,6 +914,7 @@ final class WalletGateway: ObservableObject {
         return switch vaultState {
         case .missing: .setupRequired
         case .awaitingBackup: .backupIncomplete
+        case .rotationRequired: .rotationRequired
         case .locked: .locked
         case .unlocked: status == .unlocked ? .ready : .locked
         }
@@ -622,6 +934,7 @@ final class WalletGateway: ObservableObject {
         do {
             let signerStatus = try await signer.signerStatus()
             vaultState = signerStatus.vaultState
+            recoveryOnlyVaultAvailable = signerStatus.recoveryOnlyVaultAvailable
             accounts = signerStatus.accounts
             synchronizeAccountSnapshots(with: signerStatus.accounts)
             status = signerStatus.vaultState == .unlocked ? .unlocked : .locked
@@ -632,49 +945,69 @@ final class WalletGateway: ObservableObject {
     }
 
     @discardableResult
-    func beginVaultCreation() async -> WalletVaultCreation? {
-        guard canCreateVault else { return nil }
-        do {
-            let creation = try await signer.beginVaultCreation()
-            vaultCreation = creation
-            vaultState = .awaitingBackup
-            lastError = nil
-            return creation
-        } catch {
-            lastError = error.localizedDescription
-            return nil
-        }
+    func beginVaultCreation() async -> Bool {
+        guard canCreateVault else { return false }
+        return await runRecoveryCeremony(mode: .create)
     }
 
     @discardableResult
-    func confirmVaultBackup(wordsByIndex: [Int: String]) async -> Bool {
+    func beginMainnetRotation() async -> Bool {
+        guard canRotateForMainnet else { return false }
+        return await runRecoveryCeremony(mode: .rotateForMainnet)
+    }
+
+    @discardableResult
+    func beginVaultRestoration() async -> Bool {
+        guard canCreateVault else { return false }
+        return await runRecoveryCeremony(mode: .restore)
+    }
+
+    private func runRecoveryCeremony(mode: WalletRecoveryCeremonyMode) async -> Bool {
+        guard !recoveryCeremonyActive, recoveryView.isAvailable else {
+            lastError = "The isolated recovery window is unavailable in this build."
+            return false
+        }
         do {
-            let signerStatus = try await signer.confirmVaultBackup(
-                WalletBackupConfirmation(wordsByIndex: wordsByIndex)
-            )
-            vaultCreation = nil
-            vaultState = signerStatus.vaultState
-            accounts = signerStatus.accounts
-            synchronizeAccountSnapshots(with: signerStatus.accounts)
-            status = .locked
-            lastError = nil
-            return true
+            let launch = try await signer.beginRecoveryCeremony(mode: mode)
+            activeRecoveryCeremonyID = launch.handle.id
+            recoveryCeremonyActive = true
+            if mode != .restore { vaultState = .awaitingBackup }
+            let result = try await recoveryView.present(launch: launch)
+            activeRecoveryCeremonyID = nil
+            recoveryCeremonyActive = false
+            switch result.outcome {
+            case .completed:
+                guard let signerStatus = result.signerStatus else {
+                    throw Error.signerUnavailable
+                }
+                applyRecoveryStatus(signerStatus)
+                lastError = nil
+                return true
+            case .canceled:
+                await refreshStatus()
+                return false
+            case .failed:
+                lastError = result.error ?? "The recovery ceremony failed."
+                await refreshStatus()
+                return false
+            }
         } catch {
+            if let ceremonyID = activeRecoveryCeremonyID {
+                _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID)
+            }
+            activeRecoveryCeremonyID = nil
+            recoveryCeremonyActive = false
             lastError = error.localizedDescription
             return false
         }
     }
 
-    func cancelVaultCreation() async {
-        do {
-            let signerStatus = try await signer.cancelVaultCreation()
-            vaultCreation = nil
-            vaultState = signerStatus.vaultState
-            accounts = signerStatus.accounts
-            synchronizeAccountSnapshots(with: signerStatus.accounts)
-        } catch {
-            lastError = error.localizedDescription
-        }
+    private func applyRecoveryStatus(_ signerStatus: WalletSignerStatus) {
+        vaultState = signerStatus.vaultState
+        recoveryOnlyVaultAvailable = signerStatus.recoveryOnlyVaultAvailable
+        accounts = signerStatus.accounts
+        synchronizeAccountSnapshots(with: signerStatus.accounts)
+        status = .locked
     }
 
     @discardableResult
@@ -683,6 +1016,7 @@ final class WalletGateway: ObservableObject {
             let signerStatus = try await signer.deleteVault(confirmation: confirmation)
             lock()
             vaultState = signerStatus.vaultState
+            recoveryOnlyVaultAvailable = signerStatus.recoveryOnlyVaultAvailable
             accounts = signerStatus.accounts
             synchronizeAccountSnapshots(with: signerStatus.accounts)
             lastError = nil
@@ -690,6 +1024,101 @@ final class WalletGateway: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             return false
+        }
+    }
+
+    @discardableResult
+    func deleteRecoveryVault(confirmation: String) async -> Bool {
+        do {
+            let signerStatus = try await signer.deleteRecoveryVault(confirmation: confirmation)
+            vaultState = signerStatus.vaultState
+            recoveryOnlyVaultAvailable = signerStatus.recoveryOnlyVaultAvailable
+            accounts = signerStatus.accounts
+            synchronizeAccountSnapshots(with: signerStatus.accounts)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func saveContact(
+        name: String,
+        networkID: String,
+        rawAddress: String,
+        resolvedName: String? = nil,
+        resolutionProof: String? = nil
+    ) -> Bool {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAddress = rawAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
+              !cleanName.isEmpty, cleanName.count <= 128,
+              Self.validAddress(cleanAddress, chain: descriptor.chain),
+              resolvedName == nil || (resolutionProof?.isEmpty == false) else {
+            lastError = "Enter a valid chain-scoped raw address. Resolved names require a verified forward-resolution proof."
+            return false
+        }
+        let now = Date()
+        let existing = contacts.first { contact in
+            contact.networkID == networkID
+                && contact.rawAddress.caseInsensitiveCompare(cleanAddress) == .orderedSame
+        }
+        let contact = WalletContact(
+            id: existing?.id ?? UUID().uuidString.lowercased(),
+            networkID: networkID,
+            chain: descriptor.chain,
+            name: cleanName,
+            rawAddress: cleanAddress,
+            resolvedName: resolvedName,
+            resolutionProof: resolutionProof,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now
+        )
+        do {
+            try publicStore?.upsertContact(contact)
+            contacts.removeAll { $0.id == contact.id }
+            contacts.append(contact)
+            contacts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func trustQuarantinedAsset(id: String) {
+        guard let asset = assets.first(where: { $0.id == id }), asset.trust == .quarantined else {
+            return
+        }
+        let trusted = WalletAsset(
+            canonicalID: asset.canonicalID, networkID: asset.networkID,
+            chain: asset.chain, kind: asset.kind, reference: asset.reference,
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: .userTrusted, manifestRevision: asset.manifestRevision
+        )
+        do {
+            try publicStore?.upsertAsset(trusted)
+            assets.removeAll { $0.id == trusted.id }
+            assets.append(trusted)
+            synchronizeAccountSnapshots(with: accounts)
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private static func validAddress(_ value: String, chain: WalletChain) -> Bool {
+        switch chain {
+        case .evm:
+            value.count == 42 && value.hasPrefix("0x")
+                && value.dropFirst(2).allSatisfy(\.isHexDigit)
+        case .solana:
+            WalletSolanaBase58.decode(value, exactLength: 32) != nil
+        case .sui:
+            WalletSuiAddress.isCanonical(value)
         }
     }
 
@@ -703,6 +1132,8 @@ final class WalletGateway: ObservableObject {
         guard uiFixtureHubState == nil else { return }
         guard signer.isAvailable else { return }
         var changed = false
+        var attemptedHeadNetworks: Set<String> = []
+        var headBlocks: [String: UInt64] = [:]
         let recordIDs = transactionHistory.filter {
             $0.state == .submitted || $0.state == .broadcastUnknown
         }.map(\.id)
@@ -711,14 +1142,66 @@ final class WalletGateway: ObservableObject {
                 continue
             }
             do {
-                let result = try await signer.browserRPC(
-                    method: "eth_getTransactionReceipt",
-                    params: [original.transactionHash]
-                )
+                guard let chain = WalletNetworkCatalog.descriptor(
+                    id: original.networkID
+                )?.chain else { continue }
+                let result: Any
+                switch chain {
+                case .evm:
+                    result = try await signer.browserRPC(
+                        networkID: original.networkID,
+                        method: "eth_getTransactionReceipt",
+                        params: [original.transactionHash]
+                    )
+                case .solana:
+                    result = try await signer.browserRPC(
+                        networkID: original.networkID,
+                        method: "getSignatureStatuses",
+                        params: [
+                            [original.transactionHash],
+                            ["searchTransactionHistory": true],
+                        ]
+                    )
+                case .sui:
+                    continue
+                }
                 guard let index = transactionHistory.firstIndex(where: { $0.id == recordID }) else {
                     continue
                 }
                 transactionHistory[index].lastCheckedAt = Date()
+                if chain == .solana {
+                    guard let envelope = result as? [String: Any],
+                          let values = envelope["value"] as? [Any],
+                          values.count == 1 else { continue }
+                    if values[0] is NSNull {
+                        changed = true
+                        continue
+                    }
+                    guard let status = values[0] as? [String: Any],
+                          let confirmation = status["confirmationStatus"] as? String,
+                          ["processed", "confirmed", "finalized"].contains(
+                              confirmation
+                          ) else { continue }
+                    if let error = status["err"], !(error is NSNull) {
+                        transactionHistory[index].state = .failed
+                        transactionHistory[index].finality = .failed
+                        transactionHistory[index].detail = "Solana execution failed."
+                    } else {
+                        transactionHistory[index].state = confirmation == "processed"
+                            ? .submitted : .confirmed
+                        transactionHistory[index].finality = confirmation == "finalized"
+                            ? .finalized : (confirmation == "confirmed" ? .confirmed : .pending)
+                        transactionHistory[index].detail = nil
+                    }
+                    if let slot = status["slot"] as? NSNumber,
+                       CFGetTypeID(slot) != CFBooleanGetTypeID(),
+                       slot.decimalValue >= 0,
+                       slot.decimalValue == Decimal(slot.uint64Value) {
+                        transactionHistory[index].blockNumber = String(slot.uint64Value)
+                    }
+                    changed = true
+                    continue
+                }
                 if result is NSNull {
                     changed = true
                     continue
@@ -727,6 +1210,25 @@ final class WalletGateway: ObservableObject {
                       let status = receipt["status"] as? String else { continue }
                 transactionHistory[index].state = status.lowercased() == "0x1" ? .confirmed : .failed
                 transactionHistory[index].blockNumber = receipt["blockNumber"] as? String
+                if status.lowercased() == "0x1" {
+                    if !attemptedHeadNetworks.contains(original.networkID) {
+                        attemptedHeadNetworks.insert(original.networkID)
+                        let headResponse = try? await signer.browserRPC(
+                            networkID: original.networkID,
+                            method: "eth_blockNumber", params: []
+                        )
+                        if let head = headResponse as? String,
+                           let value = WalletEthereumQuantity.hexToUInt64(head) {
+                            headBlocks[original.networkID] = value
+                        }
+                    }
+                    transactionHistory[index].finality = Self.evmFinality(
+                        block: receipt["blockNumber"] as? String,
+                        head: headBlocks[original.networkID]
+                    )
+                } else {
+                    transactionHistory[index].finality = .failed
+                }
                 transactionHistory[index].detail = nil
                 changed = true
             } catch {
@@ -738,16 +1240,600 @@ final class WalletGateway: ObservableObject {
                 changed = true
             }
         }
+        let evmNetworks = accounts.filter { $0.chain == .evm }.flatMap { account in
+            account.networkIDs.compactMap { networkID -> (WalletAccount, String)? in
+                WalletNetworkCatalog.descriptor(id: networkID)?.chain == .evm
+                    ? (account, networkID) : nil
+            }
+        }
+        for (account, networkID) in evmNetworks {
+            do {
+                let result = try await signer.performRead(
+                    tool: "wallet_get_activity",
+                    arguments: ["account_id": account.id, "network_id": networkID]
+                )
+                guard let rows = result["activity"] as? [[String: Any]], rows.count <= 500 else {
+                    continue
+                }
+                let indexedHead = (result["head_block_number"] as? String).flatMap(UInt64.init)
+                let existingByHash = Dictionary(
+                    grouping: transactionHistory, by: { $0.transactionHash.lowercased() }
+                )
+                var seenIndexedIDs: Set<String> = []
+                let indexed = rows.compactMap {
+                    indexedActivityRecord(
+                        $0, account: account, networkID: networkID,
+                        headBlock: indexedHead, existingByHash: existingByHash
+                    )
+                }.filter {
+                    seenIndexedIDs.insert($0.id).inserted
+                }
+                guard !indexed.isEmpty else { continue }
+                let indexedHashes = Set(indexed.map { $0.transactionHash.lowercased() })
+                let replacedIDs = transactionHistory.filter {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && indexedHashes.contains($0.transactionHash.lowercased())
+                }.map(\.id)
+                transactionHistory.removeAll {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && indexedHashes.contains($0.transactionHash.lowercased())
+                }
+                for id in replacedIDs { try? publicStore?.deleteActivity(id: id) }
+                transactionHistory.append(contentsOf: indexed)
+                quarantineDiscoveredAssets(from: rows, networkID: networkID)
+                changed = true
+            } catch {
+                continue
+            }
+        }
+        let solanaNetworks = accounts.filter { $0.chain == .solana }.flatMap { account in
+            account.networkIDs.compactMap { networkID -> (WalletAccount, String)? in
+                WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana
+                    ? (account, networkID) : nil
+            }
+        }
+        for (account, networkID) in solanaNetworks {
+            do {
+                let result = try await signer.performRead(
+                    tool: "wallet_get_activity",
+                    arguments: ["account_id": account.id, "network_id": networkID]
+                )
+                guard let rows = result["activity"] as? [[String: Any]],
+                      rows.count <= 500 else { continue }
+                let existingByHash = Dictionary(
+                    grouping: transactionHistory, by: \.transactionHash
+                )
+                var seenIDs: Set<String> = []
+                var indexed: [WalletActivityRecord] = []
+                var validBatch = true
+                for row in rows {
+                    guard let record = indexedSolanaActivityRecord(
+                        row, account: account, networkID: networkID,
+                        existingByHash: existingByHash
+                    ), seenIDs.insert(record.id).inserted else {
+                        validBatch = false
+                        break
+                    }
+                    indexed.append(record)
+                }
+                guard validBatch, !indexed.isEmpty else { continue }
+                let hashes = Set(indexed.map(\.transactionHash))
+                let replacedIDs = transactionHistory.filter {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && hashes.contains($0.transactionHash)
+                }.map(\.id)
+                transactionHistory.removeAll {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && hashes.contains($0.transactionHash)
+                }
+                for id in replacedIDs { try? publicStore?.deleteActivity(id: id) }
+                transactionHistory.append(contentsOf: indexed)
+                quarantineSolanaActivityAssets(from: rows, networkID: networkID)
+                changed = true
+            } catch {
+                continue
+            }
+        }
+        let suiNetworks = accounts.filter { $0.chain == .sui }.flatMap { account in
+            account.networkIDs.compactMap { networkID -> (WalletAccount, String)? in
+                WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui
+                    ? (account, networkID) : nil
+            }
+        }
+        for (account, networkID) in suiNetworks {
+            do {
+                let result = try await signer.performRead(
+                    tool: "wallet_get_activity",
+                    arguments: ["account_id": account.id, "network_id": networkID]
+                )
+                guard let rows = result["activity"] as? [[String: Any]],
+                      rows.count <= 50_500 else { continue }
+                let existingByHash = Dictionary(
+                    grouping: transactionHistory, by: \.transactionHash
+                )
+                var seenIDs: Set<String> = []
+                var indexed: [WalletActivityRecord] = []
+                var validBatch = true
+                for row in rows {
+                    guard let record = indexedSuiActivityRecord(
+                        row, account: account, networkID: networkID,
+                        existingByHash: existingByHash
+                    ), seenIDs.insert(record.id).inserted else {
+                        validBatch = false
+                        break
+                    }
+                    indexed.append(record)
+                }
+                guard validBatch, !indexed.isEmpty else { continue }
+                let hashes = Set(indexed.map(\.transactionHash))
+                let replacedIDs = transactionHistory.filter {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && hashes.contains($0.transactionHash)
+                }.map(\.id)
+                transactionHistory.removeAll {
+                    $0.networkID == networkID && $0.accountID == account.id
+                        && hashes.contains($0.transactionHash)
+                }
+                for id in replacedIDs { try? publicStore?.deleteActivity(id: id) }
+                transactionHistory.append(contentsOf: indexed)
+                quarantineSuiActivityAssets(from: rows, networkID: networkID)
+                changed = true
+            } catch {
+                continue
+            }
+        }
+        if changed {
+            transactionHistory.sort { $0.submittedAt > $1.submittedAt }
+            if transactionHistory.count > 500 {
+                let removed = transactionHistory.suffix(from: 500).map(\.id)
+                transactionHistory.removeLast(transactionHistory.count - 500)
+                for id in removed { try? publicStore?.deleteActivity(id: id) }
+            }
+        }
         if changed { persistActivity() }
+    }
+
+    private func indexedActivityRecord(
+        _ row: [String: Any],
+        account: WalletAccount,
+        networkID: String,
+        headBlock: UInt64?,
+        existingByHash: [String: [WalletActivityRecord]]
+    ) -> WalletActivityRecord? {
+        guard let rawID = row["id"] as? String,
+              !rawID.isEmpty, rawID.utf8.count <= 256,
+              let hash = row["transaction_hash"] as? String,
+              hash.count == 66, hash.hasPrefix("0x"),
+              hash.dropFirst(2).allSatisfy(\.isHexDigit),
+              let block = WalletBaseUnits.normalize(
+                  row["block_number"] as? String ?? ""
+              ),
+              let timestamp = row["occurred_at"] as? TimeInterval,
+              timestamp.isFinite, timestamp >= 0,
+              timestamp <= Date().addingTimeInterval(300).timeIntervalSince1970,
+              let from = row["from"] as? String, Self.validAddress(from, chain: .evm),
+              let to = row["to"] as? String, Self.validAddress(to, chain: .evm),
+              let assetID = row["asset_id"] as? String,
+              let amount = WalletBaseUnits.normalize(
+                  row["amount_base_units"] as? String ?? ""
+              ),
+              let kindValue = row["asset_kind"] as? String,
+              let kind = WalletAssetKind(rawValue: kindValue),
+              validIndexedAssetID(assetID, kind: kind, networkID: networkID) else {
+            return nil
+        }
+        let accountAddress = account.address.lowercased()
+        let normalizedFrom = from.lowercased()
+        let normalizedTo = to.lowercased()
+        let direction: WalletActivityDirection
+        if normalizedFrom == accountAddress && normalizedTo == accountAddress {
+            direction = .selfTransfer
+        } else if normalizedTo == accountAddress {
+            direction = .inbound
+        } else if normalizedFrom == accountAddress {
+            direction = .outbound
+        } else {
+            return nil
+        }
+        let symbol = sanitizedProviderLabel(
+            row["asset_symbol"], fallback: "Asset", limit: 32
+        )
+        let prior = existingByHash[hash.lowercased()]?.first
+        let actionKind: WalletActionKind = switch kind {
+        case .native: .nativeTransfer
+        case .fungibleToken: .fungibleTokenTransfer
+        case .nft, .collectible: .nftTransfer
+        }
+        let verb = switch direction {
+        case .inbound: "Received"
+        case .outbound: "Sent"
+        case .selfTransfer: "Moved"
+        }
+        return WalletActivityRecord(
+            id: "indexed:\(networkID):\(rawID)",
+            intentID: prior?.intentID ?? "indexed:\(rawID)",
+            transactionHash: hash.lowercased(), networkID: networkID,
+            accountID: account.id, summary: "\(verb) \(symbol)",
+            submittedAt: Date(timeIntervalSince1970: timestamp),
+            state: .confirmed, blockNumber: block, lastCheckedAt: Date(), detail: nil,
+            direction: direction, source: prior?.source, actionKind: actionKind,
+            assetID: assetID, amountBaseUnits: amount,
+            finality: Self.evmFinality(block: block, head: headBlock),
+            expiresAt: nil, replacedByTransactionHash: nil
+        )
+    }
+
+    private func indexedSolanaActivityRecord(
+        _ row: [String: Any],
+        account: WalletAccount,
+        networkID: String,
+        existingByHash: [String: [WalletActivityRecord]]
+    ) -> WalletActivityRecord? {
+        guard let rawID = row["id"] as? String,
+              !rawID.isEmpty, rawID.utf8.count <= 1_024,
+              let signature = row["transaction_hash"] as? String,
+              WalletSolanaBase58.decode(signature, exactLength: 64) != nil,
+              let slot = WalletBaseUnits.normalize(
+                  row["block_number"] as? String ?? ""
+              ), UInt64(slot) != nil,
+              let timestamp = row["occurred_at"] as? TimeInterval,
+              timestamp.isFinite, timestamp >= 1_232_000_000,
+              timestamp <= Date().addingTimeInterval(300).timeIntervalSince1970,
+              let status = row["status"] as? String,
+              status == "confirmed" || status == "failed",
+              row["owner"] as? String == account.address,
+              let fee = WalletBaseUnits.normalize(
+                  row["fee_base_units"] as? String ?? ""
+              ), UInt64(fee) != nil else { return nil }
+        let prior = existingByHash[signature]?.first
+        var direction: WalletActivityDirection?
+        var actionKind: WalletActionKind?
+        var assetID: String?
+        var amount: String?
+        var summary = status == "failed"
+            ? "Failed Solana transaction" : "Solana transaction"
+        let hasAssetFields = row["asset_id"] != nil
+            || row["asset_reference"] != nil || row["asset_kind"] != nil
+            || row["amount_base_units"] != nil || row["direction"] != nil
+        if status == "confirmed", hasAssetFields {
+            guard let rawAssetID = row["asset_id"] as? String,
+                  let rawKind = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: rawKind),
+                  let rawAmount = row["amount_base_units"] as? String,
+                  WalletBaseUnits.normalize(rawAmount) == rawAmount,
+                  rawAmount != "0",
+                  let rawDirection = row["direction"] as? String,
+                  let parsedDirection = WalletActivityDirection(
+                    rawValue: rawDirection
+                  ) else { return nil }
+            let symbol: String
+            if rawAssetID == WalletNetworkCatalog.descriptor(
+                id: networkID
+            )?.nativeAssetID {
+                guard kind == .native, row["asset_reference"] == nil,
+                      parsedDirection != .selfTransfer else { return nil }
+                actionKind = .nativeTransfer
+                symbol = "SOL"
+            } else if let identity = WalletSolanaAssetIdentity.parse(rawAssetID) {
+                guard identity.networkID == networkID,
+                      kind == .fungibleToken,
+                      row["asset_reference"] as? String == identity.mint,
+                      parsedDirection != .selfTransfer else { return nil }
+                actionKind = .fungibleTokenTransfer
+                symbol = "token"
+            } else if let identity = WalletSolanaCollectibleIdentity.parse(
+                rawAssetID
+            ) {
+                guard identity.networkID == networkID, identity.standard == .core,
+                      kind == .nft || kind == .collectible,
+                      row["asset_reference"] as? String == identity.address,
+                      rawAmount == "1" else { return nil }
+                actionKind = .nftTransfer
+                symbol = "Core asset"
+            } else {
+                return nil
+            }
+            let verb = switch parsedDirection {
+            case .inbound: "Received"
+            case .outbound: "Sent"
+            case .selfTransfer: "Moved"
+            }
+            summary = "\(verb) \(symbol)"
+            direction = parsedDirection
+            assetID = rawAssetID
+            amount = rawAmount
+        } else if hasAssetFields {
+            return nil
+        }
+        return WalletActivityRecord(
+            id: "indexed:\(networkID):\(rawID)",
+            intentID: prior?.intentID ?? "indexed:\(signature)",
+            transactionHash: signature, networkID: networkID,
+            accountID: account.id, summary: summary,
+            submittedAt: Date(timeIntervalSince1970: timestamp),
+            state: status == "failed" ? .failed : .confirmed,
+            blockNumber: slot, lastCheckedAt: Date(),
+            detail: fee == "0" ? nil : "Network fee: \(fee) lamports",
+            direction: direction, source: prior?.source,
+            actionKind: actionKind, assetID: assetID,
+            amountBaseUnits: amount,
+            finality: status == "failed" ? .failed : .finalized,
+            expiresAt: nil, replacedByTransactionHash: nil
+        )
+    }
+
+    private func indexedSuiActivityRecord(
+        _ row: [String: Any],
+        account: WalletAccount,
+        networkID: String,
+        existingByHash: [String: [WalletActivityRecord]]
+    ) -> WalletActivityRecord? {
+        guard let rawID = row["id"] as? String,
+              !rawID.isEmpty, rawID.utf8.count <= 1_024,
+              let digest = row["transaction_hash"] as? String,
+              WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
+              let block = WalletBaseUnits.normalize(
+                  row["block_number"] as? String ?? ""
+              ),
+              let timestamp = row["occurred_at"] as? TimeInterval,
+              timestamp.isFinite, timestamp >= 0,
+              timestamp <= Date().addingTimeInterval(300).timeIntervalSince1970,
+              let status = row["status"] as? String,
+              status == "confirmed" || status == "failed",
+              row["owner"] as? String == account.address else { return nil }
+        if let sender = row["sender"] as? String,
+           !WalletSuiAddress.isCanonical(sender) { return nil }
+        let prior = existingByHash[digest]?.first
+        var direction: WalletActivityDirection?
+        var actionKind: WalletActionKind?
+        var assetID: String?
+        var amount: String?
+        var summary = status == "failed" ? "Failed Sui transaction" : "Sui transaction"
+        if status == "confirmed", let rawAssetID = row["asset_id"] as? String {
+            guard let kindValue = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: kindValue),
+                  let rawAmount = row["amount_base_units"] as? String,
+                  let normalizedAmount = WalletBaseUnits.normalize(rawAmount),
+                  normalizedAmount == rawAmount, normalizedAmount != "0",
+                  let rawDirection = row["direction"] as? String,
+                  let parsedDirection = WalletActivityDirection(rawValue: rawDirection),
+                  parsedDirection != .selfTransfer else { return nil }
+            if let identity = WalletSuiAssetIdentity.parse(rawAssetID) {
+                guard identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.coinType,
+                      (identity.coinType == WalletSuiAssetIdentity.nativeCoinType
+                          ? kind == .native : kind == .fungibleToken),
+                      row["object_type"] == nil,
+                      row["has_public_transfer"] == nil else { return nil }
+                actionKind = kind == .native ? .nativeTransfer : .fungibleTokenTransfer
+                let symbol = identity.coinType == WalletSuiAssetIdentity.nativeCoinType
+                    ? "SUI"
+                    : String(
+                        (identity.coinType.components(separatedBy: "::").last ?? "COIN")
+                            .prefix(32)
+                    )
+                summary = parsedDirection == .inbound
+                    ? "Received \(symbol)" : "Sent \(symbol)"
+            } else {
+                guard let identity = WalletSuiObjectIdentity.parse(rawAssetID),
+                      identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.objectID,
+                      kind == .nft || kind == .collectible,
+                      normalizedAmount == "1",
+                      let objectType = row["object_type"] as? String,
+                      WalletSuiAssetIdentity.isCanonicalCoinType(objectType),
+                      !(objectType.hasPrefix("0x2::coin::Coin<")
+                        && objectType.hasSuffix(">")),
+                      row["has_public_transfer"] is Bool else { return nil }
+                let symbol = String(
+                    (objectType.components(separatedBy: "::").last ?? "OBJECT")
+                        .prefix(32)
+                )
+                actionKind = .nftTransfer
+                summary = parsedDirection == .inbound
+                    ? "Received \(symbol)" : "Sent \(symbol)"
+            }
+            direction = parsedDirection
+            assetID = rawAssetID
+            amount = normalizedAmount
+        } else if row["asset_id"] != nil || row["asset_reference"] != nil
+                    || row["asset_kind"] != nil || row["amount_base_units"] != nil
+                    || row["direction"] != nil || row["object_type"] != nil
+                    || row["has_public_transfer"] != nil {
+            return nil
+        }
+        return WalletActivityRecord(
+            id: "indexed:\(networkID):\(rawID)",
+            intentID: prior?.intentID ?? "indexed:\(digest)",
+            transactionHash: digest, networkID: networkID,
+            accountID: account.id, summary: summary,
+            submittedAt: Date(timeIntervalSince1970: timestamp),
+            state: status == "failed" ? .failed : .confirmed,
+            blockNumber: block, lastCheckedAt: Date(), detail: nil,
+            direction: direction, source: prior?.source,
+            actionKind: actionKind, assetID: assetID,
+            amountBaseUnits: amount,
+            finality: status == "failed" ? .failed : .finalized,
+            expiresAt: nil, replacedByTransactionHash: nil
+        )
+    }
+
+    private func quarantineSolanaActivityAssets(
+        from rows: [[String: Any]],
+        networkID: String
+    ) {
+        for row in rows {
+            guard row["status"] as? String == "confirmed",
+                  let assetID = row["asset_id"] as? String,
+                  assets.contains(where: { $0.id == assetID }) == false else {
+                continue
+            }
+            let asset: WalletAsset
+            if let identity = WalletSolanaAssetIdentity.parse(assetID) {
+                guard identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.mint,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.fungibleToken.rawValue else { continue }
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .solana, kind: .fungibleToken,
+                    reference: identity.mint, name: "Unknown Solana token",
+                    symbol: "TOKEN", decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            } else {
+                guard let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+                      identity.networkID == networkID, identity.standard == .core,
+                      row["asset_reference"] as? String == identity.address,
+                      let rawKind = row["asset_kind"] as? String,
+                      rawKind == WalletAssetKind.nft.rawValue
+                        || rawKind == WalletAssetKind.collectible.rawValue,
+                      row["amount_base_units"] as? String == "1" else { continue }
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .solana, kind: .collectible,
+                    reference: identity.address, name: "Unknown Core asset",
+                    symbol: "CORE", decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            }
+            assets.append(asset)
+            try? publicStore?.upsertAsset(asset)
+        }
+    }
+
+    private func quarantineSuiActivityAssets(
+        from rows: [[String: Any]],
+        networkID: String
+    ) {
+        for row in rows {
+            guard row["status"] as? String == "confirmed",
+                  let assetID = row["asset_id"] as? String,
+                  assets.contains(where: { $0.id == assetID }) == false else {
+                continue
+            }
+            let asset: WalletAsset
+            if let identity = WalletSuiAssetIdentity.parse(assetID) {
+                guard identity.networkID == networkID,
+                      identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
+                      row["asset_reference"] as? String == identity.coinType,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.fungibleToken.rawValue else { continue }
+                let symbol = String(
+                    (identity.coinType.components(separatedBy: "::").last ?? "COIN")
+                        .prefix(32)
+                )
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .sui, kind: .fungibleToken,
+                    reference: identity.coinType, name: "Unknown Sui Coin",
+                    symbol: symbol, decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            } else {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.objectID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["amount_base_units"] as? String == "1",
+                      let objectType = row["object_type"] as? String,
+                      WalletSuiAssetIdentity.isCanonicalCoinType(objectType),
+                      row["has_public_transfer"] is Bool else { continue }
+                let symbol = String(
+                    (objectType.components(separatedBy: "::").last ?? "OBJECT")
+                        .prefix(32)
+                )
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .sui, kind: .collectible,
+                    reference: identity.objectID, name: "Unknown Sui object",
+                    symbol: symbol, decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            }
+            assets.append(asset)
+            try? publicStore?.upsertAsset(asset)
+        }
+    }
+
+    private static func evmFinality(block: String?, head: UInt64?) -> WalletActivityFinality {
+        guard let block, let head else { return .confirmed }
+        let blockNumber = block.lowercased().hasPrefix("0x")
+            ? WalletEthereumQuantity.hexToUInt64(block) : UInt64(block)
+        guard let blockNumber else { return .confirmed }
+        guard head >= blockNumber else { return .confirmed }
+        return head - blockNumber >= 64 ? .finalized : .confirmed
+    }
+
+    private func quarantineDiscoveredAssets(
+        from rows: [[String: Any]],
+        networkID: String
+    ) {
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  assets.contains(where: { $0.id == assetID }) == false,
+                  let kindValue = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: kindValue), kind != .native,
+                  validIndexedAssetID(assetID, kind: kind, networkID: networkID),
+                  let reference = row["asset_reference"] as? String,
+                  Self.validAddress(reference, chain: .evm) else { continue }
+            let decimals = row["asset_decimals"] as? Int
+            guard decimals.map({ (0...255).contains($0) }) != false else { continue }
+            let asset = WalletAsset(
+                canonicalID: assetID, networkID: networkID, chain: .evm,
+                kind: kind, reference: reference.lowercased(),
+                name: sanitizedProviderLabel(
+                    row["asset_name"], fallback: "Unknown asset", limit: 128
+                ),
+                symbol: sanitizedProviderLabel(
+                    row["asset_symbol"], fallback: "UNKNOWN", limit: 32
+                ),
+                decimals: decimals, trust: .quarantined, manifestRevision: 0
+            )
+            assets.append(asset)
+            try? publicStore?.upsertAsset(asset)
+        }
+    }
+
+    private func validIndexedAssetID(
+        _ assetID: String,
+        kind: WalletAssetKind,
+        networkID: String
+    ) -> Bool {
+        if kind == .native {
+            return assetID == WalletNetworkCatalog.descriptor(id: networkID)?.nativeAssetID
+        }
+        guard let identity = WalletEVMAssetIdentity.parse(assetID),
+              identity.networkID == networkID else { return false }
+        switch (kind, identity.standard) {
+        case (.fungibleToken, .erc20): return identity.tokenID == nil
+        case (.nft, .erc721), (.collectible, .erc721): return identity.tokenID != nil
+        case (.nft, .erc1155), (.collectible, .erc1155): return identity.tokenID != nil
+        default: return false
+        }
+    }
+
+    private func sanitizedProviderLabel(
+        _ value: Any?, fallback: String, limit: Int
+    ) -> String {
+        guard let value = value as? String else { return fallback }
+        let scalars = value.unicodeScalars.filter {
+            ($0.value >= 0x20 && $0.value != 0x7f) || $0.value == 0x09
+        }.prefix(limit)
+        let normalized = String(String.UnicodeScalarView(scalars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? fallback : normalized
     }
 
     var statusText: String {
         if !buildSupportsWalletAlpha { return "Direct download required" }
-        if signer.isAvailable && !walletEnabled { return "Private alpha is off" }
+        if signer.isAvailable && !walletEnabled { return "Wallet is off" }
         if vaultState == .missing { return "Not created" }
         if vaultState == .awaitingBackup { return "Backup not confirmed" }
+        if vaultState == .rotationRequired { return "Rotate for Mainnet" }
         return switch status {
-        case .securityReviewRequired: "Experimental signer unavailable"
+        case .securityReviewRequired: "Signer unavailable"
         case .locked: "Locked"
         case .unlocked: "Unlocked for this Locus session"
         }
@@ -787,26 +1873,69 @@ final class WalletGateway: ObservableObject {
         do {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
+            var discoveredAssetBalances: [String: String] = [:]
+            for account in publicAccounts {
+                for networkID in account.networkIDs where WalletNetworkCatalog.descriptor(
+                    id: networkID
+                )?.chain == account.chain {
+                    guard let result = try? await signer.performRead(
+                        tool: "wallet_get_assets",
+                        arguments: [
+                            "account_id": account.id,
+                            "network_id": networkID,
+                        ]
+                    ), let rows = result["assets"] as? [[String: Any]],
+                       rows.count <= 10_000 else { continue }
+                    let reconciled = switch account.chain {
+                    case .evm:
+                        reconcileEVMAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        )
+                    case .solana:
+                        reconcileSolanaAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        )
+                    case .sui:
+                        reconcileSuiAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        )
+                    }
+                    discoveredAssetBalances.merge(
+                        reconciled, uniquingKeysWith: { _, latest in latest }
+                    )
+                }
+            }
             synchronizeAccountSnapshots(with: publicAccounts)
-            for account in publicAccounts where account.chain == .evm {
+            for snapshot in accountSnapshots {
+                if let discovered = discoveredAssetBalances[snapshot.id] {
+                    guard let index = accountSnapshots.firstIndex(where: {
+                        $0.id == snapshot.id
+                    }) else { continue }
+                    accountSnapshots[index].balanceBaseUnits = discovered
+                    accountSnapshots[index].refreshedAt = Date()
+                    accountSnapshots[index].freshness = .current
+                    continue
+                }
                 do {
                     let result = try await signer.performRead(
                         tool: "wallet_get_balance",
-                        arguments: ["account_id": account.id]
+                        arguments: [
+                            "account_id": snapshot.accountID,
+                            "network_id": snapshot.networkID,
+                            "asset_id": snapshot.assetID,
+                        ]
                     )
                     guard let balance = result["balance_base_units"] as? String,
                           WalletBaseUnits.normalize(balance) != nil,
                           let index = accountSnapshots.firstIndex(where: {
-                              $0.accountID == account.id
-                                  && $0.networkID == Self.sepoliaNetworkID
+                              $0.id == snapshot.id
                           }) else { continue }
                     accountSnapshots[index].balanceBaseUnits = WalletBaseUnits.normalize(balance)
                     accountSnapshots[index].refreshedAt = Date()
                     accountSnapshots[index].freshness = .current
                 } catch {
                     guard let index = accountSnapshots.firstIndex(where: {
-                        $0.accountID == account.id
-                            && $0.networkID == Self.sepoliaNetworkID
+                        $0.id == snapshot.id
                     }) else { continue }
                     accountSnapshots[index].freshness = accountSnapshots[index].balanceBaseUnits == nil
                         ? .notLoaded : .stale
@@ -819,6 +1948,288 @@ final class WalletGateway: ObservableObject {
                 return stale
             }
         }
+    }
+
+    private func reconcileEVMAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .evm else {
+            return [:]
+        }
+        struct Candidate {
+            let identity: WalletEVMAssetIdentity
+            let kind: WalletAssetKind
+            let balance: String
+            let name: String
+            let symbol: String
+            let decimals: Int?
+        }
+        var candidates: [Candidate] = []
+        var seenAssetIDs: Set<String> = []
+        var nftSnapshot: (block: String, hash: String)?
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  seenAssetIDs.insert(assetID).inserted,
+                  let identity = WalletEVMAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  assetID == identity.canonicalID,
+                  let reference = row["reference"] as? String,
+                  reference == identity.contractAddress,
+                  let rawBalance = row["balance_base_units"] as? String,
+                  let balance = WalletBaseUnits.normalize(rawBalance),
+                  balance == rawBalance, balance != "0" else { return [:] }
+            switch identity.standard {
+            case .erc20:
+                guard identity.tokenID == nil,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.fungibleToken.rawValue,
+                      row["standard"] == nil, row["token_id"] == nil,
+                      row["snapshot_block_number"] == nil,
+                      row["snapshot_block_hash"] == nil else { return [:] }
+                let abbreviated = "\(identity.contractAddress.prefix(6))…\(identity.contractAddress.suffix(4))"
+                candidates.append(Candidate(
+                    identity: identity, kind: .fungibleToken, balance: balance,
+                    name: "Unknown ERC-20 token", symbol: abbreviated,
+                    decimals: nil
+                ))
+            case .erc721, .erc1155:
+                guard let tokenID = identity.tokenID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["standard"] as? String == identity.standard.rawValue,
+                      row["token_id"] as? String == tokenID,
+                      identity.standard != .erc721 || balance == "1",
+                      let block = row["snapshot_block_number"] as? String,
+                      WalletBaseUnits.normalize(block) == block,
+                      let hash = row["snapshot_block_hash"] as? String,
+                      hash.count == 66, hash.hasPrefix("0x"),
+                      hash.dropFirst(2).allSatisfy(\.isHexDigit) else { return [:] }
+                if let nftSnapshot {
+                    guard nftSnapshot.block == block,
+                          nftSnapshot.hash.caseInsensitiveCompare(hash) == .orderedSame else {
+                        return [:]
+                    }
+                } else {
+                    nftSnapshot = (block, hash.lowercased())
+                }
+                candidates.append(Candidate(
+                    identity: identity, kind: .collectible, balance: balance,
+                    name: "Unknown Ethereum collectible",
+                    symbol: "\(identity.standard.rawValue.uppercased()) #\(tokenID.prefix(16))",
+                    decimals: 0
+                ))
+            }
+        }
+        for candidate in candidates {
+            let identity = candidate.identity
+            let assetID = identity.canonicalID
+            if let known = assets.first(where: { $0.id == assetID }) {
+                guard known.chain == .evm, known.networkID == networkID,
+                      known.kind == candidate.kind
+                        || (candidate.kind == .collectible && known.kind == .nft),
+                      known.reference?.lowercased() == identity.contractAddress,
+                      candidate.kind != .collectible
+                        || known.decimals == nil || known.decimals == 0 else {
+                    return [:]
+                }
+            }
+        }
+        var balances: [String: String] = [:]
+        for candidate in candidates {
+            let identity = candidate.identity
+            let assetID = identity.canonicalID
+            if assets.contains(where: { $0.id == assetID }) == false {
+                let asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .evm, kind: candidate.kind,
+                    reference: identity.contractAddress,
+                    name: candidate.name, symbol: candidate.symbol,
+                    decimals: candidate.decimals,
+                    trust: .quarantined, manifestRevision: 0
+                )
+                assets.append(asset)
+                try? publicStore?.upsertAsset(asset)
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = candidate.balance
+        }
+        return balances
+    }
+
+    private func reconcileSolanaAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        var balances: [String: String] = [:]
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String else { continue }
+            if let collectible = WalletSolanaCollectibleIdentity.parse(assetID) {
+                guard collectible.networkID == networkID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["collectible_standard"] as? String
+                        == collectible.standard.rawValue,
+                      row["reference"] as? String == collectible.address,
+                      row["balance_base_units"] as? String == "1",
+                      row["decimals"] as? Int == 0,
+                      row["account_count"] as? Int == 1,
+                      row["has_frozen_account"] is Bool,
+                      row["delegated"] is Bool,
+                      let name = row["name"] as? String,
+                      !name.isEmpty, name.count <= 128,
+                      let symbol = row["symbol"] as? String,
+                      !symbol.isEmpty, symbol.count <= 32 else { continue }
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .solana,
+                          known.networkID == networkID,
+                          known.reference == collectible.address,
+                          known.kind == .nft || known.kind == .collectible,
+                          known.decimals == nil || known.decimals == 0 else {
+                        continue
+                    }
+                } else {
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .solana, kind: .collectible,
+                        reference: collectible.address, name: name,
+                        symbol: symbol, decimals: 0, trust: .quarantined,
+                        manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+                balances["\(accountID):\(networkID):\(assetID)"] = "1"
+                continue
+            }
+            guard
+                  let identity = WalletSolanaAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  let mint = row["mint"] as? String, mint == identity.mint,
+                  row["token_program"] as? String == identity.program.rawValue,
+                  let rawBalance = row["balance_base_units"] as? String,
+                  let balance = WalletBaseUnits.normalize(rawBalance),
+                  balance == rawBalance,
+                  let decimals = row["decimals"] as? Int,
+                  (0...255).contains(decimals),
+                  let accountCount = row["account_count"] as? Int,
+                  (1...10_000).contains(accountCount),
+                  row["has_frozen_account"] is Bool else { continue }
+            if let known = assets.first(where: { $0.id == assetID }) {
+                guard known.chain == .solana, known.networkID == networkID,
+                      known.reference == mint, known.decimals == decimals else {
+                    continue
+                }
+            } else {
+                let abbreviated = "\(mint.prefix(4))…\(mint.suffix(4))"
+                let asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .solana, kind: .fungibleToken, reference: mint,
+                    name: identity.program == .token2022
+                        ? "Unknown Token-2022 asset" : "Unknown SPL token",
+                    symbol: abbreviated, decimals: decimals,
+                    trust: .quarantined, manifestRevision: 0
+                )
+                assets.append(asset)
+                try? publicStore?.upsertAsset(asset)
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = balance
+        }
+        return balances
+    }
+
+    private func reconcileSuiAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui else {
+            return [:]
+        }
+        var balances: [String: String] = [:]
+        var seenAssetIDs: Set<String> = []
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  let kindValue = row["asset_kind"] as? String,
+                  let kind = WalletAssetKind(rawValue: kindValue),
+                  seenAssetIDs.insert(assetID).inserted else { continue }
+            if kind == .nft || kind == .collectible {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      row["reference"] as? String == identity.objectID,
+                      row["object_id"] as? String == identity.objectID,
+                      let version = row["object_version"] as? UInt64,
+                      version <= 9_007_199_254_740_991,
+                      let digest = row["object_digest"] as? String,
+                      WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
+                      let moveType = row["move_type"] as? String,
+                      !moveType.isEmpty, moveType.utf8.count <= 1_024,
+                      !moveType.contains("/"),
+                      moveType.unicodeScalars.allSatisfy({
+                          $0.isASCII && $0.value >= 0x21
+                      }),
+                      row["has_public_transfer"] is Bool,
+                      row["balance_base_units"] as? String == "1",
+                      row["decimals"] as? Int == 0 else { continue }
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .sui, known.networkID == networkID,
+                          known.reference == identity.objectID,
+                          (known.kind == .nft || known.kind == .collectible) else {
+                        continue
+                    }
+                } else {
+                    let typeName = moveType.components(separatedBy: "::").last
+                        ?? "OBJECT"
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .sui, kind: .collectible,
+                        reference: identity.objectID,
+                        name: "Unknown Sui object",
+                        symbol: String(typeName.prefix(32)), decimals: 0,
+                        trust: .quarantined, manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+                balances["\(accountID):\(networkID):\(assetID)"] = "1"
+                continue
+            }
+            guard kind == .fungibleToken,
+                  let identity = WalletSuiAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  row["reference"] as? String == identity.coinType,
+                  row["coin_type"] as? String == identity.coinType,
+                  let rawTotal = row["balance_base_units"] as? String,
+                  let total = WalletBaseUnits.normalize(rawTotal), total == rawTotal,
+                  let rawCoins = row["coin_balance_base_units"] as? String,
+                  let coins = WalletBaseUnits.normalize(rawCoins), coins == rawCoins,
+                  let rawAccumulator = row["address_balance_base_units"] as? String,
+                  let accumulator = WalletBaseUnits.normalize(rawAccumulator),
+                  accumulator == rawAccumulator,
+                  WalletBaseUnits.add(coins, accumulator) == total else { continue }
+            if identity.coinType != WalletSuiAssetIdentity.nativeCoinType {
+                if let known = assets.first(where: { $0.id == assetID }) {
+                    guard known.chain == .sui, known.networkID == networkID,
+                          known.reference == identity.coinType,
+                          known.kind == .fungibleToken else { continue }
+                } else {
+                    let typeName = identity.coinType.components(separatedBy: "::").last
+                        ?? "COIN"
+                    let asset = WalletAsset(
+                        canonicalID: assetID, networkID: networkID,
+                        chain: .sui, kind: .fungibleToken,
+                        reference: identity.coinType,
+                        name: "Unknown Sui Coin", symbol: String(typeName.prefix(32)),
+                        decimals: nil, trust: .quarantined, manifestRevision: 0
+                    )
+                    assets.append(asset)
+                    try? publicStore?.upsertAsset(asset)
+                }
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = total
+        }
+        return balances
     }
 
     func diagnosticSnapshot(
@@ -856,27 +2267,36 @@ final class WalletGateway: ObservableObject {
 
     private func synchronizeAccountSnapshots(with publicAccounts: [WalletAccount]) {
         let previous = Dictionary(uniqueKeysWithValues: accountSnapshots.map { ($0.id, $0) })
-        accountSnapshots = publicAccounts.map { account in
+        accountSnapshots = publicAccounts.flatMap { account -> [WalletAccountSnapshot] in
             let networkID: String
             let assetID: String
             let symbol: String
             switch account.chain {
             case .evm:
-                networkID = Self.sepoliaNetworkID
-                assetID = "slip44:60"
-                symbol = "ETH"
+                networkID = account.networkIDs.first(where: {
+                    WalletNetworkCatalog.descriptor(id: $0)?.environment == .mainnet
+                }) ?? account.networkIDs.first ?? Self.sepoliaNetworkID
+                let descriptor = WalletNetworkCatalog.descriptor(id: networkID)
+                assetID = descriptor?.nativeAssetID ?? "\(networkID)/slip44:60"
+                symbol = descriptor?.nativeSymbol ?? "ETH"
             case .solana:
-                networkID = account.networkIDs.first ?? "solana:devnet"
-                assetID = "slip44:501"
-                symbol = "SOL"
+                networkID = account.networkIDs.first(where: {
+                    WalletNetworkCatalog.descriptor(id: $0)?.environment == .mainnet
+                }) ?? account.networkIDs.first ?? "solana:devnet"
+                let descriptor = WalletNetworkCatalog.descriptor(id: networkID)
+                assetID = descriptor?.nativeAssetID ?? "\(networkID)/slip44:501"
+                symbol = descriptor?.nativeSymbol ?? "SOL"
             case .sui:
-                networkID = account.networkIDs.first ?? "sui:testnet"
-                assetID = "sui:native"
-                symbol = "SUI"
+                networkID = account.networkIDs.first(where: {
+                    WalletNetworkCatalog.descriptor(id: $0)?.environment == .mainnet
+                }) ?? account.networkIDs.first ?? "sui:testnet"
+                let descriptor = WalletNetworkCatalog.descriptor(id: networkID)
+                assetID = descriptor?.nativeAssetID ?? "\(networkID)/coin:0x2::sui::SUI"
+                symbol = descriptor?.nativeSymbol ?? "SUI"
             }
             let id = "\(account.id):\(networkID):\(assetID)"
             let cached = previous[id]
-            return WalletAccountSnapshot(
+            let native = WalletAccountSnapshot(
                 accountID: account.id,
                 chain: account.chain,
                 address: account.address,
@@ -888,6 +2308,24 @@ final class WalletGateway: ObservableObject {
                 refreshedAt: cached?.refreshedAt,
                 freshness: cached?.freshness ?? .notLoaded
             )
+            let additional = assets.filter {
+                $0.networkID == networkID && $0.chain == account.chain
+                    && $0.isVisibleByDefault && $0.id != assetID
+            }.sorted {
+                $0.symbol.localizedCaseInsensitiveCompare($1.symbol) == .orderedAscending
+            }.map { asset -> WalletAccountSnapshot in
+                let cached = previous["\(account.id):\(networkID):\(asset.id)"]
+                return WalletAccountSnapshot(
+                    accountID: account.id, chain: account.chain,
+                    address: account.address, label: account.label,
+                    networkID: networkID, assetID: asset.id,
+                    symbol: asset.symbol,
+                    balanceBaseUnits: cached?.balanceBaseUnits,
+                    refreshedAt: cached?.refreshedAt,
+                    freshness: cached?.freshness ?? .notLoaded
+                )
+            }
+            return [native] + additional
         }
     }
 
@@ -990,7 +2428,8 @@ final class WalletGateway: ObservableObject {
             ]
         } else if fixture == "origin" {
             pendingBrowserOriginGrant = WalletBrowserOriginGrant(
-                id: UUID(), origin: "https://pay.example.com"
+                id: UUID(), origin: "https://pay.example.com",
+                networkID: Self.sepoliaNetworkID
             )
         } else if fixture == "transaction" {
             pendingConfirmation = WalletPreparedTransaction(
@@ -1021,6 +2460,9 @@ final class WalletGateway: ObservableObject {
     #endif
 
     func lock() {
+        cancelActiveRecoveryCeremony()
+        idleLockTimer?.invalidate()
+        idleLockTimer = nil
         signer.lock()
         activePolicies.removeAll()
         activePolicyStatuses.removeAll()
@@ -1034,6 +2476,11 @@ final class WalletGateway: ObservableObject {
     }
 
     private func handleSignerInvalidation() {
+        recoveryView.cancel()
+        activeRecoveryCeremonyID = nil
+        recoveryCeremonyActive = false
+        idleLockTimer?.invalidate()
+        idleLockTimer = nil
         activePolicies.removeAll()
         activePolicyStatuses.removeAll()
         prepared.removeAll()
@@ -1045,6 +2492,24 @@ final class WalletGateway: ObservableObject {
         if vaultState == .unlocked { vaultState = .locked }
     }
 
+    private func handleRecoveryInvalidation() {
+        guard let ceremonyID = activeRecoveryCeremonyID else { return }
+        activeRecoveryCeremonyID = nil
+        recoveryCeremonyActive = false
+        signer.lock()
+        Task { _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID) }
+        status = signer.isAvailable ? .locked : .securityReviewRequired
+        lastError = "The isolated recovery window was interrupted. The vault is locked."
+    }
+
+    private func cancelActiveRecoveryCeremony() {
+        guard let ceremonyID = activeRecoveryCeremonyID else { return }
+        activeRecoveryCeremonyID = nil
+        recoveryCeremonyActive = false
+        recoveryView.cancel()
+        Task { _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID) }
+    }
+
     @discardableResult
     func authorizeSession() async -> Bool {
         guard walletEnabled, signer.isAvailable else { return false }
@@ -1054,6 +2519,7 @@ final class WalletGateway: ObservableObject {
             synchronizeAccountSnapshots(with: accounts)
             guard signer.sessionID != nil else { throw Error.vaultLocked }
             status = .unlocked
+            noteUserActivity()
             vaultState = .unlocked
             lastError = nil
             return true
@@ -1063,6 +2529,24 @@ final class WalletGateway: ObservableObject {
             vaultState = .locked
             return false
         }
+    }
+
+    func configureIdleLock(minutes: Int) {
+        idleLockMinutes = min(30, max(5, minutes))
+        userDefaults.set(idleLockMinutes, forKey: idleLockDefaultsKey)
+        noteUserActivity()
+    }
+
+    func noteUserActivity() {
+        guard status == .unlocked, signer.sessionID != nil else { return }
+        idleLockTimer?.invalidate()
+        let timer = Timer(timeInterval: TimeInterval(idleLockMinutes * 60), repeats: false) {
+            [weak self] _ in
+            Task { @MainActor in self?.lock() }
+        }
+        timer.tolerance = min(15, TimeInterval(idleLockMinutes * 6))
+        RunLoop.main.add(timer, forMode: .common)
+        idleLockTimer = timer
     }
 
     @discardableResult
@@ -1118,13 +2602,26 @@ final class WalletGateway: ObservableObject {
     func addContractRegistryEntry(_ draft: WalletContractRegistryDraft) async -> Bool {
         do {
             let entry = try await signer.verifyContract(draft)
+            if let signed = reviewRegistry?.evmContracts.first(where: {
+                $0.id == entry.id
+                    || ($0.networkID == entry.networkID
+                        && $0.checksumAddress.caseInsensitiveCompare(
+                            entry.checksumAddress
+                        ) == .orderedSame)
+            }) {
+                guard signed == entry else {
+                    throw Error.policyDenied(
+                        "A locally verified contract cannot replace signed release metadata."
+                    )
+                }
+                lastError = nil
+                return true
+            }
             let changed = contractRegistry.first(where: { $0.id == entry.id }).map { $0 != entry } ?? false
             contractRegistry.removeAll { $0.id == entry.id }
             contractRegistry.append(entry)
             contractRegistry.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
-            if let data = try? JSONEncoder().encode(contractRegistry) {
-                userDefaults.set(data, forKey: registryDefaultsKey)
-            }
+            persistLocalContractRegistry()
             if changed { await clearPolicies() }
             lastError = nil
             return true
@@ -1135,11 +2632,21 @@ final class WalletGateway: ObservableObject {
     }
 
     func removeContractRegistryEntry(id: String) async {
+        guard reviewRegistry?.evmContracts.contains(where: { $0.id == id }) != true else {
+            lastError = "Signed release contracts cannot be removed locally."
+            return
+        }
         contractRegistry.removeAll { $0.id == id }
-        if let data = try? JSONEncoder().encode(contractRegistry) {
+        persistLocalContractRegistry()
+        await clearPolicies()
+    }
+
+    private func persistLocalContractRegistry() {
+        let signedIDs = Set(reviewRegistry?.evmContracts.map(\.id) ?? [])
+        let local = contractRegistry.filter { !signedIDs.contains($0.id) }
+        if let data = try? JSONEncoder().encode(local) {
             userDefaults.set(data, forKey: registryDefaultsKey)
         }
-        await clearPolicies()
     }
 
     func isTransactionConfirmable(_ transaction: WalletPreparedTransaction) -> Bool {
@@ -1147,6 +2654,117 @@ final class WalletGateway: ObservableObject {
             && transaction.simulationSucceeded
             && !transaction.riskFlags.contains(.codeHashMismatch)
             && !transaction.policyDecision.lowercased().contains("denied")
+    }
+
+    @discardableResult
+    func prepareHumanNativeTransfer(
+        networkID: String,
+        accountID: String,
+        recipient: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String
+    ) async -> Bool {
+        guard status == .unlocked else {
+            lastError = Error.vaultLocked.localizedDescription
+            return false
+        }
+        do {
+            _ = try await prepare([
+                "network_id": networkID,
+                "account_id": accountID,
+                "maximum_fee_base_units": maximumFeeBaseUnits,
+                "action": [
+                    "type": WalletActionKind.nativeTransfer.rawValue,
+                    "recipient": recipient,
+                    "amount_base_units": amountBaseUnits,
+                ],
+            ], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func prepareHumanFungibleTransfer(
+        networkID: String,
+        accountID: String,
+        assetID: String,
+        recipient: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String
+    ) async -> Bool {
+        guard status == .unlocked else {
+            lastError = Error.vaultLocked.localizedDescription
+            return false
+        }
+        do {
+            _ = try await prepare([
+                "network_id": networkID,
+                "account_id": accountID,
+                "maximum_fee_base_units": maximumFeeBaseUnits,
+                "action": [
+                    "type": WalletActionKind.fungibleTokenTransfer.rawValue,
+                    "asset_id": assetID,
+                    "recipient": recipient,
+                    "amount_base_units": amountBaseUnits,
+                ],
+            ], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func prepareHumanNFTTransfer(
+        networkID: String,
+        accountID: String,
+        assetID: String,
+        tokenID: String,
+        recipient: String,
+        maximumFeeBaseUnits: String
+    ) async -> Bool {
+        guard status == .unlocked else {
+            lastError = Error.vaultLocked.localizedDescription
+            return false
+        }
+        do {
+            _ = try await prepare([
+                "network_id": networkID,
+                "account_id": accountID,
+                "maximum_fee_base_units": maximumFeeBaseUnits,
+                "action": [
+                    "type": WalletActionKind.nftTransfer.rawValue,
+                    "asset_id": assetID,
+                    "token_id": tokenID,
+                    "recipient": recipient,
+                ],
+            ], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func confirmAndExecuteHumanIntent(intentID: String) async -> Bool {
+        guard prepared[intentID]?.source.kind == .humanUI else { return false }
+        confirm(intentID: intentID)
+        do {
+            _ = try await execute(["intent_id": intentID], source: .human)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
     }
 
     func confirm(intentID: String) {
@@ -1164,12 +2782,18 @@ final class WalletGateway: ObservableObject {
         if pendingConfirmation?.id == intentID { pendingConfirmation = nil }
     }
 
-    func requestBrowserAccounts(origin: String) async -> [String]? {
+    func requestBrowserAccounts(
+        origin: String, networkID: String = "eip155:11155111"
+    ) async -> [String]? {
         guard browserProviderEnabled, agentToolingAvailable,
-              let normalized = Self.normalizedWebOrigin(origin) else { return nil }
-        if browserOriginGrants.contains(normalized) { return evmAddresses }
+              let normalized = Self.normalizedWebOrigin(origin),
+              canUseBrowserNetwork(networkID) else { return nil }
+        let grant = WalletBrowserOriginNetworkGrant(origin: normalized, networkID: networkID)
+        if browserOriginGrants.contains(grant) { return evmAddresses }
         guard pendingBrowserOriginGrant == nil, browserGrantContinuation == nil else { return nil }
-        pendingBrowserOriginGrant = WalletBrowserOriginGrant(id: UUID(), origin: normalized)
+        pendingBrowserOriginGrant = WalletBrowserOriginGrant(
+            id: UUID(), origin: normalized, networkID: networkID
+        )
         onBrowserAuthorizationNeeded?()
         let approved = await withCheckedContinuation { continuation in
             browserGrantContinuation = continuation
@@ -1177,16 +2801,19 @@ final class WalletGateway: ObservableObject {
         return approved ? evmAddresses : nil
     }
 
-    func browserAccounts(origin: String) -> [String] {
+    func browserAccounts(
+        origin: String, networkID: String = "eip155:11155111"
+    ) -> [String] {
         guard let normalized = Self.normalizedWebOrigin(origin),
-              browserOriginGrants.contains(normalized), agentToolingAvailable else { return [] }
+              browserOriginGrants.contains(.init(origin: normalized, networkID: networkID)),
+              agentToolingAvailable else { return [] }
         return evmAddresses
     }
 
     func approveBrowserOrigin() {
         guard let request = pendingBrowserOriginGrant else { return }
-        browserOriginGrants.insert(request.origin)
-        approvedBrowserOrigins = browserOriginGrants.sorted()
+        browserOriginGrants.insert(.init(origin: request.origin, networkID: request.networkID))
+        approvedBrowserOrigins = Set(browserOriginGrants.map(\.origin)).sorted()
         pendingBrowserOriginGrant = nil
         browserGrantContinuation?.resume(returning: true)
         browserGrantContinuation = nil
@@ -1200,8 +2827,8 @@ final class WalletGateway: ObservableObject {
 
     func revokeBrowserOrigin(_ origin: String) {
         guard let normalized = Self.normalizedWebOrigin(origin) else { return }
-        browserOriginGrants.remove(normalized)
-        approvedBrowserOrigins = browserOriginGrants.sorted()
+        browserOriginGrants = Set(browserOriginGrants.filter { $0.origin != normalized })
+        approvedBrowserOrigins = Set(browserOriginGrants.map(\.origin)).sorted()
         if pendingBrowserOriginGrant?.origin == normalized { denyBrowserOrigin() }
         for intentID in browserIntentOrigins.compactMap({ $0.value == normalized ? $0.key : nil }) {
             cancelConfirmation(intentID: intentID)
@@ -1210,30 +2837,40 @@ final class WalletGateway: ObservableObject {
         onBrowserGrantsRevoked?(normalized)
     }
 
-    func browserReadRPC(origin: String, method: String, params: [Any]) async throws -> Any {
-        guard !browserAccounts(origin: origin).isEmpty else {
+    func browserReadRPC(
+        origin: String, networkID: String = "eip155:11155111",
+        method: String, params: [Any]
+    ) async throws -> Any {
+        guard !browserAccounts(origin: origin, networkID: networkID).isEmpty else {
             throw Error.approvalRequired("This website is not connected to Locus Vault.")
         }
-        return try await signer.browserRPC(method: method, params: params)
+        guard canUseBrowserNetwork(networkID) else {
+            throw Error.policyDenied("That browser network has not passed its signed release gate.")
+        }
+        return try await signer.browserRPC(networkID: networkID, method: method, params: params)
     }
 
-    func browserSendTransaction(origin: String, transaction: [String: Any]) async throws -> String {
+    func browserSendTransaction(
+        origin: String, networkID: String = "eip155:11155111",
+        transaction: [String: Any]
+    ) async throws -> String {
         let rawValue = nonempty(transaction["value"]) ?? "0x0"
         let rawData = nonempty(transaction["data"]) ?? "0x"
         guard let normalizedOrigin = Self.normalizedWebOrigin(origin),
-              let account = browserAccounts(origin: normalizedOrigin).first,
+              let account = browserAccounts(origin: normalizedOrigin, networkID: networkID).first,
               let from = nonempty(transaction["from"]),
               from.caseInsensitiveCompare(account) == .orderedSame,
               let recipient = nonempty(transaction["to"]),
               let value = WalletEthereumQuantity.hexToDecimal(rawValue),
-              rawData.lowercased() == "0x" else {
+              rawData.lowercased() == "0x",
+              canUseBrowserNetwork(networkID) else {
             throw Error.invalidArguments(
-                "The experimental browser provider accepts Sepolia native transfers only; contract calldata and signing methods are disabled."
+                "The browser provider accepts reviewed native transfers only; opaque calldata and signing methods are disabled."
             )
         }
         let browserSource = WalletRequestSource.browser(origin: normalizedOrigin)
         let preparedResult = await perform(tool: "wallet_prepare_transaction", arguments: [
-            "network_id": Self.sepoliaNetworkID,
+            "network_id": networkID,
             "account_id": accounts.first(where: { $0.chain == .evm })?.id ?? "",
             "action": [
                 "type": "native_transfer", "recipient": recipient,
@@ -1255,7 +2892,7 @@ final class WalletGateway: ObservableObject {
                 throw Error.approvalRequired("The website transaction was rejected or expired.")
             }
         }
-        guard !browserAccounts(origin: normalizedOrigin).isEmpty else {
+        guard !browserAccounts(origin: normalizedOrigin, networkID: networkID).isEmpty else {
             cancelConfirmation(intentID: intentID)
             throw Error.approvalRequired("The website grant was revoked before signing.")
         }
@@ -1266,9 +2903,19 @@ final class WalletGateway: ObservableObject {
         )
         if let message = result["error"] as? String { throw Error.policyDenied(message) }
         guard let hash = result["transaction_hash"] as? String else {
-            throw Error.invalidArguments("The Sepolia RPC did not return a transaction hash.")
+            throw Error.invalidArguments("The network provider did not return a transaction hash.")
         }
         return hash
+    }
+
+    func canUseBrowserNetwork(_ networkID: String) -> Bool {
+        if networkID == Self.sepoliaNetworkID { return true }
+        guard networkID == Self.ethereumMainnetNetworkID else { return false }
+        return (try? launchGate.authorize(
+            networkID: networkID,
+            capability: .embeddedBrowser,
+            regionCode: regionCode
+        )) != nil
     }
 
     private var evmAddresses: [String] {
@@ -1337,7 +2984,7 @@ final class WalletGateway: ObservableObject {
                     .map { "\($0.label) · \($0.chain.rawValue) · \($0.address)" }
                     .joined(separator: "\n")
                 return ["text": text, "accounts": try dictionary(accounts)]
-            case "wallet_get_balance", "wallet_get_activity":
+            case "wallet_get_balance", "wallet_get_assets", "wallet_get_activity":
                 return try await signer.performRead(tool: tool, arguments: arguments)
             case "wallet_simulate_transaction": return try await simulate(arguments, source: source)
             case "wallet_prepare_transaction": return response(for: try await prepare(arguments, source: source))
@@ -1364,7 +3011,8 @@ final class WalletGateway: ObservableObject {
         }
         let request = try parsePrepareRequest(arguments, source: source)
         let contract: WalletContractRegistryEntry?
-        if request.action.type == .contractCall {
+        switch request.action.type {
+        case .contractCall:
             guard let contractID = request.action.contractID,
                   let registered = contractRegistry.first(where: { $0.id == contractID }),
                   registered.networkID == request.networkID,
@@ -1375,7 +3023,47 @@ final class WalletGateway: ObservableObject {
                 )
             }
             contract = registered
-        } else {
+        case .fungibleTokenTransfer:
+            let chain = WalletNetworkCatalog.descriptor(id: request.networkID)?.chain
+            if chain == .solana {
+                try validateReviewedSolanaAsset(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else if chain == .sui {
+                try validateReviewedSuiAsset(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else {
+                contract = try reviewedAssetContract(
+                    for: request.action, networkID: request.networkID
+                )
+            }
+        case .nftTransfer:
+            let chain = WalletNetworkCatalog.descriptor(
+                id: request.networkID
+            )?.chain
+            if chain == .solana {
+                try validateReviewedSolanaCollectible(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else if chain == .sui {
+                try validateReviewedSuiObject(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else {
+                contract = try reviewedAssetContract(
+                    for: request.action, networkID: request.networkID
+                )
+            }
+        case .exactInputSwap:
+            contract = try reviewedSwapContract(
+                for: request.action, networkID: request.networkID
+            )
+        default:
             contract = nil
         }
         let transaction = try await signer.prepare(request, contract: contract)
@@ -1387,9 +3075,9 @@ final class WalletGateway: ObservableObject {
               transaction.expiresAt.timeIntervalSince(transaction.createdAt) <= 120.5 else {
             throw Error.invalidArguments("WalletSigner returned a preparation for a different semantic request.")
         }
-        if request.source.kind == .browser,
+        if request.source.kind != .agent,
            transaction.policyDecision == "allowed_by_session_policy" {
-            throw Error.policyDenied("Browser transactions require an exact confirmation.")
+            throw Error.policyDenied("Human and connected-wallet requests require exact confirmation.")
         }
         if transaction.policyDecision != "allowed_by_session_policy" {
             pendingConfirmation = transaction
@@ -1400,12 +3088,181 @@ final class WalletGateway: ObservableObject {
         return transaction
     }
 
+    private func reviewedAssetContract(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws -> WalletContractRegistryEntry {
+        guard let assetID = action.assetID,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .evm,
+              asset.isVisibleByDefault,
+              let identity = WalletEVMAssetIdentity.parse(assetID),
+              identity.networkID == networkID,
+              asset.reference?.caseInsensitiveCompare(identity.contractAddress) == .orderedSame,
+              let entry = contractRegistry.first(where: {
+                  $0.networkID == networkID
+                      && $0.checksumAddress.caseInsensitiveCompare(
+                          identity.contractAddress
+                      ) == .orderedSame
+              }),
+              let adapterID = WalletReviewedAdapters.validatedID(for: entry) else {
+            throw Error.invalidArguments(
+                "The selected asset is not trusted with a verified standard contract adapter."
+            )
+        }
+        let expectedAdapter: String
+        switch (action.type, identity.standard) {
+        case (.fungibleTokenTransfer, .erc20):
+            expectedAdapter = WalletReviewedAdapters.erc20
+        case (.nftTransfer, .erc721):
+            expectedAdapter = WalletReviewedAdapters.erc721SafeTransfer
+        case (.nftTransfer, .erc1155):
+            expectedAdapter = WalletReviewedAdapters.erc1155SafeTransfer
+        default:
+            throw Error.invalidArguments("The asset standard does not match the requested action.")
+        }
+        guard adapterID == expectedAdapter else {
+            throw Error.invalidArguments("The verified contract adapter does not match the asset standard.")
+        }
+        if asset.trust == .curated,
+           reviewRegistry?.containsExactContract(entry) != true {
+            throw Error.invalidArguments(
+                "The curated asset contract is not present in the signed release review manifest."
+            )
+        }
+        return entry
+    }
+
+    private func reviewedSwapContract(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws -> WalletContractRegistryEntry {
+        guard action.type == .exactInputSwap,
+              let contractID = action.contractID,
+              let adapterID = action.adapterID,
+              let route = action.swapRoute,
+              adapterID
+                == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+              let entry = contractRegistry.first(where: {
+                  $0.id == contractID && $0.networkID == networkID
+              }),
+              WalletReviewedAdapters.validatedID(for: entry) == adapterID,
+              reviewRegistry?.containsExactContract(entry) == true,
+              route.pathAssetIDs.allSatisfy({ assetID in
+                  guard let identity = WalletEVMAssetIdentity.parse(assetID),
+                        identity.networkID == networkID,
+                        identity.standard == .erc20,
+                        let asset = assets.first(where: { $0.id == assetID }),
+                        asset.chain == .evm, asset.kind == .fungibleToken,
+                        asset.trust == .curated,
+                        asset.reference?.caseInsensitiveCompare(
+                            identity.contractAddress
+                        ) == .orderedSame else { return false }
+                  return reviewRegistry?.containsExactAsset(asset) == true
+              }) else {
+            throw Error.invalidArguments(
+                "The swap router, adapter, and complete asset route are not present in the signed review manifest."
+            )
+        }
+        return entry
+    }
+
+    private func validateReviewedSolanaAsset(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaAssetIdentity.parse(assetID),
+              identity.networkID == networkID,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .solana,
+              asset.kind == .fungibleToken, asset.reference == identity.mint,
+              asset.decimals.map({ (0...255).contains($0) }) == true,
+              asset.isVisibleByDefault else {
+            throw Error.invalidArguments(
+                "The selected SPL token is not trusted for reviewed transfers."
+            )
+        }
+    }
+
+    private func validateReviewedSolanaCollectible(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+              identity.networkID == networkID, identity.standard == .core,
+              action.tokenID == identity.address,
+              action.amountBaseUnits == "1",
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .solana,
+              asset.kind == .nft || asset.kind == .collectible,
+              asset.reference == identity.address,
+              asset.decimals == nil || asset.decimals == 0,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true,
+              reviewRegistry?.containsAdapter(
+                WalletReviewedAdapters.solanaCoreTransfer
+              ) == true else {
+            throw Error.invalidArguments(
+                "The selected Core asset is not present in the signed asset and adapter manifest."
+            )
+        }
+    }
+
+    private func validateReviewedSuiAsset(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSuiAssetIdentity.parse(assetID),
+              identity.networkID == networkID,
+              identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .sui,
+              asset.kind == .fungibleToken,
+              asset.reference == identity.coinType,
+              asset.decimals.map({ (0...255).contains($0) }) == true,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true else {
+            throw Error.invalidArguments(
+                "The selected Sui Coin type is not present in the signed asset manifest."
+            )
+        }
+    }
+
+    private func validateReviewedSuiObject(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .nftTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSuiObjectIdentity.parse(assetID),
+              identity.networkID == networkID,
+              action.tokenID == identity.objectID,
+              action.amountBaseUnits == "1",
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .sui,
+              asset.kind == .nft || asset.kind == .collectible,
+              asset.reference == identity.objectID,
+              asset.decimals == nil || asset.decimals == 0,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true else {
+            throw Error.invalidArguments(
+                "The selected Sui object is not present in the signed asset manifest."
+            )
+        }
+    }
+
     private func parsePrepareRequest(
         _ arguments: [String: Any],
         source: WalletRequestSource
     ) throws -> WalletPrepareRequest {
         guard let networkID = nonempty(arguments["network_id"]),
-              networkID == Self.sepoliaNetworkID,
+              let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
               let accountID = nonempty(arguments["account_id"]),
               let maximumFee = WalletBaseUnits.normalize(nonempty(arguments["maximum_fee_base_units"]) ?? ""),
               let actionObject = arguments["action"] as? [String: Any],
@@ -1417,12 +3274,16 @@ final class WalletGateway: ObservableObject {
         switch kind {
         case .nativeTransfer:
             guard let recipient = nonempty(actionObject["recipient"]),
-                  let amount = WalletBaseUnits.normalize(nonempty(actionObject["amount_base_units"]) ?? "") else {
+                  Self.validAddress(recipient, chain: descriptor.chain),
+                  let amount = WalletBaseUnits.normalize(
+                      nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0" else {
                 throw Error.invalidArguments("A native transfer requires recipient and amount_base_units.")
             }
             action = .nativeTransfer(recipient: recipient, amountBaseUnits: amount)
         case .contractCall:
-            guard let contractID = nonempty(actionObject["contract_id"]),
+            guard descriptor.chain == .evm,
+                  let contractID = nonempty(actionObject["contract_id"]),
                   let function = nonempty(actionObject["function"]),
                   !function.lowercased().hasPrefix("0x"), actionObject["calldata"] == nil else {
                 throw Error.invalidArguments("A contract call requires a registry ID and canonical function signature; raw calldata is forbidden.")
@@ -1445,6 +3306,170 @@ final class WalletGateway: ObservableObject {
             }
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
+        case .fungibleTokenTransfer:
+            guard descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui,
+                  let assetID = nonempty(actionObject["asset_id"]),
+                  (descriptor.chain != .solana
+                    || WalletSolanaAssetIdentity.parse(assetID)?.networkID == networkID),
+                  (descriptor.chain != .sui
+                    || WalletSuiAssetIdentity.parse(assetID)?.networkID == networkID),
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: descriptor.chain),
+                  let amount = WalletBaseUnits.normalize(
+                      nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0", actionObject["calldata"] == nil else {
+                throw Error.invalidArguments(
+                    "A token transfer requires a canonical asset ID, raw recipient, and positive base-unit amount."
+                )
+            }
+            action = .fungibleTokenTransfer(
+                assetID: assetID, recipient: recipient, amountBaseUnits: amount
+            )
+        case .nftTransfer:
+            guard descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui,
+                  let assetID = nonempty(actionObject["asset_id"]),
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: descriptor.chain),
+                  actionObject["calldata"] == nil else {
+                throw Error.invalidArguments(
+                    "An NFT transfer requires a canonical asset ID, uint256 token ID, and raw recipient."
+                )
+            }
+            let tokenID: String
+            if descriptor.chain == .solana {
+                guard let identity = WalletSolanaCollectibleIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      identity.standard == .core,
+                      nonempty(actionObject["token_id"]) == identity.address else {
+                    throw Error.invalidArguments(
+                        "A Core transfer requires its canonical asset address as token_id."
+                    )
+                }
+                tokenID = identity.address
+            } else if descriptor.chain == .sui {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      nonempty(actionObject["token_id"]) == identity.objectID else {
+                    throw Error.invalidArguments(
+                        "A Sui object transfer requires the canonical object ID as token_id."
+                    )
+                }
+                tokenID = identity.objectID
+            } else {
+                guard let normalized = WalletBaseUnits.normalize(
+                    nonempty(actionObject["token_id"]) ?? ""
+                ) else {
+                    throw Error.invalidArguments(
+                        "An EVM NFT transfer requires a canonical uint256 token ID."
+                    )
+                }
+                tokenID = normalized
+            }
+            action = .nftTransfer(
+                assetID: assetID, tokenID: tokenID, recipient: recipient
+            )
+        case .exactInputSwap:
+            guard descriptor.chain == .evm,
+                  let contractID = nonempty(actionObject["contract_id"]),
+                  let adapterID = nonempty(actionObject["adapter_id"]),
+                  adapterID
+                    == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                  let inputAssetID = nonempty(actionObject["input_asset_id"]),
+                  let outputAssetID = nonempty(actionObject["output_asset_id"]),
+                  let amount = WalletBaseUnits.normalize(
+                    nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0",
+                  let minimumOutput = WalletBaseUnits.normalize(
+                    nonempty(actionObject["minimum_output_base_units"]) ?? ""
+                  ), minimumOutput != "0",
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: .evm),
+                  let routeObject = actionObject["route"] as? [String: Any],
+                  let rawProtocol = nonempty(routeObject["protocol_version"]),
+                  let protocolVersion = WalletUniversalRouterSwapProtocol(
+                    rawValue: rawProtocol
+                  ),
+                  let path = routeObject["path_asset_ids"] as? [String],
+                  (2...4).contains(path.count),
+                  path.first == inputAssetID, path.last == outputAssetID,
+                  let rawFees = routeObject["fee_tiers"] as? [Any],
+                  let feeTiers = uint32Values(rawFees),
+                  let hopPrices = routeObject["minimum_hop_price_x36"]
+                    as? [String],
+                  let normalizedPrices = normalizedBaseUnitValues(hopPrices),
+                  let quotedOutput = WalletBaseUnits.normalize(
+                    nonempty(routeObject["quoted_output_base_units"]) ?? ""
+                  ), quotedOutput != "0",
+                  let rawSlippage = routeObject["slippage_bps"],
+                  let slippageValues = uint32Values([rawSlippage]),
+                  slippageValues.count == 1, slippageValues[0] <= 5_000,
+                  let deadline = WalletBaseUnits.normalize(
+                    nonempty(routeObject["deadline_unix_seconds"]) ?? ""
+                  ),
+                  actionObject["calldata"] == nil,
+                  actionObject["commands"] == nil else {
+                throw Error.invalidArguments(
+                    "An exact-input swap requires a reviewed router, canonical asset route, positive input and minimum output, fee tiers, per-hop floors, and deadline."
+                )
+            }
+            let hopCount = path.count - 1
+            guard (protocolVersion == .v2 && feeTiers.isEmpty)
+                    || (protocolVersion == .v3 && feeTiers.count == hopCount),
+                  feeTiers.allSatisfy({ $0 > 0 && $0 <= 1_000_000 }),
+                  normalizedPrices.isEmpty
+                    || normalizedPrices.count == hopCount,
+                  normalizedPrices.allSatisfy({ $0 != "0" }),
+                  path.allSatisfy({ assetID in
+                      guard let identity = WalletEVMAssetIdentity.parse(assetID)
+                      else { return false }
+                      return identity.networkID == networkID
+                          && identity.standard == .erc20
+                          && identity.canonicalID == assetID
+                  }) else {
+                throw Error.invalidArguments(
+                    "The swap route is outside the reviewed exact-input subset."
+                )
+            }
+            action = .exactInputSwap(
+                adapterID: adapterID, contractID: contractID,
+                inputAssetID: inputAssetID, outputAssetID: outputAssetID,
+                amountInBaseUnits: amount,
+                minimumOutputBaseUnits: minimumOutput,
+                recipient: recipient,
+                route: WalletExactInputSwapRoute(
+                    protocolVersion: protocolVersion, pathAssetIDs: path,
+                    feeTiers: feeTiers,
+                    minimumHopPriceX36: normalizedPrices,
+                    quotedOutputBaseUnits: quotedOutput,
+                    slippageBPS: Int(slippageValues[0]),
+                    deadlineUnixSeconds: deadline
+                )
+            )
+        case .reviewedCall, .standardizedSignIn,
+             .reviewedTypedAuthorization:
+            throw Error.invalidArguments(
+                "That operation requires a reviewed chain adapter that is not active."
+            )
+        }
+        if descriptor.environment == .mainnet {
+            let capability: WalletNetworkCapability = switch kind {
+            case .nativeTransfer: .nativeTransfer
+            case .contractCall, .reviewedCall: .reviewedCall
+            case .fungibleTokenTransfer: .fungibleTokenTransfer
+            case .nftTransfer: .nftTransfer
+            case .exactInputSwap: .exactInputSwap
+            case .standardizedSignIn, .reviewedTypedAuthorization: .embeddedBrowser
+            }
+            do {
+                try launchGate.authorize(
+                    networkID: networkID, capability: capability,
+                    regionCode: regionCode
+                )
+            } catch {
+                throw Error.policyDenied(error.localizedDescription)
+            }
         }
         return WalletPrepareRequest(
             networkID: networkID,
@@ -1533,16 +3558,29 @@ final class WalletGateway: ObservableObject {
             state: state,
             blockNumber: nil,
             lastCheckedAt: nil,
-            detail: detail.map { String($0.prefix(512)) }
+            detail: detail.map { String($0.prefix(512)) },
+            direction: .outbound,
+            source: transaction.source,
+            actionKind: transaction.action.type,
+            assetID: transaction.budgetAssetID,
+            amountBaseUnits: transaction.spendBaseUnits,
+            finality: state == .broadcastUnknown ? .uncertain : .pending,
+            expiresAt: transaction.expiresAt
         )
         transactionHistory.removeAll { $0.id == record.id }
         transactionHistory.insert(record, at: 0)
-        if transactionHistory.count > 250 { transactionHistory.removeLast(transactionHistory.count - 250) }
+        if transactionHistory.count > 500 {
+            let removed = transactionHistory.suffix(from: 500).map(\.id)
+            transactionHistory.removeLast(transactionHistory.count - 500)
+            for id in removed { try? publicStore?.deleteActivity(id: id) }
+        }
         persistActivity()
     }
 
     private func persistActivity() {
-        if let data = try? JSONEncoder().encode(transactionHistory) {
+        if let publicStore {
+            for record in transactionHistory { try? publicStore.upsertActivity(record) }
+        } else if let data = try? JSONEncoder().encode(transactionHistory) {
             userDefaults.set(data, forKey: activityDefaultsKey)
         }
     }
@@ -1573,6 +3611,35 @@ final class WalletGateway: ObservableObject {
     private func nonempty(_ value: Any?) -> String? {
         let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? nil : text
+    }
+
+    private func uint32Values(_ values: [Any]) -> [UInt32]? {
+        var result: [UInt32] = []
+        for value in values {
+            let text: String
+            if let string = value as? String {
+                text = string
+            } else if let number = value as? NSNumber,
+                      CFGetTypeID(number) != CFBooleanGetTypeID() {
+                text = number.stringValue
+            } else {
+                return nil
+            }
+            guard let normalized = WalletBaseUnits.normalize(text),
+                  normalized == text, let parsed = UInt32(normalized) else {
+                return nil
+            }
+            result.append(parsed)
+        }
+        return result
+    }
+
+    private func normalizedBaseUnitValues(_ values: [String]) -> [String]? {
+        let normalized = values.compactMap(WalletBaseUnits.normalize)
+        guard normalized.count == values.count, normalized == values else {
+            return nil
+        }
+        return normalized
     }
 
     private func dictionary<T: Encodable>(_ value: T) throws -> Any {

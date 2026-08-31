@@ -138,42 +138,156 @@ The helpers behind ChatGPT-plan accounts are a separate download. They are large
 
 Direct-download builds from 1.14.0 onward check the stable release channel and can install signed updates when Locus quits. Mac App Store installations use the App Store update service.
 
-### Experimental Locus Vault
+### Locus Vault
 
-Direct-download builds can enable the isolated, Sepolia-only
-[Locus Vault](Docs/WalletActivation.md). It creates a separate 24-word recovery
-phrase for limited test funds and keeps signing material inside a sandboxed,
-network-isolated XPC service. Every privileged request is bound to the active
-app session and its agent or browser source; the signer rechecks the prepared
-transaction immediately before signing. Activation, setup, receiving, browser
-access, and diagnostics are handled in **Settings → Wallets** with no Terminal
-step.
+The notarized direct-download build is developing a public multichain,
+self-custodial [Locus Vault](Docs/WalletActivation.md). A network-disabled
+recovery window owns the 24-word phrase ceremony and sends entropy directly to
+the isolated signer over a single-use authenticated channel; the main app sees
+only public accounts and ceremony status. One phrase deterministically derives
+one Ethereum, Solana, and Sui account.
 
-| Area | Current boundary |
-| --- | --- |
-| Vault | Creates a separate 24-word phrase and derives EVM, Solana, and Sui public accounts; decrypted keys never leave the signer |
-| Wallet Hub | Shows a locked-safe Sepolia balance/address, Receive with a locally generated ERC-681 QR, activity and Etherscan links, agent spending rules, browser origins, and progressive Advanced controls |
-| Native EVM | Sepolia transfers, exact-confirmed registered-contract calls, finite ERC-20 transfers and approvals, and one narrow Universal Router V2 exact-input path |
-| Agent spending rules | Reviewed agent actions can use signer-owned limits for contract, asset, counterparty, amount, fee, expiry, and session totals; native ETH uses exact decimal-to-wei parsing, while Advanced token rules explicitly use raw units |
-| Browser provider | Session-scoped EIP-1193/EIP-6963 access for approved origins and Sepolia native transfers only; every browser transaction requires exact confirmation |
-| Activity | Stores bounded public transaction metadata, marks uncertain broadcasts, and reconciles receipt status without retaining raw signed transactions or secrets |
-| Solana and Sui | Derived public addresses are visible, but native signing remains disabled |
-| External wallets | MetaMask/Sepolia, Phantom/devnet, and Slush/Sui-testnet connector definitions exist; live connection buttons remain disabled |
+Mainnet is default-denied. A short-lived signed manifest can enable only code
+already reviewed in the build, only in counsel-approved regions, and only when
+its hashed audit/operational evidence satisfies the invited-canary or GA gate.
+The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL,
+narrowly safe Token-2022 `TransferChecked`, and standalone plugin-free Metaplex
+Core `TransferV1` builders plus quarantined token and collectible discovery are
+implemented, while mainnet signing remains gated.
+Wallet Hub Send now exposes those reviewed paths through the same semantic
+prepare, simulate, confirm, signer-recheck, and single-provider broadcast flow:
+native assets on all three chains, reviewed fungible tokens, reviewed EVM NFTs,
+standalone Core assets, and curated Sui objects. It always shows the raw
+destination, network, asset identity, amount, and maximum native fee. Curated
+Sui Coin/object and Core identities must match signed review metadata; a
+user-trusted Token-2022 mint still has its live extension set independently
+checked against the narrow supported subset before it can be prepared.
+Ethereum ERC-20 holdings can be enumerated through Alchemy's bounded,
+chain-verified [Token API](https://www.alchemy.com/docs/data/token-api/token-api-endpoints/alchemy-get-token-balances)
+pages. Locus accepts only canonical contract addresses
+and integer base-unit balances, rejects duplicate contracts and unstable page
+keys, and imports no provider token names, decimals, logos, or media. Unknown
+contracts enter quarantine; signed-manifest assets retain their reviewed local
+metadata and can use the same snapshot balance.
+ERC-721 and ERC-1155 holdings use Alchemy's
+[metadata-free owner endpoint](https://www.alchemy.com/docs/reference/nft-api-endpoints/nft-api-endpoints/nft-ownership-endpoints/get-nf-ts-for-owner-v-3).
+Every page must keep the same block number, block hash, and total; each item is
+reduced to its canonical standard, contract, token ID, and positive integer
+quantity. ERC-721 quantities must be exactly one. Provider names, descriptions,
+URIs, images, collection data, and spam classifications are discarded before
+the wallet model sees the collectible.
+Digital Asset Standard responses for Metaplex Token Metadata, Core, and
+compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
+media is never promoted as a wallet image. A signed-manifest Core collectible
+can reach a separate exact-transfer path only after Locus reparses its current
+on-chain `AssetV1` account. The asset must be uncompressed, standalone,
+plugin-free, owned by the vault, and keep the same update authority through
+simulation and the pre-sign recheck. The app and Rust signer independently
+rebuild the one `TransferV1` instruction; collection-backed, plugin-bearing,
+compressed, Token Metadata, programmable, and Bubblegum transfers remain
+read-only. This Core adapter remains testnet-only until an approved release pins
+and verifies the deployed upgradeable program evidence. Finalized Solana
+activity is read from bounded
+[`getSignaturesForAddress`](https://solana.com/docs/rpc/http/getsignaturesforaddress)
+pages and exact
+[`getTransaction`](https://solana.com/docs/rpc/http/gettransaction) evidence
+after genesis verification. Legacy and v0 envelopes bind resolved lookup-table
+account order, privileges, and recorded loaded addresses; v1 envelopes require
+the complete canonical resource configuration and prohibit lookup tables. Each
+accepted signature remains visible as a
+transaction-level record; exact owner SOL and reviewed SPL/Token-2022 balance
+deltas and the narrow Core `TransferV1` shape are additive effects. Unknown
+programs are not guessed, while malformed, duplicate, reordered, wrong-slot,
+or owner-substituted evidence rejects the batch. The newest 500 normalized
+records are stored in public SQLite, and unknown token/Core identities enter
+quarantine.
+Reviewed legacy Solana transfers use a two-pass compute-budget flow. Locus first
+simulates the independently rebuilt message at the protocol maximum with a zero
+unit price, adds a ten-percent measured-unit margin capped at 1.4 million, and
+then samples recent fees for the exact writable accounts. The newest 20 samples'
+75th-percentile price is capped to the user's remaining maximum fee before the
+final message is built. The app and signer independently encode exactly one
+`SetComputeUnitLimit` and one `SetComputeUnitPrice`; the provider's final fee and
+simulation must match that exact message again before signing.
+Sui native balances now use the
+[current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
+full Base58 genesis checkpoint digest, reject
+stale checkpoints and partial GraphQL results, and reconcile coin-object and
+balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
+bounded, checkpoint-stable pagination and canonical Move marker types; unknown
+Coins enter quarantine until the user or a signed review manifest trusts them.
+For curated Coin sends, Locus enumerates the exact owned
+`Coin<T>` objects at one checkpoint, validates each object's BCS UID and raw
+balance, reconciles the object subtotal, and selects one deterministic
+sufficient object. Fragmented and accumulator-only balances remain unsendable
+until a separately reviewed merge shape exists. The isolated signer rebuilds
+only `SplitCoins` from that one object followed by `TransferObjects`, with one
+distinct reviewed SUI gas object; it exports no generic Move-call authority.
+Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
+owner, object ID, version, digest, type, and public-transfer evidence. They enter
+Collectibles quarantine without BCS contents, display metadata, or remote media.
+Finalized Sui transaction activity is likewise read through the checkpoint-bound
+GraphQL path. It records only validated transaction effects and owner-specific
+SUI or Coin balance changes; unknown Coin types remain quarantined, failed
+effects cannot claim balance changes, and opaque BCS or Move-call data is not
+accepted. Non-Coin history includes exact address-owned creations, deletions,
+and cross-address ownership changes. Lifecycle flags must agree with canonical
+input/output state; contradictory, malformed, shared, object-owned, Coin/gas,
+and same-owner effects cannot masquerade as collectible transfers. Newly
+observed object identities enter quarantine without remote metadata. The signer
+core now has a deterministic, typed builder for the single
+object-backed native SUI transfer shape. Provider coin selection
+is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
+owner, raw balance, and aggregate coin-object balance before choosing one
+deterministic sufficient gas coin; fragmented or accumulator-only funds are not
+silently widened into a different transaction shape. The provider can now
+dry-run signer-built native-transfer bytes without broadcasting: Locus requires
+the exact transaction/effects digests, selected gas object, recipient credit,
+sender debit, and computed gas fee to match the reviewed transfer. The staged
+XPC flow repeats object and simulation evidence immediately before signing,
+consumes the intent, executes through one GraphQL provider, requires finality,
+and records transport ambiguity without automatic fallback. Testnet can use
+this exact subset; mainnet is still disabled until signed launch and adapter
+review manifests authorize it for an approved region.
+Curated `Coin<T>` sends use the same staged path. Simulation must return exactly
+the Coin sender debit, recipient credit, and separate native-SUI gas debit; the
+signer then rechecks both object references, balances, checkpoints, type, fee,
+and effects before consuming an exactly approved intent. Only Coin metadata in
+the signed review manifest can reach this mainnet adapter.
+Signed-manifest Sui collectibles have a similarly narrow transfer path for one
+exact, non-generic Move object that the provider proves is publicly transferable
+and owned by the sender. The signer rebuilds only `TransferObjects` for that
+object with a distinct reviewed SUI gas coin. A fresh checkpoint recheck must
+preserve object ID, version, digest, type, owner, and public-transfer status;
+simulation must show the exact object changing to the reviewed recipient while
+the gas object remains sender-owned and the only balance change is the bounded
+SUI fee. Arbitrary object BCS and Move calls never enter exported authority, and
+mainnet remains launch- and adapter-gated.
+Solana token sends use the signer-derived recipient associated token account,
+creating it idempotently through an exact reviewed instruction when it is still
+unallocated. The Universal Router now has version-separated reviewed decoders:
+the legacy adapter remains V2-pool-only, while a new adapter accepts one current
+V2 or V3 exact-input command with canonical ABI layout, route, payer, recipient,
+deadline, global minimum output, and per-hop price array. V4 actions, quote
+acquisition and the human Swap flow stay closed. A semantic V2/V3 preparation
+path now binds signed curated route assets, quoted output, slippage, minimum
+output, and deadline; the isolated signer constructs and re-decodes the router
+call, and autonomous use additionally requires signer-owned swap limits. This
+path is still launch-gated and lacks independent Anvil execution coverage.
+Token-2022
+transfer-altering extensions, Core collection/plugin variants, Token Metadata
+and compressed-collectible transfers, versioned-message signing, Sui gRPC
+execution migration, Solana/Sui swaps, external wallets, and WalletConnect
+remain closed until their implementation and evidence gates pass. Finalized
+Sui activity records strict
+non-Coin lifecycle and ownership changes for the tracked account, while
+validating and ignoring same-owner writes and gas/Coin object mutations.
 
-Locking the vault, sleeping, quitting, updating, relaunching, or losing the
-signer connection clears decrypted material, prepared transactions, origin
-grants, active policies, and spending authority while retaining public
-addresses and cached balances for receiving. Saved policy templates contain
-no authorization and must be approved again after launch. Locus does not
-import MetaMask, Phantom, or Slush recovery phrases.
-
-The feature is off by default and ignored by Mac App Store builds. EVM mainnet,
-native Solana and Sui signing, and live MetaMask, Phantom, and Slush connections
-remain security gated. MetaMask Connect on Sepolia is the recommended next
-milestone after the private alpha succeeds. See the
-[security gate](Docs/WalletSecurityGate.md) and
-[threat model](Docs/WalletThreatModel.md) for the current boundaries, reviewed
-adapters, verification requirements, and incident response plan.
+The Mac App Store target embeds neither recovery nor signer service. See the
+[security gate](Docs/WalletSecurityGate.md),
+[threat model](Docs/WalletThreatModel.md), and
+[launch readiness checklist](Docs/WalletLaunchReadiness.md) for implemented
+boundaries, remaining work, and the evidence required before public GA.
 
 ## ChatGPT plan support
 
