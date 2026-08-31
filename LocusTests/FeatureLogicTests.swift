@@ -3306,6 +3306,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(account.kind.allowsBaseURLOverride)
     }
 
+    func testCustomEndpointsWorkWithoutAStoredKey() {
+        // A local llama.cpp / LM Studio server usually has no auth at all, so
+        // the custom kind must be usable with no stored credential — while
+        // hosted providers keep demanding theirs.
+        let custom = ProviderAccount(kind: .custom, name: "Llama box")
+        XCTAssertTrue(custom.kind.allowsEmptyAPIKey)
+        XCTAssertTrue(custom.isCredentialReady)
+        XCTAssertEqual(custom.kind.keyPlaceholder, "API key (optional)")
+
+        let hosted = ProviderAccount(kind: .codex, name: "Work")
+        XCTAssertFalse(hosted.kind.allowsEmptyAPIKey)
+        XCTAssertFalse(hosted.isCredentialReady)
+    }
+
     func testAccountStoredBeforeCodexNativeParityDecodesWithTheDefaults() throws {
         // An account written before the parity fields existed carries none of
         // them; the accessors supply parity on, web search off, default effort.

@@ -2818,7 +2818,7 @@ struct SettingsView: View {
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill(
-                                    model.providerAccountsModel.accountStatus[account.id]?.isHealthy ?? account.hasKey
+                                    model.providerAccountsModel.accountStatus[account.id]?.isHealthy ?? account.isCredentialReady
                                         ? LocusTheme.success
                                         : LocusTheme.coral
                                 )

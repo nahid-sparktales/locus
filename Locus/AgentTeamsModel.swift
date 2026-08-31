@@ -176,7 +176,7 @@ final class AgentTeamsModel: ObservableObject {
                 }
             case .providerAccount(let accountID):
                 guard let account = accounts.first(where: { $0.id == accountID }),
-                      account.hasKey
+                      account.isCredentialReady
                 else {
                     return .unavailableProvider(choice.providerName)
                 }

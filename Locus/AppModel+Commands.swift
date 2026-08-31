@@ -219,7 +219,7 @@ extension AppModel {
             }
             return
         }
-        if let account, !account.hasKey {
+        if let account, !account.isCredentialReady {
             showToast("Add an API key for \(account.displayName) in Settings")
             settingsPresented = true
             return
