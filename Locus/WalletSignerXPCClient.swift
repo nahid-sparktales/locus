@@ -974,6 +974,20 @@ final class XPCWalletSignerClient: WalletSignerClient {
                         row["direction"] = inbound
                             ? WalletActivityDirection.inbound.rawValue
                             : WalletActivityDirection.outbound.rawValue
+                    } else if let identity = item.objectIdentity,
+                              let objectType = item.objectType,
+                              let hasPublicTransfer = item.objectHasPublicTransfer,
+                              item.amountBaseUnits == "1",
+                              let inbound = item.isInbound {
+                        row["asset_id"] = identity.canonicalID
+                        row["asset_reference"] = identity.objectID
+                        row["asset_kind"] = WalletAssetKind.collectible.rawValue
+                        row["object_type"] = objectType
+                        row["has_public_transfer"] = hasPublicTransfer
+                        row["amount_base_units"] = "1"
+                        row["direction"] = inbound
+                            ? WalletActivityDirection.inbound.rawValue
+                            : WalletActivityDirection.outbound.rawValue
                     }
                     return row
                 }

@@ -25,6 +25,9 @@ struct WalletSuiIndexedActivity: Equatable, Sendable {
     let sender: String?
     let successful: Bool
     let identity: WalletSuiAssetIdentity?
+    let objectIdentity: WalletSuiObjectIdentity?
+    let objectType: String?
+    let objectHasPublicTransfer: Bool?
     let amountBaseUnits: String?
     let isInbound: Bool?
 }
@@ -216,6 +219,7 @@ actor WalletSuiGraphQLClient {
     private static let activityPageSize = 50
     private static let maximumActivityPages = 10
     private static let balanceChangesPerTransaction = 100
+    private static let objectChangesPerTransaction = 100
 
     private static let nativeTransferSimulationQuery = """
     query LocusSuiSimulateNativeTransfer($transaction: JSON!) {
@@ -471,6 +475,40 @@ actor WalletSuiGraphQLClient {
                   owner { address }
                   coinType { repr }
                   amount
+                }
+                pageInfo { hasNextPage }
+              }
+              objectChanges(first: 100) {
+                nodes {
+                  address
+                  idCreated
+                  idDeleted
+                  inputState {
+                    address
+                    version
+                    digest
+                    owner {
+                      __typename
+                      ... on AddressOwner { address { address } }
+                    }
+                    asMoveObject {
+                      hasPublicTransfer
+                      contents { type { repr } }
+                    }
+                  }
+                  outputState {
+                    address
+                    version
+                    digest
+                    owner {
+                      __typename
+                      ... on AddressOwner { address { address } }
+                    }
+                    asMoveObject {
+                      hasPublicTransfer
+                      contents { type { repr } }
+                    }
+                  }
                 }
                 pageInfo { hasNextPage }
               }
@@ -1483,7 +1521,8 @@ actor WalletSuiGraphQLClient {
             }
             guard results.count <= Self.activityPageSize
                     * Self.maximumActivityPages
-                    * (Self.balanceChangesPerTransaction + 1) else {
+                    * (Self.balanceChangesPerTransaction
+                        + Self.objectChangesPerTransaction + 1) else {
                 throw WalletRPCError.invalidResponse("Sui returned too much activity")
             }
             if !hasNextPage {
@@ -1832,19 +1871,26 @@ actor WalletSuiGraphQLClient {
               let nodes = changes["nodes"] as? [[String: Any]],
               nodes.count <= balanceChangesPerTransaction,
               let pageInfo = changes["pageInfo"] as? [String: Any],
-              pageInfo["hasNextPage"] as? Bool == false else {
+              pageInfo["hasNextPage"] as? Bool == false,
+              let objectChanges = effects["objectChanges"] as? [String: Any],
+              let objectNodes = objectChanges["nodes"] as? [[String: Any]],
+              objectNodes.count <= objectChangesPerTransaction,
+              let objectPageInfo = objectChanges["pageInfo"] as? [String: Any],
+              objectPageInfo["hasNextPage"] as? Bool == false else {
             throw WalletRPCError.invalidResponse("Sui returned malformed activity effects")
         }
         if status == "FAILURE" {
-            guard nodes.isEmpty else {
+            guard nodes.isEmpty, objectNodes.isEmpty else {
                 throw WalletRPCError.invalidResponse(
-                    "A failed Sui transaction reported balance changes"
+                    "A failed Sui transaction reported balance or object changes"
                 )
             }
             return [WalletSuiIndexedActivity(
                 id: digest, transactionDigest: digest,
                 checkpointSequence: sequence, occurredAt: timestamp,
                 sender: sender, successful: false, identity: nil,
+                objectIdentity: nil, objectType: nil,
+                objectHasPublicTransfer: nil,
                 amountBaseUnits: nil, isInbound: nil
             )]
         }
@@ -1877,8 +1923,66 @@ actor WalletSuiGraphQLClient {
                 id: "\(digest):\(identity.canonicalID)",
                 transactionDigest: digest, checkpointSequence: sequence,
                 occurredAt: timestamp, sender: sender, successful: true,
-                identity: identity, amountBaseUnits: amount,
+                identity: identity, objectIdentity: nil, objectType: nil,
+                objectHasPublicTransfer: nil, amountBaseUnits: amount,
                 isInbound: inbound
+            ))
+        }
+        var seenObjectIDs: Set<String> = []
+        for node in objectNodes {
+            guard let objectID = node["address"] as? String,
+                  WalletSuiAddress.isCanonical(objectID),
+                  let idCreated = node["idCreated"] as? Bool,
+                  let idDeleted = node["idDeleted"] as? Bool,
+                  seenObjectIDs.insert(objectID).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned a malformed or duplicate activity object change"
+                )
+            }
+            // Creation and deletion are not represented as transfers in this
+            // reviewed subset. They remain visible through owned-object refresh.
+            guard !idCreated, !idDeleted else { continue }
+            guard let inputValue = node["inputState"] as? [String: Any],
+                  let outputValue = node["outputState"] as? [String: Any] else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned an incomplete activity object transfer"
+                )
+            }
+            let rawInputOwner = activityAddressOwner(inputValue)
+            let rawOutputOwner = activityAddressOwner(outputValue)
+            guard rawInputOwner == owner || rawOutputOwner == owner else { continue }
+            guard let input = parseSimulationObjectState(inputValue),
+                  let output = parseSimulationObjectState(outputValue),
+                  input.reference.objectID == objectID,
+                  output.reference.objectID == objectID,
+                  output.reference.version > input.reference.version,
+                  input.reference.type == output.reference.type,
+                  input.hasPublicTransfer == output.hasPublicTransfer else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui returned ambiguous activity object-transfer evidence"
+                )
+            }
+            // Coin mutations (including the gas coin) and same-owner object
+            // writes are not collectible ownership changes.
+            guard !isCoinObjectType(input.reference.type),
+                  input.owner != output.owner else { continue }
+            let inbound = output.owner == owner
+            guard inbound || input.owner == owner else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui substituted activity object ownership"
+                )
+            }
+            let identity = WalletSuiObjectIdentity(
+                networkID: networkID, objectID: objectID
+            )
+            records.append(WalletSuiIndexedActivity(
+                id: "\(digest):\(identity.canonicalID)",
+                transactionDigest: digest, checkpointSequence: sequence,
+                occurredAt: timestamp, sender: sender, successful: true,
+                identity: nil, objectIdentity: identity,
+                objectType: input.reference.type,
+                objectHasPublicTransfer: input.hasPublicTransfer,
+                amountBaseUnits: "1", isInbound: inbound
             ))
         }
         if records.isEmpty {
@@ -1886,10 +1990,21 @@ actor WalletSuiGraphQLClient {
                 id: digest, transactionDigest: digest,
                 checkpointSequence: sequence, occurredAt: timestamp,
                 sender: sender, successful: true, identity: nil,
+                objectIdentity: nil, objectType: nil,
+                objectHasPublicTransfer: nil,
                 amountBaseUnits: nil, isInbound: nil
             ))
         }
         return records
+    }
+
+    private static func activityAddressOwner(_ value: [String: Any]) -> String? {
+        guard let owner = value["owner"] as? [String: Any],
+              owner["__typename"] as? String == "AddressOwner",
+              let address = owner["address"] as? [String: Any],
+              let value = address["address"] as? String,
+              WalletSuiAddress.isCanonical(value) else { return nil }
+        return value
     }
 
     private static func canonicalSignedBaseUnits(_ value: Any?) -> String? {

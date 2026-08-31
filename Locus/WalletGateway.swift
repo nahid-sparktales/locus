@@ -1432,34 +1432,56 @@ final class WalletGateway: ObservableObject {
         var amount: String?
         var summary = status == "failed" ? "Failed Sui transaction" : "Sui transaction"
         if status == "confirmed", let rawAssetID = row["asset_id"] as? String {
-            guard let identity = WalletSuiAssetIdentity.parse(rawAssetID),
-                  identity.networkID == networkID,
-                  row["asset_reference"] as? String == identity.coinType,
-                  let kindValue = row["asset_kind"] as? String,
+            guard let kindValue = row["asset_kind"] as? String,
                   let kind = WalletAssetKind(rawValue: kindValue),
-                  (identity.coinType == WalletSuiAssetIdentity.nativeCoinType
-                      ? kind == .native : kind == .fungibleToken),
                   let rawAmount = row["amount_base_units"] as? String,
                   let normalizedAmount = WalletBaseUnits.normalize(rawAmount),
                   normalizedAmount == rawAmount, normalizedAmount != "0",
                   let rawDirection = row["direction"] as? String,
                   let parsedDirection = WalletActivityDirection(rawValue: rawDirection),
                   parsedDirection != .selfTransfer else { return nil }
+            if let identity = WalletSuiAssetIdentity.parse(rawAssetID) {
+                guard identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.coinType,
+                      (identity.coinType == WalletSuiAssetIdentity.nativeCoinType
+                          ? kind == .native : kind == .fungibleToken),
+                      row["object_type"] == nil,
+                      row["has_public_transfer"] == nil else { return nil }
+                actionKind = kind == .native ? .nativeTransfer : .fungibleTokenTransfer
+                let symbol = identity.coinType == WalletSuiAssetIdentity.nativeCoinType
+                    ? "SUI"
+                    : String(
+                        (identity.coinType.components(separatedBy: "::").last ?? "COIN")
+                            .prefix(32)
+                    )
+                summary = parsedDirection == .inbound
+                    ? "Received \(symbol)" : "Sent \(symbol)"
+            } else {
+                guard let identity = WalletSuiObjectIdentity.parse(rawAssetID),
+                      identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.objectID,
+                      kind == .nft || kind == .collectible,
+                      normalizedAmount == "1",
+                      let objectType = row["object_type"] as? String,
+                      WalletSuiAssetIdentity.isCanonicalCoinType(objectType),
+                      !(objectType.hasPrefix("0x2::coin::Coin<")
+                        && objectType.hasSuffix(">")),
+                      row["has_public_transfer"] is Bool else { return nil }
+                let symbol = String(
+                    (objectType.components(separatedBy: "::").last ?? "OBJECT")
+                        .prefix(32)
+                )
+                actionKind = .nftTransfer
+                summary = parsedDirection == .inbound
+                    ? "Received \(symbol)" : "Sent \(symbol)"
+            }
             direction = parsedDirection
             assetID = rawAssetID
             amount = normalizedAmount
-            actionKind = kind == .native ? .nativeTransfer : .fungibleTokenTransfer
-            let symbol = identity.coinType == WalletSuiAssetIdentity.nativeCoinType
-                ? "SUI"
-                : String(
-                    (identity.coinType.components(separatedBy: "::").last ?? "COIN")
-                        .prefix(32)
-                )
-            summary = parsedDirection == .inbound
-                ? "Received \(symbol)" : "Sent \(symbol)"
         } else if row["asset_id"] != nil || row["asset_reference"] != nil
                     || row["asset_kind"] != nil || row["amount_base_units"] != nil
-                    || row["direction"] != nil {
+                    || row["direction"] != nil || row["object_type"] != nil
+                    || row["has_public_transfer"] != nil {
             return nil
         }
         return WalletActivityRecord(
@@ -1485,25 +1507,49 @@ final class WalletGateway: ObservableObject {
         for row in rows {
             guard row["status"] as? String == "confirmed",
                   let assetID = row["asset_id"] as? String,
-                  assets.contains(where: { $0.id == assetID }) == false,
-                  let identity = WalletSuiAssetIdentity.parse(assetID),
-                  identity.networkID == networkID,
-                  identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
-                  row["asset_reference"] as? String == identity.coinType,
-                  row["asset_kind"] as? String == WalletAssetKind.fungibleToken.rawValue else {
+                  assets.contains(where: { $0.id == assetID }) == false else {
                 continue
             }
-            let symbol = String(
-                (identity.coinType.components(separatedBy: "::").last ?? "COIN")
-                    .prefix(32)
-            )
-            let asset = WalletAsset(
-                canonicalID: assetID, networkID: networkID,
-                chain: .sui, kind: .fungibleToken,
-                reference: identity.coinType, name: "Unknown Sui Coin",
-                symbol: symbol, decimals: nil,
-                trust: .quarantined, manifestRevision: 0
-            )
+            let asset: WalletAsset
+            if let identity = WalletSuiAssetIdentity.parse(assetID) {
+                guard identity.networkID == networkID,
+                      identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
+                      row["asset_reference"] as? String == identity.coinType,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.fungibleToken.rawValue else { continue }
+                let symbol = String(
+                    (identity.coinType.components(separatedBy: "::").last ?? "COIN")
+                        .prefix(32)
+                )
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .sui, kind: .fungibleToken,
+                    reference: identity.coinType, name: "Unknown Sui Coin",
+                    symbol: symbol, decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            } else {
+                guard let identity = WalletSuiObjectIdentity.parse(assetID),
+                      identity.networkID == networkID,
+                      row["asset_reference"] as? String == identity.objectID,
+                      row["asset_kind"] as? String
+                        == WalletAssetKind.collectible.rawValue,
+                      row["amount_base_units"] as? String == "1",
+                      let objectType = row["object_type"] as? String,
+                      WalletSuiAssetIdentity.isCanonicalCoinType(objectType),
+                      row["has_public_transfer"] is Bool else { continue }
+                let symbol = String(
+                    (objectType.components(separatedBy: "::").last ?? "OBJECT")
+                        .prefix(32)
+                )
+                asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .sui, kind: .collectible,
+                    reference: identity.objectID, name: "Unknown Sui object",
+                    symbol: symbol, decimals: nil,
+                    trust: .quarantined, manifestRevision: 0
+                )
+            }
             assets.append(asset)
             try? publicStore?.upsertAsset(asset)
         }

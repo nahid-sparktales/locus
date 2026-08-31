@@ -207,9 +207,11 @@ mainnet remains launch- and adapter-gated.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui object-effect activity and gRPC execution migration,
-full swaps, external wallets, and WalletConnect remain closed until their
-implementation and evidence gates pass.
+versioned messages, Sui object creation/deletion activity and gRPC execution
+migration, full swaps, external wallets, and WalletConnect remain closed until
+their implementation and evidence gates pass. Finalized Sui activity does record
+strict non-Coin ownership transitions for the tracked account, while validating
+and ignoring same-owner writes and gas/Coin object mutations.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

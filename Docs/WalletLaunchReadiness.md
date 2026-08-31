@@ -50,6 +50,10 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   checkpoint-pinned GraphQL connection, with exact transaction/effects digest,
   sender, status, timestamp, checkpoint, signed-delta, owner, and Coin-type
   validation; failed, duplicate, unstable, or truncated evidence fails closed.
+- [x] Finalized Sui non-Coin ownership-change activity with terminal object
+  effects, exact input/output object identity, version, digest, owner, type, and
+  public-transfer validation. Same-owner and Coin/gas mutations are excluded;
+  unknown transferred objects enter metadata-free quarantine.
 - [x] Canonical signer-core builder for one object-backed native SUI transfer:
   exact `SplitCoins(GasCoin)` plus `TransferObjects`, current-epoch expiry,
   one owned gas object, reviewed reference gas price, maximum gas budget, and
@@ -85,10 +89,10 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui object-effect activity, gRPC execution migration, multi-object Coin
-  merge/object batching, and localnet coverage complete. The exact native,
-  single-object curated Coin, and publicly transferable object GraphQL subsets
-  are implemented but not mainnet-enabled.
+- [ ] Sui object creation/deletion activity, gRPC execution migration,
+  multi-object Coin merge/object batching, and localnet coverage complete. The
+  exact native, single-object curated Coin, and publicly transferable object
+  GraphQL subsets are implemented but not mainnet-enabled.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.

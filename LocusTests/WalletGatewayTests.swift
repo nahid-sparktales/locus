@@ -2248,6 +2248,153 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(coin.isInbound, false)
     }
 
+    func testSuiGraphQLIndexesExactFinalizedObjectOwnershipChange() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let sender = "0x" + String(repeating: "2", count: 64)
+        let objectID = "0x" + String(repeating: "3", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 70, count: 32))
+        let input = WalletSuiObjectReference(
+            objectID: objectID, version: 9,
+            digest: WalletSolanaBase58.encode(Data(repeating: 71, count: 32)),
+            type: "0x1234::artifact::ARTIFACT"
+        )
+        let output = WalletSuiObjectReference(
+            objectID: objectID, version: 10,
+            digest: WalletSolanaBase58.encode(Data(repeating: 72, count: 32)),
+            type: input.type
+        )
+        let gasInput = WalletSuiObjectReference(
+            objectID: "0x" + String(repeating: "4", count: 64), version: 30,
+            digest: WalletSolanaBase58.encode(Data(repeating: 77, count: 32)),
+            type: "0x2::coin::Coin<0x2::sui::SUI>"
+        )
+        let gasOutput = WalletSuiObjectReference(
+            objectID: gasInput.objectID, version: 31,
+            digest: WalletSolanaBase58.encode(Data(repeating: 78, count: 32)),
+            type: gasInput.type
+        )
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let query = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(query.contains("objectChanges(first: 100)"))
+            XCTAssertTrue(query.contains("hasPublicTransfer"))
+            XCTAssertFalse(query.lowercased().contains("bcs"))
+            XCTAssertFalse(query.contains("display"))
+            return try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: sender, balanceChanges: [],
+                    objectChanges: [
+                        self.suiActivityObjectChangeJSON(
+                            input: input, output: output,
+                            inputOwner: sender, outputOwner: owner
+                        ),
+                        self.suiActivityObjectChangeJSON(
+                            input: gasInput, output: gasOutput,
+                            inputOwner: sender, outputOwner: sender
+                        ),
+                    ]
+                )]
+            )
+        }
+        let activity = try await client.activity(owner: owner)
+        XCTAssertEqual(activity.count, 1)
+        let item = try XCTUnwrap(activity.first)
+        XCTAssertEqual(item.transactionDigest, digest)
+        XCTAssertEqual(item.objectIdentity?.objectID, objectID)
+        XCTAssertEqual(item.objectType, input.type)
+        XCTAssertEqual(item.objectHasPublicTransfer, true)
+        XCTAssertEqual(item.amountBaseUnits, "1")
+        XCTAssertEqual(item.isInbound, true)
+        XCTAssertNil(item.identity)
+    }
+
+    func testSuiGraphQLRejectsAmbiguousObjectActivityEvidence() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let owner = "0x" + String(repeating: "4", count: 64)
+        let recipient = "0x" + String(repeating: "5", count: 64)
+        let objectID = "0x" + String(repeating: "6", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 73, count: 32))
+        let input = WalletSuiObjectReference(
+            objectID: objectID, version: 20,
+            digest: WalletSolanaBase58.encode(Data(repeating: 74, count: 32)),
+            type: "0x1234::artifact::ARTIFACT"
+        )
+        let substituted = WalletSuiObjectReference(
+            objectID: objectID, version: 21,
+            digest: WalletSolanaBase58.encode(Data(repeating: 75, count: 32)),
+            type: "0x1234::other::OBJECT"
+        )
+        let client = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [self.suiActivityObjectChangeJSON(
+                        input: input, output: substituted,
+                        inputOwner: owner, outputOwner: recipient
+                    )]
+                )]
+            )
+        }
+        do {
+            _ = try await client.activity(owner: owner)
+            XCTFail("Object type substitution must fail the activity batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("ambiguous"))
+        }
+
+        let validOutput = WalletSuiObjectReference(
+            objectID: objectID, version: 21,
+            digest: WalletSolanaBase58.encode(Data(repeating: 79, count: 32)),
+            type: input.type
+        )
+        let repeated = suiActivityObjectChangeJSON(
+            input: input, output: validOutput,
+            inputOwner: owner, outputOwner: recipient
+        )
+        let duplicate = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [repeated, repeated]
+                )]
+            )
+        }
+        do {
+            _ = try await duplicate.activity(owner: owner)
+            XCTFail("Duplicate object effects must fail the activity batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicate"))
+        }
+
+        let truncated = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiActivityResponse(
+                owner: owner,
+                transactions: [self.suiActivityTransactionJSON(
+                    digest: digest, sender: owner, balanceChanges: [],
+                    objectChanges: [], hasMoreObjectChanges: true
+                )]
+            )
+        }
+        do {
+            _ = try await truncated.activity(owner: owner)
+            XCTFail("Truncated object changes must fail the activity batch.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("effects"))
+        }
+    }
+
     func testSuiGraphQLRejectsAmbiguousBalanceChangeEvidence() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -2483,6 +2630,50 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(quarantined.trust, .quarantined)
         XCTAssertFalse(try XCTUnwrap(
             store.loadAssets().first { $0.id == coinID }
+        ).isVisibleByDefault)
+    }
+
+    func testGatewayPersistsFinalizedSuiObjectActivityInQuarantine() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "9", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 76, count: 32))
+        let objectID = "0x" + String(repeating: "a", count: 64)
+        let assetID = "sui:testnet/object:\(objectID)"
+        signer.indexedActivityRows = [[
+            "id": "\(digest):object", "transaction_hash": digest,
+            "block_number": "123455",
+            "occurred_at": Date().addingTimeInterval(-30).timeIntervalSince1970,
+            "status": "confirmed", "owner": signer.accountAddress,
+            "sender": "0x" + String(repeating: "b", count: 64),
+            "asset_id": assetID, "asset_reference": objectID,
+            "asset_kind": WalletAssetKind.collectible.rawValue,
+            "object_type": "0x1234::artifact::ARTIFACT",
+            "has_public_transfer": true,
+            "amount_base_units": "1", "direction": "inbound",
+        ]]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        await gateway.refreshStatus()
+        await gateway.refreshTransactionHistory()
+        let record = try XCTUnwrap(gateway.transactionHistory.first)
+        XCTAssertEqual(record.transactionHash, digest)
+        XCTAssertEqual(record.actionKind, .nftTransfer)
+        XCTAssertEqual(record.assetID, assetID)
+        XCTAssertEqual(record.amountBaseUnits, "1")
+        XCTAssertEqual(record.direction, .inbound)
+        XCTAssertEqual(record.finality, .finalized)
+        let asset = try XCTUnwrap(gateway.assets.first { $0.id == assetID })
+        XCTAssertEqual(asset.kind, .collectible)
+        XCTAssertEqual(asset.trust, .quarantined)
+        XCTAssertEqual(asset.reference, objectID)
+        XCTAssertFalse(try XCTUnwrap(
+            store.loadAssets().first { $0.id == assetID }
         ).isVisibleByDefault)
     }
 
@@ -4055,7 +4246,9 @@ final class WalletGatewayTests: XCTestCase {
         timestamp: String = "2026-08-31T12:00:00Z",
         checkpointSequence: Int = 123_455,
         balanceChanges: [[String: Any]],
-        hasMoreBalanceChanges: Bool = false
+        hasMoreBalanceChanges: Bool = false,
+        objectChanges: [[String: Any]] = [],
+        hasMoreObjectChanges: Bool = false
     ) -> [String: Any] {
         let senderValue: Any = sender.map {
             ["address": $0] as [String: Any]
@@ -4072,7 +4265,33 @@ final class WalletGatewayTests: XCTestCase {
                     "nodes": balanceChanges,
                     "pageInfo": ["hasNextPage": hasMoreBalanceChanges],
                 ],
+                "objectChanges": [
+                    "nodes": objectChanges,
+                    "pageInfo": ["hasNextPage": hasMoreObjectChanges],
+                ],
             ],
+        ]
+    }
+
+    private func suiActivityObjectChangeJSON(
+        input: WalletSuiObjectReference,
+        output: WalletSuiObjectReference,
+        inputOwner: String,
+        outputOwner: String,
+        hasPublicTransfer: Bool = true
+    ) -> [String: Any] {
+        [
+            "address": input.objectID,
+            "idCreated": false,
+            "idDeleted": false,
+            "inputState": suiObjectStateJSON(
+                reference: input, owner: inputOwner,
+                hasPublicTransfer: hasPublicTransfer
+            ),
+            "outputState": suiObjectStateJSON(
+                reference: output, owner: outputOwner,
+                hasPublicTransfer: hasPublicTransfer
+            ),
         ]
     }
 

@@ -158,6 +158,14 @@ signing adapter.
   or Coin types, unstable pages, and truncated results fail closed. Only public
   activity metadata enters SQLite; unknown Coins remain quarantined and no BCS,
   Move-call, or signing authority is exposed.
+- Finalized Sui object activity uses the same pinned effects query and accepts
+  only terminal object-change pagination. For a tracked ownership transition it
+  requires matching canonical object IDs, increasing versions, valid digests,
+  unchanged non-Coin Move type and public-transfer flag, and two exact address
+  owners. Coin/gas mutations and same-owner writes are validated then ignored;
+  creations, deletions, shared objects, dynamic fields, BCS, display metadata,
+  and media are not promoted into transfer records. Unknown transferred objects
+  enter public-metadata quarantine with an amount of one.
 - The isolated signer core can canonically rebuild one object-backed native SUI
   transfer from typed fields. It accepts exactly one gas coin, a positive split,
   one recipient transfer, the reviewed reference gas price and budget, and a
@@ -205,9 +213,9 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui object-effect activity, gRPC execution migration, multi-object transfers,
-  and localnet suites; native SUI, Coin, and object-transfer mainnet activation
-  remain gated;
+  Sui object creation/deletion activity, gRPC execution migration, multi-object
+  transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
+  activation remain gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and
