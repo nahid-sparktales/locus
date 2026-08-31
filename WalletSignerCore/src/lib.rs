@@ -25,8 +25,8 @@ use sui_crypto::SuiSigner;
 use sui_crypto::ed25519::Ed25519PrivateKey;
 use sui_sdk_types::bcs::ToBcs;
 use sui_sdk_types::{
-    Address as SuiAddress, Argument as SuiArgument, Command as SuiCommand,
-    Digest as SuiDigest, GasPayment as SuiGasPayment, ObjectReference as SuiObjectReference,
+    Address as SuiAddress, Argument as SuiArgument, Command as SuiCommand, Digest as SuiDigest,
+    GasPayment as SuiGasPayment, ObjectReference as SuiObjectReference,
     ProgrammableTransaction as SuiProgrammableTransaction, SplitCoins as SuiSplitCoins,
     Transaction as SuiTransaction, TransactionExpiration as SuiTransactionExpiration,
     TransactionKind as SuiTransactionKind, TransferObjects as SuiTransferObjects,
@@ -564,22 +564,13 @@ fn build_sui_native_transaction(
         &request.gas_balance_base_units,
         "invalid Sui gas coin balance",
     )?;
-    let amount = parse_canonical_u64(
-        &request.amount_base_units,
-        "invalid SUI transfer amount",
-    )?;
+    let amount = parse_canonical_u64(&request.amount_base_units, "invalid SUI transfer amount")?;
     let reference_gas_price = parse_canonical_u64(
         &request.reference_gas_price_base_units,
         "invalid Sui reference gas price",
     )?;
-    let gas_price = parse_canonical_u64(
-        &request.gas_price_base_units,
-        "invalid Sui gas price",
-    )?;
-    let gas_budget = parse_canonical_u64(
-        &request.gas_budget_base_units,
-        "invalid Sui gas budget",
-    )?;
+    let gas_price = parse_canonical_u64(&request.gas_price_base_units, "invalid Sui gas price")?;
+    let gas_budget = parse_canonical_u64(&request.gas_budget_base_units, "invalid Sui gas budget")?;
     if amount == 0 || reference_gas_price == 0 || gas_budget == 0 {
         return Err("Sui amount, reference gas price, and gas budget must be positive");
     }
@@ -596,11 +587,8 @@ fn build_sui_native_transaction(
         return Err("Sui transaction must expire at the reviewed current epoch");
     }
 
-    let gas_object = SuiObjectReference::new(
-        gas_object_id,
-        request.gas_object_version,
-        gas_object_digest,
-    );
+    let gas_object =
+        SuiObjectReference::new(gas_object_id, request.gas_object_version, gas_object_digest);
     Ok(SuiTransaction {
         kind: SuiTransactionKind::ProgrammableTransaction(SuiProgrammableTransaction {
             inputs: vec![
@@ -676,14 +664,8 @@ fn build_sui_coin_transaction(
         &request.reference_gas_price_base_units,
         "invalid Sui reference gas price",
     )?;
-    let gas_price = parse_canonical_u64(
-        &request.gas_price_base_units,
-        "invalid Sui gas price",
-    )?;
-    let gas_budget = parse_canonical_u64(
-        &request.gas_budget_base_units,
-        "invalid Sui gas budget",
-    )?;
+    let gas_price = parse_canonical_u64(&request.gas_price_base_units, "invalid Sui gas price")?;
+    let gas_budget = parse_canonical_u64(&request.gas_budget_base_units, "invalid Sui gas budget")?;
     if amount == 0 || reference_gas_price == 0 || gas_budget == 0 {
         return Err("Sui amount, reference gas price, and gas budget must be positive");
     }
@@ -705,11 +687,8 @@ fn build_sui_coin_transaction(
         request.coin_object_version,
         coin_object_digest,
     );
-    let gas_object = SuiObjectReference::new(
-        gas_object_id,
-        request.gas_object_version,
-        gas_object_digest,
-    );
+    let gas_object =
+        SuiObjectReference::new(gas_object_id, request.gas_object_version, gas_object_digest);
     Ok(SuiTransaction {
         kind: SuiTransactionKind::ProgrammableTransaction(SuiProgrammableTransaction {
             inputs: vec![
@@ -781,14 +760,8 @@ fn build_sui_object_transaction(
         &request.reference_gas_price_base_units,
         "invalid Sui reference gas price",
     )?;
-    let gas_price = parse_canonical_u64(
-        &request.gas_price_base_units,
-        "invalid Sui gas price",
-    )?;
-    let gas_budget = parse_canonical_u64(
-        &request.gas_budget_base_units,
-        "invalid Sui gas budget",
-    )?;
+    let gas_price = parse_canonical_u64(&request.gas_price_base_units, "invalid Sui gas price")?;
+    let gas_budget = parse_canonical_u64(&request.gas_budget_base_units, "invalid Sui gas budget")?;
     if reference_gas_price == 0 || gas_budget == 0 {
         return Err("Sui reference gas price and gas budget must be positive");
     }
@@ -803,11 +776,8 @@ fn build_sui_object_transaction(
     }
 
     let object = SuiObjectReference::new(object_id, request.object_version, object_digest);
-    let gas_object = SuiObjectReference::new(
-        gas_object_id,
-        request.gas_object_version,
-        gas_object_digest,
-    );
+    let gas_object =
+        SuiObjectReference::new(gas_object_id, request.gas_object_version, gas_object_digest);
     Ok(SuiTransaction {
         kind: SuiTransactionKind::ProgrammableTransaction(SuiProgrammableTransaction {
             inputs: vec![
@@ -1188,10 +1158,17 @@ fn build_solana_spl_message(
     } else {
         // Accounts: payer, source, destination, mint, Token Program.
         if let Some((_, _, compute_program)) = compute_budget
-            && [payer, source, destination, mint, token_program, compute_program]
-                .into_iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
+            && [
+                payer,
+                source,
+                destination,
+                mint,
+                token_program,
+                compute_program,
+            ]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
                 != 6
         {
             return Err("compute-budget account roles overlap");
@@ -2112,13 +2089,15 @@ mod tests {
             .decode(signed["transaction_bcs"].as_str().unwrap())
             .unwrap();
         let transaction = SuiTransaction::from_bcs(&transaction_bytes).unwrap();
-        assert_eq!(transaction.digest().to_string(), signed["transaction_digest"]);
+        assert_eq!(
+            transaction.digest().to_string(),
+            signed["transaction_digest"]
+        );
         assert_eq!(
             format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
             signed["signing_digest"]
         );
-        let signature =
-            UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
+        let signature = UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
         let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
         let signing_key = sui_signing_key(&mnemonic);
         Ed25519VerifyingKey::new(&signing_key.public_key())
@@ -2170,10 +2149,8 @@ mod tests {
 
         for value in cases {
             let request = CString::new(value.to_string()).unwrap();
-            let pointer = locus_wallet_prepare_sui_native_transfer_json(
-                entropy.as_ptr(),
-                request.as_ptr(),
-            );
+            let pointer =
+                locus_wallet_prepare_sui_native_transfer_json(entropy.as_ptr(), request.as_ptr());
             let json = unsafe { CStr::from_ptr(pointer) }
                 .to_string_lossy()
                 .into_owned();
@@ -2263,13 +2240,15 @@ mod tests {
             SuiCommand::TransferObjects(_)
         ));
         assert_eq!(transaction.gas_payment.objects.len(), 1);
-        assert_eq!(transaction.digest().to_string(), signed["transaction_digest"]);
+        assert_eq!(
+            transaction.digest().to_string(),
+            signed["transaction_digest"]
+        );
         assert_eq!(
             format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
             signed["signing_digest"]
         );
-        let signature =
-            UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
+        let signature = UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
         let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
         let signing_key = sui_signing_key(&mnemonic);
         Ed25519VerifyingKey::new(&signing_key.public_key())
@@ -2329,10 +2308,8 @@ mod tests {
 
         for value in cases {
             let request = CString::new(value.to_string()).unwrap();
-            let pointer = locus_wallet_prepare_sui_coin_transfer_json(
-                entropy.as_ptr(),
-                request.as_ptr(),
-            );
+            let pointer =
+                locus_wallet_prepare_sui_coin_transfer_json(entropy.as_ptr(), request.as_ptr());
             let json = unsafe { CStr::from_ptr(pointer) }
                 .to_string_lossy()
                 .into_owned();
@@ -2418,8 +2395,7 @@ mod tests {
             SuiCommand::TransferObjects(_)
         ));
         assert_eq!(transaction.gas_payment.objects.len(), 1);
-        let signature =
-            UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
+        let signature = UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
         let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
         let signing_key = sui_signing_key(&mnemonic);
         Ed25519VerifyingKey::new(&signing_key.public_key())
@@ -2474,10 +2450,8 @@ mod tests {
 
         for value in cases {
             let request = CString::new(value.to_string()).unwrap();
-            let pointer = locus_wallet_prepare_sui_object_transfer_json(
-                entropy.as_ptr(),
-                request.as_ptr(),
-            );
+            let pointer =
+                locus_wallet_prepare_sui_object_transfer_json(entropy.as_ptr(), request.as_ptr());
             let json = unsafe { CStr::from_ptr(pointer) }
                 .to_string_lossy()
                 .into_owned();
@@ -2749,10 +2723,8 @@ mod tests {
         ];
         for value in cases {
             let request = CString::new(value.to_string()).unwrap();
-            let pointer = locus_wallet_prepare_solana_core_transfer_json(
-                entropy.as_ptr(),
-                request.as_ptr(),
-            );
+            let pointer =
+                locus_wallet_prepare_solana_core_transfer_json(entropy.as_ptr(), request.as_ptr());
             let json = unsafe { CStr::from_ptr(pointer) }
                 .to_string_lossy()
                 .into_owned();
@@ -2971,7 +2943,10 @@ mod tests {
         let token_program = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
         let derived = derive_solana_associated_token_address(&owner, &mint, token_program)
             .expect("reviewed Token-2022 ATA derivation");
-        assert_eq!(derived.address, "9dTDtNrTEkkDWLkvXLLQfmsJ7wFcuk7DCf6nN53i1Dt");
+        assert_eq!(
+            derived.address,
+            "9dTDtNrTEkkDWLkvXLLQfmsJ7wFcuk7DCf6nN53i1Dt"
+        );
 
         let entropy =
             CString::new("0000000000000000000000000000000000000000000000000000000000000000")
