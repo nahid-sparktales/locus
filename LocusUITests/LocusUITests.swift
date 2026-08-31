@@ -702,9 +702,7 @@ final class LocusUITests: XCTestCase {
         }, "collapsed code must still copy all 25 source lines")
         XCTAssertEqual(transcript.frame.width, initialWidth, accuracy: 1)
 
-        showCode.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)
-        ).click()
+        clickInTranscript(showCode, normalizedOffset: CGVector(dx: 0.12, dy: 0.5))
         XCTAssertTrue(waitUntil {
             self.anyElement("message.codeBlock.collapse").label
                 == "Collapse 25-line code block"
@@ -3175,9 +3173,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000202").exists)
         XCTAssertTrue(anyElement("message.00000000-0000-0000-0000-000000000204").exists)
 
-        firstGroup.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)
-        ).click()
+        clickInTranscript(firstGroup, normalizedOffset: CGVector(dx: 0.15, dy: 0.5))
         XCTAssertTrue(anyElement(
             "thinkingActivity.entry.00000000-0000-0000-0000-000000000201.0"
         ).waitForExistence(timeout: 3))
