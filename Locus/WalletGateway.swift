@@ -416,17 +416,24 @@ enum WalletPolicyEngine {
             counterparties = transaction.effects.filter {
                 $0.kind == "minimum_receive"
             }.compactMap(\.to)
-            guard transaction.action.arguments.count == 3,
-                  let deadline = UInt64(transaction.action.arguments[2].value),
+            guard transaction.action.type == .exactInputSwap,
+                  let route = transaction.action.swapRoute,
+                  let deadline = UInt64(route.deadlineUnixSeconds),
                   deadline >= UInt64(max(0, now.timeIntervalSince1970.rounded(.down))) else {
                 return .requiresApproval("The swap quote is stale.")
             }
-            if let minimum = policy.minimumOutputBaseUnits {
-                let outputs = transaction.effects.filter { $0.kind == "minimum_receive" }
-                guard outputs.count == 1,
-                      WalletBaseUnits.lessThanOrEqual(minimum, outputs[0].amountBaseUnits) else {
-                    return .requiresApproval("The swap minimum output is below the policy floor.")
-                }
+            guard let maximumSlippage = policy.maximumSlippageBPS,
+                  (0...5_000).contains(maximumSlippage),
+                  route.slippageBPS <= maximumSlippage else {
+                return .requiresApproval("The swap slippage exceeds the policy limit.")
+            }
+            let outputs = transaction.effects.filter { $0.kind == "minimum_receive" }
+            guard let minimum = policy.minimumOutputBaseUnits,
+                  outputs.count == 1,
+                  WalletBaseUnits.lessThanOrEqual(
+                    minimum, outputs[0].amountBaseUnits
+                  ) else {
+                return .requiresApproval("The swap minimum output is below the policy floor.")
             }
         default:
             counterparties = []
@@ -3052,6 +3059,10 @@ final class WalletGateway: ObservableObject {
                     for: request.action, networkID: request.networkID
                 )
             }
+        case .exactInputSwap:
+            contract = try reviewedSwapContract(
+                for: request.action, networkID: request.networkID
+            )
         default:
             contract = nil
         }
@@ -3117,6 +3128,40 @@ final class WalletGateway: ObservableObject {
            reviewRegistry?.containsExactContract(entry) != true {
             throw Error.invalidArguments(
                 "The curated asset contract is not present in the signed release review manifest."
+            )
+        }
+        return entry
+    }
+
+    private func reviewedSwapContract(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws -> WalletContractRegistryEntry {
+        guard action.type == .exactInputSwap,
+              let contractID = action.contractID,
+              let adapterID = action.adapterID,
+              let route = action.swapRoute,
+              adapterID
+                == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+              let entry = contractRegistry.first(where: {
+                  $0.id == contractID && $0.networkID == networkID
+              }),
+              WalletReviewedAdapters.validatedID(for: entry) == adapterID,
+              reviewRegistry?.containsExactContract(entry) == true,
+              route.pathAssetIDs.allSatisfy({ assetID in
+                  guard let identity = WalletEVMAssetIdentity.parse(assetID),
+                        identity.networkID == networkID,
+                        identity.standard == .erc20,
+                        let asset = assets.first(where: { $0.id == assetID }),
+                        asset.chain == .evm, asset.kind == .fungibleToken,
+                        asset.trust == .curated,
+                        asset.reference?.caseInsensitiveCompare(
+                            identity.contractAddress
+                        ) == .orderedSame else { return false }
+                  return reviewRegistry?.containsExactAsset(asset) == true
+              }) else {
+            throw Error.invalidArguments(
+                "The swap router, adapter, and complete asset route are not present in the signed review manifest."
             )
         }
         return entry
@@ -3325,7 +3370,84 @@ final class WalletGateway: ObservableObject {
             action = .nftTransfer(
                 assetID: assetID, tokenID: tokenID, recipient: recipient
             )
-        case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+        case .exactInputSwap:
+            guard descriptor.chain == .evm,
+                  let contractID = nonempty(actionObject["contract_id"]),
+                  let adapterID = nonempty(actionObject["adapter_id"]),
+                  adapterID
+                    == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                  let inputAssetID = nonempty(actionObject["input_asset_id"]),
+                  let outputAssetID = nonempty(actionObject["output_asset_id"]),
+                  let amount = WalletBaseUnits.normalize(
+                    nonempty(actionObject["amount_base_units"]) ?? ""
+                  ), amount != "0",
+                  let minimumOutput = WalletBaseUnits.normalize(
+                    nonempty(actionObject["minimum_output_base_units"]) ?? ""
+                  ), minimumOutput != "0",
+                  let recipient = nonempty(actionObject["recipient"]),
+                  Self.validAddress(recipient, chain: .evm),
+                  let routeObject = actionObject["route"] as? [String: Any],
+                  let rawProtocol = nonempty(routeObject["protocol_version"]),
+                  let protocolVersion = WalletUniversalRouterSwapProtocol(
+                    rawValue: rawProtocol
+                  ),
+                  let path = routeObject["path_asset_ids"] as? [String],
+                  (2...4).contains(path.count),
+                  path.first == inputAssetID, path.last == outputAssetID,
+                  let rawFees = routeObject["fee_tiers"] as? [Any],
+                  let feeTiers = uint32Values(rawFees),
+                  let hopPrices = routeObject["minimum_hop_price_x36"]
+                    as? [String],
+                  let normalizedPrices = normalizedBaseUnitValues(hopPrices),
+                  let quotedOutput = WalletBaseUnits.normalize(
+                    nonempty(routeObject["quoted_output_base_units"]) ?? ""
+                  ), quotedOutput != "0",
+                  let rawSlippage = routeObject["slippage_bps"],
+                  let slippageValues = uint32Values([rawSlippage]),
+                  slippageValues.count == 1, slippageValues[0] <= 5_000,
+                  let deadline = WalletBaseUnits.normalize(
+                    nonempty(routeObject["deadline_unix_seconds"]) ?? ""
+                  ),
+                  actionObject["calldata"] == nil,
+                  actionObject["commands"] == nil else {
+                throw Error.invalidArguments(
+                    "An exact-input swap requires a reviewed router, canonical asset route, positive input and minimum output, fee tiers, per-hop floors, and deadline."
+                )
+            }
+            let hopCount = path.count - 1
+            guard (protocolVersion == .v2 && feeTiers.isEmpty)
+                    || (protocolVersion == .v3 && feeTiers.count == hopCount),
+                  feeTiers.allSatisfy({ $0 > 0 && $0 <= 1_000_000 }),
+                  normalizedPrices.isEmpty
+                    || normalizedPrices.count == hopCount,
+                  normalizedPrices.allSatisfy({ $0 != "0" }),
+                  path.allSatisfy({ assetID in
+                      guard let identity = WalletEVMAssetIdentity.parse(assetID)
+                      else { return false }
+                      return identity.networkID == networkID
+                          && identity.standard == .erc20
+                          && identity.canonicalID == assetID
+                  }) else {
+                throw Error.invalidArguments(
+                    "The swap route is outside the reviewed exact-input subset."
+                )
+            }
+            action = .exactInputSwap(
+                adapterID: adapterID, contractID: contractID,
+                inputAssetID: inputAssetID, outputAssetID: outputAssetID,
+                amountInBaseUnits: amount,
+                minimumOutputBaseUnits: minimumOutput,
+                recipient: recipient,
+                route: WalletExactInputSwapRoute(
+                    protocolVersion: protocolVersion, pathAssetIDs: path,
+                    feeTiers: feeTiers,
+                    minimumHopPriceX36: normalizedPrices,
+                    quotedOutputBaseUnits: quotedOutput,
+                    slippageBPS: Int(slippageValues[0]),
+                    deadlineUnixSeconds: deadline
+                )
+            )
+        case .reviewedCall, .standardizedSignIn,
              .reviewedTypedAuthorization:
             throw Error.invalidArguments(
                 "That operation requires a reviewed chain adapter that is not active."
@@ -3489,6 +3611,35 @@ final class WalletGateway: ObservableObject {
     private func nonempty(_ value: Any?) -> String? {
         let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? nil : text
+    }
+
+    private func uint32Values(_ values: [Any]) -> [UInt32]? {
+        var result: [UInt32] = []
+        for value in values {
+            let text: String
+            if let string = value as? String {
+                text = string
+            } else if let number = value as? NSNumber,
+                      CFGetTypeID(number) != CFBooleanGetTypeID() {
+                text = number.stringValue
+            } else {
+                return nil
+            }
+            guard let normalized = WalletBaseUnits.normalize(text),
+                  normalized == text, let parsed = UInt32(normalized) else {
+                return nil
+            }
+            result.append(parsed)
+        }
+        return result
+    }
+
+    private func normalizedBaseUnitValues(_ values: [String]) -> [String]? {
+        let normalized = values.compactMap(WalletBaseUnits.normalize)
+        guard normalized.count == values.count, normalized == values else {
+            return nil
+        }
+        return normalized
     }
 
     private func dictionary<T: Encodable>(_ value: T) throws -> Any {

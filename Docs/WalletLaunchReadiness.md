@@ -137,9 +137,16 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   input ABI, the current account as literal recipient and payer, a deadline no
   more than 20 minutes away, 1-3 acyclic hops, a nonzero global minimum output,
   canonical dynamic offsets/padding, and either an empty per-hop price array or
-  one nonzero floor per hop. It remains separately review-manifest-bound; V4,
-  Permit2 forms, native wrapping, sub-plans, quote acquisition, Swap UI, and
-  end-to-end execution are not claimed by this item.
+  one nonzero floor per hop. The protocol-v2 semantic preparation path now also
+  requires a signed router and complete curated-token route, quoted output,
+  slippage bound, minimum output, deadline, and per-hop floors. The isolated
+  signer—not the main process—materializes the sole permitted command, encodes
+  it through the Rust ABI boundary, decodes it again, and binds the verified
+  runtime code hash and RPC simulation. Autonomous eligibility additionally
+  requires a signer-owned exact-input policy with router, adapter, input asset,
+  recipient, amount, fee, slippage, minimum-output, and expiry bounds. V4,
+  Permit2 forms, native wrapping, sub-plans, live quote acquisition, Swap UI,
+  and Anvil execution fixtures remain incomplete.
 - [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
   token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
   transfer-based quarantine are implemented.
@@ -155,7 +162,9 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   GraphQL subsets are implemented but not mainnet-enabled.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets
   complete. Universal Router V2/V3 decoding is implemented as described above;
-  V4 and all end-to-end quote/simulation/broadcast flows remain closed.
+  its semantic preparation, signer reconstruction, and RPC simulation path is
+  implemented, while live quotes, UI, V4, and independent local-chain execution
+  coverage remain closed.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.
 

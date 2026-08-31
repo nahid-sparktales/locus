@@ -270,6 +270,14 @@ signing adapter.
   V3 fee bounds, and either zero hop floors or exactly one positive floor per
   hop. Exact-output, Permit2, wrapping, partial-fill cleanup, multiple commands,
   V4 nested actions, and sub-plans remain unrepresentable in this adapter.
+- Semantic Universal Router requests contain no commands or calldata. They bind
+  a signed router plus a complete signed curated-token route, protocol version,
+  fee tiers, quoted output, slippage, minimum output, per-hop floors, deadline,
+  and signer-derived recipient. The signer constructs the sole permitted call,
+  sends only its ABI result back for simulation, then independently reconstructs
+  and decodes it again against the verified runtime code hash. Legacy raw typed
+  contract-call swaps are ineligible for autonomous policies; semantic swaps
+  require signer-owned slippage and minimum-output limits.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -288,8 +296,8 @@ until their implementation and evidence gates pass:
   Sui gRPC execution migration, multi-object
   transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
   activation remain gated;
-- Universal Router V4 plus end-to-end quote/simulation/broadcast, Jupiter
-  `/build`, and pinned Cetus V3 swaps;
+- Universal Router live quotes, human Swap UI, V4, and independent Anvil
+  execution coverage, plus Jupiter `/build` and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - ERC-721/1155 metadata/media sandboxing and independent local-chain coverage
   for Ethereum asset paths;

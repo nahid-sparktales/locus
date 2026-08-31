@@ -269,7 +269,12 @@ unallocated. The Universal Router now has version-separated reviewed decoders:
 the legacy adapter remains V2-pool-only, while a new adapter accepts one current
 V2 or V3 exact-input command with canonical ABI layout, route, payer, recipient,
 deadline, global minimum output, and per-hop price array. V4 actions, quote
-acquisition, the human Swap flow, and broadcast stay closed. Token-2022
+acquisition and the human Swap flow stay closed. A semantic V2/V3 preparation
+path now binds signed curated route assets, quoted output, slippage, minimum
+output, and deadline; the isolated signer constructs and re-decodes the router
+call, and autonomous use additionally requires signer-owned swap limits. This
+path is still launch-gated and lacks independent Anvil execution coverage.
+Token-2022
 transfer-altering extensions, Core collection/plugin variants, Token Metadata
 and compressed-collectible transfers, versioned-message signing, Sui gRPC
 execution migration, Solana/Sui swaps, external wallets, and WalletConnect

@@ -1114,6 +1114,111 @@ final class WalletGatewayTests: XCTestCase {
             action: action(command: "0x10", words: v3Words),
             accountAddress: account, now: now
         ))
+
+        let thirdToken = "3333333333333333333333333333333333333333"
+        let cyclicV2Words = [
+            abiWord(String(account.dropFirst(2))), abiWord("a"), abiWord("9"),
+            abiWord("c0"), abiWord("1"), abiWord("160"), abiWord("4"),
+            abiWord(inputToken), abiWord(outputToken), abiWord(thirdToken),
+            abiWord(outputToken), abiWord("0"),
+        ]
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.decode(
+            action: action(command: "0x08", words: cyclicV2Words),
+            accountAddress: account, now: now
+        ))
+    }
+
+    func testSemanticUniversalRouterSwapMaterializesOnlyReviewedCall() throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let input = "eip155:1/erc20:0x1111111111111111111111111111111111111111"
+        let output = "eip155:1/erc20:0x2222222222222222222222222222222222222222"
+        let now = Date(timeIntervalSince1970: 1_000)
+        func action(
+            protocolVersion: WalletUniversalRouterSwapProtocol,
+            path: [String] = [], feeTiers: [UInt32] = [],
+            slippageBPS: Int = 1_000
+        ) -> WalletSemanticAction {
+            let resolvedPath = path.isEmpty ? [input, output] : path
+            return .exactInputSwap(
+                adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                contractID: "uniswap.router", inputAssetID: input,
+                outputAssetID: output, amountInBaseUnits: "10",
+                minimumOutputBaseUnits: "9", recipient: account,
+                route: WalletExactInputSwapRoute(
+                    protocolVersion: protocolVersion,
+                    pathAssetIDs: resolvedPath, feeTiers: feeTiers,
+                    minimumHopPriceX36: ["1"],
+                    quotedOutputBaseUnits: "10", slippageBPS: slippageBPS,
+                    deadlineUnixSeconds: "1100"
+                )
+            )
+        }
+
+        let v2Call = try XCTUnwrap(
+            WalletUniversalRouterV2V3Adapter.contractAction(
+                for: action(protocolVersion: .v2),
+                accountAddress: account, networkID: "eip155:1", now: now
+            )
+        )
+        XCTAssertEqual(v2Call.type, .contractCall)
+        XCTAssertEqual(v2Call.function, "execute(bytes,bytes[],uint256)")
+        XCTAssertEqual(v2Call.arguments.first?.value, "0x08")
+        XCTAssertEqual(
+            WalletUniversalRouterV2V3Adapter.decode(
+                action: v2Call, accountAddress: account,
+                networkID: "eip155:1", now: now
+            )?.protocolVersion,
+            .v2
+        )
+
+        let v3Call = try XCTUnwrap(
+            WalletUniversalRouterV2V3Adapter.contractAction(
+                for: action(protocolVersion: .v3, feeTiers: [3_000]),
+                accountAddress: account, networkID: "eip155:1", now: now
+            )
+        )
+        XCTAssertEqual(v3Call.arguments.first?.value, "0x00")
+        XCTAssertEqual(
+            WalletUniversalRouterV2V3Adapter.decode(
+                action: v3Call, accountAddress: account,
+                networkID: "eip155:1", now: now
+            )?.protocolVersion,
+            .v3
+        )
+
+        let middle = "eip155:1/erc20:0x3333333333333333333333333333333333333333"
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
+            for: action(
+                protocolVersion: .v2,
+                path: [input, middle, input, output]
+            ), accountAddress: account, networkID: "eip155:1", now: now
+        ))
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
+            for: action(protocolVersion: .v3, feeTiers: []),
+            accountAddress: account, networkID: "eip155:1", now: now
+        ))
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
+            for: action(protocolVersion: .v2, slippageBPS: 500),
+            accountAddress: account, networkID: "eip155:1", now: now
+        ))
+
+        let overflow = WalletSemanticAction.exactInputSwap(
+            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            contractID: "uniswap.router", inputAssetID: input,
+            outputAssetID: output,
+            amountInBaseUnits: "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+            minimumOutputBaseUnits: "9", recipient: account,
+            route: WalletExactInputSwapRoute(
+                protocolVersion: .v2, pathAssetIDs: [input, output],
+                feeTiers: [], minimumHopPriceX36: [],
+                quotedOutputBaseUnits: "10", slippageBPS: 1_000,
+                deadlineUnixSeconds: "1100"
+            )
+        )
+        XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
+            for: overflow, accountAddress: account,
+            networkID: "eip155:1", now: now
+        ))
     }
 
     private func abiWord(_ value: String) -> String {
@@ -1145,6 +1250,82 @@ final class WalletGatewayTests: XCTestCase {
         } catch WalletRPCError.invalidResponse(let message) {
             XCTAssertTrue(message.contains("exactly one"))
         }
+    }
+
+    func testEVMSwapPreparationBindsReviewedRouterCodeAndZeroNativeValue() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let router = "0x4444444444444444444444444444444444444444"
+        let codeHash = "0x" + String(repeating: "b", count: 64)
+        let client = makeRPCClient { request in
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? Int)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any = switch method {
+            case "eth_getCode": "0x6000"
+            case "web3_sha3": codeHash
+            case "eth_chainId": "0xaa36a7"
+            case "eth_getTransactionCount": "0x1"
+            case "eth_getBlockByNumber": ["baseFeePerGas": "0x64"]
+            case "eth_maxPriorityFeePerGas": "0x1"
+            case "eth_call": "0x"
+            case "eth_estimateGas": "0x5208"
+            default: throw WalletRPCError.invalidResponse("unexpected \(method)")
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        let routerABI = #"[{"type":"function","name":"execute","stateMutability":"payable","inputs":[{"name":"commands","type":"bytes"},{"name":"inputs","type":"bytes[]"},{"name":"deadline","type":"uint256"}],"outputs":[]}]"#
+        let entry = WalletContractRegistryEntry(
+            id: "uniswap.router", networkID: WalletGateway.sepoliaNetworkID,
+            checksumAddress: router, label: "Reviewed Router",
+            normalizedABI: routerABI,
+            abiDigest: "sha256:" + SHA256.hash(data: Data(routerABI.utf8))
+                .map { String(format: "%02x", $0) }.joined(),
+            runtimeCodeHash: codeHash,
+            permittedFunctions: ["execute(bytes,bytes[],uint256)"],
+            permittedSelectors: ["0x3593564c"],
+            reviewedAdapterID:
+                WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            verifiedAt: Date()
+        )
+        let input = "eip155:11155111/erc20:0x1111111111111111111111111111111111111111"
+        let output = "eip155:11155111/erc20:0x2222222222222222222222222222222222222222"
+        let action = WalletSemanticAction.exactInputSwap(
+            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            contractID: entry.id, inputAssetID: input,
+            outputAssetID: output, amountInBaseUnits: "1000",
+            minimumOutputBaseUnits: "975", recipient: account,
+            route: WalletExactInputSwapRoute(
+                protocolVersion: .v3, pathAssetIDs: [input, output],
+                feeTiers: [3_000], minimumHopPriceX36: ["1"],
+                quotedOutputBaseUnits: "1000", slippageBPS: 250,
+                deadlineUnixSeconds: String(
+                    UInt64(Date().timeIntervalSince1970) + 600
+                )
+            )
+        )
+        let request = WalletPrepareRequest(
+            networkID: WalletGateway.sepoliaNetworkID,
+            accountID: "account-1", source: .human, action: action,
+            maximumFeeBaseUnits: "10000000"
+        )
+        let encoded = WalletEncodedContractCall(
+            input: "0x3593564c" + String(repeating: "0", count: 64)
+        )
+        let packet = try await client.prepare(
+            request: request, fromAddress: account,
+            contract: entry, encodedContract: encoded
+        )
+        XCTAssertEqual(packet.transaction.to, router)
+        XCTAssertEqual(packet.transaction.value, "0")
+        XCTAssertEqual(packet.transaction.input, encoded.input)
+        XCTAssertEqual(packet.observedRuntimeCodeHash, codeHash)
+        XCTAssertTrue(packet.simulationSucceeded)
     }
 
     func testRPCAssetBalancesUseOnlyReviewedStandardSelectors() async throws {
@@ -2273,6 +2454,128 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(response["error"])
         XCTAssertEqual(signer.preparedRequests.last?.action.assetID, identity.canonicalID)
         XCTAssertNil(signer.preparedContracts.last ?? nil)
+    }
+
+    @MainActor
+    func testGatewayPreparesOnlySignedManifestSemanticRouterSwap() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date().addingTimeInterval(-60)
+        let routerABI = #"[{"type":"function","name":"execute","stateMutability":"payable","inputs":[{"name":"commands","type":"bytes"},{"name":"inputs","type":"bytes[]"},{"name":"deadline","type":"uint256"}],"outputs":[]}]"#
+        let digest = "sha256:" + SHA256.hash(data: Data(routerABI.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let entry = WalletContractRegistryEntry(
+            id: "uniswap.router", networkID: WalletGateway.sepoliaNetworkID,
+            checksumAddress: "0x4444444444444444444444444444444444444444",
+            label: "Reviewed Router", normalizedABI: routerABI,
+            abiDigest: digest,
+            runtimeCodeHash: "0x" + String(repeating: "a", count: 64),
+            permittedFunctions: ["execute(bytes,bytes[],uint256)"],
+            permittedSelectors: ["0x3593564c"],
+            reviewedAdapterID:
+                WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            verifiedAt: issuedAt.addingTimeInterval(-60)
+        )
+        let input = "eip155:11155111/erc20:0x1111111111111111111111111111111111111111"
+        let output = "eip155:11155111/erc20:0x2222222222222222222222222222222222222222"
+        let assets = [
+            WalletAsset(
+                canonicalID: input, networkID: WalletGateway.sepoliaNetworkID,
+                chain: .evm, kind: .fungibleToken,
+                reference: "0x1111111111111111111111111111111111111111",
+                name: "Input", symbol: "IN", decimals: 18,
+                trust: .curated, manifestRevision: 7
+            ),
+            WalletAsset(
+                canonicalID: output, networkID: WalletGateway.sepoliaNetworkID,
+                chain: .evm, kind: .fungibleToken,
+                reference: "0x2222222222222222222222222222222222222222",
+                name: "Output", symbol: "OUT", decimals: 18,
+                trust: .curated, manifestRevision: 7
+            ),
+        ]
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 7, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: assets, evmContracts: [entry], explorerTemplates: [:],
+            adapterIDs: [
+                WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            ]
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey
+        )
+        let suiteName = "WalletGatewayTests.semantic-swap.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(
+            try JSONEncoder().encode([entry]),
+            forKey: "LocusWalletContractRegistryV1"
+        )
+        let signer = FakeWalletSigner()
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        signer.accountAddress = account
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
+            publicStore: try WalletPublicStore(path: ":memory:"),
+            reviewRegistry: registry, buildSupportsWalletAlpha: true
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let response = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID,
+                "account_id": "account-1",
+                "maximum_fee_base_units": "50000",
+                "action": [
+                    "type": WalletActionKind.exactInputSwap.rawValue,
+                    "contract_id": entry.id,
+                    "adapter_id": WalletReviewedAdapters
+                        .uniswapUniversalRouterV2V3ExactIn,
+                    "input_asset_id": input, "output_asset_id": output,
+                    "amount_base_units": "1000",
+                    "minimum_output_base_units": "975",
+                    "recipient": account,
+                    "route": [
+                        "protocol_version": "v3",
+                        "path_asset_ids": [input, output],
+                        "fee_tiers": ["3000"],
+                        "minimum_hop_price_x36": ["1"],
+                        "quoted_output_base_units": "1000",
+                        "slippage_bps": "250",
+                        "deadline_unix_seconds": String(
+                            UInt64(Date().timeIntervalSince1970) + 600
+                        ),
+                    ],
+                ],
+            ],
+            source: .human
+        )
+        XCTAssertNil(response["error"])
+        XCTAssertEqual(signer.preparedRequests.last?.action.type, .exactInputSwap)
+        XCTAssertEqual(
+            signer.preparedRequests.last?.action.swapRoute?.feeTiers, [3_000]
+        )
+        XCTAssertEqual(signer.preparedContracts.last.flatMap { $0 }, entry)
+
+        let rejected = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID,
+                "account_id": "account-1", "maximum_fee_base_units": "50000",
+                "action": [
+                    "type": WalletActionKind.exactInputSwap.rawValue,
+                    "contract_id": entry.id,
+                    "adapter_id": WalletReviewedAdapters
+                        .uniswapUniversalRouterV2ExactIn,
+                ],
+            ], source: .human
+        )
+        XCTAssertNotNil(rejected["error"])
+        XCTAssertEqual(signer.preparedRequests.count, 1)
     }
 
     @MainActor
@@ -6242,6 +6545,84 @@ final class WalletGatewayTests: XCTestCase {
         guard case .requiresApproval = WalletPolicyEngine.evaluate(
             transaction: transaction, policy: wrongCounterparty, spentThisSession: "0"
         ) else { return XCTFail("A contract adapter must enforce its decoded counterparty.") }
+    }
+
+    func testSemanticSwapPolicyBindsSlippageMinimumRouterAndRecipient() {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let input = "eip155:11155111/erc20:0x1111111111111111111111111111111111111111"
+        let output = "eip155:11155111/erc20:0x2222222222222222222222222222222222222222"
+        let route = WalletExactInputSwapRoute(
+            protocolVersion: .v3, pathAssetIDs: [input, output],
+            feeTiers: [3_000], minimumHopPriceX36: ["1"],
+            quotedOutputBaseUnits: "1000", slippageBPS: 250,
+            deadlineUnixSeconds: String(
+                UInt64(Date().timeIntervalSince1970) + 600
+            )
+        )
+        let action = WalletSemanticAction.exactInputSwap(
+            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            contractID: "uniswap.router", inputAssetID: input,
+            outputAssetID: output, amountInBaseUnits: "1000",
+            minimumOutputBaseUnits: "975", recipient: account, route: route
+        )
+        let transaction = WalletPreparedTransaction(
+            id: "swap-intent", digest: "digest",
+            networkID: WalletGateway.sepoliaNetworkID,
+            accountID: "account-1", source: .agent, action: action,
+            summary: "Swap", effects: [
+                WalletDecodedEffect(
+                    id: "spend", kind: "token_swap_exact_in",
+                    assetID: input, amountBaseUnits: "1000",
+                    from: account, to: "0x4444444444444444444444444444444444444444",
+                    spender: nil
+                ),
+                WalletDecodedEffect(
+                    id: "receive", kind: "minimum_receive",
+                    assetID: output, amountBaseUnits: "975",
+                    from: "0x4444444444444444444444444444444444444444",
+                    to: account, spender: nil
+                ),
+            ], riskFlags: [], contract: WalletContractIdentity(
+                registryID: "uniswap.router",
+                address: "0x4444444444444444444444444444444444444444",
+                label: "Router", function: "execute(bytes,bytes[],uint256)",
+                abiDigest: "sha256:test", runtimeCodeHash: "0xcode"
+            ),
+            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            budgetAssetID: input, spendBaseUnits: "1000",
+            maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15",
+            simulation: "Success", simulationSucceeded: true, nonce: "1",
+            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
+            policyDecision: "", policyID: nil
+        )
+        func policy(slippage: Int, minimum: String) -> WalletSessionPolicy {
+            WalletSessionPolicy(
+                id: "swap-policy", accountID: "account-1",
+                networkID: WalletGateway.sepoliaNetworkID,
+                allowedAssetIDs: [input], allowedRecipients: [account],
+                allowedContractIDs: ["uniswap.router"],
+                allowedAdapterIDs: [
+                    WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                ], maximumTransactionBaseUnits: "1000",
+                maximumSessionBaseUnits: "2000", maximumFeeBaseUnits: "20",
+                expiresAt: Date().addingTimeInterval(300),
+                allowedActionKinds: [.exactInputSwap],
+                maximumSlippageBPS: slippage,
+                minimumOutputBaseUnits: minimum
+            )
+        }
+        XCTAssertEqual(WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy(slippage: 250, minimum: "975"),
+            spentThisSession: "0"
+        ), .automatic)
+        guard case .requiresApproval = WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy(slippage: 200, minimum: "975"),
+            spentThisSession: "0"
+        ) else { return XCTFail("The swap slippage policy must be signer-bound.") }
+        guard case .requiresApproval = WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy(slippage: 250, minimum: "976"),
+            spentThisSession: "0"
+        ) else { return XCTFail("The swap minimum-output policy must be signer-bound.") }
     }
 
     func testExternalConnectorCatalogKeepsNativeSigningOnSepolia() {

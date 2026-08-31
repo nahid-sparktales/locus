@@ -753,9 +753,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 switch packet.request.action.type {
                 case .nativeTransfer:
                     intent = try self.prepareNativeTransfer(packet: packet, entropy: entropy)
-                case .contractCall, .fungibleTokenTransfer, .nftTransfer:
+                case .contractCall, .fungibleTokenTransfer, .nftTransfer,
+                     .exactInputSwap:
                     intent = try self.prepareContractCall(packet: packet, entropy: entropy)
-                case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+                case .reviewedCall, .standardizedSignIn,
                      .reviewedTypedAuthorization:
                     throw self.signerError(
                         "The requested semantic action has no reviewed signer adapter."
@@ -2672,6 +2673,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 throw signerError("The token or NFT action is outside its reviewed standard adapter.")
             }
             nativeValue = "0"
+        case .exactInputSwap:
+            guard action.contractID == entry.id,
+                  WalletReviewedAdapters.validatedID(for: entry)
+                    == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                  reviewedSwapRouteIsSigned(
+                    action, networkID: entry.networkID
+                  ),
+                  WalletUniversalRouterV2V3Adapter.contractAction(
+                    for: action, accountAddress: account.address,
+                    networkID: entry.networkID
+                  ) != nil else {
+                throw signerError(
+                    "The swap action is outside its reviewed exact-input adapter."
+                )
+            }
+            nativeValue = "0"
         default:
             throw signerError("This registered transaction kind is not implemented.")
         }
@@ -2681,6 +2698,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let capability: WalletNetworkCapability = switch action.type {
         case .fungibleTokenTransfer: .fungibleTokenTransfer
         case .nftTransfer: .nftTransfer
+        case .exactInputSwap: .exactInputSwap
         default:
             switch WalletReviewedAdapters.validatedID(for: entry) {
             case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
@@ -2722,7 +2740,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         let semanticCall = WalletEVMAssetAdapter.resolve(
             action: action, registryEntry: entry, accountAddress: account.address
         )
-        let function = action.function ?? semanticCall?.function ?? ""
+        let function = action.type == .exactInputSwap
+            ? "execute(bytes,bytes[],uint256)"
+            : action.function ?? semanticCall?.function ?? ""
         let identity = WalletContractIdentity(
             registryID: entry.id, address: entry.checksumAddress, label: entry.label,
             function: function, abiDigest: entry.abiDigest,
@@ -2736,7 +2756,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 ? "Send reviewed \(entry.label) tokens on \(packet.request.networkID)"
                 : action.type == .nftTransfer
                     ? "Transfer reviewed \(entry.label) collectible on \(packet.request.networkID)"
-                    : "Call \(entry.label).\(function) on \(packet.request.networkID)",
+                    : action.type == .exactInputSwap
+                        ? "Swap exact input through reviewed \(entry.label) on \(packet.request.networkID)"
+                        : "Call \(entry.label).\(function) on \(packet.request.networkID)",
             effects: decoded.effects, riskFlags: decoded.riskFlags, contract: identity,
             adapterID: decoded.adapterID, budgetAssetID: decoded.budgetAssetID,
             spendBaseUnits: decoded.spendBaseUnits,
@@ -2793,6 +2815,28 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             }
             function = semantic.function
             arguments = semantic.arguments
+        case .exactInputSwap:
+            guard action.contractID == entry.id,
+                  WalletReviewedAdapters.validatedID(for: entry)
+                    == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                  reviewedSwapRouteIsSigned(
+                    action, networkID: entry.networkID
+                  ),
+                  let accountID = request.accountID,
+                  let account = try store.accounts().first(where: {
+                      $0.id == accountID && $0.chain == .evm
+                          && $0.networkIDs.contains(entry.networkID)
+                  }),
+                  let materialized = WalletUniversalRouterV2V3Adapter.contractAction(
+                    for: action, accountAddress: account.address,
+                    networkID: entry.networkID
+                  ) else {
+                throw signerError(
+                    "The semantic swap is outside its reviewed EVM adapter."
+                )
+            }
+            function = materialized.function ?? ""
+            arguments = materialized.arguments
         default:
             throw signerError("The semantic call has no reviewed EVM adapter.")
         }
@@ -2900,8 +2944,13 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 ? WalletReviewedAdapters.erc20 : nil
             budgetAssetID = tokenAsset
             spendBaseUnits = amount
-        } else if let swap = Self.reviewedUniversalRouterSwap(
-            adapterID: reviewedAdapterID, action: action,
+        } else if let swapAction = action.type == .exactInputSwap
+                    ? WalletUniversalRouterV2V3Adapter.contractAction(
+                        for: action, accountAddress: account.address,
+                        networkID: entry.networkID
+                      ) : action,
+                  let swap = Self.reviewedUniversalRouterSwap(
+            adapterID: reviewedAdapterID, action: swapAction,
             accountAddress: account.address, networkID: entry.networkID
         ) {
             effects = [
@@ -2967,6 +3016,29 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         }
     }
 
+    private func reviewedSwapRouteIsSigned(
+        _ action: WalletSemanticAction,
+        networkID: String
+    ) -> Bool {
+        guard let route = action.swapRoute, let reviewRegistry else {
+            return false
+        }
+        return route.pathAssetIDs.allSatisfy { assetID in
+            guard let identity = WalletEVMAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  identity.standard == .erc20,
+                  let asset = reviewRegistry.assets.first(where: {
+                      $0.id == assetID
+                  }),
+                  asset.chain == .evm, asset.kind == .fungibleToken,
+                  asset.trust == .curated,
+                  asset.reference?.caseInsensitiveCompare(
+                    identity.contractAddress
+                  ) == .orderedSame else { return false }
+            return reviewRegistry.containsExactAsset(asset)
+        }
+    }
+
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
         try authorizeNetwork(policy.networkID, capability: .autonomousPolicy)
         let accounts = try store.accounts()
@@ -3003,6 +3075,22 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             )
         }
         let adapterID = policy.allowedAdapterIDs.first!
+        let swapAdapterIDs: Set<String> = [
+            WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+            WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+        ]
+        if swapAdapterIDs.contains(adapterID) {
+            guard policy.allowedActionKinds == [.exactInputSwap],
+                  let maximumSlippage = policy.maximumSlippageBPS,
+                  (0...5_000).contains(maximumSlippage),
+                  let minimumOutput = policy.minimumOutputBaseUnits,
+                  SignerUnsignedInteger.normalize(minimumOutput) == minimumOutput,
+                  minimumOutput != "0" else {
+                throw signerError(
+                    "Swap policies require an exact-input action, slippage limit, and positive minimum-output floor."
+                )
+            }
+        }
         let nativeEVMPolicy = descriptor.chain == .evm
             && adapterID == WalletReviewedAdapters.ethereumNativeTransfer
             && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:60"]
@@ -3064,6 +3152,28 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             let contractMatches = transaction.contract.map {
                 policy.allowedContractIDs.contains($0.registryID)
             } ?? policy.allowedContractIDs.isEmpty
+            let swapPolicyMatches: Bool
+            if [WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+                WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn]
+                .contains(adapterID) {
+                let outputs = transaction.effects.filter {
+                    $0.kind == "minimum_receive"
+                }
+                swapPolicyMatches = transaction.action.type == .exactInputSwap
+                    && transaction.action.swapRoute.map { route in
+                        policy.maximumSlippageBPS.map {
+                            route.slippageBPS <= $0
+                        } == true
+                    } == true
+                    && policy.minimumOutputBaseUnits.map { minimum in
+                        outputs.count == 1
+                            && SignerUnsignedInteger.lessThanOrEqual(
+                                minimum, outputs[0].amountBaseUnits
+                            )
+                    } == true
+            } else {
+                swapPolicyMatches = true
+            }
             guard policy.accountID == transaction.accountID,
                   policy.networkID == transaction.networkID,
                   policy.allowedActionKinds?.contains(transaction.action.type) == true,
@@ -3074,7 +3184,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                           $0.caseInsensitiveCompare(counterparty) == .orderedSame
                       })
                   }),
-                  contractMatches,
+                  contractMatches, swapPolicyMatches,
                   SignerUnsignedInteger.lessThanOrEqual(
                       transaction.spendBaseUnits, policy.maximumTransactionBaseUnits
                   ),
@@ -3112,8 +3222,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             return values
         case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
              WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
-            guard transaction.action.arguments.count == 3,
-                  let deadline = UInt64(transaction.action.arguments[2].value),
+            guard transaction.action.type == .exactInputSwap,
+                  let deadlineText = transaction.action.swapRoute?
+                    .deadlineUnixSeconds,
+                  let deadline = UInt64(deadlineText),
                   deadline >= UInt64(max(0, Date().timeIntervalSince1970.rounded(.down))) else {
                 return nil
             }

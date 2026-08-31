@@ -203,7 +203,36 @@ actor WalletSepoliaRPCClient {
             amount = "0"
             input = encodedContract.input
             observedRuntimeCodeHash = currentCodeHash
-        case .exactInputSwap, .reviewedCall, .standardizedSignIn,
+        case .exactInputSwap:
+            guard let contract, let encodedContract,
+                  contract.networkID == request.networkID,
+                  request.action.contractID == contract.id,
+                  request.action.adapterID
+                    == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+                  WalletReviewedAdapters.validatedID(for: contract)
+                    == request.action.adapterID,
+                  Self.isAddress(contract.checksumAddress),
+                  encodedContract.input.hasPrefix("0x"),
+                  encodedContract.input.count >= 10 else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The exact-input swap is missing its reviewed router adapter."
+                )
+            }
+            let currentCodeHash = try await runtimeCodeHash(
+                address: contract.checksumAddress
+            )
+            guard currentCodeHash.caseInsensitiveCompare(
+                contract.runtimeCodeHash
+            ) == .orderedSame else {
+                throw WalletGateway.Error.policyDenied(
+                    "The swap router runtime code changed after registry approval."
+                )
+            }
+            recipient = contract.checksumAddress
+            amount = "0"
+            input = encodedContract.input
+            observedRuntimeCodeHash = currentCodeHash
+        case .reviewedCall, .standardizedSignIn,
              .reviewedTypedAuthorization:
             throw WalletGateway.Error.invalidArguments(
                 "This semantic action requires a reviewed chain adapter."
