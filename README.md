@@ -162,12 +162,13 @@ stale checkpoints and partial GraphQL results, and reconcile coin-object and
 balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
 bounded, checkpoint-stable pagination and canonical Move marker types; unknown
 Coins enter quarantine until the user or a signed review manifest trusts them.
-For future curated Coin sends, Locus now enumerates the exact owned
+For curated Coin sends, Locus enumerates the exact owned
 `Coin<T>` objects at one checkpoint, validates each object's BCS UID and raw
 balance, reconciles the object subtotal, and selects one deterministic
 sufficient object. Fragmented and accumulator-only balances remain unsendable
-until a separately reviewed merge shape exists; this milestone does not yet
-open Coin signing.
+until a separately reviewed merge shape exists. The isolated signer rebuilds
+only `SplitCoins` from that one object followed by `TransferObjects`, with one
+distinct reviewed SUI gas object; it exports no generic Move-call authority.
 Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
 owner, object ID, version, digest, type, and public-transfer evidence. They enter
 Collectibles quarantine without BCS contents, display metadata, or remote media.
@@ -189,10 +190,15 @@ consumes the intent, executes through one GraphQL provider, requires finality,
 and records transport ambiguity without automatic fallback. Testnet can use
 this exact subset; mainnet is still disabled until signed launch and adapter
 review manifests authorize it for an approved region.
+Curated `Coin<T>` sends use the same staged path. Simulation must return exactly
+the Coin sender debit, recipient credit, and separate native-SUI gas debit; the
+signer then rechecks both object references, balances, checkpoints, type, fee,
+and effects before consuming an exactly approved intent. Only Coin metadata in
+the signed review manifest can reach this mainnet adapter.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui Coin/object-transfer adapters, full
+versioned messages, Sui object/NFT-transfer adapters, full
 swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass.
 

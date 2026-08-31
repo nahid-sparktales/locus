@@ -846,6 +846,7 @@ final class WalletGateway: ObservableObject {
         var supportedChains = [
             Self.sepoliaNetworkID,
             WalletNetworkCatalog.solanaDevnet.id,
+            WalletNetworkCatalog.suiTestnet.id,
         ]
         if (try? launchGate.authorize(
             networkID: Self.ethereumMainnetNetworkID,
@@ -860,6 +861,13 @@ final class WalletGateway: ObservableObject {
             regionCode: regionCode
         )) != nil {
             supportedChains.append(Self.solanaMainnetNetworkID)
+        }
+        if (try? launchGate.authorize(
+            networkID: Self.suiMainnetNetworkID,
+            capability: .nativeTransfer,
+            regionCode: regionCode
+        )) != nil {
+            supportedChains.append(Self.suiMainnetNetworkID)
         }
         return [
             "protocol_version": Self.protocolVersion,
@@ -2654,8 +2662,14 @@ final class WalletGateway: ObservableObject {
             }
             contract = registered
         case .fungibleTokenTransfer:
-            if WalletNetworkCatalog.descriptor(id: request.networkID)?.chain == .solana {
+            let chain = WalletNetworkCatalog.descriptor(id: request.networkID)?.chain
+            if chain == .solana {
                 try validateReviewedSolanaAsset(
+                    for: request.action, networkID: request.networkID
+                )
+                contract = nil
+            } else if chain == .sui {
+                try validateReviewedSuiAsset(
                     for: request.action, networkID: request.networkID
                 )
                 contract = nil
@@ -2757,6 +2771,28 @@ final class WalletGateway: ObservableObject {
         }
     }
 
+    private func validateReviewedSuiAsset(
+        for action: WalletSemanticAction,
+        networkID: String
+    ) throws {
+        guard action.type == .fungibleTokenTransfer,
+              let assetID = action.assetID,
+              let identity = WalletSuiAssetIdentity.parse(assetID),
+              identity.networkID == networkID,
+              identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
+              let asset = assets.first(where: { $0.id == assetID }),
+              asset.networkID == networkID, asset.chain == .sui,
+              asset.kind == .fungibleToken,
+              asset.reference == identity.coinType,
+              asset.decimals.map({ (0...255).contains($0) }) == true,
+              asset.trust == .curated,
+              reviewRegistry?.containsExactAsset(asset) == true else {
+            throw Error.invalidArguments(
+                "The selected Sui Coin type is not present in the signed asset manifest."
+            )
+        }
+    }
+
     private func parsePrepareRequest(
         _ arguments: [String: Any],
         source: WalletRequestSource
@@ -2807,10 +2843,13 @@ final class WalletGateway: ObservableObject {
             action = .contractCall(contractID: contractID, function: function,
                                    arguments: typedArguments, valueBaseUnits: value)
         case .fungibleTokenTransfer:
-            guard descriptor.chain == .evm || descriptor.chain == .solana,
+            guard descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui,
                   let assetID = nonempty(actionObject["asset_id"]),
                   (descriptor.chain != .solana
                     || WalletSolanaAssetIdentity.parse(assetID)?.networkID == networkID),
+                  (descriptor.chain != .sui
+                    || WalletSuiAssetIdentity.parse(assetID)?.networkID == networkID),
                   let recipient = nonempty(actionObject["recipient"]),
                   Self.validAddress(recipient, chain: descriptor.chain),
                   let amount = WalletBaseUnits.normalize(

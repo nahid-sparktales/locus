@@ -120,7 +120,17 @@ signing adapter.
   balances must equal the checkpoint's coin-object subtotal. Selection chooses
   the smallest sufficient single object deterministically and rejects native
   SUI, fragmented holdings, accumulator-only holdings, type substitution, and
-  any implicit merge expansion. No Coin signing authority is opened yet.
+  any implicit merge expansion. The isolated signer can now rebuild exactly
+  `SplitCoins(Input(owned Coin<T>))` followed by `TransferObjects`, with a
+  distinct exact SUI gas object. Generic Move calls and caller-supplied BCS stay
+  absent.
+- Sui Coin simulation accepts exactly three terminal balance changes: sender
+  Coin debit, recipient Coin credit, and sender native-SUI gas debit. The signer
+  rechecks both object references, balances, checkpoint lineage, Coin type,
+  amount, gas formula, fee ceiling, and effects digest before consuming an
+  exactly approved intent. Mainnet additionally requires the Coin and adapter
+  in the signed review manifest and the launch capability in the signed launch
+  manifest.
 - Read-only Sui object discovery pins every page to its first checkpoint and
   requires an exact address owner, canonical object ID, UInt53 version, Base58
   digest, bounded ASCII Move type, and public-transfer flag. Coin objects are
@@ -182,8 +192,8 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui Coin and object/NFT transfers, object-effect activity, gRPC execution,
-  and localnet suites; native SUI mainnet activation remains gated;
+  Sui object/NFT transfers, object-effect activity, gRPC execution migration,
+  and localnet suites; native SUI and Coin mainnet activation remain gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

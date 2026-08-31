@@ -95,6 +95,22 @@ struct WalletSuiNativeTransferSimulation: Equatable, Sendable {
     let gas: WalletSuiGasCostSummary
 }
 
+struct WalletSuiCoinTransferSimulation: Equatable, Sendable {
+    let network: WalletSuiNetworkStatus
+    let transactionDigest: String
+    let effectsDigest: String
+    let sender: String
+    let recipient: String
+    let identity: WalletSuiAssetIdentity
+    let coinObjectID: String
+    let amountBaseUnits: String
+    let senderAssetDebitBaseUnits: String
+    let senderGasDebitBaseUnits: String
+    let recipientCreditBaseUnits: String
+    let gasObjectID: String
+    let gas: WalletSuiGasCostSummary
+}
+
 struct WalletSuiExecutionResult: Equatable, Sendable {
     let transactionDigest: String
     let effectsDigest: String
@@ -1023,6 +1039,129 @@ actor WalletSuiGraphQLClient {
         )
     }
 
+    func simulateCoinTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        identity: WalletSuiAssetIdentity,
+        coinObjectID: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String,
+        gasObjectID: String
+    ) async throws -> WalletSuiCoinTransferSimulation {
+        guard identity.networkID == network.id,
+              identity.coinType != WalletSuiAssetIdentity.nativeCoinType,
+              let transaction = Data(base64Encoded: transactionBCS),
+              !transaction.isEmpty, transaction.count <= Self.maximumRequestBytes / 2,
+              transaction.base64EncodedString() == transactionBCS,
+              WalletSolanaBase58.decode(expectedTransactionDigest, exactLength: 32) != nil,
+              Self.isCanonicalAddress(sender), Self.isCanonicalAddress(recipient),
+              sender != recipient, Self.isCanonicalAddress(coinObjectID),
+              Self.isCanonicalAddress(gasObjectID), coinObjectID != gasObjectID,
+              let amount = Self.canonicalUInt64(amountBaseUnits), amount != "0",
+              let maximumFee = Self.canonicalUInt64(maximumFeeBaseUnits),
+              maximumFee != "0" else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui Coin simulation requires canonical signer-built transaction evidence."
+            )
+        }
+        let data = try await query(
+            document: Self.nativeTransferSimulationQuery,
+            variables: ["transaction": ["bcs": ["value": transactionBCS]]]
+        )
+        let status = try parseNetworkStatus(data)
+        guard let simulation = data["simulateTransaction"] as? [String: Any],
+              let effects = simulation["effects"] as? [String: Any],
+              effects["digest"] as? String == expectedTransactionDigest,
+              let effectsDigest = effects["effectsDigest"] as? String,
+              WalletSolanaBase58.decode(effectsDigest, exactLength: 32) != nil,
+              effects["status"] as? String == "SUCCESS",
+              effects["executionError"] == nil || effects["executionError"] is NSNull,
+              let gasEffects = effects["gasEffects"] as? [String: Any],
+              let gasObject = gasEffects["gasObject"] as? [String: Any],
+              gasObject["address"] as? String == gasObjectID,
+              let summary = gasEffects["gasSummary"] as? [String: Any],
+              let computation = Self.canonicalUInt53BaseUnits(summary["computationCost"]),
+              let storage = Self.canonicalUInt53BaseUnits(summary["storageCost"]),
+              let rebate = Self.canonicalUInt53BaseUnits(summary["storageRebate"]),
+              let nonRefundable = Self.canonicalUInt53BaseUnits(
+                  summary["nonRefundableStorageFee"]
+              ),
+              let gross = WalletBaseUnits.add(computation, storage),
+              let actualFee = WalletBaseUnits.subtract(gross, rebate),
+              actualFee != "0", WalletBaseUnits.lessThanOrEqual(actualFee, maximumFee),
+              let changes = effects["balanceChanges"] as? [String: Any],
+              let nodes = changes["nodes"] as? [[String: Any]], nodes.count == 3,
+              let pageInfo = changes["pageInfo"] as? [String: Any],
+              pageInfo["hasNextPage"] as? Bool == false else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation did not return exact successful Coin-transfer effects"
+            )
+        }
+        var senderAssetDebit: String?
+        var senderGasDebit: String?
+        var recipientCredit: String?
+        for node in nodes {
+            guard let owner = node["owner"] as? [String: Any],
+                  let address = owner["address"] as? String,
+                  let coinType = node["coinType"] as? [String: Any],
+                  let representation = coinType["repr"] as? String,
+                  let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
+                throw WalletRPCError.invalidResponse(
+                    "Sui simulation returned an undecodable Coin balance change"
+                )
+            }
+            switch (address, representation, signed.hasPrefix("-")) {
+            case (sender, identity.coinType, true):
+                guard senderAssetDebit == nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation duplicated the Coin sender debit"
+                    )
+                }
+                senderAssetDebit = String(signed.dropFirst())
+            case (recipient, identity.coinType, false):
+                guard recipientCredit == nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation duplicated the Coin recipient credit"
+                    )
+                }
+                recipientCredit = signed
+            case (sender, WalletSuiAssetIdentity.nativeCoinType, true):
+                guard senderGasDebit == nil else {
+                    throw WalletRPCError.invalidResponse(
+                        "Sui simulation duplicated the gas debit"
+                    )
+                }
+                senderGasDebit = String(signed.dropFirst())
+            default:
+                throw WalletRPCError.invalidResponse(
+                    "Sui simulation returned an unexpected Coin-transfer balance change"
+                )
+            }
+        }
+        guard let senderAssetDebit, let senderGasDebit, let recipientCredit,
+              senderAssetDebit == amount, recipientCredit == amount,
+              senderGasDebit == actualFee else {
+            throw WalletRPCError.invalidResponse(
+                "Sui simulation changed the reviewed Coin amount or gas debit"
+            )
+        }
+        return WalletSuiCoinTransferSimulation(
+            network: status, transactionDigest: expectedTransactionDigest,
+            effectsDigest: effectsDigest, sender: sender, recipient: recipient,
+            identity: identity, coinObjectID: coinObjectID,
+            amountBaseUnits: amount, senderAssetDebitBaseUnits: senderAssetDebit,
+            senderGasDebitBaseUnits: senderGasDebit,
+            recipientCreditBaseUnits: recipientCredit, gasObjectID: gasObjectID,
+            gas: WalletSuiGasCostSummary(
+                computationCost: computation, storageCost: storage,
+                storageRebate: rebate, nonRefundableStorageFee: nonRefundable,
+                actualFeeBaseUnits: actualFee
+            )
+        )
+    }
+
     func executeTransaction(
         transactionBCS: String,
         signature: String,
@@ -1712,6 +1851,39 @@ actor WalletSuiProviderCoordinator {
                 expectedTransactionDigest: expectedTransactionDigest,
                 sender: sender, recipient: recipient,
                 amountBaseUnits: amountBaseUnits,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObjectID: gasObjectID
+            )
+        }
+    }
+
+    func simulateCoinTransfer(
+        transactionBCS: String,
+        expectedTransactionDigest: String,
+        sender: String,
+        recipient: String,
+        identity: WalletSuiAssetIdentity,
+        coinObjectID: String,
+        amountBaseUnits: String,
+        maximumFeeBaseUnits: String,
+        gasObjectID: String
+    ) async throws -> WalletSuiCoinTransferSimulation {
+        do {
+            return try await primary.simulateCoinTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient, identity: identity,
+                coinObjectID: coinObjectID, amountBaseUnits: amountBaseUnits,
+                maximumFeeBaseUnits: maximumFeeBaseUnits,
+                gasObjectID: gasObjectID
+            )
+        } catch {
+            guard let fallback else { throw error }
+            return try await fallback.simulateCoinTransfer(
+                transactionBCS: transactionBCS,
+                expectedTransactionDigest: expectedTransactionDigest,
+                sender: sender, recipient: recipient, identity: identity,
+                coinObjectID: coinObjectID, amountBaseUnits: amountBaseUnits,
                 maximumFeeBaseUnits: maximumFeeBaseUnits,
                 gasObjectID: gasObjectID
             )

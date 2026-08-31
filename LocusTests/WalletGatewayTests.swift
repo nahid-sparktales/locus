@@ -1675,6 +1675,67 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testGatewayPreparesOnlySignedManifestSuiCoinTransfer() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date().addingTimeInterval(-60)
+        let identity = WalletSuiAssetIdentity(
+            networkID: WalletNetworkCatalog.suiTestnet.id,
+            coinType: "0x1234::example::COIN"
+        )
+        let asset = WalletAsset(
+            canonicalID: identity.canonicalID, networkID: identity.networkID,
+            chain: .sui, kind: .fungibleToken, reference: identity.coinType,
+            name: "Reviewed Coin", symbol: "COIN", decimals: 6,
+            trust: .curated, manifestRevision: 4
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: [WalletReviewedAdapters.suiCoinTransfer]
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey
+        )
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountAddress = "0x" + String(repeating: "1", count: 64)
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.adapterID = WalletReviewedAdapters.suiCoinTransfer
+        let defaults = UserDefaults(
+            suiteName: "WalletGatewayTests.sui-coin.\(UUID().uuidString)"
+        )!
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
+            publicStore: try WalletPublicStore(path: ":memory:"),
+            reviewRegistry: registry, buildSupportsWalletAlpha: true
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let response = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": WalletNetworkCatalog.suiTestnet.id,
+                "account_id": "account-1",
+                "maximum_fee_base_units": "10000000",
+                "action": [
+                    "type": WalletActionKind.fungibleTokenTransfer.rawValue,
+                    "asset_id": identity.canonicalID,
+                    "recipient": "0x" + String(repeating: "2", count: 64),
+                    "amount_base_units": "100",
+                ],
+            ],
+            source: .human
+        )
+        XCTAssertNil(response["error"])
+        XCTAssertEqual(signer.preparedRequests.last?.action.assetID, identity.canonicalID)
+        XCTAssertNil(signer.preparedContracts.last ?? nil)
+    }
+
     func testSuiNativeTransferSimulationBindsExactEffectsAndSignerBytes() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -1765,6 +1826,102 @@ final class WalletGatewayTests: XCTestCase {
                     gasObjectID: gasObjectID
                 )
                 XCTFail("Substituted Sui simulation effects must fail closed.")
+            } catch WalletRPCError.invalidResponse {
+                // Expected.
+            }
+        }
+    }
+
+    func testSuiCoinTransferSimulationBindsSeparateAssetAndGasDebits() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let sender = "0x" + String(repeating: "1", count: 64)
+        let recipient = "0x" + String(repeating: "2", count: 64)
+        let coinObjectID = "0x" + String(repeating: "3", count: 64)
+        let gasObjectID = "0x" + String(repeating: "4", count: 64)
+        let identity = WalletSuiAssetIdentity(
+            networkID: WalletNetworkCatalog.suiMainnet.id,
+            coinType: "0x2::locus::LOCUS"
+        )
+        let digest = WalletSolanaBase58.encode(Data(repeating: 51, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 52, count: 32))
+        let transactionBCS = Data([4, 3, 2, 1]).base64EncodedString()
+        let client = makeSuiGraphQLClient(
+            network: WalletNetworkCatalog.suiMainnet, now: now
+        ) { request in
+            let body = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            XCTAssertTrue((body["query"] as? String)?.contains(
+                "balanceChanges(first: 3)"
+            ) == true)
+            return try self.suiCoinTransferSimulationResponse(
+                sender: sender, recipient: recipient,
+                coinType: identity.coinType, gasObjectID: gasObjectID,
+                transactionDigest: digest, effectsDigest: effectsDigest,
+                assetDebit: "100", recipientCredit: "100", gasDebit: "1300"
+            )
+        }
+        let result = try await client.simulateCoinTransfer(
+            transactionBCS: transactionBCS,
+            expectedTransactionDigest: digest,
+            sender: sender, recipient: recipient, identity: identity,
+            coinObjectID: coinObjectID, amountBaseUnits: "100",
+            maximumFeeBaseUnits: "10000", gasObjectID: gasObjectID
+        )
+        XCTAssertEqual(result.identity, identity)
+        XCTAssertEqual(result.coinObjectID, coinObjectID)
+        XCTAssertEqual(result.senderAssetDebitBaseUnits, "100")
+        XCTAssertEqual(result.recipientCreditBaseUnits, "100")
+        XCTAssertEqual(result.senderGasDebitBaseUnits, "1300")
+        XCTAssertEqual(result.gas.actualFeeBaseUnits, "1300")
+    }
+
+    func testSuiCoinTransferSimulationRejectsMixedOrSubstitutedEffects() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let sender = "0x" + String(repeating: "1", count: 64)
+        let recipient = "0x" + String(repeating: "2", count: 64)
+        let coinObjectID = "0x" + String(repeating: "3", count: 64)
+        let gasObjectID = "0x" + String(repeating: "4", count: 64)
+        let identity = WalletSuiAssetIdentity(
+            networkID: WalletNetworkCatalog.suiMainnet.id,
+            coinType: "0x2::locus::LOCUS"
+        )
+        let digest = WalletSolanaBase58.encode(Data(repeating: 53, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 54, count: 32))
+        let transactionBCS = Data([4, 3, 2, 1]).base64EncodedString()
+        let substitutions = [
+            ("101", "100", "1300", identity.coinType),
+            ("100", "99", "1300", identity.coinType),
+            ("100", "100", "1299", identity.coinType),
+            ("100", "100", "1300", "0x2::other::COIN"),
+        ]
+        for (assetDebit, credit, gasDebit, responseType) in substitutions {
+            let client = makeSuiGraphQLClient(
+                network: WalletNetworkCatalog.suiMainnet, now: now
+            ) { _ in
+                try self.suiCoinTransferSimulationResponse(
+                    sender: sender, recipient: recipient,
+                    coinType: responseType, gasObjectID: gasObjectID,
+                    transactionDigest: digest, effectsDigest: effectsDigest,
+                    assetDebit: assetDebit, recipientCredit: credit,
+                    gasDebit: gasDebit
+                )
+            }
+            do {
+                _ = try await client.simulateCoinTransfer(
+                    transactionBCS: transactionBCS,
+                    expectedTransactionDigest: digest,
+                    sender: sender, recipient: recipient, identity: identity,
+                    coinObjectID: coinObjectID, amountBaseUnits: "100",
+                    maximumFeeBaseUnits: "10000", gasObjectID: gasObjectID
+                )
+                XCTFail("Substituted Sui Coin effects must fail closed.")
             } catch WalletRPCError.invalidResponse {
                 // Expected.
             }
@@ -3548,6 +3705,64 @@ final class WalletGatewayTests: XCTestCase {
         ])
     }
 
+    private func suiCoinTransferSimulationResponse(
+        sender: String,
+        recipient: String,
+        coinType: String,
+        gasObjectID: String,
+        transactionDigest: String,
+        effectsDigest: String,
+        assetDebit: String,
+        recipientCredit: String,
+        gasDebit: String
+    ) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": WalletSuiChainIdentity.mainnetBase58,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": "2026-08-31T12:00:00Z",
+                    "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                ],
+                "simulateTransaction": [
+                    "effects": [
+                        "digest": transactionDigest,
+                        "effectsDigest": effectsDigest,
+                        "status": "SUCCESS",
+                        "executionError": NSNull(),
+                        "gasEffects": [
+                            "gasObject": ["address": gasObjectID],
+                            "gasSummary": [
+                                "computationCost": 1_000,
+                                "storageCost": 500,
+                                "storageRebate": 200,
+                                "nonRefundableStorageFee": 100,
+                            ],
+                        ],
+                        "balanceChanges": [
+                            "nodes": [
+                                self.suiBalanceChangeJSON(
+                                    owner: sender, coinType: coinType,
+                                    amount: "-\(assetDebit)"
+                                ),
+                                self.suiBalanceChangeJSON(
+                                    owner: recipient, coinType: coinType,
+                                    amount: recipientCredit
+                                ),
+                                self.suiBalanceChangeJSON(
+                                    owner: sender,
+                                    coinType: WalletSuiAssetIdentity.nativeCoinType,
+                                    amount: "-\(gasDebit)"
+                                ),
+                            ],
+                            "pageInfo": ["hasNextPage": false],
+                        ],
+                    ],
+                ],
+            ],
+        ])
+    }
+
     private func suiBalanceChangeJSON(
         owner: String,
         coinType: String,
@@ -4128,6 +4343,11 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(
             (gateway.capability?["supported_chains"] as? [String])?.contains(
                 WalletNetworkCatalog.solanaDevnet.id
+            ) == true
+        )
+        XCTAssertTrue(
+            (gateway.capability?["supported_chains"] as? [String])?.contains(
+                WalletNetworkCatalog.suiTestnet.id
             ) == true
         )
 

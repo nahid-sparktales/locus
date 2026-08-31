@@ -630,6 +630,10 @@ struct WalletReviewRegistry: Sendable {
             && manifest.evmContracts.contains(entry)
     }
 
+    func containsExactAsset(_ asset: WalletAsset) -> Bool {
+        manifest.assets.contains { Self.sameAssetAuthority($0, asset) }
+    }
+
     func containsAdapter(_ adapterID: String) -> Bool {
         manifest.adapterIDs.contains(adapterID)
     }
@@ -981,7 +985,7 @@ enum WalletNetworkCatalog {
         ),
         nativeAssetID: "sui:mainnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/mainnet/tx/{transaction}",
-        staticallyReviewedCapabilities: [.nativeTransfer]
+        staticallyReviewedCapabilities: [.nativeTransfer, .fungibleTokenTransfer]
     )
 
     static let suiTestnet = WalletNetworkDescriptor(
@@ -992,7 +996,7 @@ enum WalletNetworkCatalog {
         ),
         nativeAssetID: "sui:testnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/testnet/tx/{transaction}",
-        staticallyReviewedCapabilities: [.nativeTransfer]
+        staticallyReviewedCapabilities: [.nativeTransfer, .fungibleTokenTransfer]
     )
 
     static let all = [

@@ -301,6 +301,7 @@ enum WalletReviewedAdapters {
     static let solanaAssociatedTokenCreateIdempotent =
         "solana-associated-token-create-idempotent-v1"
     static let suiNativeTransfer = "sui-native-transfer-v1"
+    static let suiCoinTransfer = "sui-coin-transfer-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
@@ -310,7 +311,7 @@ enum WalletReviewedAdapters {
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
         solanaAssociatedTokenCreateIdempotent,
-        suiNativeTransfer,
+        suiNativeTransfer, suiCoinTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]
@@ -798,6 +799,12 @@ struct WalletSuiPreparationPacket: Codable, Equatable, Sendable {
     let checkpointSequence: UInt64
     let checkpointTimestamp: Date
     let sender: String
+    let assetID: String
+    let coinType: String
+    let coinObject: WalletSuiObjectReference?
+    let coinBalanceBaseUnits: String?
+    let coinCheckpointSequence: UInt64?
+    let coinCheckpointTimestamp: Date?
     let gasObject: WalletSuiObjectReference
     let gasBalanceBaseUnits: String
     let gasBudgetBaseUnits: String
@@ -824,8 +831,12 @@ struct WalletSuiSimulationPacket: Codable, Equatable, Sendable {
     let effectsDigest: String
     let sender: String
     let recipient: String
+    let assetID: String
+    let coinType: String
+    let coinObjectID: String?
     let amountBaseUnits: String
     let senderDebitBaseUnits: String
+    let senderGasDebitBaseUnits: String?
     let recipientCreditBaseUnits: String
     let gasObjectID: String
     let computationCost: String
@@ -838,6 +849,10 @@ struct WalletSuiSimulationPacket: Codable, Equatable, Sendable {
 
 struct WalletSuiRecheckPacket: Codable, Equatable, Sendable {
     let simulation: WalletSuiSimulationPacket
+    let coinObject: WalletSuiObjectReference?
+    let coinBalanceBaseUnits: String?
+    let coinCheckpointSequence: UInt64?
+    let coinCheckpointTimestamp: Date?
     let gasObject: WalletSuiObjectReference
     let gasBalanceBaseUnits: String
     let gasCheckpointSequence: UInt64
