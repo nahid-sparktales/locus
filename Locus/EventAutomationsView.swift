@@ -219,7 +219,7 @@ private struct EventTriggerRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus(.card))
             HStack(spacing: 7) {
                 Button("Edit", action: onEdit)
                 Button(trigger.enabled ? "Pause" : "Resume", action: onToggle)

@@ -5,8 +5,8 @@ from fastapi import APIRouter
 from . import (
     chat_transport,
     continuity,
-    event_triggers,
     evaluations,
+    event_triggers,
     extensions,
     knowledge,
     providers,

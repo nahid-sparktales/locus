@@ -21,8 +21,8 @@ from typing import Any
 
 from . import paths
 from .event_triggers import (
-    EventTriggerValidationError,
     MAX_PENDING_PER_TRIGGER,
+    EventTriggerValidationError,
     matches_trigger,
     normalize_connection,
     normalize_event,

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
-from ..runstore import RunStoreError, TERMINAL_STATES
+from ..runstore import TERMINAL_STATES, RunStoreError
 from ..sessions import SessionMeta, SessionStore
 from .dependencies import get_service
 
