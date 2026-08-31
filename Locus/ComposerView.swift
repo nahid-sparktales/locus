@@ -1394,7 +1394,7 @@ private struct ComposerTeamPickerPopover: View {
             guard let account = model.providerAccounts.first(where: { $0.id == accountID }) else {
                 return "A hosted provider used by this team is unavailable."
             }
-            if !account.hasKey {
+            if !account.isCredentialReady {
                 return "Reconnect \(account.displayName) before using this team."
             }
         }

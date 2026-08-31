@@ -104,7 +104,7 @@ extension AppModel {
                 ]
             case .providerAccount(let accountID):
                 guard let account = providerAccounts.first(where: { $0.id == accountID }),
-                      account.hasKey
+                      account.isCredentialReady
                 else { return nil }
                 if account.kind == .chatGPT {
                     route = [

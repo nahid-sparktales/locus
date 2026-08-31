@@ -82,7 +82,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         // Moonshot documents no prefix for these; guessing one would contradict
         // what the user is about to paste.
         case .kimiCode: "Kimi Code Console key"
-        case .custom: "API key"
+        case .custom: "API key (optional)"
         }
     }
 
@@ -97,6 +97,13 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     }
 
     var requiresAPIKey: Bool { self != .chatGPT }
+
+    /// Whether the account works with no key at all. Local OpenAI-compatible
+    /// servers (llama.cpp, LM Studio, vLLM, Ollama) usually run without
+    /// authentication; demanding a key forced people to invent one, which the
+    /// HTTPS rule then rejected on plain-HTTP LAN endpoints — leaving no way
+    /// to add the server at all.
+    var allowsEmptyAPIKey: Bool { self == .custom }
 
     var usesManagedChatGPTAuthentication: Bool { self == .chatGPT }
 
@@ -468,6 +475,13 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
         kind.usesManagedChatGPTAuthentication
             || CredentialStore.has(account: credentialAccount)
     }
+
+    /// Whether the account has the credential it needs to take traffic:
+    /// managed ChatGPT auth, a stored key, or a kind that works without one.
+    /// Gates that decide "can this account be used" belong on this, not on
+    /// `hasKey` — that stays the literal fact that a credential is stored,
+    /// which display code (Key saved / No API key) still wants.
+    var isCredentialReady: Bool { hasKey || kind.allowsEmptyAPIKey }
 
     /// The window to budget this account against: what the user set, else
     /// the provider's published figure for the selected model, else none.

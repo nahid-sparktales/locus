@@ -156,6 +156,65 @@ def resolve_auth_style(style: str, base_url: str) -> str:
     return AUTH_BEARER
 
 
+#: Address space that cannot be on the public internet: loopback, RFC1918,
+#: and link-local. Only these earn the plain-HTTP scheme guess below.
+_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(block)
+    for block in (
+        "10.0.0.0/8",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
+)
+
+
+def _default_scheme(schemeless_input: str) -> str:
+    """The scheme to assume when someone types a bare ``host:port``.
+
+    ``https`` is the only safe guess for a name on the public internet, but
+    for localhost, mDNS names, and private-network IP literals it is almost
+    always wrong: local OpenAI-compatible servers (llama.cpp, LM Studio,
+    vLLM, Ollama) speak plain HTTP, and TLS certificates are rarely issued
+    for bare IPs. Guessing ``https`` there turns ``ip:port/v1`` into an
+    opaque TLS failure that never says the URL was rewritten. Public
+    addresses keep the ``https`` default. Mirrors the app's
+    ``RemoteEndpointTester.defaultScheme`` — the endpoint is saved as typed,
+    so the two guesses must never disagree.
+    """
+    # The two parsers only agree on a plain-ASCII, percent-free authority.
+    # Swift's URL.host percent-decodes and applies IDNA/UTS-46 mapping — so
+    # "192%2E168%2E1%2E50" and a CJK IME's full-width "192。168。1。50" both
+    # become a dotted quad there while urlsplit leaves them alone. Refuse to
+    # guess rather than let the app and the agent build different URLs from
+    # the same string.
+    authority = schemeless_input.split("/", 1)[0]
+    if "%" in authority or not authority.isascii():
+        return "https"
+    try:
+        host = (urlsplit("http://" + schemeless_input).hostname or "").lower()
+    except ValueError:
+        host = ""
+    if not host:
+        return "https"
+    if host == "localhost" or host.endswith((".localhost", ".local")):
+        return "http"
+    if ":" in host:
+        # A bracketed IPv6 literal, and a local server is the only plausible
+        # reason to type one.
+        return "http"
+    try:
+        # Strict by design (CVE-2021-29921 hardening): "192.168.001.050" is a
+        # hostname here on both sides, never an address.
+        address = ipaddress.IPv4Address(host)
+    except ValueError:
+        return "https"
+    if any(address in network for network in _PRIVATE_IPV4_NETWORKS):
+        return "http"
+    return "https"
+
+
 def normalize_base_url(url: str) -> str:
     """Return a base URL ending in a single ``/v1``.
 
@@ -167,7 +226,7 @@ def normalize_base_url(url: str) -> str:
     if not base:
         return ""
     if "://" not in base:
-        base = "https://" + base
+        base = _default_scheme(base) + "://" + base
     for suffix in ("/chat/completions", "/completions", "/messages"):
         if base.endswith(suffix):
             base = base[: -len(suffix)]
@@ -266,6 +325,12 @@ class RemoteClient:
         if self.api_key:
             body = body.replace(self.api_key, "[redacted]")
         if status in (401, 403):
+            # "Rejected the key" would be a riddle when none was sent.
+            if not self.api_key:
+                return OllamaError(
+                    f"the endpoint requires an API key ({status}). "
+                    f"Add one to this account in Settings. {body}".strip()
+                )
             return OllamaError(
                 f"the endpoint rejected the API key ({status}). "
                 f"Check the key and that it has access to this model. {body}".strip()

@@ -38,19 +38,39 @@ struct AccountEditorView: View {
 
     private var kind: ProviderKind { account.kind }
 
-    private var canSave: Bool {
-        if kind == .chatGPT { return true }
-        // A key is required to reach a provider; an endpoint that has one
-        // saved already does not need it typed again.
-        let hasKey = keyStored || !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectiveKey = key.isEmpty && keyStored ? "saved-key" : key
-        return hasKey
-            && !resolvedBaseURL.isEmpty
-            && RemoteEndpointTester.securityError(
-                baseURL: resolvedBaseURL,
-                apiKey: effectiveKey
-            ) == nil
+    private var canSave: Bool { saveBlocker == nil }
+
+    /// Why Save is refused right now, or nil when it isn't. Rendered beside
+    /// the button: a control that goes dead without saying why is how "Locus
+    /// wouldn't accept my server" reports happen.
+    private var saveBlocker: String? {
+        Self.blocker(
+            kind: kind,
+            resolvedBaseURL: resolvedBaseURL,
+            keyStored: keyStored,
+            typedKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    static func blocker(
+        kind: ProviderKind,
+        resolvedBaseURL: String,
+        keyStored: Bool,
+        typedKey: String
+    ) -> String? {
+        if kind == .chatGPT { return nil }
+        if resolvedBaseURL.isEmpty { return "Enter the endpoint URL." }
+        // A key is required to reach a hosted provider — an endpoint that has
+        // one saved already does not need it typed again — but a custom
+        // endpoint may genuinely have none, like a local llama.cpp server.
+        if !keyStored, typedKey.isEmpty, !kind.allowsEmptyAPIKey {
+            return "Add the \(kind.marketingName) key to save this account."
+        }
+        let effectiveKey = typedKey.isEmpty && keyStored ? "saved-key" : typedKey
+        return RemoteEndpointTester.securityError(
+            baseURL: resolvedBaseURL,
+            apiKey: effectiveKey
+        )
     }
 
     private var resolvedBaseURL: String {
@@ -188,7 +208,14 @@ struct AccountEditorView: View {
             }
             .formStyle(.grouped)
 
-            HStack {
+            HStack(spacing: 12) {
+                if let saveBlocker {
+                    Text(saveBlocker)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("accountEditor.saveBlocker")
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .accessibilityIdentifier("accountEditor.cancel")
@@ -474,16 +501,12 @@ struct AccountEditorView: View {
             }
             return
         }
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectiveKey = trimmedKey.isEmpty && keyStored ? "saved-key" : trimmedKey
-        if let error = RemoteEndpointTester.securityError(
-            baseURL: resolvedBaseURL,
-            apiKey: effectiveKey
-        ) {
-            testResult = error
+        if let saveBlocker {
+            testResult = saveBlocker
             testFailed = true
             return
         }
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         var updated = account
         updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.baseURLOverride = kind.allowsBaseURLOverride

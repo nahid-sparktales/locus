@@ -64,7 +64,7 @@ enum RemoteEndpointTester {
         var base = url.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         guard !base.isEmpty else { return "" }
-        if !base.contains("://") { base = "https://" + base }
+        if !base.contains("://") { base = defaultScheme(for: base) + "://" + base }
         for suffix in ["/chat/completions", "/completions", "/messages"]
         where base.hasSuffix(suffix) {
             base.removeLast(suffix.count)
@@ -73,6 +73,69 @@ enum RemoteEndpointTester {
         while base.hasSuffix("/") { base.removeLast() }
         if !base.hasSuffix("/v1") { base += "/v1" }
         return base
+    }
+
+    /// The scheme to assume when someone types a bare `host:port`.
+    ///
+    /// `https` is the only safe guess for a name on the public internet, but
+    /// for localhost, mDNS names, and private-network IP literals it is almost
+    /// always wrong: local OpenAI-compatible servers (llama.cpp, LM Studio,
+    /// vLLM, Ollama) speak plain HTTP, and TLS certificates are rarely issued
+    /// for bare IPs. Guessing `https` there turns `ip:port/v1` into an opaque
+    /// SSL failure that never says the URL was rewritten. Public addresses
+    /// keep the `https` default: only hosts that cannot be on the public
+    /// internet earn the `http` guess. Mirrors the backend's
+    /// `_default_scheme` — the saved endpoint travels to the agent as typed,
+    /// so the two guesses must never disagree.
+    private static func defaultScheme(for schemelessInput: String) -> String {
+        // The two parsers only agree on a plain-ASCII, percent-free
+        // authority. `URL.host` percent-decodes and applies IDNA/UTS-46
+        // mapping — so "192%2E168%2E1%2E50" and a CJK IME's full-width
+        // "192。168。1。50" both become a dotted quad here while Python's
+        // urlsplit leaves them alone. Refuse to guess rather than let the
+        // app and the agent build different URLs from the same string.
+        //
+        // Taken by scalar, not by Character: `"/" + U+0301` is a single
+        // grapheme cluster, so a Character-wise scan would run past the slash
+        // and test a different string than Python's `split("/", 1)`.
+        let authority = schemelessInput.unicodeScalars.prefix { $0 != "/" }
+        guard authority.allSatisfy({ $0.isASCII }),
+              !authority.contains("%"),
+              let host = URL(string: "http://" + schemelessInput)?.host?.lowercased(),
+              !host.isEmpty
+        else { return "https" }
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return "http"
+        }
+        // A colon can only reach a percent-free host inside a bracketed IPv6
+        // literal, and a local server is the only plausible reason to type one.
+        if host.contains(":") { return "http" }
+        guard let octets = strictIPv4Octets(host) else { return "https" }
+        let isPrivate = octets[0] == 10
+            || octets[0] == 127
+            || (octets[0] == 169 && octets[1] == 254)
+            || (octets[0] == 172 && (16...31).contains(octets[1]))
+            || (octets[0] == 192 && octets[1] == 168)
+        return isPrivate ? "http" : "https"
+    }
+
+    /// The octets of a canonical dotted-quad IPv4 literal, or nil. Strict on
+    /// purpose, to match Python's `ipaddress` (CVE-2021-29921 hardening): four
+    /// parts, ASCII digits only, no signs, no leading zeros — so
+    /// "192.168.001.050" is a hostname here on both sides, never an address.
+    private static func strictIPv4Octets(_ host: String) -> [UInt8]? {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        var octets: [UInt8] = []
+        for part in parts {
+            guard !part.isEmpty,
+                  part.allSatisfy({ ("0"..."9").contains($0) }),
+                  part == "0" || !part.hasPrefix("0"),
+                  let value = UInt8(part)
+            else { return nil }
+            octets.append(value)
+        }
+        return octets
     }
 
     static func securityError(baseURL: String, apiKey: String) -> String? {
@@ -217,7 +280,10 @@ enum RemoteEndpointTester {
             body = body.replacingOccurrences(of: apiKey, with: "[redacted]")
         }
         let hint = switch status {
-        case 401, 403: "The endpoint rejected the API key"
+        // "Rejected the key" would be a riddle when none was sent.
+        case 401, 403: apiKey.isEmpty
+            ? "The endpoint requires an API key"
+            : "The endpoint rejected the API key"
         case 400: "The endpoint rejected the request (400)"
         case 404: "Nothing answered at that path"
         case 429: "The endpoint is rate-limiting requests (429)"

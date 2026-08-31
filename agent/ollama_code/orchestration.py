@@ -2833,7 +2833,15 @@ def _validate_route(route: dict[str, Any], name: str) -> None:
     if provider != "remote" or not str(route.get("base_url") or ""):
         raise OrchestrationError(f"provider route for {name} is unavailable")
     if not str(route.get("api_key") or ""):
-        raise OrchestrationError(f"provider credentials for {name} are missing")
+        # A custom endpoint may legitimately have none — a local llama.cpp or
+        # LM Studio server usually runs unauthenticated — and the app lets
+        # such an account be saved and selected, so refusing it here would
+        # fail the team run instead of the pre-flight check. Every other kind
+        # reaching this point is a hosted provider whose empty key really is a
+        # missing credential; an older app that sends no account_kind keeps
+        # the strict rule.
+        if str(route.get("account_kind") or "").lower() != "custom":
+            raise OrchestrationError(f"provider credentials for {name} are missing")
 
 
 def _openai_responses_eligible(profile: AgentProfile) -> bool:
