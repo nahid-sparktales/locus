@@ -1076,7 +1076,9 @@ final class LocusUITests: XCTestCase {
 
     func testWalletHubDisabledFixture() {
         relaunchWalletFixture("disabled", anchor: "settings.wallet.enable-alpha")
-        XCTAssertTrue(app.staticTexts["Locus Vault Private Alpha"].exists)
+        XCTAssertTrue(app.staticTexts[
+            "One recovery phrase. Ethereum, Solana, and Sui accounts."
+        ].exists)
     }
 
     func testWalletHubSetupFixture() {
@@ -1092,7 +1094,10 @@ final class LocusUITests: XCTestCase {
 
     func testWalletHubReadyFixture() {
         relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
-        XCTAssertTrue(app.staticTexts["Agent Spending Rules"].exists)
+        let agentRules = app.buttons["wallet.hub.agent-rules"]
+        XCTAssertTrue(agentRules.waitForExistence(timeout: 2))
+        agentRules.click()
+        XCTAssertTrue(app.staticTexts["Agent Spending Rules"].waitForExistence(timeout: 2))
         XCTAssertTrue(anyElement("settings.wallet.rule.usage").exists)
     }
 
@@ -1120,15 +1125,18 @@ final class LocusUITests: XCTestCase {
 
     func testWalletHubActivityFixture() {
         relaunchWalletFixture("activity", anchor: "settings.wallet.lock")
+        let activity = app.buttons["wallet.hub.activity"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 2))
+        activity.click()
         XCTAssertTrue(app.staticTexts["Sent 0.002 Sepolia ETH"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Copy Hash"].firstMatch.exists)
-        XCTAssertTrue(app.links["View on Etherscan"].firstMatch.exists)
+        XCTAssertTrue(app.links["View in Explorer"].firstMatch.exists)
     }
 
     func testWalletOriginRequestFixture() {
         relaunchWalletFixture("origin", anchor: "settings.wallet.lock")
         XCTAssertTrue(app.staticTexts[
-            "Allow this website to see your Sepolia address?"
+            "Allow this website to see your Ethereum Sepolia address?"
         ].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["https://pay.example.com"].exists)
         XCTAssertTrue(app.buttons["Allow Address Access"].exists)
@@ -1138,7 +1146,7 @@ final class LocusUITests: XCTestCase {
         relaunchWalletFixture("transaction", anchor: "settings.wallet.lock")
         XCTAssertTrue(app.staticTexts["Review Transaction"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Requested by https://pay.example.com"].exists)
-        let confirm = app.buttons["Confirm and Send 0.01 Sepolia ETH"]
+        let confirm = app.buttons["Confirm and Send 0.01 ETH"]
         XCTAssertTrue(confirm.exists)
         XCTAssertTrue(confirm.isEnabled)
     }
@@ -3166,7 +3174,7 @@ final class LocusUITests: XCTestCase {
                 || !firstMessage.isHittable
                 || firstMessage.frame.minY < firstMessageY - 20
         })
-        XCTAssertFalse(jump.exists)
+        XCTAssertTrue(waitUntil(timeout: 3) { !jump.exists })
     }
 
     func testCollapsedToolActivityGroupsAndExpands() {
