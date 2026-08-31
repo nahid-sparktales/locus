@@ -20,11 +20,13 @@ expected="$(/usr/bin/printf '%s\n' \
     locus_wallet_prepare_evm_transaction_json \
     locus_wallet_prepare_solana_native_transfer_json \
     locus_wallet_prepare_solana_spl_transfer_json \
+    locus_wallet_prepare_sui_coin_transfer_json \
     locus_wallet_prepare_sui_native_transfer_json \
     locus_wallet_restore_vault_json \
     locus_wallet_sign_evm_transaction_json \
     locus_wallet_sign_solana_native_transfer_json \
     locus_wallet_sign_solana_spl_transfer_json \
+    locus_wallet_sign_sui_coin_transfer_json \
     locus_wallet_sign_sui_native_transfer_json \
     locus_wallet_string_free)"
 

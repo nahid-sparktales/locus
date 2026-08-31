@@ -151,6 +151,28 @@ struct SuiNativeTransferRequest {
     expiration_epoch: u64,
 }
 
+#[derive(Clone, Deserialize)]
+struct SuiCoinTransferRequest {
+    chain_identifier: String,
+    sender: String,
+    recipient: String,
+    coin_type: String,
+    coin_object_id: String,
+    coin_object_version: u64,
+    coin_object_digest: String,
+    coin_balance_base_units: String,
+    gas_object_id: String,
+    gas_object_version: u64,
+    gas_object_digest: String,
+    gas_balance_base_units: String,
+    amount_base_units: String,
+    reference_gas_price_base_units: String,
+    gas_price_base_units: String,
+    gas_budget_base_units: String,
+    current_epoch: u64,
+    expiration_epoch: u64,
+}
+
 #[derive(Serialize)]
 struct PreparedSuiTransaction {
     from: String,
@@ -374,6 +396,56 @@ fn parse_canonical_u64(value: &str, error: &'static str) -> Result<u64, &'static
     Ok(parsed)
 }
 
+fn validate_sui_chain_identifier(value: &str) -> Result<(), &'static str> {
+    const SUI_MAINNET_CHAIN_ID: &str = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S";
+    const SUI_TESTNET_CHAIN_ID: &str = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD";
+    if value != SUI_MAINNET_CHAIN_ID && value != SUI_TESTNET_CHAIN_ID {
+        return Err("unsupported Sui chain identifier");
+    }
+    parse_canonical_sui_digest(value)?;
+    Ok(())
+}
+
+fn validate_move_identifier(value: &str) -> Result<(), &'static str> {
+    let mut bytes = value.bytes();
+    let first = bytes.next().ok_or("invalid Sui coin type")?;
+    if !(first.is_ascii_alphabetic() || first == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err("invalid Sui coin type");
+    }
+    Ok(())
+}
+
+fn validate_canonical_sui_coin_type(value: &str) -> Result<(), &'static str> {
+    if value.is_empty() || value.len() > 512 || !value.is_ascii() {
+        return Err("invalid Sui coin type");
+    }
+    let mut components = value.split("::");
+    let address = components.next().ok_or("invalid Sui coin type")?;
+    let module = components.next().ok_or("invalid Sui coin type")?;
+    let name = components.next().ok_or("invalid Sui coin type")?;
+    if components.next().is_some() || !address.starts_with("0x") {
+        return Err("invalid Sui coin type");
+    }
+    let address_hex = &address[2..];
+    if address_hex.is_empty()
+        || address_hex.len() > 64
+        || (address_hex.len() > 1 && address_hex.starts_with('0'))
+        || !address_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("invalid Sui coin type");
+    }
+    validate_move_identifier(module)?;
+    validate_move_identifier(name)?;
+    if value == "0x2::sui::SUI" {
+        return Err("native SUI is not accepted by the coin transfer boundary");
+    }
+    Ok(())
+}
+
 fn parse_sui_native_request(
     value: *const c_char,
 ) -> Result<SuiNativeTransferRequest, &'static str> {
@@ -388,18 +460,23 @@ fn parse_sui_native_request(
     serde_json::from_slice(json).map_err(|_| "invalid Sui transaction JSON")
 }
 
+fn parse_sui_coin_request(value: *const c_char) -> Result<SuiCoinTransferRequest, &'static str> {
+    if value.is_null() {
+        return Err("missing Sui coin transaction");
+    }
+    // SAFETY: Callers provide a live NUL-terminated CString for this call.
+    let json = unsafe { CStr::from_ptr(value) }.to_bytes();
+    if json.len() > 16 * 1024 {
+        return Err("Sui coin transaction is too large");
+    }
+    serde_json::from_slice(json).map_err(|_| "invalid Sui coin transaction JSON")
+}
+
 fn build_sui_native_transaction(
     request: &SuiNativeTransferRequest,
     signing_key: &Ed25519PrivateKey,
 ) -> Result<SuiTransaction, &'static str> {
-    const SUI_MAINNET_CHAIN_ID: &str = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S";
-    const SUI_TESTNET_CHAIN_ID: &str = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD";
-    if request.chain_identifier != SUI_MAINNET_CHAIN_ID
-        && request.chain_identifier != SUI_TESTNET_CHAIN_ID
-    {
-        return Err("unsupported Sui chain identifier");
-    }
-    parse_canonical_sui_digest(&request.chain_identifier)?;
+    validate_sui_chain_identifier(&request.chain_identifier)?;
 
     let sender = parse_canonical_sui_address(&request.sender)?;
     let expected_sender = signing_key.public_key().derive_address();
@@ -488,8 +565,118 @@ fn build_sui_native_transaction(
     })
 }
 
+fn build_sui_coin_transaction(
+    request: &SuiCoinTransferRequest,
+    signing_key: &Ed25519PrivateKey,
+) -> Result<SuiTransaction, &'static str> {
+    validate_sui_chain_identifier(&request.chain_identifier)?;
+    validate_canonical_sui_coin_type(&request.coin_type)?;
+
+    let sender = parse_canonical_sui_address(&request.sender)?;
+    let expected_sender = signing_key.public_key().derive_address();
+    let recipient = parse_canonical_sui_address(&request.recipient)?;
+    let coin_object_id = parse_canonical_sui_address(&request.coin_object_id)?;
+    let coin_object_digest = parse_canonical_sui_digest(&request.coin_object_digest)?;
+    let gas_object_id = parse_canonical_sui_address(&request.gas_object_id)?;
+    let gas_object_digest = parse_canonical_sui_digest(&request.gas_object_digest)?;
+    if sender != expected_sender
+        || recipient == sender
+        || recipient == SuiAddress::ZERO
+        || coin_object_id == SuiAddress::ZERO
+        || gas_object_id == SuiAddress::ZERO
+        || coin_object_id == gas_object_id
+        || coin_object_id == sender
+        || coin_object_id == recipient
+        || gas_object_id == sender
+        || gas_object_id == recipient
+    {
+        return Err("Sui account and object roles do not match the reviewed coin transfer");
+    }
+    if request.coin_object_version == 0 || request.gas_object_version == 0 {
+        return Err("Sui object versions must be positive");
+    }
+
+    let coin_balance = parse_canonical_u64(
+        &request.coin_balance_base_units,
+        "invalid Sui coin object balance",
+    )?;
+    let gas_balance = parse_canonical_u64(
+        &request.gas_balance_base_units,
+        "invalid Sui gas coin balance",
+    )?;
+    let amount = parse_canonical_u64(
+        &request.amount_base_units,
+        "invalid Sui coin transfer amount",
+    )?;
+    let reference_gas_price = parse_canonical_u64(
+        &request.reference_gas_price_base_units,
+        "invalid Sui reference gas price",
+    )?;
+    let gas_price = parse_canonical_u64(
+        &request.gas_price_base_units,
+        "invalid Sui gas price",
+    )?;
+    let gas_budget = parse_canonical_u64(
+        &request.gas_budget_base_units,
+        "invalid Sui gas budget",
+    )?;
+    if amount == 0 || reference_gas_price == 0 || gas_budget == 0 {
+        return Err("Sui amount, reference gas price, and gas budget must be positive");
+    }
+    if amount > coin_balance {
+        return Err("Sui coin object cannot cover the transfer amount");
+    }
+    if gas_budget > gas_balance {
+        return Err("Sui gas coin cannot cover the maximum gas budget");
+    }
+    if gas_price != reference_gas_price {
+        return Err("Sui gas price does not match reviewed reference gas price");
+    }
+    if request.expiration_epoch != request.current_epoch {
+        return Err("Sui transaction must expire at the reviewed current epoch");
+    }
+
+    let coin_object = SuiObjectReference::new(
+        coin_object_id,
+        request.coin_object_version,
+        coin_object_digest,
+    );
+    let gas_object = SuiObjectReference::new(
+        gas_object_id,
+        request.gas_object_version,
+        gas_object_digest,
+    );
+    Ok(SuiTransaction {
+        kind: SuiTransactionKind::ProgrammableTransaction(SuiProgrammableTransaction {
+            inputs: vec![
+                sui_sdk_types::Input::ImmutableOrOwned(coin_object),
+                sui_sdk_types::Input::Pure(amount.to_le_bytes().to_vec()),
+                sui_sdk_types::Input::Pure(recipient.as_bytes().to_vec()),
+            ],
+            commands: vec![
+                SuiCommand::SplitCoins(SuiSplitCoins {
+                    coin: SuiArgument::Input(0),
+                    amounts: vec![SuiArgument::Input(1)],
+                }),
+                SuiCommand::TransferObjects(SuiTransferObjects {
+                    objects: vec![SuiArgument::NestedResult(0, 0)],
+                    address: SuiArgument::Input(2),
+                }),
+            ],
+        }),
+        sender,
+        gas_payment: SuiGasPayment {
+            objects: vec![gas_object],
+            owner: sender,
+            price: gas_price,
+            budget: gas_budget,
+        },
+        expiration: SuiTransactionExpiration::Epoch(request.expiration_epoch),
+    })
+}
+
 fn prepare_sui_transaction_response(
-    request: &SuiNativeTransferRequest,
+    chain_identifier: &str,
     transaction: &SuiTransaction,
 ) -> Result<PreparedSuiTransaction, &'static str> {
     let transaction_bcs = transaction
@@ -497,7 +684,7 @@ fn prepare_sui_transaction_response(
         .map_err(|_| "Sui transaction serialization failed")?;
     Ok(PreparedSuiTransaction {
         from: transaction.sender.to_string(),
-        chain_identifier: request.chain_identifier.clone(),
+        chain_identifier: chain_identifier.to_owned(),
         transaction_digest: transaction.digest().to_string(),
         signing_digest: format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
         transaction_bcs: base64::engine::general_purpose::STANDARD.encode(transaction_bcs),
@@ -1068,7 +1255,7 @@ pub extern "C" fn locus_wallet_prepare_sui_native_transfer_json(
         let signing_key = sui_signing_key(&mnemonic);
         let request = parse_sui_native_request(transaction_json)?;
         let transaction = build_sui_native_transaction(&request, &signing_key)?;
-        prepare_sui_transaction_response(&request, &transaction)
+        prepare_sui_transaction_response(&request.chain_identifier, &transaction)
     })();
     entropy.zeroize();
     match result {
@@ -1094,7 +1281,69 @@ pub extern "C" fn locus_wallet_sign_sui_native_transfer_json(
         let signing_key = sui_signing_key(&mnemonic);
         let request = parse_sui_native_request(transaction_json)?;
         let transaction = build_sui_native_transaction(&request, &signing_key)?;
-        let prepared = prepare_sui_transaction_response(&request, &transaction)?;
+        let prepared = prepare_sui_transaction_response(&request.chain_identifier, &transaction)?;
+        let signature = signing_key
+            .sign_transaction(&transaction)
+            .map_err(|_| "Sui transaction signing failed")?;
+        Ok::<_, &'static str>(SignedSuiTransaction {
+            from: prepared.from,
+            chain_identifier: prepared.chain_identifier,
+            transaction_digest: prepared.transaction_digest,
+            signing_digest: prepared.signing_digest,
+            transaction_bcs: prepared.transaction_bcs,
+            signature: signature.to_base64(),
+        })
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Independently rebuild one reviewed single-object `Coin<T>` transfer. The
+/// accepted programmable transaction uses exactly one owned coin object and a
+/// distinct SUI gas object. Generic type nesting, Move calls, merge commands,
+/// extra objects, and caller-supplied BCS are absent from this boundary.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_prepare_sui_coin_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = sui_signing_key(&mnemonic);
+        let request = parse_sui_coin_request(transaction_json)?;
+        let transaction = build_sui_coin_transaction(&request, &signing_key)?;
+        prepare_sui_transaction_response(&request.chain_identifier, &transaction)
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
+/// Rebuild and sign only the reviewed single-object `Coin<T>` transfer shape.
+#[unsafe(no_mangle)]
+pub extern "C" fn locus_wallet_sign_sui_coin_transfer_json(
+    entropy_hex: *const c_char,
+    transaction_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        let signing_key = sui_signing_key(&mnemonic);
+        let request = parse_sui_coin_request(transaction_json)?;
+        let transaction = build_sui_coin_transaction(&request, &signing_key)?;
+        let prepared = prepare_sui_transaction_response(&request.chain_identifier, &transaction)?;
         let signature = signing_key
             .sign_transaction(&transaction)
             .map_err(|_| "Sui transaction signing failed")?;
@@ -1297,6 +1546,29 @@ mod tests {
         })
     }
 
+    fn reviewed_sui_coin_request() -> serde_json::Value {
+        serde_json::json!({
+            "chain_identifier": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S",
+            "sender": "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c",
+            "recipient": SuiAddress::new([7_u8; 32]).to_string(),
+            "coin_type": "0x2::locus::LOCUS",
+            "coin_object_id": SuiAddress::new([10_u8; 32]).to_string(),
+            "coin_object_version": 17,
+            "coin_object_digest": SuiDigest::new([11_u8; 32]).to_string(),
+            "coin_balance_base_units": "900000000",
+            "gas_object_id": SuiAddress::new([8_u8; 32]).to_string(),
+            "gas_object_version": 42,
+            "gas_object_digest": SuiDigest::new([9_u8; 32]).to_string(),
+            "gas_balance_base_units": "5000000000",
+            "amount_base_units": "123456789",
+            "reference_gas_price_base_units": "1000",
+            "gas_price_base_units": "1000",
+            "gas_budget_base_units": "10000000",
+            "current_epoch": 412,
+            "expiration_epoch": 412
+        })
+    }
+
     #[test]
     fn sui_native_transfer_is_rebuilt_and_signed_deterministically() {
         use sui_crypto::SuiVerifier;
@@ -1426,6 +1698,165 @@ mod tests {
                     .as_str()
                     .is_some(),
                 "unsafe Sui request was accepted: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn sui_coin_transfer_is_rebuilt_and_signed_deterministically() {
+        use sui_crypto::SuiVerifier;
+        use sui_crypto::ed25519::Ed25519VerifyingKey;
+        use sui_sdk_types::UserSignature;
+        use sui_sdk_types::bcs::FromBcs;
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(reviewed_sui_coin_request().to_string()).unwrap();
+        let prepared_pointer =
+            locus_wallet_prepare_sui_coin_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let prepared_json = unsafe { CStr::from_ptr(prepared_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(prepared_pointer) };
+        let prepared: serde_json::Value = serde_json::from_str(&prepared_json).unwrap();
+        assert_eq!(
+            prepared["from"],
+            "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
+        );
+        assert_eq!(
+            prepared["chain_identifier"],
+            "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+        );
+        assert_eq!(
+            prepared["transaction_digest"],
+            "CcTp7QwnrdbnxEiNsbtU5uLFKmvMkGeHvgSYJ1a9SYE6"
+        );
+        assert_eq!(
+            prepared["signing_digest"],
+            "blake2b256:c86f92b477fdc7b3ba2be0b0035b71fddbb1fb0417c53621566184777e18e208"
+        );
+        assert_eq!(
+            prepared["transaction_bcs"],
+            "AAADAQAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKChEAAAAAAAAAIAsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLAAgVzVsHAAAAAAAgBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcCAgEAAAEBAQABAQMAAAAAAQIA+WfiHBakdX2q/sE+55wNxcUykZm+XXDIb9B7jnXbiSwBCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgqAAAAAAAAACAJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCfln4hwWpHV9qv7BPuecDcXFMpGZvl1wyG/Qe45124ks6AMAAAAAAACAlpgAAAAAAAGcAQAAAAAAAA=="
+        );
+
+        let signed_pointer =
+            locus_wallet_sign_sui_coin_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let signed_json = unsafe { CStr::from_ptr(signed_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(signed_pointer) };
+        let signed: serde_json::Value = serde_json::from_str(&signed_json).unwrap();
+        assert_eq!(signed["transaction_digest"], prepared["transaction_digest"]);
+        assert_eq!(signed["signing_digest"], prepared["signing_digest"]);
+        assert_eq!(signed["transaction_bcs"], prepared["transaction_bcs"]);
+        assert_eq!(
+            signed["signature"],
+            "AKJxVegkH/55sXfq2XrPGJyuXN8mY3SSzE7c7J5IBn8iWz0RHic41c1aAI08TixBO4p7vix9padeo0QPx5lx1w0gXFduCkowYm4UcNay6Iz0RwTwP7oVMVlw7Oe+CutXlg=="
+        );
+
+        let transaction_bytes = base64::engine::general_purpose::STANDARD
+            .decode(signed["transaction_bcs"].as_str().unwrap())
+            .unwrap();
+        let transaction = SuiTransaction::from_bcs(&transaction_bytes).unwrap();
+        let SuiTransactionKind::ProgrammableTransaction(programmable) = &transaction.kind else {
+            panic!("reviewed Sui coin transaction was not programmable");
+        };
+        assert_eq!(programmable.inputs.len(), 3);
+        assert!(matches!(
+            programmable.inputs[0],
+            sui_sdk_types::Input::ImmutableOrOwned(_)
+        ));
+        assert_eq!(programmable.commands.len(), 2);
+        assert!(matches!(
+            programmable.commands[0],
+            SuiCommand::SplitCoins(_)
+        ));
+        assert!(matches!(
+            programmable.commands[1],
+            SuiCommand::TransferObjects(_)
+        ));
+        assert_eq!(transaction.gas_payment.objects.len(), 1);
+        assert_eq!(transaction.digest().to_string(), signed["transaction_digest"]);
+        assert_eq!(
+            format!("blake2b256:{}", hex::encode(transaction.signing_digest())),
+            signed["signing_digest"]
+        );
+        let signature =
+            UserSignature::from_base64(signed["signature"].as_str().unwrap()).unwrap();
+        let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
+        let signing_key = sui_signing_key(&mnemonic);
+        Ed25519VerifyingKey::new(&signing_key.public_key())
+            .unwrap()
+            .verify_transaction(&transaction, &signature)
+            .unwrap();
+        entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn sui_coin_transfer_rejects_substitution_and_broader_authority() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let base = reviewed_sui_coin_request();
+        let mut cases = Vec::new();
+
+        for coin_type in [
+            "0x2::sui::SUI",
+            "0x02::locus::LOCUS",
+            "0x2::locus::LOCUS<0x3::x::Y>",
+            "0x2::locus",
+            "0X2::locus::LOCUS",
+        ] {
+            let mut value = base.clone();
+            value["coin_type"] = coin_type.into();
+            cases.push(value);
+        }
+
+        let mut shared_gas_and_coin = base.clone();
+        shared_gas_and_coin["gas_object_id"] = base["coin_object_id"].clone();
+        cases.push(shared_gas_and_coin);
+
+        let mut zero_coin_version = base.clone();
+        zero_coin_version["coin_object_version"] = 0.into();
+        cases.push(zero_coin_version);
+
+        let mut underfunded_coin = base.clone();
+        underfunded_coin["coin_balance_base_units"] = "123456788".into();
+        cases.push(underfunded_coin);
+
+        let mut underfunded_gas = base.clone();
+        underfunded_gas["gas_balance_base_units"] = "9999999".into();
+        cases.push(underfunded_gas);
+
+        let mut foreign_sender = base.clone();
+        foreign_sender["sender"] = SuiAddress::new([6_u8; 32]).to_string().into();
+        cases.push(foreign_sender);
+
+        let mut self_transfer = base.clone();
+        self_transfer["recipient"] = base["sender"].clone();
+        cases.push(self_transfer);
+
+        let mut stale_epoch = base;
+        stale_epoch["expiration_epoch"] = 413.into();
+        cases.push(stale_epoch);
+
+        for value in cases {
+            let request = CString::new(value.to_string()).unwrap();
+            let pointer = locus_wallet_prepare_sui_coin_transfer_json(
+                entropy.as_ptr(),
+                request.as_ptr(),
+            );
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&json).unwrap()["error"]
+                    .as_str()
+                    .is_some(),
+                "unsafe Sui coin request was accepted: {json}"
             );
         }
     }
