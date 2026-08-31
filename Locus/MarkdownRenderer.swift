@@ -454,14 +454,16 @@ struct MarkdownInlineStyleSpec {
             spec.pillFill = LocusTheme.inlineCodeFill
         }
 
-        // A workspace file mentioned as inline code keeps the code pill's ink
-        // even though it navigates like a link; the blue-underline treatment
-        // is reserved for authored links and remote URLs.
-        if let link,
-           !(run.style.contains(.code) && run.destination == nil
-             && link.scheme == "locus-workspace") {
-            spec.foreground = LocusTheme.signalDeep
-            spec.isUnderlined = true
+        // A workspace file reference navigates like a link but reads like the
+        // text around it: a code run keeps its pill and ink, a plain run keeps
+        // only an underline. The accent treatment is reserved for remote URLs.
+        if let link {
+            if link.scheme != "locus-workspace" {
+                spec.foreground = LocusTheme.signalDeep
+                spec.isUnderlined = true
+            } else if !run.style.contains(.code) {
+                spec.isUnderlined = true
+            }
         }
 
         return spec
