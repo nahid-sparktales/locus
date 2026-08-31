@@ -981,7 +981,7 @@ enum WalletNetworkCatalog {
         ),
         nativeAssetID: "sui:mainnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/mainnet/tx/{transaction}",
-        staticallyReviewedCapabilities: []
+        staticallyReviewedCapabilities: [.nativeTransfer]
     )
 
     static let suiTestnet = WalletNetworkDescriptor(
@@ -992,7 +992,7 @@ enum WalletNetworkCatalog {
         ),
         nativeAssetID: "sui:testnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/testnet/tx/{transaction}",
-        staticallyReviewedCapabilities: []
+        staticallyReviewedCapabilities: [.nativeTransfer]
     )
 
     static let all = [

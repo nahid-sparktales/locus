@@ -26,6 +26,11 @@ enum WalletSignerClientFactory {
 }
 
 #if LOCUS_DIRECT_DOWNLOAD
+private struct WalletSuiClientIntent {
+    let packet: WalletSuiPreparationPacket
+    let unsigned: WalletSuiUnsignedIntent
+}
+
 @MainActor
 final class XPCWalletSignerClient: WalletSignerClient {
     let isAvailable: Bool
@@ -40,6 +45,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
     private let suiRPCClients: [String: WalletSuiProviderCoordinator]
     private var preparationPackets: [String: WalletEVMPreparationPacket] = [:]
     private var solanaPreparationPackets: [String: WalletSolanaPreparationPacket] = [:]
+    private var suiPreparationPackets: [String: WalletSuiClientIntent] = [:]
 
     init(bundle: Bundle = .main) {
         var clients: [String: WalletEVMProviderCoordinator] = [:]
@@ -238,9 +244,51 @@ final class XPCWalletSignerClient: WalletSignerClient {
             solanaPreparationPackets[transaction.id] = packet
             return transaction
         case .sui:
-            throw WalletGateway.Error.invalidArguments(
-                "The reviewed Sui transaction builder is not active."
+            guard contract == nil, request.action.type == .nativeTransfer,
+                  let amount = request.action.amountBaseUnits,
+                  let required = WalletBaseUnits.add(
+                      amount, request.maximumFeeBaseUnits
+                  ) else {
+                throw WalletGateway.Error.invalidArguments(
+                    "Sui supports only the reviewed native-transfer subset."
+                )
+            }
+            let rpc = try suiRPCClient(for: request.networkID)
+            let selection = try await rpc.selectNativeGasCoin(
+                owner: account.address, requiredBalanceBaseUnits: required
             )
+            let status = selection.snapshot.network
+            let packet = WalletSuiPreparationPacket(
+                request: request, chainIdentifier: status.chainIdentifier,
+                checkpointSequence: status.checkpointSequence,
+                checkpointTimestamp: status.checkpointTimestamp,
+                sender: account.address, gasObject: selection.coin.reference,
+                gasBalanceBaseUnits: selection.coin.balanceBaseUnits,
+                gasBudgetBaseUnits: request.maximumFeeBaseUnits,
+                referenceGasPriceBaseUnits: status.referenceGasPrice,
+                gasPriceBaseUnits: status.referenceGasPrice,
+                currentEpoch: status.epoch, expirationEpoch: status.epoch,
+                observedAt: Date()
+            )
+            let data = try authorized(packet, source: request.source)
+            let unsigned: WalletSuiUnsignedIntent = try await call { proxy, reply in
+                proxy.prepareSui(data, reply: reply)
+            }
+            guard unsigned.prepared.networkID == request.networkID,
+                  unsigned.prepared.accountID == request.accountID,
+                  unsigned.prepared.source == request.source,
+                  unsigned.prepared.action == request.action,
+                  unsigned.prepared.maximumFeeBaseUnits
+                    == request.maximumFeeBaseUnits,
+                  !unsigned.prepared.simulationSucceeded else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The signer returned mismatched Sui preparation evidence."
+                )
+            }
+            let intent = WalletSuiClientIntent(packet: packet, unsigned: unsigned)
+            let prepared = try await simulateSui(intent: intent)
+            suiPreparationPackets[prepared.id] = intent
+            return prepared
         }
     }
 
@@ -259,6 +307,9 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 proxy.simulateSolana(data, reply: reply)
             }
         }
+        if let intent = suiPreparationPackets[intentID] {
+            return try await simulateSui(intent: intent)
+        }
         throw WalletGateway.Error.intentNotFound
     }
 
@@ -274,6 +325,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let request = try authorized(intentID, source: packet.request.source)
             let _: WalletPreparedTransaction = try await call { proxy, reply in
                 proxy.confirmSolana(request, reply: reply)
+            }
+            return
+        }
+        if let intent = suiPreparationPackets[intentID] {
+            let request = try authorized(
+                intentID, source: intent.packet.request.source
+            )
+            let _: WalletPreparedTransaction = try await call { proxy, reply in
+                proxy.confirmSui(request, reply: reply)
             }
             return
         }
@@ -338,6 +398,62 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 intentID: intentID, networkID: packet.request.networkID,
                 transactionHash: transactionID
             )
+        }
+        if let intent = suiPreparationPackets[intentID] {
+            let rpc = try suiRPCClient(for: intent.packet.request.networkID)
+            let snapshot = try await rpc.nativeGasCoins(
+                owner: intent.packet.sender
+            )
+            guard let gasCoin = snapshot.coins.first(where: {
+                $0.reference.objectID == intent.packet.gasObject.objectID
+            }), gasCoin.reference == intent.packet.gasObject,
+               gasCoin.balanceBaseUnits == intent.packet.gasBalanceBaseUnits else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The selected Sui gas object changed before signing."
+                )
+            }
+            let simulation = try await suiSimulation(
+                intent: intent, rpc: rpc
+            )
+            let recheck = WalletSuiRecheckPacket(
+                simulation: simulation, gasObject: gasCoin.reference,
+                gasBalanceBaseUnits: gasCoin.balanceBaseUnits,
+                gasCheckpointSequence: snapshot.network.checkpointSequence,
+                gasCheckpointTimestamp: snapshot.network.checkpointTimestamp,
+                currentEpoch: snapshot.network.epoch,
+                referenceGasPriceBaseUnits: snapshot.network.referenceGasPrice
+            )
+            let request = try authorized(
+                recheck, source: intent.packet.request.source
+            )
+            let signed: WalletSuiSignedTransaction = try await call { proxy, reply in
+                proxy.executeSui(request, reply: reply)
+            }
+            suiPreparationPackets[intentID] = nil
+            guard signed.intentID == intentID,
+                  signed.transactionDigest == intent.unsigned.prepared.digest,
+                  signed.transactionBytes == intent.unsigned.transactionBCS else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The signer returned different Sui transaction material."
+                )
+            }
+            do {
+                let finalized = try await rpc.executeTransaction(
+                    transactionBCS: signed.transactionBytes,
+                    signature: signed.signature,
+                    expectedTransactionDigest: signed.transactionDigest
+                )
+                return Self.submissionResult(
+                    intentID: intentID,
+                    networkID: intent.packet.request.networkID,
+                    transactionHash: finalized.transactionDigest
+                )
+            } catch {
+                throw WalletGateway.Error.broadcastUnknown(
+                    transactionHash: signed.transactionDigest,
+                    message: error.localizedDescription
+                )
+            }
         }
         throw WalletGateway.Error.intentNotFound
     }
@@ -731,6 +847,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         sessionID = nil
         preparationPackets.removeAll()
         solanaPreparationPackets.removeAll()
+        suiPreparationPackets.removeAll()
         guard isAvailable else { return }
         do {
             let proxy = try remoteProxy()
@@ -778,6 +895,74 @@ final class XPCWalletSignerClient: WalletSignerClient {
             )
         }
         return rpc
+    }
+
+    private func simulateSui(
+        intent: WalletSuiClientIntent
+    ) async throws -> WalletPreparedTransaction {
+        let rpc = try suiRPCClient(for: intent.packet.request.networkID)
+        let simulation = try await suiSimulation(intent: intent, rpc: rpc)
+        let data = try authorized(
+            simulation, source: intent.packet.request.source
+        )
+        let prepared: WalletPreparedTransaction = try await call { proxy, reply in
+            proxy.simulateSui(data, reply: reply)
+        }
+        guard prepared.id == intent.unsigned.prepared.id,
+              prepared.digest == intent.unsigned.prepared.digest,
+              prepared.networkID == intent.packet.request.networkID,
+              prepared.accountID == intent.packet.request.accountID,
+              prepared.source == intent.packet.request.source,
+              prepared.action == intent.packet.request.action,
+              prepared.maximumFeeBaseUnits
+                == intent.packet.request.maximumFeeBaseUnits,
+              prepared.simulationSucceeded else {
+            throw WalletGateway.Error.invalidArguments(
+                "The signer returned mismatched Sui simulation evidence."
+            )
+        }
+        return prepared
+    }
+
+    private func suiSimulation(
+        intent: WalletSuiClientIntent,
+        rpc: WalletSuiProviderCoordinator
+    ) async throws -> WalletSuiSimulationPacket {
+        guard let recipient = intent.packet.request.action.recipient,
+              let amount = intent.packet.request.action.amountBaseUnits else {
+            throw WalletGateway.Error.invalidArguments(
+                "The reviewed Sui transfer is incomplete."
+            )
+        }
+        let result = try await rpc.simulateNativeTransfer(
+            transactionBCS: intent.unsigned.transactionBCS,
+            expectedTransactionDigest: intent.unsigned.prepared.digest,
+            sender: intent.packet.sender, recipient: recipient,
+            amountBaseUnits: amount,
+            maximumFeeBaseUnits: intent.packet.request.maximumFeeBaseUnits,
+            gasObjectID: intent.packet.gasObject.objectID
+        )
+        return WalletSuiSimulationPacket(
+            intentID: intent.unsigned.prepared.id,
+            chainIdentifier: result.network.chainIdentifier,
+            checkpointSequence: result.network.checkpointSequence,
+            checkpointTimestamp: result.network.checkpointTimestamp,
+            currentEpoch: result.network.epoch,
+            referenceGasPriceBaseUnits: result.network.referenceGasPrice,
+            transactionDigest: result.transactionDigest,
+            effectsDigest: result.effectsDigest,
+            sender: result.sender, recipient: result.recipient,
+            amountBaseUnits: result.amountBaseUnits,
+            senderDebitBaseUnits: result.senderDebitBaseUnits,
+            recipientCreditBaseUnits: result.recipientCreditBaseUnits,
+            gasObjectID: result.gasObjectID,
+            computationCost: result.gas.computationCost,
+            storageCost: result.gas.storageCost,
+            storageRebate: result.gas.storageRebate,
+            nonRefundableStorageFee: result.gas.nonRefundableStorageFee,
+            actualFeeBaseUnits: result.gas.actualFeeBaseUnits,
+            observedAt: Date()
+        )
     }
 
     private static func submissionResult(
@@ -868,6 +1053,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
         sessionID = nil
         preparationPackets.removeAll()
         solanaPreparationPackets.removeAll()
+        suiPreparationPackets.removeAll()
         invalidationHandler?()
     }
 }

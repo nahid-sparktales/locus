@@ -170,21 +170,23 @@ GraphQL path. It records only validated transaction effects and owner-specific
 SUI or Coin balance changes; unknown Coin types remain quarantined, failed
 effects cannot claim balance changes, and opaque BCS or Move-call data is not
 accepted. The signer core now has a deterministic, typed builder for the single
-object-backed native SUI transfer shape, but it remains unreachable through XPC
-until simulation, effect recheck, and execution land. Provider coin selection
+object-backed native SUI transfer shape. Provider coin selection
 is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
 owner, raw balance, and aggregate coin-object balance before choosing one
 deterministic sufficient gas coin; fragmented or accumulator-only funds are not
 silently widened into a different transaction shape. The provider can now
 dry-run signer-built native-transfer bytes without broadcasting: Locus requires
 the exact transaction/effects digests, selected gas object, recipient credit,
-sender debit, and computed gas fee to match the reviewed transfer. This still
-does not expose Sui signing through XPC; staged intent ownership and a fresh
-effect recheck remain required first.
+sender debit, and computed gas fee to match the reviewed transfer. The staged
+XPC flow repeats object and simulation evidence immediately before signing,
+consumes the intent, executes through one GraphQL provider, requires finality,
+and records transport ambiguity without automatic fallback. Testnet can use
+this exact subset; mainnet is still disabled until signed launch and adapter
+review manifests authorize it for an approved region.
 Solana token sends use the signer-derived recipient associated token account,
 creating it idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, Sui XPC signing and object-transfer adapters, full
+versioned messages, Sui Coin/object-transfer adapters, full
 swaps, external wallets, and WalletConnect remain closed until their
 implementation and evidence gates pass.
 

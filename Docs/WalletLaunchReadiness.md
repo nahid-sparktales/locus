@@ -48,8 +48,7 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
 - [x] Canonical signer-core builder for one object-backed native SUI transfer:
   exact `SplitCoins(GasCoin)` plus `TransferObjects`, current-epoch expiry,
   one owned gas object, reviewed reference gas price, maximum gas budget, and
-  deterministic BCS/digest/signature fixtures. The XPC capability remains
-  closed pending provider preparation, simulation, and recheck.
+  deterministic BCS/digest/signature fixtures.
 - [x] Checkpoint-bound native SUI gas-coin discovery and deterministic
   single-coin selection. The provider validates exact `Coin<SUI>` type, owner,
   object ID/version/digest, canonical 40-byte Coin BCS, embedded UID, raw u64
@@ -59,13 +58,19 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   bytes. The provider must return the exact transaction and effects digests,
   selected gas object, successful terminal balance changes, and a complete gas
   cost summary; recipient credit and sender debit are recomputed exactly and
-  bounded by the reviewed maximum fee. XPC signing remains closed pending the
-  signer-owned staged intent and independent recheck.
+  bounded by the reviewed maximum fee.
+- [x] End-to-end native SUI staged intent for testnet: checkpoint-bound gas
+  selection, isolated signer rebuild, exact GraphQL simulation, human approval,
+  fresh object/version/digest/balance and effects recheck, signer consumption,
+  one-provider GraphQL execution, finality evidence, and broadcast-unknown
+  handling. Mainnet activation still requires both signed launch capability and
+  signed adapter-review evidence; the checked-in manifests enable neither.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui gRPC/GraphQL native transfer, Coin transfer, object/NFT transfer,
-  object-effect activity, simulation, execution, and finality implementation complete.
+- [ ] Sui Coin transfer, object/NFT transfer, object-effect activity, gRPC
+  execution migration, and localnet coverage complete. The exact native
+  transfer GraphQL subset is implemented but not mainnet-enabled.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.

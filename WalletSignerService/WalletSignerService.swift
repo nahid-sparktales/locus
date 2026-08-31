@@ -64,6 +64,18 @@ private func rustSignSolanaSPLTransfer(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_prepare_sui_native_transfer_json")
+private func rustPrepareSuiNativeTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("locus_wallet_sign_sui_native_transfer_json")
+private func rustSignSuiNativeTransfer(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ transactionJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_derive_solana_associated_token_json")
 private func rustDeriveSolanaAssociatedToken(
     _ requestJSON: UnsafePointer<CChar>
@@ -106,6 +118,23 @@ private struct RustSignedSolana: Decodable {
     let canonicalMessageDigest: String
     let transactionID: String
     let signedTransaction: String
+}
+
+private struct RustPreparedSui: Decodable {
+    let from: String
+    let chainIdentifier: String
+    let transactionDigest: String
+    let signingDigest: String
+    let transactionBCS: String
+}
+
+private struct RustSignedSui: Decodable {
+    let from: String
+    let chainIdentifier: String
+    let transactionDigest: String
+    let signingDigest: String
+    let transactionBCS: String
+    let signature: String
 }
 
 private struct RustEncodedContractCall: Decodable {
@@ -161,6 +190,22 @@ private struct RustSolanaAssociatedTokenAddress: Decodable {
     let bump: UInt8
 }
 
+private struct RustSuiNativeTransfer: Encodable {
+    let chainIdentifier: String
+    let sender: String
+    let recipient: String
+    let gasObjectID: String
+    let gasObjectVersion: UInt64
+    let gasObjectDigest: String
+    let gasBalanceBaseUnits: String
+    let amountBaseUnits: String
+    let referenceGasPriceBaseUnits: String
+    let gasPriceBaseUnits: String
+    let gasBudgetBaseUnits: String
+    let currentEpoch: UInt64
+    let expirationEpoch: UInt64
+}
+
 private struct StoredEVMIntent {
     let transaction: WalletEVMTransactionFields
     var prepared: WalletPreparedTransaction
@@ -170,6 +215,14 @@ private struct StoredEVMIntent {
 private struct StoredSolanaIntent {
     let packet: WalletSolanaPreparationPacket
     var prepared: WalletPreparedTransaction
+    var explicitlyApproved = false
+}
+
+private struct StoredSuiIntent {
+    let packet: WalletSuiPreparationPacket
+    let rust: RustPreparedSui
+    var prepared: WalletPreparedTransaction
+    var simulation: WalletSuiSimulationPacket?
     var explicitlyApproved = false
 }
 
@@ -249,6 +302,27 @@ private enum SignerUnsignedInteger {
             carry = total / 10
         }
         if carry > 0 { a.append(carry) }
+        return a.reversed().map(String.init).joined()
+    }
+
+    static func subtract(_ lhs: String, _ rhs: String) -> String? {
+        guard let left = normalize(lhs), let right = normalize(rhs),
+              compare(left, right) != .orderedAscending else { return nil }
+        var a = left.reversed().map { Int(String($0))! }
+        let b = right.reversed().map { Int(String($0))! }
+        var borrow = 0
+        for index in 0..<a.count {
+            var digit = a[index] - borrow - (index < b.count ? b[index] : 0)
+            if digit < 0 {
+                digit += 10
+                borrow = 1
+            } else {
+                borrow = 0
+            }
+            a[index] = digit
+        }
+        guard borrow == 0 else { return nil }
+        while a.count > 1, a.last == 0 { a.removeLast() }
         return a.reversed().map(String.init).joined()
     }
 
@@ -429,6 +503,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     private var activeSessionID: String?
     private var preparedIntents: [String: StoredEVMIntent] = [:]
     private var preparedSolanaIntents: [String: StoredSolanaIntent] = [:]
+    private var preparedSuiIntents: [String: StoredSuiIntent] = [:]
     private var activePolicies: [String: SignerActivePolicy] = [:]
     private var pendingPresenceIntents: Set<String> = []
     private var policyPresencePending = false
@@ -940,6 +1015,17 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 let authorized: WalletAuthorizedRequest<WalletSuiPreparationPacket> =
                     try self.authorized(request)
                 let packet = authorized.payload
+                guard packet.request.source == authorized.source else {
+                    throw self.signerError("The request source changed before Sui preparation.")
+                }
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                self.expireIntents()
+                guard self.preparedIntents.count + self.preparedSolanaIntents.count
+                        + self.preparedSuiIntents.count < Self.maximumPreparedIntents else {
+                    throw self.signerError("Too many wallet intents are pending for this session.")
+                }
                 guard let descriptor = WalletNetworkCatalog.descriptor(id: packet.request.networkID),
                       descriptor.chain == .sui,
                       descriptor.identity.kind == .suiChainIdentifier,
@@ -950,7 +1036,19 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     descriptor.id, chain: .sui,
                     capability: self.capability(for: packet.request.action.type)
                 )
-                throw self.signerError("The reviewed Sui transaction builder is not active in this build.")
+                guard packet.request.action.type == .nativeTransfer else {
+                    throw self.signerError(
+                        "That Sui semantic action has no reviewed signer adapter."
+                    )
+                }
+                let intent = try self.prepareSuiNativeTransfer(
+                    packet: packet, entropy: entropy
+                )
+                self.preparedSuiIntents[intent.prepared.id] = intent
+                reply(self.encoded(WalletSuiUnsignedIntent(
+                    prepared: intent.prepared,
+                    transactionBCS: intent.rust.transactionBCS
+                )))
             } catch {
                 reply(self.error("Sui preparation failed: \(error.localizedDescription)"))
             }
@@ -958,15 +1056,135 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     }
 
     func simulateSui(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Sui simulation failed: no reviewed Sui intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSuiSimulationPacket> =
+                    try self.authorized(request)
+                var intent = try self.validatedSuiIntent(
+                    for: authorized.payload
+                )
+                guard intent.prepared.source == authorized.source else {
+                    throw self.signerError(
+                        "The request source changed before Sui simulation."
+                    )
+                }
+                intent.prepared = self.recheckedSui(
+                    intent.prepared, using: authorized.payload
+                )
+                if intent.simulation == nil { intent.simulation = authorized.payload }
+                self.preparedSuiIntents[intent.prepared.id] = intent
+                reply(self.encoded(intent.prepared))
+            } catch {
+                reply(self.error("Sui simulation failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func confirmSui(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Sui confirmation failed: no reviewed Sui intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<String> = try self.authorized(request)
+                guard let intent = self.preparedSuiIntents[authorized.payload],
+                      intent.prepared.expiresAt > Date(),
+                      intent.prepared.simulationSucceeded,
+                      intent.prepared.source == authorized.source else {
+                    throw self.signerError(
+                        "The prepared Sui transaction is missing, unsimulated, expired, or belongs to another source."
+                    )
+                }
+                if WalletNetworkCatalog.descriptor(
+                    id: intent.prepared.networkID
+                )?.environment == .mainnet {
+                    guard self.pendingPresenceIntents.insert(authorized.payload).inserted else {
+                        throw self.signerError(
+                            "User presence is already pending for this transaction."
+                        )
+                    }
+                    self.requireUserPresence(
+                        reason: "Approve this exact Locus Vault Sui mainnet transaction"
+                    ) { result in
+                        self.pendingPresenceIntents.remove(authorized.payload)
+                        guard self.activeSessionID == authorized.sessionID,
+                              self.unlockedEntropy != nil else {
+                            return reply(self.error(
+                                "Sui confirmation failed: Locus Vault locked while approval was pending."
+                            ))
+                        }
+                        switch result {
+                        case .failure(let error):
+                            reply(self.error(
+                                "Sui confirmation failed: \(error.localizedDescription)"
+                            ))
+                        case .success:
+                            guard var current = self.preparedSuiIntents[authorized.payload],
+                                  current.prepared == intent.prepared,
+                                  current.prepared.expiresAt > Date() else {
+                                return reply(self.error(
+                                    "Sui confirmation failed: the intent changed or expired."
+                                ))
+                            }
+                            current.explicitlyApproved = true
+                            self.preparedSuiIntents[authorized.payload] = current
+                            reply(self.encoded(current.prepared))
+                        }
+                    }
+                    return
+                }
+                var approved = intent
+                approved.explicitlyApproved = true
+                self.preparedSuiIntents[authorized.payload] = approved
+                reply(self.encoded(approved.prepared))
+            } catch {
+                reply(self.error("Sui confirmation failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func executeSui(_ request: Data, reply: @escaping (Data) -> Void) {
-        reply(error("Sui execution failed: no reviewed Sui intent is active."))
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletSuiRecheckPacket> =
+                    try self.authorized(request)
+                guard let entropy = self.unlockedEntropy else {
+                    throw self.signerError("Locus Vault is locked.")
+                }
+                let recheck = authorized.payload
+                let validated = try self.validatedSuiIntent(for: recheck)
+                guard validated.prepared.source == authorized.source,
+                      validated.explicitlyApproved else {
+                    throw self.signerError(
+                        "The Sui transaction lacks exact approval for this request source."
+                    )
+                }
+                guard let intent = self.preparedSuiIntents.removeValue(
+                    forKey: recheck.simulation.intentID
+                ) else {
+                    return reply(self.error(
+                        "The prepared Sui transaction was already consumed."
+                    ))
+                }
+                let signed = try self.rustSignSui(
+                    packet: intent.packet, entropy: entropy
+                )
+                guard signed.from == intent.packet.sender,
+                      signed.chainIdentifier == intent.packet.chainIdentifier,
+                      signed.transactionDigest == intent.rust.transactionDigest,
+                      signed.signingDigest == intent.rust.signingDigest,
+                      signed.transactionBCS == intent.rust.transactionBCS else {
+                    return reply(self.error(
+                        "The signing core returned mismatched Sui transaction material."
+                    ))
+                }
+                reply(self.encoded(WalletSuiSignedTransaction(
+                    intentID: recheck.simulation.intentID,
+                    transactionDigest: signed.transactionDigest,
+                    transactionBytes: signed.transactionBCS,
+                    signature: signed.signature
+                )))
+            } catch {
+                reply(self.error("Sui execution failed: \(error.localizedDescription)"))
+            }
+        }
     }
 
     func activatePolicy(_ request: Data, reply: @escaping (Data) -> Void) {
@@ -1471,6 +1689,107 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             prepared.policyID = policyID
         }
         return StoredSolanaIntent(packet: packet, prepared: prepared)
+    }
+
+    private func prepareSuiNativeTransfer(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data
+    ) throws -> StoredSuiIntent {
+        let action = packet.request.action
+        guard action.type == .nativeTransfer,
+              action.assetID == nil, action.tokenID == nil,
+              action.inputAssetID == nil, action.outputAssetID == nil,
+              action.minimumOutputBaseUnits == nil, action.adapterID == nil,
+              action.authorizationFormat == nil, action.metadataDigest == nil,
+              action.contractID == nil, action.function == nil,
+              action.arguments.isEmpty, action.valueBaseUnits == nil,
+              let recipient = action.recipient,
+              let amount = action.amountBaseUnits.flatMap(SignerUnsignedInteger.normalize),
+              let amountValue = UInt64(amount), amountValue > 0,
+              String(amountValue) == amount,
+              WalletSuiAddress.isCanonical(packet.sender),
+              WalletSuiAddress.isCanonical(recipient),
+              packet.sender != recipient,
+              packet.gasObject.type == "0x2::coin::Coin<0x2::sui::SUI>",
+              WalletSuiAddress.isCanonical(packet.gasObject.objectID),
+              packet.gasObject.version > 0,
+              WalletSolanaBase58.decode(packet.gasObject.digest, exactLength: 32) != nil,
+              let gasBalance = SignerUnsignedInteger.normalize(
+                  packet.gasBalanceBaseUnits
+              ), UInt64(gasBalance) != nil, gasBalance == packet.gasBalanceBaseUnits,
+              let gasBudget = SignerUnsignedInteger.normalize(
+                  packet.gasBudgetBaseUnits
+              ), let gasBudgetValue = UInt64(gasBudget), gasBudgetValue > 0,
+              gasBudget == packet.request.maximumFeeBaseUnits,
+              let referenceGasPrice = SignerUnsignedInteger.normalize(
+                  packet.referenceGasPriceBaseUnits
+              ), let referenceGasPriceValue = UInt64(referenceGasPrice),
+              referenceGasPriceValue > 0,
+              packet.gasPriceBaseUnits == referenceGasPrice,
+              packet.currentEpoch == packet.expirationEpoch,
+              packet.checkpointSequence > 0,
+              abs(packet.observedAt.timeIntervalSinceNow) <= 30,
+              packet.checkpointTimestamp <= Date().addingTimeInterval(120),
+              packet.checkpointTimestamp >= Date().addingTimeInterval(-15 * 60),
+              let required = SignerUnsignedInteger.add(amount, gasBudget),
+              SignerUnsignedInteger.lessThanOrEqual(required, gasBalance) else {
+            throw signerError(
+                "The provider evidence does not match a fresh reviewed native SUI transfer."
+            )
+        }
+        let account = try store.accounts().first {
+            $0.id == packet.request.accountID && $0.chain == .sui
+                && $0.networkIDs.contains(packet.request.networkID)
+        }
+        guard let account, account.address == packet.sender else {
+            throw signerError("The requested Sui account roles are invalid.")
+        }
+        try authorizeReviewedAdapter(
+            WalletReviewedAdapters.suiNativeTransfer,
+            networkID: packet.request.networkID
+        )
+        let rust = try rustPrepareSui(packet: packet, entropy: entropy)
+        guard rust.from == account.address,
+              rust.chainIdentifier == packet.chainIdentifier,
+              WalletSolanaBase58.decode(rust.transactionDigest, exactLength: 32) != nil,
+              rust.signingDigest.hasPrefix("blake2b256:"),
+              rust.signingDigest.count == 75,
+              let transactionBCS = Data(base64Encoded: rust.transactionBCS),
+              !transactionBCS.isEmpty,
+              transactionBCS.base64EncodedString() == rust.transactionBCS else {
+            throw signerError(
+                "The signer-rebuilt Sui transaction is not canonical."
+            )
+        }
+        let now = Date()
+        let intentID = UUID().uuidString.lowercased()
+        let prepared = WalletPreparedTransaction(
+            id: intentID, digest: rust.transactionDigest,
+            networkID: packet.request.networkID,
+            accountID: packet.request.accountID,
+            source: packet.request.source, action: action,
+            summary: "Send \(amount) MIST on \(packet.request.networkID) to \(recipient)",
+            effects: [WalletDecodedEffect(
+                id: "\(intentID):sui-debit", kind: "debit",
+                assetID: "\(packet.request.networkID)/coin:0x2::sui::SUI",
+                amountBaseUnits: amount, from: account.address,
+                to: recipient, spender: nil
+            )],
+            riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.suiNativeTransfer,
+            budgetAssetID: "\(packet.request.networkID)/coin:0x2::sui::SUI",
+            spendBaseUnits: amount,
+            maximumFeeBaseUnits: gasBudget,
+            feeQuoteBaseUnits: "0",
+            simulation: "Awaiting exact Sui effects",
+            simulationSucceeded: false,
+            nonce: "\(packet.gasObject.objectID)@\(packet.gasObject.version)",
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "exact_confirmation_required", policyID: nil
+        )
+        return StoredSuiIntent(
+            packet: packet, rust: rust, prepared: prepared, simulation: nil
+        )
     }
 
     private func prepareSolanaSPLTransfer(
@@ -2210,6 +2529,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         preparedSolanaIntents = preparedSolanaIntents.filter {
             $0.value.prepared.expiresAt > now
         }
+        preparedSuiIntents = preparedSuiIntents.filter {
+            $0.value.prepared.expiresAt > now
+        }
     }
 
     private func policyStatuses() -> [WalletActivePolicyStatus] {
@@ -2507,6 +2829,91 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         return intent
     }
 
+    private func validatedSuiIntent(
+        for simulation: WalletSuiSimulationPacket
+    ) throws -> StoredSuiIntent {
+        expireIntents()
+        guard let intent = preparedSuiIntents[simulation.intentID] else {
+            throw signerError("The prepared Sui transaction is missing or consumed.")
+        }
+        let initialEffectsMatch = intent.simulation.map {
+            $0.effectsDigest == simulation.effectsDigest
+                && $0.senderDebitBaseUnits == simulation.senderDebitBaseUnits
+                && $0.recipientCreditBaseUnits == simulation.recipientCreditBaseUnits
+                && $0.computationCost == simulation.computationCost
+                && $0.storageCost == simulation.storageCost
+                && $0.storageRebate == simulation.storageRebate
+                && $0.nonRefundableStorageFee
+                    == simulation.nonRefundableStorageFee
+                && $0.actualFeeBaseUnits == simulation.actualFeeBaseUnits
+        } ?? true
+        guard initialEffectsMatch,
+              intent.prepared.expiresAt > Date(),
+              simulation.chainIdentifier == intent.packet.chainIdentifier,
+              simulation.checkpointSequence >= intent.packet.checkpointSequence,
+              simulation.checkpointTimestamp >= intent.packet.checkpointTimestamp,
+              simulation.checkpointTimestamp <= Date().addingTimeInterval(120),
+              simulation.checkpointTimestamp >= Date().addingTimeInterval(-15 * 60),
+              simulation.currentEpoch == intent.packet.currentEpoch,
+              simulation.referenceGasPriceBaseUnits
+                == intent.packet.referenceGasPriceBaseUnits,
+              simulation.transactionDigest == intent.rust.transactionDigest,
+              WalletSolanaBase58.decode(simulation.effectsDigest, exactLength: 32) != nil,
+              simulation.sender == intent.packet.sender,
+              simulation.recipient == intent.packet.request.action.recipient,
+              simulation.amountBaseUnits
+                == intent.packet.request.action.amountBaseUnits,
+              simulation.recipientCreditBaseUnits == simulation.amountBaseUnits,
+              simulation.gasObjectID == intent.packet.gasObject.objectID,
+              abs(simulation.observedAt.timeIntervalSinceNow) <= 30,
+              let computation = SignerUnsignedInteger.normalize(
+                  simulation.computationCost
+              ), computation == simulation.computationCost,
+              let storage = SignerUnsignedInteger.normalize(simulation.storageCost),
+              storage == simulation.storageCost,
+              SignerUnsignedInteger.normalize(simulation.nonRefundableStorageFee)
+                == simulation.nonRefundableStorageFee,
+              let rebate = SignerUnsignedInteger.normalize(simulation.storageRebate),
+              rebate == simulation.storageRebate,
+              let gross = SignerUnsignedInteger.add(computation, storage),
+              let fee = SignerUnsignedInteger.subtract(gross, rebate), fee != "0",
+              fee == simulation.actualFeeBaseUnits,
+              SignerUnsignedInteger.lessThanOrEqual(
+                  fee, intent.prepared.maximumFeeBaseUnits
+              ),
+              SignerUnsignedInteger.add(simulation.amountBaseUnits, fee)
+                == simulation.senderDebitBaseUnits else {
+            throw signerError(
+                "Sui chain, checkpoint, object effects, amount, or fee changed after preparation."
+            )
+        }
+        return intent
+    }
+
+    private func validatedSuiIntent(
+        for recheck: WalletSuiRecheckPacket
+    ) throws -> StoredSuiIntent {
+        let intent = try validatedSuiIntent(for: recheck.simulation)
+        guard recheck.gasObject == intent.packet.gasObject,
+              recheck.gasBalanceBaseUnits == intent.packet.gasBalanceBaseUnits,
+              recheck.gasCheckpointSequence >= intent.packet.checkpointSequence,
+              recheck.gasCheckpointTimestamp >= intent.packet.checkpointTimestamp,
+              recheck.gasCheckpointTimestamp <= Date().addingTimeInterval(120),
+              recheck.gasCheckpointTimestamp >= Date().addingTimeInterval(-15 * 60),
+              recheck.currentEpoch == intent.packet.currentEpoch,
+              recheck.referenceGasPriceBaseUnits
+                == intent.packet.referenceGasPriceBaseUnits,
+              recheck.simulation.checkpointSequence
+                >= recheck.gasCheckpointSequence,
+              recheck.simulation.checkpointTimestamp
+                >= recheck.gasCheckpointTimestamp else {
+            throw signerError(
+                "The selected Sui gas object changed version, digest, type, or balance."
+            )
+        }
+        return intent
+    }
+
     private func rechecked(
         _ prepared: WalletPreparedTransaction,
         using recheck: WalletEVMRecheckPacket
@@ -2543,6 +2950,29 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             feeQuoteBaseUnits: recheck.feeQuoteBaseUnits,
             simulation: recheck.simulation,
             simulationSucceeded: recheck.simulationSucceeded,
+            nonce: prepared.nonce, createdAt: prepared.createdAt,
+            expiresAt: prepared.expiresAt,
+            policyDecision: prepared.policyDecision, policyID: prepared.policyID
+        )
+    }
+
+    private func recheckedSui(
+        _ prepared: WalletPreparedTransaction,
+        using simulation: WalletSuiSimulationPacket
+    ) -> WalletPreparedTransaction {
+        WalletPreparedTransaction(
+            id: prepared.id, digest: prepared.digest,
+            networkID: prepared.networkID, accountID: prepared.accountID,
+            source: prepared.source, action: prepared.action,
+            summary: prepared.summary, effects: prepared.effects,
+            riskFlags: prepared.riskFlags, contract: nil,
+            adapterID: prepared.adapterID,
+            budgetAssetID: prepared.budgetAssetID,
+            spendBaseUnits: prepared.spendBaseUnits,
+            maximumFeeBaseUnits: prepared.maximumFeeBaseUnits,
+            feeQuoteBaseUnits: simulation.actualFeeBaseUnits,
+            simulation: "Success · effects \(simulation.effectsDigest)",
+            simulationSucceeded: true,
             nonce: prepared.nonce, createdAt: prepared.createdAt,
             expiresAt: prepared.expiresAt,
             policyDecision: prepared.policyDecision, policyID: prepared.policyID
@@ -2605,6 +3035,77 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         default:
             throw signerError("The Solana signer adapter is unavailable.")
         }
+    }
+
+    private func rustPrepareSui(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data
+    ) throws -> RustPreparedSui {
+        try rustSuiCall(
+            packet: packet, entropy: entropy,
+            function: rustPrepareSuiNativeTransfer
+        )
+    }
+
+    private func rustSignSui(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data
+    ) throws -> RustSignedSui {
+        try rustSuiCall(
+            packet: packet, entropy: entropy,
+            function: rustSignSuiNativeTransfer
+        )
+    }
+
+    private func rustSuiCall<Result: Decodable>(
+        packet: WalletSuiPreparationPacket,
+        entropy: Data,
+        function: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) throws -> Result {
+        guard let recipient = packet.request.action.recipient,
+              let amount = packet.request.action.amountBaseUnits else {
+            throw signerError("The semantic SUI transfer is incomplete.")
+        }
+        let request = RustSuiNativeTransfer(
+            chainIdentifier: packet.chainIdentifier,
+            sender: packet.sender, recipient: recipient,
+            gasObjectID: packet.gasObject.objectID,
+            gasObjectVersion: packet.gasObject.version,
+            gasObjectDigest: packet.gasObject.digest,
+            gasBalanceBaseUnits: packet.gasBalanceBaseUnits,
+            amountBaseUnits: amount,
+            referenceGasPriceBaseUnits: packet.referenceGasPriceBaseUnits,
+            gasPriceBaseUnits: packet.gasPriceBaseUnits,
+            gasBudgetBaseUnits: packet.gasBudgetBaseUnits,
+            currentEpoch: packet.currentEpoch,
+            expirationEpoch: packet.expirationEpoch
+        )
+        var entropyHex = entropy.map { String(format: "%02x", $0) }.joined()
+        defer {
+            entropyHex.replaceSubrange(
+                entropyHex.startIndex..<entropyHex.endIndex, with: ""
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        guard var json = String(data: data, encoding: .utf8) else {
+            throw signerError("The reviewed Sui transfer could not be encoded.")
+        }
+        defer { json.replaceSubrange(json.startIndex..<json.endIndex, with: "") }
+        guard let pointer = entropyHex.withCString({ entropyPointer in
+            json.withCString { jsonPointer in function(entropyPointer, jsonPointer) }
+        }) else { throw signerError("The signing core is unavailable.") }
+        defer { rustFreeString(pointer) }
+        let result = Data(String(cString: pointer).utf8)
+        if let failure = try? JSONDecoder().decode(
+            WalletSignerErrorPayload.self, from: result
+        ) {
+            throw signerError(failure.error)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(Result.self, from: result)
     }
 
     private func rustSolanaNativeCall<T: Decodable>(
@@ -2834,6 +3335,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         activeSessionID = nil
         preparedIntents.removeAll(keepingCapacity: false)
         preparedSolanaIntents.removeAll(keepingCapacity: false)
+        preparedSuiIntents.removeAll(keepingCapacity: false)
         activePolicies.removeAll(keepingCapacity: false)
         pendingPresenceIntents.removeAll(keepingCapacity: false)
         policyPresencePending = false

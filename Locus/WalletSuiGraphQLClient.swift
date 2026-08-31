@@ -51,7 +51,7 @@ struct WalletSuiGasCoinSelection: Equatable, Sendable {
     let requiredBalanceBaseUnits: String
 }
 
-struct WalletSuiGasCostSummary: Equatable, Sendable {
+struct WalletSuiGasCostSummary: Codable, Equatable, Sendable {
     let computationCost: String
     let storageCost: String
     let storageRebate: String
@@ -70,6 +70,13 @@ struct WalletSuiNativeTransferSimulation: Equatable, Sendable {
     let recipientCreditBaseUnits: String
     let gasObjectID: String
     let gas: WalletSuiGasCostSummary
+}
+
+struct WalletSuiExecutionResult: Equatable, Sendable {
+    let transactionDigest: String
+    let effectsDigest: String
+    let checkpointSequence: UInt64
+    let finalizedAt: Date
 }
 
 struct WalletSuiProviderConfiguration: Sendable {
@@ -180,6 +187,26 @@ actor WalletSuiGraphQLClient {
             }
             pageInfo { hasNextPage }
           }
+        }
+      }
+    }
+    """
+
+    private static let executeTransactionMutation = """
+    mutation LocusSuiExecuteTransaction(
+      $transactionDataBcs: Base64!
+      $signatures: [Base64!]!
+    ) {
+      executeTransaction(
+        transactionDataBcs: $transactionDataBcs
+        signatures: $signatures
+      ) {
+        effects {
+          digest
+          effectsDigest
+          status
+          executionError { message }
+          checkpoint { sequenceNumber timestamp }
         }
       }
     }
@@ -835,6 +862,56 @@ actor WalletSuiGraphQLClient {
         )
     }
 
+    func executeTransaction(
+        transactionBCS: String,
+        signature: String,
+        expectedTransactionDigest: String
+    ) async throws -> WalletSuiExecutionResult {
+        guard let transaction = Data(base64Encoded: transactionBCS),
+              !transaction.isEmpty, transaction.count <= Self.maximumRequestBytes / 2,
+              transaction.base64EncodedString() == transactionBCS,
+              let signatureBytes = Data(base64Encoded: signature),
+              signatureBytes.count == 97,
+              signatureBytes.base64EncodedString() == signature,
+              WalletSolanaBase58.decode(expectedTransactionDigest, exactLength: 32) != nil else {
+            throw WalletGateway.Error.invalidArguments(
+                "Sui execution requires canonical signer-produced transaction material."
+            )
+        }
+        // Verify this exact endpoint immediately before the non-idempotent mutation.
+        _ = try await networkStatus()
+        let data = try await query(
+            document: Self.executeTransactionMutation,
+            variables: [
+                "transactionDataBcs": transactionBCS,
+                "signatures": [signature],
+            ]
+        )
+        guard let execution = data["executeTransaction"] as? [String: Any],
+              let effects = execution["effects"] as? [String: Any],
+              effects["digest"] as? String == expectedTransactionDigest,
+              let effectsDigest = effects["effectsDigest"] as? String,
+              WalletSolanaBase58.decode(effectsDigest, exactLength: 32) != nil,
+              effects["status"] as? String == "SUCCESS",
+              effects["executionError"] == nil || effects["executionError"] is NSNull,
+              let checkpoint = effects["checkpoint"] as? [String: Any],
+              let sequence = Self.unsigned53(checkpoint["sequenceNumber"]),
+              let timestampText = checkpoint["timestamp"] as? String,
+              timestampText.count <= 64,
+              let finalizedAt = Self.date(timestampText), sequence > 0,
+              finalizedAt <= now().addingTimeInterval(Self.maximumFutureDrift),
+              finalizedAt >= now().addingTimeInterval(-Self.maximumCheckpointAge) else {
+            throw WalletRPCError.invalidResponse(
+                "Sui execution did not return matching successful finality evidence"
+            )
+        }
+        return WalletSuiExecutionResult(
+            transactionDigest: expectedTransactionDigest,
+            effectsDigest: effectsDigest,
+            checkpointSequence: sequence, finalizedAt: finalizedAt
+        )
+    }
+
     func activity(owner: String) async throws -> [WalletSuiIndexedActivity] {
         guard Self.isCanonicalAddress(owner) else {
             throw WalletGateway.Error.invalidArguments(
@@ -1406,6 +1483,19 @@ actor WalletSuiProviderCoordinator {
                 gasObjectID: gasObjectID
             )
         }
+    }
+
+    func executeTransaction(
+        transactionBCS: String,
+        signature: String,
+        expectedTransactionDigest: String
+    ) async throws -> WalletSuiExecutionResult {
+        // Mutations never fail over automatically: once bytes leave this
+        // endpoint, a transport error is an ambiguous broadcast outcome.
+        try await primary.executeTransaction(
+            transactionBCS: transactionBCS, signature: signature,
+            expectedTransactionDigest: expectedTransactionDigest
+        )
     }
 
     func activity(owner: String) async throws -> [WalletSuiIndexedActivity] {

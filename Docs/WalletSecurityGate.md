@@ -131,9 +131,7 @@ signing adapter.
   transfer from typed fields. It accepts exactly one gas coin, a positive split,
   one recipient transfer, the reviewed reference gas price and budget, and a
   current-epoch expiration; it rejects arbitrary BCS, Move calls, extra commands,
-  role substitution, underfunding, and chain substitution. This builder is not
-  reachable through XPC until checkpoint-bound coin selection, simulation,
-  effect recheck, and execution are complete.
+  role substitution, underfunding, and chain substitution.
 - Native SUI gas discovery filters the GraphQL object connection to the exact
   `0x2::coin::Coin<0x2::sui::SUI>` type at one pinned checkpoint. It accepts
   only canonical owner/object/version/digest evidence and the exact 40-byte BCS
@@ -148,7 +146,19 @@ signing adapter.
   exact selected gas-object ID, terminal two-party SUI balance changes, and the
   complete gas-cost formula. Recipient credit must equal the reviewed amount;
   sender debit must equal amount plus the computed fee, which must remain within
-  the reviewed maximum. This read-only path cannot execute or sign a transaction.
+  the reviewed maximum.
+- The native SUI XPC flow is staged around an opaque intent. Only the signer can
+  produce the unsigned BCS, and it stores the exact typed request, gas reference,
+  transaction/signing digests, and expiry. Before signing, the client reloads
+  the selected coin at a fresh checkpoint and repeats the exact simulation; the
+  signer requires unchanged object ID/version/digest/type/balance, epoch,
+  reference gas price, amount, recipient, fee arithmetic, and effects. Exact
+  human approval is mandatory and the intent is consumed before signing.
+  GraphQL execution re-verifies the endpoint identity, never broadcasts through
+  fallback concurrently or automatically, requires matching successful finality
+  evidence, and treats every post-signing error as broadcast-unknown. Mainnet is
+  still default-denied unless signed capability and adapter-review manifests
+  independently authorize this exact compiled subset and region.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -164,8 +174,8 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui XPC signing authority, provider execution, Coin and object/NFT
-  transfers, object-effect activity, gRPC execution, and localnet suites;
+  Sui Coin and object/NFT transfers, object-effect activity, gRPC execution,
+  and localnet suites; native SUI mainnet activation remains gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

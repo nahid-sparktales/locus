@@ -300,6 +300,7 @@ enum WalletReviewedAdapters {
         "solana-token-2022-transfer-checked-v1"
     static let solanaAssociatedTokenCreateIdempotent =
         "solana-associated-token-create-idempotent-v1"
+    static let suiNativeTransfer = "sui-native-transfer-v1"
     static let erc20 = "erc20-v1"
     static let erc721SafeTransfer = "erc721-safe-transfer-v1"
     static let erc1155SafeTransfer = "erc1155-safe-transfer-v1"
@@ -309,6 +310,7 @@ enum WalletReviewedAdapters {
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
         solanaAssociatedTokenCreateIdempotent,
+        suiNativeTransfer,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
     ]
@@ -790,39 +792,58 @@ struct WalletSuiObjectReference: Codable, Equatable, Sendable {
     let type: String
 }
 
-struct WalletSuiReviewedCommand: Codable, Equatable, Sendable {
-    let adapterID: String
-    let packageID: String
-    let module: String
-    let function: String
-    let typeArguments: [String]
-    let canonicalArguments: [String: String]
-}
-
 struct WalletSuiPreparationPacket: Codable, Equatable, Sendable {
     let request: WalletPrepareRequest
     let chainIdentifier: String
+    let checkpointSequence: UInt64
+    let checkpointTimestamp: Date
     let sender: String
-    let gasObjects: [WalletSuiObjectReference]
-    let inputObjects: [WalletSuiObjectReference]
-    let commands: [WalletSuiReviewedCommand]
+    let gasObject: WalletSuiObjectReference
+    let gasBalanceBaseUnits: String
     let gasBudgetBaseUnits: String
+    let referenceGasPriceBaseUnits: String
     let gasPriceBaseUnits: String
-    let simulation: String
-    let simulationSucceeded: Bool
-    let expectedEffectsDigest: String
+    let currentEpoch: UInt64
+    let expirationEpoch: UInt64
+    let observedAt: Date
+}
+
+struct WalletSuiUnsignedIntent: Codable, Equatable, Sendable {
+    let prepared: WalletPreparedTransaction
+    let transactionBCS: String
+}
+
+struct WalletSuiSimulationPacket: Codable, Equatable, Sendable {
+    let intentID: String
+    let chainIdentifier: String
+    let checkpointSequence: UInt64
+    let checkpointTimestamp: Date
+    let currentEpoch: UInt64
+    let referenceGasPriceBaseUnits: String
+    let transactionDigest: String
+    let effectsDigest: String
+    let sender: String
+    let recipient: String
+    let amountBaseUnits: String
+    let senderDebitBaseUnits: String
+    let recipientCreditBaseUnits: String
+    let gasObjectID: String
+    let computationCost: String
+    let storageCost: String
+    let storageRebate: String
+    let nonRefundableStorageFee: String
+    let actualFeeBaseUnits: String
     let observedAt: Date
 }
 
 struct WalletSuiRecheckPacket: Codable, Equatable, Sendable {
-    let intentID: String
-    let chainIdentifier: String
-    let objectReferences: [WalletSuiObjectReference]
-    let gasPriceBaseUnits: String
-    let simulation: String
-    let simulationSucceeded: Bool
-    let effectsDigest: String
-    let observedAt: Date
+    let simulation: WalletSuiSimulationPacket
+    let gasObject: WalletSuiObjectReference
+    let gasBalanceBaseUnits: String
+    let gasCheckpointSequence: UInt64
+    let gasCheckpointTimestamp: Date
+    let currentEpoch: UInt64
+    let referenceGasPriceBaseUnits: String
 }
 
 struct WalletSuiSignedTransaction: Codable, Equatable, Sendable {
