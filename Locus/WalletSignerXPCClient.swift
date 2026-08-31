@@ -197,7 +197,6 @@ final class XPCWalletSignerClient: WalletSignerClient {
                let assetID = request.action.assetID,
                let identity = WalletSolanaAssetIdentity.parse(assetID),
                identity.networkID == request.networkID,
-               identity.program == .spl,
                let owner = request.action.recipient {
                 let derivation = WalletSolanaAssociatedTokenRequest(
                     networkID: request.networkID, owner: owner,

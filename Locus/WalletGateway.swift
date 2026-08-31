@@ -379,7 +379,8 @@ enum WalletPolicyEngine {
         switch adapterID {
         case WalletReviewedAdapters.ethereumNativeTransfer,
              WalletReviewedAdapters.solanaNativeTransfer,
-             WalletReviewedAdapters.solanaSPLTransferChecked:
+             WalletReviewedAdapters.solanaSPLTransferChecked,
+             WalletReviewedAdapters.solanaToken2022TransferChecked:
             counterparties = transaction.action.recipient.map { [$0] } ?? []
         case WalletReviewedAdapters.erc20:
             counterparties = transaction.effects.compactMap { effect in

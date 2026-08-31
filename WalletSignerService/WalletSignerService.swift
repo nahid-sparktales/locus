@@ -769,9 +769,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 ), descriptor.chain == .solana,
                    Self.isSolanaAddress(value.owner),
                    Self.isSolanaAddress(value.mint),
-                   value.tokenProgramID == WalletSolanaTokenProgram.spl.programID else {
+                   WalletSolanaTokenProgram.allCases.contains(where: {
+                     $0.programID == value.tokenProgramID
+                   }) else {
                     throw self.signerError(
-                        "The associated-token request is outside classic SPL."
+                        "The associated-token request uses an unreviewed program."
                     )
                 }
                 try self.authorizeNetwork(
@@ -1480,7 +1482,6 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               let assetID = action.assetID,
               let identity = WalletSolanaAssetIdentity.parse(assetID),
               identity.networkID == packet.request.networkID,
-              identity.program == .spl,
               action.tokenID == nil, action.inputAssetID == nil,
               action.outputAssetID == nil, action.minimumOutputBaseUnits == nil,
               action.adapterID == nil, action.authorizationFormat == nil,
@@ -1509,12 +1510,16 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             $0.id == packet.request.accountID && $0.chain == .solana
                 && $0.networkIDs.contains(packet.request.networkID)
         }
+        let tokenProgramID = identity.program.programID
+        let adapterID = identity.program == .token2022
+            ? WalletReviewedAdapters.solanaToken2022TransferChecked
+            : WalletReviewedAdapters.solanaSPLTransferChecked
         guard let account, account.address == packet.feePayer,
               Self.isSolanaAddress(recipient), recipient != account.address,
               (1...2).contains(packet.instructions.count),
               let instruction = packet.instructions.last,
-              instruction.programID == WalletSolanaTokenProgram.spl.programID,
-              instruction.adapterID == WalletReviewedAdapters.solanaSPLTransferChecked,
+              instruction.programID == tokenProgramID,
+              instruction.adapterID == adapterID,
               instruction.semanticOperation
                 == WalletActionKind.fungibleTokenTransfer.rawValue,
               let source = instruction.canonicalArguments["source_token_account"],
@@ -1525,22 +1530,53 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               let decimalsText = instruction.canonicalArguments["decimals"],
               let decimals = UInt8(decimalsText),
               identity.mint == mint,
-              instruction.canonicalArguments == [
-                  "amount": amount,
-                  "asset_id": assetID,
-                  "decimals": String(decimals),
-                  "destination_owner": recipient,
-                  "destination_token_account": destination,
-                  "mint": mint,
-                  "source_token_account": source,
-              ],
               Self.isSolanaAddress(source), Self.isSolanaAddress(destination) else {
             throw signerError("The requested SPL account roles are invalid.")
+        }
+        let mintExtensions = try canonicalTokenExtensionArgument(
+            instruction.canonicalArguments["mint_extensions"],
+            required: identity.program == .token2022
+        )
+        let sourceExtensions = try canonicalTokenExtensionArgument(
+            instruction.canonicalArguments["source_extensions"],
+            required: identity.program == .token2022
+        )
+        let destinationExtensions = try canonicalTokenExtensionArgument(
+            instruction.canonicalArguments["destination_extensions"],
+            required: identity.program == .token2022
+        )
+        try requireSafeTokenExtensions(
+            program: identity.program, mint: mintExtensions,
+            source: sourceExtensions, destination: destinationExtensions
+        )
+        var expectedArguments: [String: String] = [
+            "amount": amount,
+            "asset_id": assetID,
+            "decimals": String(decimals),
+            "destination_owner": recipient,
+            "destination_token_account": destination,
+            "mint": mint,
+            "source_token_account": source,
+        ]
+        if identity.program == .token2022 {
+            expectedArguments["mint_extensions"] = mintExtensions.joined(
+                separator: ","
+            )
+            expectedArguments["source_extensions"] = sourceExtensions.joined(
+                separator: ","
+            )
+            expectedArguments["destination_extensions"] =
+                destinationExtensions.joined(separator: ",")
+        }
+        guard instruction.canonicalArguments == expectedArguments else {
+            throw signerError(
+                "The reviewed token arguments or extension evidence changed."
+            )
         }
         let createsDestinationAssociatedAccount = packet.instructions.count == 2
         var distinctAddresses = [
             account.address, source, mint, destination, recipient,
-            WalletSolanaTokenProgram.spl.programID,
+            tokenProgramID,
         ]
         if createsDestinationAssociatedAccount {
             distinctAddresses.append(Self.solanaSystemProgramID)
@@ -1570,9 +1606,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         if createsDestinationAssociatedAccount {
             let derived = try rustAssociatedTokenAddress(
                 owner: recipient, mint: mint,
-                tokenProgramID: WalletSolanaTokenProgram.spl.programID
+                tokenProgramID: tokenProgramID
             )
             guard derived.address == destination,
+                  identity.program != .token2022
+                    || destinationExtensions == ["immutableOwner"],
                   let creation = packet.instructions.first,
                   creation.programID == Self.solanaAssociatedTokenProgramID,
                   creation.adapterID
@@ -1602,7 +1640,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                         lookupTableAddress: nil, lookupTableSlot: nil
                     ),
                     WalletSolanaResolvedAccount(
-                        address: WalletSolanaTokenProgram.spl.programID,
+                        address: tokenProgramID,
                         isSigner: false, isWritable: false,
                         lookupTableAddress: nil, lookupTableSlot: nil
                     ),
@@ -1611,7 +1649,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     "associated_token_account": destination,
                     "destination_owner": recipient,
                     "mint": mint,
-                    "token_program_id": WalletSolanaTokenProgram.spl.programID,
+                    "token_program_id": tokenProgramID,
                   ] else {
                 throw signerError(
                     "The associated-token account does not match the signer-derived reviewed instruction."
@@ -1626,7 +1664,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             feePayer: account.address, sourceTokenAccount: source, mint: mint,
             destinationTokenAccount: destination, recipientOwner: recipient,
             createsDestinationAssociatedAccount:
-                createsDestinationAssociatedAccount
+                createsDestinationAssociatedAccount,
+            tokenProgramID: tokenProgramID,
+            mintExtensions: mintExtensions,
+            sourceExtensions: sourceExtensions,
+            destinationExtensions: destinationExtensions
         )
         guard instruction.accounts == expectedAccounts,
               packet.resolvedAccountsDigest == resolvedDigest else {
@@ -1635,7 +1677,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             )
         }
         try authorizeReviewedAdapter(
-            WalletReviewedAdapters.solanaSPLTransferChecked,
+            adapterID,
             networkID: packet.request.networkID
         )
         let rust = try rustPrepareSolana(packet: packet, entropy: entropy)
@@ -1659,7 +1701,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 from: account.address, to: recipient, spender: nil
             )],
             riskFlags: [], contract: nil,
-            adapterID: WalletReviewedAdapters.solanaSPLTransferChecked,
+            adapterID: adapterID,
             budgetAssetID: assetID, spendBaseUnits: amount,
             maximumFeeBaseUnits: packet.request.maximumFeeBaseUnits,
             feeQuoteBaseUnits: fee,
@@ -2035,14 +2077,20 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             && adapterID == WalletReviewedAdapters.solanaNativeTransfer
             && policy.allowedAssetIDs == ["\(policy.networkID)/slip44:501"]
             && policy.allowedContractIDs.isEmpty
-        let splSolanaPolicy = descriptor.chain == .solana
-            && adapterID == WalletReviewedAdapters.solanaSPLTransferChecked
+        let solanaTokenPolicy = descriptor.chain == .solana
+            && [WalletReviewedAdapters.solanaSPLTransferChecked,
+                WalletReviewedAdapters.solanaToken2022TransferChecked].contains(
+                    adapterID
+                )
             && policy.allowedAssetIDs.allSatisfy {
                 guard let identity = WalletSolanaAssetIdentity.parse($0) else {
                     return false
                 }
                 return identity.networkID == policy.networkID
-                    && identity.program == .spl
+                    && (identity.program == .spl
+                        ? adapterID == WalletReviewedAdapters.solanaSPLTransferChecked
+                        : adapterID
+                            == WalletReviewedAdapters.solanaToken2022TransferChecked)
             }
             && policy.allowedContractIDs.isEmpty
         let contractPolicy = descriptor.chain == .evm && [
@@ -2053,7 +2101,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             && policy.allowedAssetIDs.allSatisfy {
                 Self.isERC20AssetID($0, networkID: policy.networkID)
             }
-        guard nativeEVMPolicy || nativeSolanaPolicy || splSolanaPolicy
+        guard nativeEVMPolicy || nativeSolanaPolicy || solanaTokenPolicy
                 || contractPolicy else {
             throw signerError("The policy does not match a supported reviewed adapter shape.")
         }
@@ -2066,6 +2114,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
               [WalletReviewedAdapters.ethereumNativeTransfer,
                WalletReviewedAdapters.solanaNativeTransfer,
                WalletReviewedAdapters.solanaSPLTransferChecked,
+               WalletReviewedAdapters.solanaToken2022TransferChecked,
                WalletReviewedAdapters.erc20,
                WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn].contains(adapterID),
               transaction.riskFlags.isEmpty,
@@ -2112,7 +2161,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         switch transaction.adapterID {
         case WalletReviewedAdapters.ethereumNativeTransfer,
              WalletReviewedAdapters.solanaNativeTransfer,
-             WalletReviewedAdapters.solanaSPLTransferChecked:
+             WalletReviewedAdapters.solanaSPLTransferChecked,
+             WalletReviewedAdapters.solanaToken2022TransferChecked:
             return transaction.action.recipient.map { [$0] }
         case WalletReviewedAdapters.erc20:
             let values = transaction.effects.compactMap { effect -> String? in
@@ -2179,6 +2229,61 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         WalletSolanaBase58.decode(value, exactLength: 32) != nil
     }
 
+    private func canonicalTokenExtensionArgument(
+        _ value: String?,
+        required: Bool
+    ) throws -> [String] {
+        if !required {
+            guard value == nil else {
+                throw signerError(
+                    "Classic SPL evidence cannot contain Token-2022 extensions."
+                )
+            }
+            return []
+        }
+        guard let value else {
+            throw signerError("Token-2022 extension evidence is missing.")
+        }
+        let parsed = value.isEmpty ? [] : value.split(
+            separator: ",", omittingEmptySubsequences: false
+        ).map(String.init)
+        guard parsed.allSatisfy(Self.validSolanaExtensionName),
+              parsed == Array(Set(parsed)).sorted() else {
+            throw signerError("Token-2022 extension evidence is not canonical.")
+        }
+        return parsed
+    }
+
+    private func requireSafeTokenExtensions(
+        program: WalletSolanaTokenProgram,
+        mint: [String],
+        source: [String],
+        destination: [String]
+    ) throws {
+        if program == .spl {
+            guard mint.isEmpty, source.isEmpty, destination.isEmpty else {
+                throw signerError("Classic SPL extension evidence is invalid.")
+            }
+            return
+        }
+        let safeMint: Set<String> = ["metadataPointer", "tokenMetadata"]
+        let safeAccount: Set<String> = ["immutableOwner"]
+        guard Set(mint).isSubset(of: safeMint),
+              Set(source).isSubset(of: safeAccount),
+              Set(destination).isSubset(of: safeAccount) else {
+            throw signerError(
+                "The Token-2022 extensions change reviewed transfer semantics."
+            )
+        }
+    }
+
+    private static func validSolanaExtensionName(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 64 && value.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0)
+                || (97...122).contains($0)
+        }
+    }
+
     private static func solanaResolvedAccountsDigest(
         feePayer: String,
         recipient: String
@@ -2198,13 +2303,21 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         mint: String,
         destinationTokenAccount: String,
         recipientOwner: String,
-        createsDestinationAssociatedAccount: Bool = false
+        createsDestinationAssociatedAccount: Bool = false,
+        tokenProgramID: String = WalletSolanaTokenProgram.spl.programID,
+        mintExtensions: [String] = [],
+        sourceExtensions: [String] = [],
+        destinationExtensions: [String] = []
     ) -> String {
-        let tokenProgram = WalletSolanaTokenProgram.spl.programID
         var description =
-            "legacy|\(tokenProgram)|\(feePayer):signer:writable|\(sourceTokenAccount):nonsigner:writable|\(mint):nonsigner:readonly|\(destinationTokenAccount):nonsigner:writable|owner:\(recipientOwner)"
+            "legacy|\(tokenProgramID)|\(feePayer):signer:writable|\(sourceTokenAccount):nonsigner:writable|\(mint):nonsigner:readonly|\(destinationTokenAccount):nonsigner:writable|owner:\(recipientOwner)"
         if createsDestinationAssociatedAccount {
             description += "|create_ata:\(solanaAssociatedTokenProgramID)"
+        }
+        if tokenProgramID == WalletSolanaTokenProgram.token2022.programID {
+            description += "|mint_exts:\(mintExtensions.joined(separator: ","))"
+            description += "|source_exts:\(sourceExtensions.joined(separator: ","))"
+            description += "|destination_exts:\(destinationExtensions.joined(separator: ","))"
         }
         let value = Data(description.utf8)
         return "sha256:" + SHA256.hash(data: value).map {
@@ -2520,6 +2633,9 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     ) throws -> T {
         guard let recipient = packet.request.action.recipient,
               let amount = packet.request.action.amountBaseUnits,
+              let assetID = packet.request.action.assetID,
+              let identity = WalletSolanaAssetIdentity.parse(assetID),
+              identity.networkID == packet.request.networkID,
               (1...2).contains(packet.instructions.count),
               let arguments = packet.instructions.last?.canonicalArguments,
               let source = arguments["source_token_account"],
@@ -2533,7 +2649,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             feePayer: packet.feePayer, sourceTokenAccount: source,
             mint: mint, destinationTokenAccount: destination,
             recipientOwner: recipient,
-            tokenProgramID: WalletSolanaTokenProgram.spl.programID,
+            tokenProgramID: identity.program.programID,
             associatedTokenProgramID: Self.solanaAssociatedTokenProgramID,
             createDestinationAssociatedAccount: packet.instructions.count == 2,
             recentBlockhash: packet.recentBlockhash,

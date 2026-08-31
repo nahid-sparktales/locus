@@ -24,8 +24,11 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   signer-derived recipient associated token account, exact idempotent creation
   when unallocated, simulation recheck, and signer-owned token rules.
 - [x] Solana associated-token-account derivation and exact idempotent creation.
+- [x] Token-2022 `TransferChecked` for the fail-closed extension subset:
+  metadata-only mint extensions and `immutableOwner` token accounts, with
+  program-scoped ATA derivation and extension evidence rebound before signing.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
-- [ ] Solana reviewed Token-2022 extension transfers and
+- [ ] Solana transfer-altering Token-2022 extensions and
   NFT/compressed-collectible implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.

@@ -21,9 +21,10 @@ interrupted, pending recovery state is cleared and signing authority locks.
 The signer exports typed EVM, Solana, and Sui protocol-v2 operations. Arbitrary
 digest signing, raw messages, opaque calldata, unresolved Solana instructions,
 and unknown Move calls are not exported authority. Implemented Solana builders
-accept only one canonical native transfer or one classic SPL `TransferChecked`,
-optionally preceded by one exact idempotent associated-token-account creation;
-all other Solana and Sui transaction shapes remain fail-closed.
+accept only one canonical native transfer or one reviewed SPL/Token-2022
+`TransferChecked`, optionally preceded by one exact idempotent
+associated-token-account creation; all other Solana and Sui transaction shapes
+remain fail-closed.
 
 ## Mainnet capability manifest
 
@@ -78,6 +79,14 @@ signing adapter.
   bind both programs, account roles, mint, decimals, exact amount, blockhash,
   fee, and simulated effects. Signer-owned rules bind the exact mint and
   recipient.
+- Token-2022 transfers use a separate reviewed adapter and program-scoped ATA.
+  The mint is limited to no extensions or metadata-only `metadataPointer` and
+  `tokenMetadata`; token accounts are limited to no extensions or
+  `immutableOwner`. Every observed extension name is canonicalized and rebound
+  during recheck. Transfer fees, hooks, confidentiality, pausing, permanent
+  delegates, memo/CPI requirements, unknown/unparseable extensions, and other
+  altered semantics are unsignable. See the
+  [official extension catalogue](https://www.solana-program.com/docs/token-2022/extensions).
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -89,9 +98,9 @@ signing adapter.
 The code intentionally does not claim GA. These capabilities stay disabled
 until their implementation and evidence gates pass:
 
-- Solana Token-2022 extension transfers, NFT/compressed-collectible adapters,
-  versioned-message and lookup-table decoding, indexed history, priority fees,
-  and local-validator coverage; all
+- Solana transfer-altering Token-2022 extensions,
+  NFT/compressed-collectible adapters, versioned-message and lookup-table
+  decoding, indexed history, priority fees, and local-validator coverage; all
   Sui builders, signing, provider execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;

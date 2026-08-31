@@ -1023,7 +1023,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertThrowsError(try WalletSolanaCanonicalSPLTransfer(
             feePayer: payer, sourceTokenAccount: source, mint: mint,
             destinationTokenAccount: destination, recipientOwner: recipient,
-            tokenProgramID: WalletSolanaTokenProgram.token2022.programID,
+            tokenProgramID: WalletSolanaBase58.encode(
+                Data(repeating: 10, count: 32)
+            ),
             recentBlockhash: blockhash, amountBaseUnits: "1", decimals: 6
         ))
         XCTAssertThrowsError(try WalletSolanaCanonicalSPLTransfer(
@@ -1066,6 +1068,40 @@ final class WalletGatewayTests: XCTestCase {
                 createsDestinationAssociatedAccount: true
             )
         )
+    }
+
+    func testSolanaCanonicalToken2022TransferMatchesIndependentSignerFixture() throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let destination = "9dTDtNrTEkkDWLkvXLLQfmsJ7wFcuk7DCf6nN53i1Dt"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let transfer = try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.token2022.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "123456789",
+            decimals: 6, createsDestinationAssociatedAccount: true,
+            mintExtensions: ["metadataPointer", "tokenMetadata"],
+            sourceAccountExtensions: ["immutableOwner"],
+            destinationAccountExtensions: ["immutableOwner"]
+        )
+        XCTAssertEqual(
+            transfer.canonicalMessageDigest,
+            "sha256:163ce00af6a503a938aabe131c8c672d16fbe56104b2431de34ebb9dcddc7f4a"
+        )
+        XCTAssertEqual(transfer.message.count, 320)
+        XCTAssertThrowsError(try WalletSolanaCanonicalSPLTransfer(
+            feePayer: payer, sourceTokenAccount: source, mint: mint,
+            destinationTokenAccount: destination, recipientOwner: recipient,
+            tokenProgramID: WalletSolanaTokenProgram.token2022.programID,
+            recentBlockhash: blockhash, amountBaseUnits: "123456789",
+            decimals: 6, createsDestinationAssociatedAccount: true,
+            mintExtensions: ["transferFeeConfig"],
+            sourceAccountExtensions: ["immutableOwner"],
+            destinationAccountExtensions: ["immutableOwner"]
+        ))
     }
 
     func testSolanaAssetIdentityIsCanonicalAndProgramScoped() {
@@ -1293,6 +1329,147 @@ final class WalletGatewayTests: XCTestCase {
             XCTFail("An occupied unverified associated address must be rejected.")
         } catch WalletRPCError.invalidResponse(let message) {
             XCTAssertTrue(message.contains("already occupied"))
+        }
+    }
+
+    func testSolanaProviderAllowsOnlySafeToken2022ExtensionSubset() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let source = WalletSolanaBase58.encode(Data(repeating: 2, count: 32))
+        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
+        let destination = "9dTDtNrTEkkDWLkvXLLQfmsJ7wFcuk7DCf6nN53i1Dt"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        let assetID = "solana:devnet/token2022:\(mint)"
+        var unsafeMintExtension = false
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getAccountInfo":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let address = try XCTUnwrap(params[0] as? String)
+                if address == mint {
+                    let extensions: [[String: Any]] = unsafeMintExtension
+                        ? [["extension": "transferFeeConfig", "state": [:]]]
+                        : [
+                            ["extension": "tokenMetadata", "state": [:]],
+                            ["extension": "metadataPointer", "state": [:]],
+                        ]
+                    result = [
+                        "context": ["slot": 42],
+                        "value": [
+                            "data": [
+                                "program": WalletSolanaTokenProgram.token2022
+                                    .parsedProgramName,
+                                "parsed": [
+                                    "type": "mint",
+                                    "info": [
+                                        "decimals": 6, "isInitialized": true,
+                                        "extensions": extensions,
+                                    ],
+                                ],
+                                "space": 256,
+                            ],
+                            "executable": false, "lamports": 2_000_000,
+                            "owner": WalletSolanaTokenProgram.token2022.programID,
+                            "space": 256,
+                        ],
+                    ]
+                } else {
+                    XCTAssertEqual(address, destination)
+                    result = ["context": ["slot": 42], "value": NSNull()]
+                }
+            case "getTokenAccountsByOwner":
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let owner = try XCTUnwrap(params[0] as? String)
+                let filter = try XCTUnwrap(params[1] as? [String: Any])
+                let programID = try XCTUnwrap(filter["programId"] as? String)
+                let values: [Any]
+                if programID == WalletSolanaTokenProgram.token2022.programID,
+                   owner == payer {
+                    values = [self.solanaTokenAccountJSON(
+                        address: source, mint: mint, owner: payer,
+                        amount: "999999999", decimals: 6, programID: programID,
+                        extensions: [["extension": "immutableOwner"]]
+                    )]
+                } else {
+                    values = []
+                }
+                result = ["context": ["slot": 42], "value": values]
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "blockhash": blockhash, "lastValidBlockHeight": 500,
+                    ],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "err": NSNull(), "innerInstructions": [],
+                        "logs": ["Program TokenzQd success"],
+                        "unitsConsumed": 3_000,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = 450
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .fungibleTokenTransfer(
+                assetID: assetID, recipient: recipient,
+                amountBaseUnits: "123456789"
+            ),
+            maximumFeeBaseUnits: "6000"
+        )
+        let packet = try await client.prepare(
+            request: request, feePayer: payer,
+            recipientAssociatedTokenAddress: destination
+        )
+        XCTAssertEqual(
+            packet.canonicalMessageDigest,
+            "sha256:163ce00af6a503a938aabe131c8c672d16fbe56104b2431de34ebb9dcddc7f4a"
+        )
+        XCTAssertEqual(
+            packet.instructions.last?.adapterID,
+            WalletReviewedAdapters.solanaToken2022TransferChecked
+        )
+        XCTAssertEqual(
+            packet.instructions.last?.canonicalArguments["mint_extensions"],
+            "metadataPointer,tokenMetadata"
+        )
+        XCTAssertEqual(
+            packet.instructions.last?.canonicalArguments["source_extensions"],
+            "immutableOwner"
+        )
+        _ = try await client.recheck(intentID: "token-2022", packet: packet)
+
+        unsafeMintExtension = true
+        do {
+            _ = try await client.prepare(
+                request: request, feePayer: payer,
+                recipientAssociatedTokenAddress: destination
+            )
+            XCTFail("Transfer-fee Token-2022 mints must remain unsignable.")
+        } catch WalletGateway.Error.policyDenied(let message) {
+            XCTAssertTrue(message.contains("change reviewed transfer semantics"))
         }
     }
 
@@ -1615,23 +1792,29 @@ final class WalletGatewayTests: XCTestCase {
         owner: String,
         amount: String,
         decimals: Int,
-        programID: String
+        programID: String,
+        extensions: [[String: Any]] = []
     ) -> [String: Any] {
-        [
+        let parsedProgram = programID == WalletSolanaTokenProgram.token2022.programID
+            ? WalletSolanaTokenProgram.token2022.parsedProgramName
+            : WalletSolanaTokenProgram.spl.parsedProgramName
+        var info: [String: Any] = [
+            "isNative": false, "mint": mint, "owner": owner,
+            "state": "initialized",
+            "tokenAmount": [
+                "amount": amount, "decimals": decimals,
+                "uiAmount": NSNull(), "uiAmountString": "ignored",
+            ],
+        ]
+        if !extensions.isEmpty { info["extensions"] = extensions }
+        return [
             "pubkey": address,
             "account": [
                 "data": [
-                    "program": "spl-token",
+                    "program": parsedProgram,
                     "parsed": [
                         "type": "account",
-                        "info": [
-                            "isNative": false, "mint": mint, "owner": owner,
-                            "state": "initialized",
-                            "tokenAmount": [
-                                "amount": amount, "decimals": decimals,
-                                "uiAmount": NSNull(), "uiAmountString": "ignored",
-                            ],
-                        ],
+                        "info": info,
                     ],
                     "space": 165,
                 ],

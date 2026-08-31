@@ -50,6 +50,7 @@ let supportedAdapterIDs: Set<String> = [
     "native-eth-transfer-v1",
     "solana-system-transfer-v1",
     "solana-spl-transfer-checked-v1",
+    "solana-token-2022-transfer-checked-v1",
     "solana-associated-token-create-idempotent-v1",
     "erc20-v1",
     "erc721-safe-transfer-v1",

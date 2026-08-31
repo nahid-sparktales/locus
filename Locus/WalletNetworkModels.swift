@@ -216,6 +216,29 @@ struct WalletSolanaTokenAccount: Codable, Equatable, Identifiable, Sendable {
     let decimals: Int
     let state: String
     let isNative: Bool
+    /// Canonical RPC extension names. Unknown names remain visible to the
+    /// quarantine model but are never silently treated as transferable.
+    let extensions: [String]
+
+    init(
+        address: String,
+        owner: String,
+        identity: WalletSolanaAssetIdentity,
+        amountBaseUnits: String,
+        decimals: Int,
+        state: String,
+        isNative: Bool,
+        extensions: [String] = []
+    ) {
+        self.address = address
+        self.owner = owner
+        self.identity = identity
+        self.amountBaseUnits = amountBaseUnits
+        self.decimals = decimals
+        self.state = state
+        self.isNative = isNative
+        self.extensions = extensions
+    }
 }
 
 enum WalletProviderKind: String, Codable, CaseIterable, Sendable {

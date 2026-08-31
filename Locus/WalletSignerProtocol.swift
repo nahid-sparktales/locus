@@ -296,6 +296,8 @@ enum WalletReviewedAdapters {
     static let ethereumNativeTransfer = "native-eth-transfer-v1"
     static let solanaNativeTransfer = "solana-system-transfer-v1"
     static let solanaSPLTransferChecked = "solana-spl-transfer-checked-v1"
+    static let solanaToken2022TransferChecked =
+        "solana-token-2022-transfer-checked-v1"
     static let solanaAssociatedTokenCreateIdempotent =
         "solana-associated-token-create-idempotent-v1"
     static let erc20 = "erc20-v1"
@@ -305,6 +307,7 @@ enum WalletReviewedAdapters {
         "uniswap-universal-router-v2-exact-in-v1"
     static let staticallySupportedIDs: Set<String> = [
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
+        solanaToken2022TransferChecked,
         solanaAssociatedTokenCreateIdempotent,
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,

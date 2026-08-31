@@ -404,9 +404,10 @@ fn derive_solana_associated_token_address(
     token_program_id: &str,
 ) -> Result<SolanaAssociatedTokenAddress, &'static str> {
     const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
     const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-    if token_program_id != SPL_TOKEN_PROGRAM {
-        return Err("associated-token derivation is reviewed for classic SPL only");
+    if token_program_id != SPL_TOKEN_PROGRAM && token_program_id != TOKEN_2022_PROGRAM {
+        return Err("associated-token derivation requires a reviewed token program");
     }
     let owner = canonical_solana_pubkey(owner)?;
     let mint = canonical_solana_pubkey(mint)?;
@@ -427,9 +428,12 @@ fn build_solana_spl_message(
     signing_key: &SigningKey,
 ) -> Result<Vec<u8>, &'static str> {
     const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
     const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-    if request.token_program_id != SPL_TOKEN_PROGRAM {
-        return Err("only the classic SPL Token Program is reviewed");
+    if request.token_program_id != SPL_TOKEN_PROGRAM
+        && request.token_program_id != TOKEN_2022_PROGRAM
+    {
+        return Err("only reviewed Solana token programs are accepted");
     }
     let payer = canonical_solana_pubkey(&request.fee_payer)?;
     let source = canonical_solana_pubkey(&request.source_token_account)?;
@@ -1182,12 +1186,12 @@ mod tests {
         let recipient = Pubkey::new_from_array([5_u8; 32]).to_string();
         let blockhash = Pubkey::new_from_array([9_u8; 32]).to_string();
         let foreign = Pubkey::new_from_array([8_u8; 32]).to_string();
-        let token_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+        let foreign_program = Pubkey::new_from_array([10_u8; 32]).to_string();
         let cases = [
             serde_json::json!({
                 "fee_payer": payer, "source_token_account": source, "mint": mint,
                 "destination_token_account": destination, "recipient_owner": recipient,
-                "token_program_id": token_2022, "recent_blockhash": blockhash,
+                "token_program_id": foreign_program, "recent_blockhash": blockhash,
                 "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
                 "create_destination_associated_account": false,
                 "amount_base_units": "1", "decimals": 6
@@ -1301,6 +1305,48 @@ mod tests {
             .into_owned();
         unsafe { locus_wallet_string_free(pointer) };
         assert!(json.contains("not the recipient associated token account"));
+    }
+
+    #[test]
+    fn solana_token_2022_transfer_uses_program_scoped_associated_address() {
+        let owner = Pubkey::new_from_array([5_u8; 32]).to_string();
+        let mint = Pubkey::new_from_array([3_u8; 32]).to_string();
+        let token_program = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+        let derived = derive_solana_associated_token_address(&owner, &mint, token_program)
+            .expect("reviewed Token-2022 ATA derivation");
+        assert_eq!(derived.address, "9dTDtNrTEkkDWLkvXLLQfmsJ7wFcuk7DCf6nN53i1Dt");
+
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(
+            serde_json::json!({
+                "fee_payer": "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+                "source_token_account": Pubkey::new_from_array([2_u8; 32]).to_string(),
+                "mint": mint,
+                "destination_token_account": derived.address,
+                "recipient_owner": owner,
+                "token_program_id": token_program,
+                "associated_token_program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+                "create_destination_associated_account": true,
+                "recent_blockhash": Pubkey::new_from_array([9_u8; 32]).to_string(),
+                "amount_base_units": "123456789",
+                "decimals": 6
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let pointer =
+            locus_wallet_prepare_solana_spl_transfer_json(entropy.as_ptr(), request.as_ptr());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["canonical_message_digest"],
+            "sha256:163ce00af6a503a938aabe131c8c672d16fbe56104b2431de34ebb9dcddc7f4a"
+        );
     }
 
     #[test]

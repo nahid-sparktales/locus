@@ -1594,7 +1594,11 @@ private struct WalletSPLTokenPolicySheet: View {
             accountID: snapshot.accountID, networkID: snapshot.networkID,
             allowedAssetIDs: [snapshot.assetID],
             allowedRecipients: [recipient], allowedContractIDs: [],
-            allowedAdapterIDs: [WalletReviewedAdapters.solanaSPLTransferChecked],
+            allowedAdapterIDs: [
+                WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .token2022
+                    ? WalletReviewedAdapters.solanaToken2022TransferChecked
+                    : WalletReviewedAdapters.solanaSPLTransferChecked,
+            ],
             maximumTransactionBaseUnits: perTransactionUnits,
             maximumSessionBaseUnits: sessionCapUnits,
             maximumFeeBaseUnits: feeCapUnits,
