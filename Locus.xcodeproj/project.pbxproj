@@ -10,6 +10,7 @@
 		0160AB5D0CEB9185E7B6F66A /* AppModel+ChatOrganization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */; };
 		01DCA647E6FC8E205FEBA724 /* TaskWorkerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1616CD8FA01FCC15741F95EF /* TaskWorkerRuntime.swift */; };
 		02458331522F5E1FA06ADC29 /* WorkspaceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */; };
+		0267DE32A2FA09423C7B0B53 /* WalletSuiGraphQLClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */; };
 		03BC5D8CAF07F44D0618F330 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
 		03E21DC8F5F4070C0E7397E1 /* AppModel+OverviewActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EB0B289F5D84A7CEE3B7109 /* AppModel+OverviewActions.swift */; };
 		04DA9F043DC64CEA71910532 /* LocusMASUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDCCB01E3D4A8164C073B907 /* LocusMASUITests.swift */; };
@@ -226,6 +227,7 @@
 		8F0FD6852C5C0D1EA2F8ED6A /* AgentTeamsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD57FF854E0D56B9953A1E92 /* AgentTeamsModel.swift */; };
 		8F674D1398BBBFEB043FB536 /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
 		905A0324EC1C01C7D0A0DEBB /* ActivityCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA846238A2408DF496777142 /* ActivityCenterModel.swift */; };
+		90C1DAA74424D23F3285E83E /* WalletSuiGraphQLClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */; };
 		90C2ED2DE9CA123B0A892707 /* AppLifecycleJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81270ABC0C4D667173248A3F /* AppLifecycleJournal.swift */; };
 		91644271E86F9E3BA337CB8D /* NotebookSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F060C7C61F52AA56B69D08 /* NotebookSheet.swift */; };
 		9164D6778F06D2BABCA617C2 /* AppModel+SessionLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6957EFEAE0E05AC5893C23F /* AppModel+SessionLifecycle.swift */; };
@@ -651,6 +653,7 @@
 		CEDE792B67295C1B0196FC71 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
 		CF3D3389D598BBECBE77E38F /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
 		D30F3385999B1530556776AA /* StringUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringUtilities.swift; sourceTree = "<group>"; };
+		D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSuiGraphQLClient.swift; sourceTree = "<group>"; };
 		D8E292075DE9F84B3C78158F /* LandingFlowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingFlowModel.swift; sourceTree = "<group>"; };
 		D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAccounts.swift; sourceTree = "<group>"; };
 		DA846238A2408DF496777142 /* ActivityCenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityCenterModel.swift; sourceTree = "<group>"; };
@@ -971,6 +974,7 @@
 				530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */,
 				9506793B59FF339DD8E1CB39 /* WalletSignerXPCClient.swift */,
 				01CC51562DC9D45DE8CC92E2 /* WalletSolanaRPCClient.swift */,
+				D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */,
 				EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */,
 				766496079870F565A68EE51D /* WorkspaceArtifactOpener.swift */,
 				4765B1A3BBFEF5F98D1FD22A /* WorkspaceFileModel.swift */,
@@ -1640,6 +1644,7 @@
 				83AADDDF785F1C1B6E461820 /* WalletSignerProtocol.swift in Sources */,
 				2FFB6A7399CBB12CBA1F9D2C /* WalletSignerXPCClient.swift in Sources */,
 				E1C0DFD50327C12B2D73AD9C /* WalletSolanaRPCClient.swift in Sources */,
+				90C1DAA74424D23F3285E83E /* WalletSuiGraphQLClient.swift in Sources */,
 				C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */,
 				BA520D9DACB642C9F28474E2 /* WorkspaceArtifactOpener.swift in Sources */,
 				249F108823C504A4A0785741 /* WorkspaceFileModel.swift in Sources */,
@@ -1807,6 +1812,7 @@
 				2634EB59945AF7B86A666ECE /* WalletSignerProtocol.swift in Sources */,
 				C6C03C9466FF039AB3E93407 /* WalletSignerXPCClient.swift in Sources */,
 				15CBB134E8FBCE312F08441C /* WalletSolanaRPCClient.swift in Sources */,
+				0267DE32A2FA09423C7B0B53 /* WalletSuiGraphQLClient.swift in Sources */,
 				06A23CF5AE9CED9B211FAA4B /* WorkspaceAccess.swift in Sources */,
 				96EEA5E8CFC6F8467CA2BDB5 /* WorkspaceArtifactOpener.swift in Sources */,
 				51C5514D5FC2B6DFDE86EFB0 /* WorkspaceFileModel.swift in Sources */,
@@ -2104,10 +2110,14 @@
 				LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL = "";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;
@@ -2266,10 +2276,14 @@
 				LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL = "";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;
@@ -2567,10 +2581,14 @@
 				LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL = "";
 				LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL = "";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_NAME = Locus;
 				SDKROOT = macosx;

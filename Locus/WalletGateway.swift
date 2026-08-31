@@ -1465,7 +1465,7 @@ final class WalletGateway: ObservableObject {
                 }
             }
             synchronizeAccountSnapshots(with: publicAccounts)
-            for snapshot in accountSnapshots where snapshot.chain != .sui {
+            for snapshot in accountSnapshots {
                 if let discovered = discoveredSolanaBalances[snapshot.id] {
                     guard let index = accountSnapshots.firstIndex(where: {
                         $0.id == snapshot.id

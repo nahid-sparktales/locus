@@ -223,6 +223,12 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
                 LocusWalletQuickNodeSolanaMainnetRPCURL
             )
         fi
+        if [[ "${enabled_networks}" == *'"sui:mainnet"'* ]]; then
+            provider_keys+=(
+                LocusWalletAlchemySuiMainnetGraphQLURL
+                LocusWalletQuickNodeSuiMainnetGraphQLURL
+            )
+        fi
         for provider_key in "${provider_keys[@]}"
         do
             provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \

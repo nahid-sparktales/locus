@@ -37,6 +37,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
     private let decoder = JSONDecoder()
     private let rpcClients: [String: WalletEVMProviderCoordinator]
     private let solanaRPCClients: [String: WalletSolanaProviderCoordinator]
+    private let suiRPCClients: [String: WalletSuiProviderCoordinator]
     private var preparationPackets: [String: WalletEVMPreparationPacket] = [:]
     private var solanaPreparationPackets: [String: WalletSolanaPreparationPacket] = [:]
 
@@ -67,6 +68,19 @@ final class XPCWalletSignerClient: WalletSignerClient {
             solanaClients[network.id] = coordinator
         }
         solanaRPCClients = solanaClients
+        var suiClients: [String: WalletSuiProviderCoordinator] = [:]
+        for network in [
+            WalletNetworkCatalog.suiMainnet,
+            WalletNetworkCatalog.suiTestnet,
+        ] {
+            guard let configuration = WalletSuiProviderConfiguration.bundled(
+                network: network, bundle: bundle
+            ), let coordinator = try? WalletSuiProviderCoordinator(
+                network: network, configuration: configuration
+            ) else { continue }
+            suiClients[network.id] = coordinator
+        }
+        suiRPCClients = suiClients
         let serviceURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("XPCServices", isDirectory: true)
@@ -423,8 +437,13 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     )
                 }
             case .sui:
-                throw WalletGateway.Error.invalidArguments(
-                    "The reviewed Sui provider is not active."
+                guard assetID == descriptor.nativeAssetID else {
+                    throw WalletGateway.Error.invalidArguments(
+                        "Only the canonical native SUI balance is active."
+                    )
+                }
+                balance = try await suiRPCClient(for: networkID).balance(
+                    address: account.address
                 )
             }
             return [
@@ -641,6 +660,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
         guard let rpc = solanaRPCClients[networkID] else {
             throw WalletGateway.Error.invalidArguments(
                 "No reviewed Solana provider is configured for \(networkID)."
+            )
+        }
+        return rpc
+    }
+
+    private func suiRPCClient(for networkID: String) throws -> WalletSuiProviderCoordinator {
+        guard let rpc = suiRPCClients[networkID] else {
+            throw WalletGateway.Error.invalidArguments(
+                "No reviewed Sui GraphQL provider is configured for \(networkID)."
             )
         }
         return rpc

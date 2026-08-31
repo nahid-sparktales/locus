@@ -59,6 +59,67 @@ enum WalletSolanaBase58 {
     }
 }
 
+/// Sui's current gRPC and GraphQL APIs report the full Base58 genesis
+/// checkpoint digest. Older tooling stores the first four digest bytes as
+/// eight lowercase hexadecimal characters. These are the only two encodings
+/// accepted here; provider labels and environment names are never identities.
+enum WalletSuiChainIdentity {
+    static let mainnetBase58 = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+    static let testnetBase58 = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD"
+
+    static func matches(expected: String, reported: String) -> Bool {
+        guard let expected = parsed(expected), let reported = parsed(reported) else {
+            return false
+        }
+        switch (expected, reported) {
+        case (.full(let lhs), .full(let rhs)):
+            return lhs == rhs
+        case (.short(let lhs), .short(let rhs)):
+            return lhs == rhs
+        case (.full(let full), .short(let short)), (.short(let short), .full(let full)):
+            return full.prefix(short.count) == short
+        }
+    }
+
+    static func shortHex(_ value: String) -> String? {
+        guard let parsed = parsed(value) else { return nil }
+        let bytes: Data
+        switch parsed {
+        case .full(let value): bytes = value.prefix(4)
+        case .short(let value): bytes = value
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private enum Parsed {
+        case full(Data)
+        case short(Data)
+    }
+
+    private static func parsed(_ value: String) -> Parsed? {
+        if value.count == 8, value == value.lowercased(),
+           value.allSatisfy(\.isHexDigit), let bytes = hexadecimal(value) {
+            return .short(bytes)
+        }
+        guard let bytes = WalletSolanaBase58.decode(value, exactLength: 32) else {
+            return nil
+        }
+        return .full(bytes)
+    }
+
+    private static func hexadecimal(_ value: String) -> Data? {
+        var result = Data()
+        var index = value.startIndex
+        while index < value.endIndex {
+            let end = value.index(index, offsetBy: 2)
+            guard let byte = UInt8(value[index..<end], radix: 16) else { return nil }
+            result.append(byte)
+            index = end
+        }
+        return result
+    }
+}
+
 enum WalletNetworkEnvironment: String, Codable, CaseIterable, Sendable {
     case mainnet
     case testnet
@@ -797,7 +858,10 @@ enum WalletNetworkCatalog {
 
     static let suiMainnet = WalletNetworkDescriptor(
         canonicalID: "sui:mainnet", chain: .sui, environment: .mainnet,
-        displayName: "Sui", identity: .init(kind: .suiChainIdentifier, value: "35834a8a"),
+        displayName: "Sui", identity: .init(
+            kind: .suiChainIdentifier,
+            value: WalletSuiChainIdentity.mainnetBase58
+        ),
         nativeAssetID: "sui:mainnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/mainnet/tx/{transaction}",
         staticallyReviewedCapabilities: []
@@ -805,7 +869,10 @@ enum WalletNetworkCatalog {
 
     static let suiTestnet = WalletNetworkDescriptor(
         canonicalID: "sui:testnet", chain: .sui, environment: .testnet,
-        displayName: "Sui Testnet", identity: .init(kind: .suiChainIdentifier, value: "4c78adac"),
+        displayName: "Sui Testnet", identity: .init(
+            kind: .suiChainIdentifier,
+            value: WalletSuiChainIdentity.testnetBase58
+        ),
         nativeAssetID: "sui:testnet/coin:0x2::sui::SUI", nativeSymbol: "SUI", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://suiscan.xyz/testnet/tx/{transaction}",
         staticallyReviewedCapabilities: []

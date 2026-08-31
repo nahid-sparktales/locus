@@ -59,6 +59,14 @@
 	<string>$(LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL)</string>
 	<key>LocusWalletQuickNodeSolanaDevnetRPCURL</key>
 	<string>$(LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL)</string>
+	<key>LocusWalletAlchemySuiMainnetGraphQLURL</key>
+	<string>$(LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL)</string>
+	<key>LocusWalletQuickNodeSuiMainnetGraphQLURL</key>
+	<string>$(LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL)</string>
+	<key>LocusWalletAlchemySuiTestnetGraphQLURL</key>
+	<string>$(LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL)</string>
+	<key>LocusWalletQuickNodeSuiTestnetGraphQLURL</key>
+	<string>$(LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

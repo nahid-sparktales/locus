@@ -97,6 +97,15 @@ signing adapter.
   classified as raster images. SVG, HTML, script URLs, malformed items, and
   unknown interfaces are never promoted as trusted wallet content. No remote
   media URL currently crosses into the main-app asset store.
+- Read-only Sui native balances use GraphQL following the official
+  [JSON-RPC migration guidance](https://github.com/MystenLabs/sui/blob/main/docs/content/develop/accessing-data/grpc/what-is-grpc.mdx).
+  Every response carries the chain identifier in the same query as
+  checkpoint, epoch, gas-price, address, coin type, and balance evidence. Locus
+  accepts only the canonical full Base58 genesis digest or its provably
+  equivalent legacy four-byte form, rejects any GraphQL error or oversized or
+  stale response, and requires `totalBalance` to equal the exact sum of coin
+  objects and the address balance accumulator. This path exports no Sui signing
+  or generic GraphQL authority.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -112,7 +121,8 @@ until their implementation and evidence gates pass:
   NFT/compressed-collectible transfer adapters, remote-media rendering,
   versioned-message and lookup-table
   decoding, indexed history, priority fees, and local-validator coverage; all
-  Sui builders, signing, provider execution, and localnet suites;
+  Sui transaction builders, signing, provider execution, Coin/object/NFT and
+  activity adapters, gRPC execution, and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

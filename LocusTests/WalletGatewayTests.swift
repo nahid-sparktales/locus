@@ -1002,6 +1002,157 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(value is NSNull)
     }
 
+    func testSuiChainIdentityMatchesOnlyCanonicalFullAndLegacyForms() {
+        XCTAssertEqual(
+            WalletSuiChainIdentity.shortHex(WalletSuiChainIdentity.mainnetBase58),
+            "35834a8a"
+        )
+        XCTAssertEqual(
+            WalletSuiChainIdentity.shortHex(WalletSuiChainIdentity.testnetBase58),
+            "4c78adac"
+        )
+        XCTAssertTrue(WalletSuiChainIdentity.matches(
+            expected: WalletSuiChainIdentity.mainnetBase58, reported: "35834a8a"
+        ))
+        XCTAssertTrue(WalletSuiChainIdentity.matches(
+            expected: "4c78adac", reported: WalletSuiChainIdentity.testnetBase58
+        ))
+        XCTAssertFalse(WalletSuiChainIdentity.matches(
+            expected: WalletSuiChainIdentity.mainnetBase58,
+            reported: WalletSuiChainIdentity.testnetBase58
+        ))
+        XCTAssertFalse(WalletSuiChainIdentity.matches(
+            expected: WalletSuiChainIdentity.mainnetBase58, reported: "35834A8A"
+        ))
+        XCTAssertEqual(
+            WalletNetworkCatalog.suiMainnet.identity.value,
+            WalletSuiChainIdentity.mainnetBase58
+        )
+    }
+
+    func testSuiGraphQLBindsChainCheckpointAndBothBalanceStores() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let address = "0x" + String(repeating: "1", count: 64)
+        let client = makeSuiGraphQLClient(now: now) { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            let object = try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)
+            ) as? [String: Any]
+            XCTAssertNil(object?["jsonrpc"])
+            let query = object?["query"] as? String
+            XCTAssertTrue(query?.contains("chainIdentifier") == true)
+            XCTAssertTrue(query?.contains("addressBalance") == true)
+            let variables = object?["variables"] as? [String: Any]
+            XCTAssertEqual(variables?["address"] as? String, address)
+            XCTAssertEqual(variables?["coinType"] as? String, "0x2::sui::SUI")
+            return try self.suiOverviewResponse(address: address)
+        }
+        let overview = try await client.accountOverview(address: address)
+        XCTAssertEqual(overview.totalBalance, "1007")
+        XCTAssertEqual(overview.coinBalance, "1000")
+        XCTAssertEqual(overview.addressBalance, "7")
+        XCTAssertEqual(overview.network.checkpointSequence, 123_456)
+        XCTAssertEqual(overview.network.epoch, 900)
+        XCTAssertEqual(overview.network.referenceGasPrice, "1000")
+        let refreshedBalance = try await client.balance(address: address)
+        XCTAssertEqual(refreshedBalance, "1007")
+    }
+
+    func testSuiGraphQLRejectsWrongChainAndInconsistentBalance() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:05:00Z"
+        ))
+        let address = "0x" + String(repeating: "2", count: 64)
+        let wrongChain = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiOverviewResponse(
+                chainIdentifier: WalletSuiChainIdentity.mainnetBase58,
+                address: address
+            )
+        }
+        do {
+            _ = try await wrongChain.accountOverview(address: address)
+            XCTFail("A Sui provider on another genesis must fail closed.")
+        } catch WalletRPCError.wrongChain(let reported) {
+            XCTAssertEqual(reported, WalletSuiChainIdentity.mainnetBase58)
+        }
+
+        let inconsistent = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiOverviewResponse(
+                address: address, total: "1008", coins: "1000", accumulator: "7"
+            )
+        }
+        do {
+            _ = try await inconsistent.accountOverview(address: address)
+            XCTFail("Sui coin-object and accumulator totals must reconcile exactly.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("balance evidence"))
+        }
+    }
+
+    func testSuiGraphQLRejectsErrorsStaleEvidenceAndOversizedResponses() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(
+            from: "2026-08-31T12:30:00Z"
+        ))
+        let address = "0x" + String(repeating: "3", count: 64)
+        let graphQLError = makeSuiGraphQLClient(now: now) { _ in
+            try JSONSerialization.data(withJSONObject: [
+                "data": ["chainIdentifier": WalletSuiChainIdentity.testnetBase58],
+                "errors": [["message": "denied\nby provider"]],
+            ])
+        }
+        do {
+            _ = try await graphQLError.accountOverview(address: address)
+            XCTFail("GraphQL partial data with errors must not be trusted.")
+        } catch WalletRPCError.rpc(_, let message) {
+            XCTAssertEqual(message, "deniedby provider")
+        }
+
+        let stale = makeSuiGraphQLClient(now: now) { _ in
+            try self.suiOverviewResponse(address: address)
+        }
+        do {
+            _ = try await stale.accountOverview(address: address)
+            XCTFail("A stale checkpoint must not drive a current balance.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("stale"))
+        }
+
+        let oversized = makeSuiGraphQLClient(now: now) { _ in
+            Data(repeating: 0x20, count: 1_048_577)
+        }
+        do {
+            _ = try await oversized.accountOverview(address: address)
+            XCTFail("An oversized Sui response must fail closed.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("oversized"))
+        }
+    }
+
+    func testGatewayRefreshesCanonicalNativeSuiSnapshot() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .sui
+        signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
+        signer.accountAddress = "0x" + String(repeating: "4", count: 64)
+        signer.balanceBaseUnits = "1234567890"
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(gateway.accountSnapshots.first)
+        XCTAssertEqual(snapshot.chain, .sui)
+        XCTAssertEqual(snapshot.networkID, WalletNetworkCatalog.suiTestnet.id)
+        XCTAssertEqual(snapshot.assetID, WalletNetworkCatalog.suiTestnet.nativeAssetID)
+        XCTAssertEqual(snapshot.balanceBaseUnits, "1234567890")
+        XCTAssertEqual(snapshot.freshness, .current)
+    }
+
     func testSolanaCanonicalNativeMessageUsesStrictBase58AndReviewedShape() throws {
         let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
         let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
@@ -2071,6 +2222,51 @@ final class WalletGatewayTests: XCTestCase {
             endpoint: "https://solana-wallet-rpc.test",
             session: URLSession(configuration: configuration)
         )
+    }
+
+    private func makeSuiGraphQLClient(
+        network: WalletNetworkDescriptor = WalletNetworkCatalog.suiTestnet,
+        now: Date,
+        response: @escaping (URLRequest) throws -> Data
+    ) -> WalletSuiGraphQLClient {
+        WalletRPCURLProtocol.handler = { request in (200, try response(request)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WalletRPCURLProtocol.self]
+        return try! WalletSuiGraphQLClient(
+            network: network,
+            endpoint: "https://sui-wallet-graphql.test/graphql",
+            session: URLSession(configuration: configuration),
+            now: { now }
+        )
+    }
+
+    private func suiOverviewResponse(
+        chainIdentifier: String = WalletSuiChainIdentity.testnetBase58,
+        address: String,
+        timestamp: String = "2026-08-31T12:00:00Z",
+        total: String = "1007",
+        coins: String = "1000",
+        accumulator: String = "7"
+    ) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "data": [
+                "chainIdentifier": chainIdentifier,
+                "checkpoint": [
+                    "sequenceNumber": 123_456,
+                    "timestamp": timestamp,
+                ],
+                "epoch": ["epochId": 900, "referenceGasPrice": "1000"],
+                "address": [
+                    "address": address,
+                    "balance": [
+                        "coinType": ["repr": "0x2::sui::SUI"],
+                        "totalBalance": total,
+                        "coinBalance": coins,
+                        "addressBalance": accumulator,
+                    ],
+                ],
+            ],
+        ])
     }
 
     private func solanaTokenAccountJSON(

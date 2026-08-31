@@ -155,11 +155,15 @@ narrowly safe Token-2022 `TransferChecked` builders plus quarantined token and
 collectible discovery are implemented, while mainnet signing remains gated.
 Digital Asset Standard responses for Metaplex Token Metadata, Core, and
 compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
-media is never promoted as a wallet image. Solana token
+media is never promoted as a wallet image. Sui native balances now use the
+[current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
+full Base58 genesis checkpoint digest, reject
+stale checkpoints and partial GraphQL results, and reconcile coin-object and
+balance-accumulator totals before updating Wallet Hub. Solana token
 sends use the signer-derived recipient associated token account, creating it
 idempotently through an exact reviewed instruction when it is still
 unallocated. Token-2022 transfer-altering extensions, collectible transfers,
-versioned messages, all Sui adapters, full swaps, external wallets, and
+versioned messages, Sui transaction/signing adapters, full swaps, external wallets, and
 WalletConnect remain closed until their implementation and evidence gates pass.
 
 The Mac App Store target embeds neither recovery nor signer service. See the

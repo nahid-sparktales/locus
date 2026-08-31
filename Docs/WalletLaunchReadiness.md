@@ -31,10 +31,15 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   Token Metadata, Core, and compressed Bubblegum holdings, with canonical
   identities, strict ownership/compression evidence, quarantine, bounded
   pagination, and active-media exclusion.
+- [x] Read-only Sui GraphQL network health and native SUI balances with full
+  genesis-digest verification, bounded/error-free response envelopes, fresh
+  checkpoint and epoch/gas evidence, and exact reconciliation of coin-object
+  plus balance-accumulator holdings.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
 - [ ] Solana transfer-altering Token-2022 extensions and reviewed
   NFT/compressed-collectible transfer implementation complete.
-- [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
+- [ ] Sui gRPC/GraphQL native transfer, curated Coin, object/NFT, activity,
+  simulation, execution, and finality implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
 - [ ] Sandboxed remote collectible-media fetch and rendering complete.
