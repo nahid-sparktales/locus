@@ -24,6 +24,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
 
+    /// How long the first screen a launch fixture renders is given to appear.
+    /// The relaunch helpers already allow ten seconds for the window itself,
+    /// but a cold CI runner can spend several more seconds before that
+    /// window's content is queryable — the window existing is not the fixture
+    /// being drawn. Three seconds is the right budget for a transition inside
+    /// a running app and the wrong one straight after a launch, where it
+    /// reports a slow runner as a missing element.
+    private static let launchContentTimeout: TimeInterval = 10
+
     /// SwiftUI controls do not expose a stable element type across macOS
     /// releases. Match anchors by identifier on any element type and take the
     /// first result, because interactions on an ambiguous query fail outright.
@@ -273,6 +282,17 @@ final class LocusUITests: XCTestCase {
             if issue.auditType == .sufficientElementDescription,
                let element = issue.element,
                element.elementType == .group || element.elementType == .other {
+                return true
+            }
+            // A Help tag is the system's tooltip window. AppKit draws it, owns
+            // it, and exposes it as an undescribed element for as long as it
+            // is on screen; the control that summoned it carries the real
+            // label and is audited on its own. The hover above asks any tag to
+            // go away before the audit runs, but that races the tooltip delay,
+            // so on a slow runner a tag can still be up — an artifact of
+            // AppKit's chrome rather than a defect in the surface under test.
+            if issue.auditType == .sufficientElementDescription,
+               issue.element?.elementType == .helpTag {
                 return true
             }
             // The macOS system menu bar container has no label by design;
@@ -670,7 +690,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithTextOutputFixture()
 
         let transcript = anyElement("conversation.scroll")
-        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        XCTAssertTrue(transcript.waitForExistence(timeout: Self.launchContentTimeout))
         let initialWidth = transcript.frame.width
 
         let tableToggle = anyElement("message.table.collapse")
@@ -2158,7 +2178,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("swarm-live")
         app.typeKey("1", modifierFlags: .command)
 
-        XCTAssertTrue(anyElement("plan.section.subagents").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.section.subagents").waitForExistence(timeout: Self.launchContentTimeout))
         let subagent = anyElement("plan.subagents.row.seed-run")
         XCTAssertTrue(subagent.waitForExistence(timeout: 3))
         XCTAssertTrue(
@@ -2196,7 +2216,7 @@ final class LocusUITests: XCTestCase {
         // Running: the header "+" offers the same actions above real rows.
         relaunchWithPlanOverview("running")
         let add = anyElement("plan.section.outputs.add")
-        XCTAssertTrue(add.waitForExistence(timeout: 3))
+        XCTAssertTrue(add.waitForExistence(timeout: Self.launchContentTimeout))
         add.click()
         XCTAssertTrue(app.menuItems["Create document"].waitForExistence(timeout: 3))
         for item in creationItems {
@@ -2526,7 +2546,7 @@ final class LocusUITests: XCTestCase {
     func testRunningOverviewShowsAllSummarySections() {
         relaunchWithPlanOverview("running")
 
-        XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(anyElement("plan.section.plan").exists)
         XCTAssertTrue(anyElement("plan.section.outputs").exists)
         XCTAssertTrue(anyElement("plan.plan.row").exists)
@@ -2665,7 +2685,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithPlanOverview("error")
 
         let planRow = anyElement("plan.plan.row")
-        XCTAssertTrue(planRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(planRow.waitForExistence(timeout: Self.launchContentTimeout))
         planRow.click()
 
         XCTAssertTrue(anyElement("plan.plan.detail").waitForExistence(timeout: 3))
@@ -2700,7 +2720,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntil { toggle.label.contains("Expand") })
 
         relaunchWithPlanOverview("running", preserveSections: true)
-        XCTAssertTrue(anyElement("plan.section.outputs").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("plan.section.outputs").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertFalse(firstRow.exists, "a collapsed section must stay collapsed across launches")
         XCTAssertTrue(toggle.label.contains("Expand"), "Unexpected toggle label: \(toggle.label)")
 
@@ -2904,7 +2924,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("completed", uncleanRecovery: true)
 
         let state = anyElement("runs.state")
-        XCTAssertTrue(state.waitForExistence(timeout: 3))
+        XCTAssertTrue(state.waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue((state.label + " \(state.value ?? "")").lowercased().contains("completed"))
         XCTAssertFalse(anyElement("runs.recoveryExplanation").exists)
         XCTAssertTrue(anyElement("teamBoard.terminalSummary").exists)
@@ -2929,7 +2949,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("recoverable", uncleanRecovery: true)
 
         XCTAssertFalse(anyElement("runs.recoveryExplanation").exists)
-        XCTAssertTrue(anyElement("teamBoard.resume").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("teamBoard.resume").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(anyElement("teamBoard.discard").exists)
         XCTAssertTrue(
             app.staticTexts.matching(
@@ -2989,7 +3009,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithScrollFixture()
 
         let transcript = anyElement("conversation.scroll")
-        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        XCTAssertTrue(transcript.waitForExistence(timeout: Self.launchContentTimeout))
         let group = anyElement(
             "toolActivity.group.00000000-0000-0000-0000-000000000401"
         )
@@ -3077,7 +3097,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithScrollFixture()
 
         let transcript = anyElement("conversation.scroll")
-        XCTAssertTrue(transcript.waitForExistence(timeout: 3))
+        XCTAssertTrue(transcript.waitForExistence(timeout: Self.launchContentTimeout))
 
         app.typeKey("f", modifierFlags: .command)
         let search = app.textFields["search.field"]
@@ -3370,7 +3390,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithLandingFixture()
 
         let review = anyElement("workspace.reviewAndLand")
-        XCTAssertTrue(review.waitForExistence(timeout: 3))
+        XCTAssertTrue(review.waitForExistence(timeout: Self.launchContentTimeout))
         review.click()
         XCTAssertTrue(anyElement("landing.diff").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("landing.checkCommands").exists)
@@ -3393,7 +3413,7 @@ final class LocusUITests: XCTestCase {
     func testDispatcherRepairIsVisibleInProgressAndRuns() {
         relaunchWithRunFixture("dispatcher-repair")
 
-        XCTAssertTrue(anyElement("teamDispatch.progress").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("teamDispatch.progress").waitForExistence(timeout: Self.launchContentTimeout))
         let progress = anyElement("workspace.teamProgress")
         XCTAssertTrue(progress.waitForExistence(timeout: 3))
         progress.click()
@@ -3423,7 +3443,7 @@ final class LocusUITests: XCTestCase {
     func testTeamPlanAppearsOnceInConversationWithWholePlanActions() {
         relaunchWithRunFixture("dispatch-plan")
 
-        XCTAssertTrue(anyElement("teamDispatch.approval").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("teamDispatch.approval").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("teamDispatch.jobs").exists)
         XCTAssertTrue(anyElement("teamDispatch.run").exists)
@@ -3435,7 +3455,7 @@ final class LocusUITests: XCTestCase {
     func testLiveSwarmTreeShowsNestedBranchAndStopControl() {
         relaunchWithRunFixture("swarm-live")
 
-        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(app.staticTexts["Research lead"].exists)
         XCTAssertTrue(app.staticTexts["API specialist"].exists)
         XCTAssertTrue(anyElement("runs.agentTree.stop.inspect.1").exists)
@@ -3445,7 +3465,7 @@ final class LocusUITests: XCTestCase {
     func testRecoverableSwarmTreeShowsBranchRetryControl() {
         relaunchWithRunFixture("swarm-recoverable")
 
-        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.agentTree").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(app.staticTexts["API specialist"].exists)
         XCTAssertTrue(anyElement("runs.agentTree.retry.inspect.1").exists)
         XCTAssertFalse(anyElement("runs.agentTree.stop.inspect.1").exists)
@@ -3454,7 +3474,7 @@ final class LocusUITests: XCTestCase {
     func testCompletedSoloSwarmShowsReadOnlyWorkerEvidenceAndUsage() {
         relaunchWithRunFixture("solo-swarm-completed")
 
-        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(app.staticTexts["Inventory API reader"].exists)
         let worker = anyElement("runs.soloSwarm.worker./root/inventory-api")
         XCTAssertTrue(worker.exists)
@@ -3467,7 +3487,7 @@ final class LocusUITests: XCTestCase {
     func testSoloSwarmWithoutDelegationHasMeaningfulEmptyState() {
         relaunchWithRunFixture("solo-swarm-empty")
 
-        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: Self.launchContentTimeout))
         let empty = anyElement("runs.soloSwarm.noWorkers")
         XCTAssertTrue(empty.exists)
         // Not a whole card any more: no workers is one line, and it has to say
@@ -3485,7 +3505,7 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "1000"
         relaunchWithRunFixture("solo-swarm-work")
 
-        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: Self.launchContentTimeout))
 
         // The strip answers "what happened" before any card does. Four tool
         // results, two surviving files: the numbers the panel used to report as
@@ -3520,7 +3540,7 @@ final class LocusUITests: XCTestCase {
     func testRunsPanelPassesAnAccessibilityAudit() throws {
         relaunchWithRunFixture("solo-swarm-work")
 
-        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: Self.launchContentTimeout))
         try auditCurrentSurface()
         anyElement("runs.view.activity").click()
         XCTAssertTrue(anyElement("runs.activity").waitForExistence(timeout: 3))
@@ -3531,7 +3551,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithPendingPermission()
 
         let panel = anyElement("permission.panel")
-        XCTAssertTrue(panel.waitForExistence(timeout: 3))
+        XCTAssertTrue(panel.waitForExistence(timeout: Self.launchContentTimeout))
         // The prompt replaces the input entirely while it waits.
         XCTAssertFalse(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("permission.once").exists)
@@ -3549,7 +3569,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithPendingPermission()
 
         let panel = anyElement("permission.panel")
-        XCTAssertTrue(panel.waitForExistence(timeout: 3))
+        XCTAssertTrue(panel.waitForExistence(timeout: Self.launchContentTimeout))
         panel.click()
         app.typeKey(.escape, modifierFlags: [])
 
@@ -3565,7 +3585,7 @@ final class LocusUITests: XCTestCase {
     func testHiddenToolActivityKeepsThePermissionPanelUsable() {
         relaunchWithPendingPermission(toolActivityMode: "hidden")
 
-        XCTAssertTrue(anyElement("permission.panel").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("permission.panel").waitForExistence(timeout: Self.launchContentTimeout))
         let hidden = anyElement(
             "toolActivity.hidden.00000000-0000-0000-0000-000000000201"
         )
