@@ -2371,9 +2371,6 @@ private struct ConversationView: View {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
                     Button {
                         scrollCoordinator.jumpToLatest(animated: true)
-                        withAnimation(LocusMotion.scroll) {
-                            proxy.scrollTo(bottomID, anchor: .bottom)
-                        }
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
                             .font(.locus(size: 9, weight: .semibold))
