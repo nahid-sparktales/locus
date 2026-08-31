@@ -17,6 +17,80 @@ private enum WalletHubSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum WalletSendEligibility {
+    static func supports(
+        snapshot: WalletAccountSnapshot,
+        assets: [WalletAsset]
+    ) -> Bool {
+        guard let network = WalletNetworkCatalog.descriptor(
+            id: snapshot.networkID
+        ), network.chain == snapshot.chain else { return false }
+        if snapshot.assetID == network.nativeAssetID {
+            return network.staticallyReviewedCapabilities.contains(.nativeTransfer)
+        }
+        guard let asset = assets.first(where: { $0.id == snapshot.assetID }),
+              asset.networkID == network.id, asset.chain == network.chain,
+              asset.isVisibleByDefault else { return false }
+        switch network.chain {
+        case .evm:
+            guard let identity = WalletEVMAssetIdentity.parse(asset.id),
+                  identity.networkID == network.id,
+                  asset.reference?.caseInsensitiveCompare(
+                      identity.contractAddress
+                  ) == .orderedSame else { return false }
+            switch identity.standard {
+            case .erc20:
+                return asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            case .erc721, .erc1155:
+                return (asset.kind == .nft || asset.kind == .collectible)
+                    && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+            }
+        case .solana:
+            if let identity = WalletSolanaAssetIdentity.parse(asset.id) {
+                return identity.networkID == network.id
+                    && asset.reference == identity.mint
+                    && asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            }
+            guard let identity = WalletSolanaCollectibleIdentity.parse(asset.id)
+            else { return false }
+            return identity.networkID == network.id
+                && identity.standard == .core
+                && asset.reference == identity.address
+                && (asset.kind == .nft || asset.kind == .collectible)
+                && asset.trust == .curated
+                && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+        case .sui:
+            if let identity = WalletSuiAssetIdentity.parse(asset.id) {
+                return identity.networkID == network.id
+                    && identity.coinType != WalletSuiAssetIdentity.nativeCoinType
+                    && asset.reference == identity.coinType
+                    && asset.kind == .fungibleToken
+                    && asset.decimals.map({ (0...255).contains($0) }) == true
+                    && asset.trust == .curated
+                    && network.staticallyReviewedCapabilities.contains(
+                        .fungibleTokenTransfer
+                    )
+            }
+            guard let identity = WalletSuiObjectIdentity.parse(asset.id) else {
+                return false
+            }
+            return identity.networkID == network.id
+                && asset.reference == identity.objectID
+                && (asset.kind == .nft || asset.kind == .collectible)
+                && asset.trust == .curated
+                && network.staticallyReviewedCapabilities.contains(.nftTransfer)
+        }
+    }
+}
+
 struct WalletSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gateway: WalletGateway
@@ -248,6 +322,9 @@ struct WalletSettingsView: View {
                                 .buttonStyle(.borderedProminent)
                                 .tint(LocusTheme.ink)
                                 .disabled(gateway.status != .unlocked)
+                                .accessibilityIdentifier(
+                                    "wallet.send.open.\(snapshot.id)"
+                                )
                         } else {
                             Label("Release-gated", systemImage: "lock.shield")
                                 .font(.caption)
@@ -841,19 +918,7 @@ struct WalletSettingsView: View {
     }
 
     private func sendSupported(_ snapshot: WalletAccountSnapshot) -> Bool {
-        guard let network = WalletNetworkCatalog.descriptor(id: snapshot.networkID)
-        else { return false }
-        if snapshot.assetID == network.nativeAssetID {
-            return snapshot.chain == .evm || snapshot.chain == .solana
-        }
-        if snapshot.chain == .evm {
-            return WalletEVMAssetIdentity.parse(snapshot.assetID) != nil
-        }
-        guard snapshot.chain == .solana,
-              WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .spl,
-              let asset = gateway.assets.first(where: { $0.id == snapshot.assetID })
-        else { return false }
-        return asset.isVisibleByDefault && asset.kind == .fungibleToken
+        WalletSendEligibility.supports(snapshot: snapshot, assets: gateway.assets)
     }
 
     private func freshnessText(_ snapshot: WalletAccountSnapshot) -> String {
@@ -1015,8 +1080,8 @@ private struct WalletSendSheet: View {
                 text: $recipient
             )
             if isNFT {
-                if let fixedTokenID = assetIdentity?.tokenID {
-                    LabeledContent("Token ID") {
+                if let fixedTokenID {
+                    LabeledContent(fixedAssetIDLabel) {
                         Text(fixedTokenID).font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                     }
@@ -1035,9 +1100,8 @@ private struct WalletSendSheet: View {
                 .font(.callout)
                 .foregroundStyle(LocusTheme.textSecondary)
 
-            if snapshot.chain == .sui
-                || (snapshot.chain == .solana && !isNative && !isReviewedSPL) {
-                Label("This chain adapter remains disabled until its signer and audit gate passes.", systemImage: "lock.shield")
+            if !isTransferSupported {
+                Label("This asset does not have an active reviewed transfer path.", systemImage: "lock.shield")
                     .font(.callout)
                     .foregroundStyle(LocusTheme.warning)
             }
@@ -1055,6 +1119,7 @@ private struct WalletSendSheet: View {
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
                 .disabled(!isValid || preparing)
+                .accessibilityIdentifier("wallet.send.review")
             }
         }
         .padding(24)
@@ -1077,27 +1142,40 @@ private struct WalletSendSheet: View {
         WalletEVMAssetIdentity.parse(snapshot.assetID)
     }
 
-    private var solanaAssetIdentity: WalletSolanaAssetIdentity? {
-        WalletSolanaAssetIdentity.parse(snapshot.assetID)
+    private var solanaCollectibleIdentity: WalletSolanaCollectibleIdentity? {
+        WalletSolanaCollectibleIdentity.parse(snapshot.assetID)
+    }
+
+    private var suiObjectIdentity: WalletSuiObjectIdentity? {
+        WalletSuiObjectIdentity.parse(snapshot.assetID)
     }
 
     private var isNative: Bool { snapshot.assetID == network?.nativeAssetID }
     private var isNFT: Bool {
         assetIdentity?.standard == .erc721 || assetIdentity?.standard == .erc1155
+            || solanaCollectibleIdentity?.standard == .core
+            || suiObjectIdentity != nil
     }
-    private var isReviewedSPL: Bool {
-        guard snapshot.chain == .solana,
-              solanaAssetIdentity?.program == .spl,
-              let asset, asset.kind == .fungibleToken,
-              asset.isVisibleByDefault,
-              asset.decimals.map({ (0...255).contains($0) }) == true else {
-            return false
-        }
-        return true
+
+    private var fixedTokenID: String? {
+        assetIdentity?.tokenID ?? solanaCollectibleIdentity?.address
+            ?? suiObjectIdentity?.objectID
+    }
+
+    private var fixedAssetIDLabel: String {
+        if suiObjectIdentity != nil { return "Object ID" }
+        if solanaCollectibleIdentity != nil { return "Asset address" }
+        return "Token ID"
+    }
+
+    private var isTransferSupported: Bool {
+        WalletSendEligibility.supports(
+            snapshot: snapshot, assets: gateway.assets
+        )
     }
 
     private var resolvedTokenID: String? {
-        assetIdentity?.tokenID
+        fixedTokenID
             ?? WalletBaseUnits.normalize(tokenID.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
@@ -1110,14 +1188,13 @@ private struct WalletSendSheet: View {
         case .solana:
             WalletSolanaBase58.decode(destination, exactLength: 32) != nil
         case .sui:
-            false
+            WalletSuiAddress.isCanonical(destination)
         }
-        guard validDestination,
+        guard validDestination, isTransferSupported,
               WalletAmountFormatter.baseUnits(
                   from: maximumFee.trimmingCharacters(in: .whitespacesAndNewlines),
                   decimals: network?.nativeDecimals ?? 0
-              ) != nil,
-              snapshot.chain == .evm || isNative || isReviewedSPL else {
+              ).map({ $0 != "0" }) == true else {
             return false
         }
         if isNFT { return resolvedTokenID != nil }
@@ -1153,7 +1230,7 @@ private struct WalletSendSheet: View {
                     recipient: destination, amountBaseUnits: baseUnits,
                     maximumFeeBaseUnits: feeUnits
                 )
-            } else if assetIdentity?.standard == .erc20 || isReviewedSPL,
+            } else if !isNFT, !isNative, asset?.kind == .fungibleToken,
                       let decimals = asset?.decimals,
                       let baseUnits = WalletAmountFormatter.baseUnits(
                           from: amount.trimmingCharacters(in: .whitespacesAndNewlines),

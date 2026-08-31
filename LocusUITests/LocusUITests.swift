@@ -1078,6 +1078,21 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("settings.wallet.rule.usage").exists)
     }
 
+    func testWalletHubSendExposesReviewedSuiPath() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        let sendSection = app.buttons["wallet.hub.send"]
+        XCTAssertTrue(sendSection.waitForExistence(timeout: 2))
+        sendSection.click()
+        let suiSend = app.buttons[
+            "wallet.send.open.wallet-fixture-sui:sui:testnet:"
+                + "sui:testnet/coin:0x2::sui::SUI"
+        ]
+        XCTAssertTrue(suiSend.waitForExistence(timeout: 2))
+        suiSend.click()
+        XCTAssertTrue(app.staticTexts["Send SUI"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["wallet.send.review"].exists)
+    }
+
     func testWalletHubReadyCompactFixturePassesAccessibilityAudit() throws {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"

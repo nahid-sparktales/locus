@@ -251,6 +251,15 @@ signing adapter.
   evidence, and treats every post-signing error as broadcast-unknown. Mainnet is
   still default-denied unless signed capability and adapter-review manifests
   independently authorize this exact compiled subset and region.
+- Wallet Hub Send derives availability from the exact snapshot, canonical
+  network descriptor, canonical asset identity, trust state, and compiled
+  transfer capability. Sui Coin/object and Solana Core rows require curated
+  review metadata; user-trusted Token-2022 rows may enter preparation only
+  because the provider and signer subsequently bind the live mint and token-
+  account extensions to the fail-closed subset. The sheet keeps the raw
+  destination and fixed collectible/object identity visible, requires a
+  nonzero native fee ceiling, and calls only the typed human semantic transfer
+  APIs. It does not bypass signed mainnet launch or adapter-review gates.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -271,8 +280,8 @@ until their implementation and evidence gates pass:
   activation remain gated;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
-- complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and
-  independent local-chain coverage for Ethereum asset paths;
+- ERC-721/1155 metadata/media sandboxing and independent local-chain coverage
+  for Ethereum asset paths;
 - external audits, counsel approval, capacity testing, canary, soak, staffing,
   incident drill, notarization, and signed-update verification.
 

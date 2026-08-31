@@ -154,6 +154,14 @@ The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL,
 narrowly safe Token-2022 `TransferChecked`, and standalone plugin-free Metaplex
 Core `TransferV1` builders plus quarantined token and collectible discovery are
 implemented, while mainnet signing remains gated.
+Wallet Hub Send now exposes those reviewed paths through the same semantic
+prepare, simulate, confirm, signer-recheck, and single-provider broadcast flow:
+native assets on all three chains, reviewed fungible tokens, reviewed EVM NFTs,
+standalone Core assets, and curated Sui objects. It always shows the raw
+destination, network, asset identity, amount, and maximum native fee. Curated
+Sui Coin/object and Core identities must match signed review metadata; a
+user-trusted Token-2022 mint still has its live extension set independently
+checked against the narrow supported subset before it can be prepared.
 Ethereum ERC-20 holdings can be enumerated through Alchemy's bounded,
 chain-verified [Token API](https://www.alchemy.com/docs/data/token-api/token-api-endpoints/alchemy-get-token-balances)
 pages. Locus accepts only canonical contract addresses

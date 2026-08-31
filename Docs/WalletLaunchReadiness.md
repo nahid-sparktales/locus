@@ -121,6 +121,15 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   exact object-ownership and gas simulation, fresh dual-object recheck, exact
   approval, one-provider execution, and frozen BCS/digest/signature fixtures.
   Shared objects, batches, Move calls, and mainnet activation remain gated.
+- [x] Wallet Hub Send eligibility for every implemented human transfer subset.
+  One chain-native sheet routes native, fungible, and reviewed collectible
+  snapshots through the same semantic preparation and signer recheck as other
+  request sources. Canonical network/asset identity, exact trust level, static
+  compiled capability, raw destination, and nonzero native fee ceiling are
+  required. Curated Sui Coin/object and Solana Core snapshots are distinct from
+  locally trusted assets; safe Token-2022 remains subject to live extension
+  evidence in the provider and signer path. Signed launch/review manifests
+  remain independently required for any mainnet signature.
 - [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
   token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
   transfer-based quarantine are implemented.

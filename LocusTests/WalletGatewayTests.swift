@@ -468,6 +468,129 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(gateway.assets.isEmpty)
     }
 
+    func testWalletSendEligibilityExposesOnlyReviewedMultichainPaths() {
+        func snapshot(
+            chain: WalletChain,
+            networkID: String,
+            assetID: String,
+            symbol: String
+        ) -> WalletAccountSnapshot {
+            WalletAccountSnapshot(
+                accountID: "account", chain: chain, address: "address",
+                label: "Account", networkID: networkID, assetID: assetID,
+                symbol: symbol, balanceBaseUnits: "1", refreshedAt: Date(),
+                freshness: .current
+            )
+        }
+
+        let suiNetwork = WalletNetworkCatalog.suiTestnet
+        let nativeSui = snapshot(
+            chain: .sui, networkID: suiNetwork.id,
+            assetID: suiNetwork.nativeAssetID, symbol: "SUI"
+        )
+        XCTAssertTrue(WalletSendEligibility.supports(
+            snapshot: nativeSui, assets: []
+        ))
+
+        let coinIdentity = WalletSuiAssetIdentity(
+            networkID: suiNetwork.id, coinType: "0x1234::coin::COIN"
+        )
+        let reviewedCoin = WalletAsset(
+            canonicalID: coinIdentity.canonicalID, networkID: suiNetwork.id,
+            chain: .sui, kind: .fungibleToken,
+            reference: coinIdentity.coinType, name: "Reviewed Coin",
+            symbol: "COIN", decimals: 6, trust: .curated,
+            manifestRevision: 1
+        )
+        let coinSnapshot = snapshot(
+            chain: .sui, networkID: suiNetwork.id,
+            assetID: reviewedCoin.id, symbol: reviewedCoin.symbol
+        )
+        XCTAssertTrue(WalletSendEligibility.supports(
+            snapshot: coinSnapshot, assets: [reviewedCoin]
+        ))
+        let locallyTrustedCoin = WalletAsset(
+            canonicalID: reviewedCoin.id, networkID: reviewedCoin.networkID,
+            chain: reviewedCoin.chain, kind: reviewedCoin.kind,
+            reference: reviewedCoin.reference, name: reviewedCoin.name,
+            symbol: reviewedCoin.symbol, decimals: reviewedCoin.decimals,
+            trust: .userTrusted, manifestRevision: 0
+        )
+        XCTAssertFalse(WalletSendEligibility.supports(
+            snapshot: coinSnapshot, assets: [locallyTrustedCoin]
+        ))
+
+        let objectIdentity = WalletSuiObjectIdentity(
+            networkID: suiNetwork.id,
+            objectID: "0x" + String(repeating: "3", count: 64)
+        )
+        let reviewedObject = WalletAsset(
+            canonicalID: objectIdentity.canonicalID, networkID: suiNetwork.id,
+            chain: .sui, kind: .collectible,
+            reference: objectIdentity.objectID, name: "Reviewed Object",
+            symbol: "OBJECT", decimals: 0, trust: .curated,
+            manifestRevision: 1
+        )
+        XCTAssertTrue(WalletSendEligibility.supports(
+            snapshot: snapshot(
+                chain: .sui, networkID: suiNetwork.id,
+                assetID: reviewedObject.id, symbol: reviewedObject.symbol
+            ), assets: [reviewedObject]
+        ))
+        let locallyTrustedObject = WalletAsset(
+            canonicalID: reviewedObject.id,
+            networkID: reviewedObject.networkID,
+            chain: reviewedObject.chain, kind: reviewedObject.kind,
+            reference: reviewedObject.reference, name: reviewedObject.name,
+            symbol: reviewedObject.symbol, decimals: reviewedObject.decimals,
+            trust: .userTrusted, manifestRevision: 0
+        )
+        XCTAssertFalse(WalletSendEligibility.supports(
+            snapshot: snapshot(
+                chain: .sui, networkID: suiNetwork.id,
+                assetID: reviewedObject.id, symbol: reviewedObject.symbol
+            ), assets: [locallyTrustedObject]
+        ))
+
+        let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let tokenIdentity = WalletSolanaAssetIdentity(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            program: .token2022, mint: mint
+        )
+        let token = WalletAsset(
+            canonicalID: tokenIdentity.canonicalID,
+            networkID: tokenIdentity.networkID, chain: .solana,
+            kind: .fungibleToken, reference: mint, name: "Token-2022",
+            symbol: "T22", decimals: 6, trust: .userTrusted,
+            manifestRevision: 0
+        )
+        XCTAssertTrue(WalletSendEligibility.supports(
+            snapshot: snapshot(
+                chain: .solana, networkID: tokenIdentity.networkID,
+                assetID: token.id, symbol: token.symbol
+            ), assets: [token]
+        ))
+
+        let coreAddress = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let coreIdentity = WalletSolanaCollectibleIdentity(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            standard: .core, address: coreAddress
+        )
+        let coreAsset = WalletAsset(
+            canonicalID: coreIdentity.canonicalID,
+            networkID: coreIdentity.networkID, chain: .solana,
+            kind: .collectible, reference: coreAddress,
+            name: "Reviewed Core Asset", symbol: "CORE", decimals: nil,
+            trust: .curated, manifestRevision: 1
+        )
+        XCTAssertTrue(WalletSendEligibility.supports(
+            snapshot: snapshot(
+                chain: .solana, networkID: coreIdentity.networkID,
+                assetID: coreAsset.id, symbol: coreAsset.symbol
+            ), assets: [coreAsset]
+        ))
+    }
+
     func testSignedReviewManifestRequiresCanonicalSolanaMintIdentity() throws {
         let key = Curve25519.Signing.PrivateKey()
         let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
@@ -5106,6 +5229,43 @@ final class WalletGatewayTests: XCTestCase {
             .fungibleTokenTransfer
         )
         XCTAssertEqual(gateway.pendingConfirmation?.source, .human)
+    }
+
+    func testGatewayPreparesExplicitlyTrustedToken2022ThroughReviewedPath() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        signer.adapterID = WalletReviewedAdapters.solanaToken2022TransferChecked
+        let mint = WalletSolanaBase58.encode(Data(repeating: 6, count: 32))
+        let assetID = "solana:devnet/token2022:\(mint)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID, "mint": mint,
+            "token_program": WalletSolanaTokenProgram.token2022.rawValue,
+            "balance_base_units": "999999999", "decimals": 6,
+            "account_count": 1, "has_frozen_account": false,
+        ]]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        gateway.trustQuarantinedAsset(id: assetID)
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
+        let prepared = await gateway.prepareHumanFungibleTransfer(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "account-1", assetID: assetID, recipient: recipient,
+            amountBaseUnits: "123456789", maximumFeeBaseUnits: "6000"
+        )
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(signer.preparedRequests.last?.action.assetID, assetID)
+        XCTAssertEqual(
+            signer.preparedRequests.last?.action.type,
+            .fungibleTokenTransfer
+        )
     }
 
     private func solanaCoreAssetData(

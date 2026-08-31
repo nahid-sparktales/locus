@@ -3125,7 +3125,7 @@ final class WalletGateway: ObservableObject {
         guard action.type == .fungibleTokenTransfer,
               let assetID = action.assetID,
               let identity = WalletSolanaAssetIdentity.parse(assetID),
-              identity.networkID == networkID, identity.program == .spl,
+              identity.networkID == networkID,
               let asset = assets.first(where: { $0.id == assetID }),
               asset.networkID == networkID, asset.chain == .solana,
               asset.kind == .fungibleToken, asset.reference == identity.mint,
