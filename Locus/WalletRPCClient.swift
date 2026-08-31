@@ -368,6 +368,80 @@ actor WalletSepoliaRPCClient {
         return decimal
     }
 
+    func tokenBalances(
+        provider: WalletProviderKind,
+        address: String
+    ) async throws -> [WalletEVMDiscoveredAsset] {
+        guard provider == .alchemy, Self.isAddress(address) else {
+            throw WalletProviderCoordinatorError.noProvider(networkID)
+        }
+        _ = try await verifiedChainID()
+        var pageKey: String?
+        var seenPageKeys: Set<String> = []
+        var seenContracts: Set<String> = []
+        var assets: [WalletEVMDiscoveredAsset] = []
+        for _ in 0..<50 {
+            var options: [String: Any] = ["maxCount": 100]
+            if let pageKey { options["pageKey"] = pageKey }
+            let result = try await rpc(
+                method: "alchemy_getTokenBalances",
+                params: [address, "erc20", options]
+            )
+            guard let object = result as? [String: Any],
+                  let returnedAddress = object["address"] as? String,
+                  returnedAddress.caseInsensitiveCompare(address) == .orderedSame,
+                  let balances = object["tokenBalances"] as? [[String: Any]],
+                  balances.count <= 100 else {
+                throw WalletRPCError.invalidResponse(
+                    "alchemy_getTokenBalances returned a malformed page"
+                )
+            }
+            for balance in balances {
+                guard balance["error"] == nil || balance["error"] is NSNull,
+                      let contract = balance["contractAddress"] as? String,
+                      Self.isAddress(contract),
+                      seenContracts.insert(contract.lowercased()).inserted,
+                      let quantity = balance["tokenBalance"] as? String,
+                      quantity.count <= 66, quantity.hasPrefix("0x"),
+                      quantity.dropFirst(2).allSatisfy(\.isHexDigit),
+                      let baseUnits = WalletEthereumQuantity.hexToDecimal(quantity),
+                      let identity = WalletEVMAssetIdentity.parse(
+                          "\(networkID)/erc20:\(contract.lowercased())"
+                      ) else {
+                    throw WalletRPCError.invalidResponse(
+                        "alchemy_getTokenBalances returned malformed token evidence"
+                    )
+                }
+                if baseUnits != "0" {
+                    assets.append(WalletEVMDiscoveredAsset(
+                        identity: identity, balanceBaseUnits: baseUnits
+                    ))
+                }
+            }
+            guard assets.count <= 5_000 else {
+                throw WalletRPCError.invalidResponse(
+                    "alchemy_getTokenBalances exceeded the wallet asset limit"
+                )
+            }
+            if object["pageKey"] == nil || object["pageKey"] is NSNull {
+                return assets.sorted { $0.id < $1.id }
+            }
+            guard let next = object["pageKey"] as? String,
+                  !next.isEmpty, next.utf8.count <= 512,
+                  next.unicodeScalars.allSatisfy({
+                      $0.isASCII && $0.value >= 0x21 && $0.value != 0x7f
+                  }), seenPageKeys.insert(next).inserted else {
+                throw WalletRPCError.invalidResponse(
+                    "alchemy_getTokenBalances returned an invalid page key"
+                )
+            }
+            pageKey = next
+        }
+        throw WalletRPCError.invalidResponse(
+            "alchemy_getTokenBalances pagination was truncated"
+        )
+    }
+
     func indexedTransfers(
         provider: WalletProviderKind,
         address: String,

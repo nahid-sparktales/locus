@@ -1672,7 +1672,7 @@ final class WalletGateway: ObservableObject {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
             var discoveredAssetBalances: [String: String] = [:]
-            for account in publicAccounts where account.chain != .evm {
+            for account in publicAccounts {
                 for networkID in account.networkIDs where WalletNetworkCatalog.descriptor(
                     id: networkID
                 )?.chain == account.chain {
@@ -1684,13 +1684,20 @@ final class WalletGateway: ObservableObject {
                         ]
                     ), let rows = result["assets"] as? [[String: Any]],
                        rows.count <= 10_000 else { continue }
-                    let reconciled = account.chain == .solana
-                        ? reconcileSolanaAssets(
+                    let reconciled = switch account.chain {
+                    case .evm:
+                        reconcileEVMAssets(
                             rows, accountID: account.id, networkID: networkID
                         )
-                        : reconcileSuiAssets(
+                    case .solana:
+                        reconcileSolanaAssets(
                             rows, accountID: account.id, networkID: networkID
                         )
+                    case .sui:
+                        reconcileSuiAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        )
+                    }
                     discoveredAssetBalances.merge(
                         reconciled, uniquingKeysWith: { _, latest in latest }
                     )
@@ -1739,6 +1746,53 @@ final class WalletGateway: ObservableObject {
                 return stale
             }
         }
+    }
+
+    private func reconcileEVMAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .evm else {
+            return [:]
+        }
+        var balances: [String: String] = [:]
+        var seenAssetIDs: Set<String> = []
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  seenAssetIDs.insert(assetID).inserted,
+                  let identity = WalletEVMAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  identity.standard == .erc20, identity.tokenID == nil,
+                  assetID == identity.collectionID,
+                  row["asset_kind"] as? String
+                    == WalletAssetKind.fungibleToken.rawValue,
+                  let reference = row["reference"] as? String,
+                  reference == identity.contractAddress,
+                  let rawBalance = row["balance_base_units"] as? String,
+                  let balance = WalletBaseUnits.normalize(rawBalance),
+                  balance == rawBalance, balance != "0" else { continue }
+            if let known = assets.first(where: { $0.id == assetID }) {
+                guard known.chain == .evm, known.networkID == networkID,
+                      known.kind == .fungibleToken,
+                      known.reference?.lowercased() == identity.contractAddress else {
+                    continue
+                }
+            } else {
+                let abbreviated = "\(identity.contractAddress.prefix(6))…\(identity.contractAddress.suffix(4))"
+                let asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .evm, kind: .fungibleToken,
+                    reference: identity.contractAddress,
+                    name: "Unknown ERC-20 token", symbol: abbreviated,
+                    decimals: nil, trust: .quarantined, manifestRevision: 0
+                )
+                assets.append(asset)
+                try? publicStore?.upsertAsset(asset)
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = balance
+        }
+        return balances
     }
 
     private func reconcileSolanaAssets(

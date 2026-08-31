@@ -153,6 +153,13 @@ its hashed audit/operational evidence satisfies the invited-canary or GA gate.
 The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL, and
 narrowly safe Token-2022 `TransferChecked` builders plus quarantined token and
 collectible discovery are implemented, while mainnet signing remains gated.
+Ethereum ERC-20 holdings can be enumerated through Alchemy's bounded,
+chain-verified [Token API](https://www.alchemy.com/docs/data/token-api/token-api-endpoints/alchemy-get-token-balances)
+pages. Locus accepts only canonical contract addresses
+and integer base-unit balances, rejects duplicate contracts and unstable page
+keys, and imports no provider token names, decimals, logos, or media. Unknown
+contracts enter quarantine; signed-manifest assets retain their reviewed local
+metadata and can use the same snapshot balance.
 Digital Asset Standard responses for Metaplex Token Metadata, Core, and
 compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
 media is never promoted as a wallet image. Sui native balances now use the

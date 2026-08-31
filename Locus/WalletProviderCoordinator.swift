@@ -183,6 +183,20 @@ actor WalletEVMProviderCoordinator {
         }
     }
 
+    func tokenBalances(address: String) async throws -> [WalletEVMDiscoveredAsset] {
+        if primaryEndpoint.provider == .alchemy {
+            return try await primary.tokenBalances(
+                provider: .alchemy, address: address
+            )
+        }
+        if let fallback, fallbackEndpoint?.provider == .alchemy {
+            return try await fallback.tokenBalances(
+                provider: .alchemy, address: address
+            )
+        }
+        throw WalletProviderCoordinatorError.noProvider(network.id)
+    }
+
     func indexedTransfers(
         address: String,
         limit: Int = 250

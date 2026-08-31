@@ -960,6 +960,103 @@ final class WalletGatewayTests: XCTestCase {
         })
     }
 
+    func testAlchemyERC20DiscoveryUsesCanonicalPaginatedBaseUnits() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let first = "0x1111111111111111111111111111111111111111"
+        let second = "0x2222222222222222222222222222222222222222"
+        let zero = "0x3333333333333333333333333333333333333333"
+        var page = 0
+        let client = makeRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? Int)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            if method == "eth_chainId" {
+                result = "0xaa36a7"
+            } else {
+                XCTAssertEqual(method, "alchemy_getTokenBalances")
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                XCTAssertEqual(params[0] as? String, account)
+                XCTAssertEqual(params[1] as? String, "erc20")
+                let options = try XCTUnwrap(params[2] as? [String: Any])
+                XCTAssertEqual(options["maxCount"] as? Int, 100)
+                page += 1
+                if page == 1 {
+                    XCTAssertNil(options["pageKey"])
+                    result = [
+                        "address": "0x" + account.dropFirst(2).uppercased(),
+                        "tokenBalances": [[
+                            "contractAddress": "0x" + second.dropFirst(2).uppercased(),
+                            "tokenBalance": "0x2a", "error": NSNull(),
+                        ], [
+                            "contractAddress": zero,
+                            "tokenBalance": "0x0", "error": NSNull(),
+                        ]],
+                        "pageKey": "page-2",
+                    ]
+                } else {
+                    XCTAssertEqual(options["pageKey"] as? String, "page-2")
+                    result = [
+                        "address": account,
+                        "tokenBalances": [[
+                            "contractAddress": first,
+                            "tokenBalance": "0xffffffffffffffffffffffffffffffff",
+                            "error": NSNull(),
+                        ]],
+                        "pageKey": NSNull(),
+                    ]
+                }
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        let assets = try await client.tokenBalances(
+            provider: .alchemy, address: account
+        )
+        XCTAssertEqual(page, 2)
+        XCTAssertEqual(assets.map(\.identity.contractAddress), [first, second])
+        XCTAssertEqual(
+            assets.map(\.balanceBaseUnits),
+            ["340282366920938463463374607431768211455", "42"]
+        )
+    }
+
+    func testAlchemyERC20DiscoveryRejectsDuplicateOrErroredEvidence() async throws {
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let contract = "0x1111111111111111111111111111111111111111"
+        let client = makeRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let id = try XCTUnwrap(object["id"] as? Int)
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any = method == "eth_chainId" ? "0xaa36a7" : [
+                "address": account,
+                "tokenBalances": [
+                    ["contractAddress": contract, "tokenBalance": "0x1"],
+                    ["contractAddress": contract, "tokenBalance": "0x2"],
+                ],
+                "pageKey": NSNull(),
+            ]
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": id, "result": result,
+            ])
+        }
+        do {
+            _ = try await client.tokenBalances(provider: .alchemy, address: account)
+            XCTFail("Duplicate ERC-20 contracts must fail the asset snapshot.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("token evidence"))
+        }
+    }
+
     func testAlchemyIndexedActivityNormalizesRawBaseUnitsWithoutFloatingPoint() async throws {
         let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         let contract = "0x1111111111111111111111111111111111111111"
@@ -1076,6 +1173,47 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(gateway.transactionHistory[0].finality, .finalized)
         XCTAssertEqual(gateway.assets.first?.trust, .quarantined)
         XCTAssertFalse(try XCTUnwrap(store.loadAssets().first).isVisibleByDefault)
+    }
+
+    func testGatewayQuarantinesDiscoveredERC20UntilExplicitTrust() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let contract = "0x1111111111111111111111111111111111111111"
+        let assetID = "eip155:11155111/erc20:\(contract)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID,
+            "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+            "reference": contract,
+            "balance_base_units": "340282366920938463463374607431768211455",
+        ]]
+        let store = try WalletPublicStore(path: ":memory:")
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: store
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        let quarantined = try XCTUnwrap(gateway.assets.first { $0.id == assetID })
+        XCTAssertEqual(quarantined.name, "Unknown ERC-20 token")
+        XCTAssertEqual(quarantined.trust, .quarantined)
+        XCTAssertNil(quarantined.decimals)
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(gateway.accountSnapshots.first {
+            $0.assetID == assetID
+        })
+        XCTAssertEqual(
+            snapshot.balanceBaseUnits,
+            "340282366920938463463374607431768211455"
+        )
+        XCTAssertEqual(snapshot.freshness, .current)
+        XCTAssertTrue(try XCTUnwrap(
+            store.loadAssets().first { $0.id == assetID }
+        ).isVisibleByDefault)
     }
 
     func testRPCRejectsOversizedResponseBeforeParsing() async throws {

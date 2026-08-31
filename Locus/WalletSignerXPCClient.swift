@@ -778,9 +778,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let networkID = arguments["network_id"] as? String
                 ?? WalletNetworkCatalog.solanaDevnet.id
             guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
-                  descriptor.chain == .solana || descriptor.chain == .sui else {
+                  descriptor.chain == .evm || descriptor.chain == .solana
+                    || descriptor.chain == .sui else {
                 throw WalletGateway.Error.invalidArguments(
-                    "Asset discovery is active only for reviewed Solana and Sui providers."
+                    "Asset discovery is active only for reviewed wallet providers."
                 )
             }
             let accounts = try await listAccounts()
@@ -791,6 +792,25 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 throw WalletGateway.Error.invalidArguments(
                     "Select the matching Locus Vault chain account."
                 )
+            }
+            if descriptor.chain == .evm {
+                let balances = try await rpcClient(for: networkID).tokenBalances(
+                    address: account.address
+                )
+                let rows: [[String: Any]] = balances.map { item in
+                    [
+                        "asset_id": item.identity.collectionID,
+                        "asset_kind": WalletAssetKind.fungibleToken.rawValue,
+                        "reference": item.identity.contractAddress,
+                        "balance_base_units": item.balanceBaseUnits,
+                    ]
+                }
+                return [
+                    "text": "Loaded \(rows.count) ERC-20 balances.",
+                    "account_id": account.id,
+                    "network_id": networkID,
+                    "assets": rows,
+                ]
             }
             if descriptor.chain == .sui {
                 let balances = try await suiRPCClient(for: networkID).balances(

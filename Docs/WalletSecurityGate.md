@@ -63,6 +63,14 @@ signing adapter.
 - Reviewed ERC-20, ERC-721, and ERC-1155 transfers plus indexed inbound and
   outbound Ethereum activity. Provider-discovered assets enter quarantine and
   provider numeric values are normalized from integer base units only.
+- Alchemy ERC-20 holding discovery verifies chain identity before bounded
+  pagination, requires the returned owner, canonical unique contract addresses,
+  valid page keys, and one uint256 hex balance per row, and ignores zero
+  balances. Provider token names, symbols, decimals, logos, prices, and remote
+  media do not cross this path. Unknown contracts are stored as public SQLite
+  quarantine records and remain hidden until explicitly trusted; signed assets
+  keep only their reviewed manifest metadata. QuickNode and user endpoints do
+  not impersonate this vendor-specific discovery method.
 - Reviewed native SOL transfers using one canonical legacy System Program
   message. The app and Rust signer rebuild it independently; genesis identity,
   blockhash lifetime, account privileges, fee, simulation, request source, and

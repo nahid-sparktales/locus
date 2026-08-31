@@ -225,6 +225,16 @@ struct WalletEVMIndexedTransfer: Codable, Equatable, Identifiable, Sendable {
     let assetDecimals: Int?
 }
 
+/// A provider-normalized ERC-20 holding. Metadata is deliberately excluded:
+/// an unknown contract remains quarantined until a signed manifest or the user
+/// supplies trust, and remote logos never cross this boundary.
+struct WalletEVMDiscoveredAsset: Codable, Equatable, Identifiable, Sendable {
+    var id: String { identity.collectionID }
+
+    let identity: WalletEVMAssetIdentity
+    let balanceBaseUnits: String
+}
+
 enum WalletSolanaTokenProgram: String, Codable, CaseIterable, Sendable {
     case spl = "spl"
     case token2022 = "token2022"
