@@ -2370,7 +2370,7 @@ private struct ConversationView: View {
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
                     Button {
-                        scrollCoordinator.jumpToLatest()
+                        scrollCoordinator.jumpToLatest(animated: true)
                         withAnimation(LocusMotion.scroll) {
                             proxy.scrollTo(bottomID, anchor: .bottom)
                         }
@@ -2914,11 +2914,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
         }
     }
 
-    func jumpToLatest() {
+    func jumpToLatest(animated: Bool = false) {
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
-        scrollToBottom(animated: true)
+        if animated { scrollToBottom(animated: true) }
     }
 
     func detachAll() {
