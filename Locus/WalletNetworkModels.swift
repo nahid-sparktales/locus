@@ -1,6 +1,64 @@
 import CryptoKit
 import Foundation
 
+enum WalletSolanaBase58 {
+    private static let alphabet = Array(
+        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8
+    )
+    private static let positions = Dictionary(
+        uniqueKeysWithValues: alphabet.enumerated().map { ($0.element, $0.offset) }
+    )
+
+    static func decode(_ value: String, exactLength: Int? = nil) -> Data? {
+        let encoded = Array(value.utf8)
+        guard !encoded.isEmpty, encoded.count <= 128 else { return nil }
+        var littleEndian: [UInt8] = []
+        for character in encoded {
+            guard var carry = positions[character] else { return nil }
+            for index in littleEndian.indices {
+                let next = Int(littleEndian[index]) * 58 + carry
+                littleEndian[index] = UInt8(next & 0xff)
+                carry = next >> 8
+            }
+            while carry > 0 {
+                littleEndian.append(UInt8(carry & 0xff))
+                carry >>= 8
+            }
+        }
+        let leadingZeroCount = encoded.prefix { $0 == alphabet[0] }.count
+        let decoded = Data(
+            Array(repeatElement(UInt8(0), count: leadingZeroCount))
+                + Array(littleEndian.reversed())
+        )
+        guard exactLength.map({ decoded.count == $0 }) ?? true,
+              encode(decoded) == value else { return nil }
+        return decoded
+    }
+
+    static func encode(_ value: Data) -> String {
+        guard !value.isEmpty else { return "" }
+        let leadingZeroCount = value.prefix { $0 == 0 }.count
+        var digits: [UInt8] = []
+        for byte in value {
+            var carry = Int(byte)
+            for index in digits.indices {
+                let next = Int(digits[index]) * 256 + carry
+                digits[index] = UInt8(next % 58)
+                carry = next / 58
+            }
+            while carry > 0 {
+                digits.append(UInt8(carry % 58))
+                carry /= 58
+            }
+        }
+        let prefix = String(repeating: Character("1"), count: leadingZeroCount)
+        let significant = digits.reversed().map {
+            Character(UnicodeScalar(alphabet[Int($0)]))
+        }
+        return prefix + String(significant)
+    }
+}
+
 enum WalletNetworkEnvironment: String, Codable, CaseIterable, Sendable {
     case mainnet
     case testnet
@@ -104,6 +162,60 @@ struct WalletEVMIndexedTransfer: Codable, Equatable, Identifiable, Sendable {
     let assetName: String
     let assetSymbol: String
     let assetDecimals: Int?
+}
+
+enum WalletSolanaTokenProgram: String, Codable, CaseIterable, Sendable {
+    case spl = "spl"
+    case token2022 = "token2022"
+
+    var programID: String {
+        switch self {
+        case .spl: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        case .token2022: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+    }
+
+    var parsedProgramName: String {
+        switch self {
+        case .spl: "spl-token"
+        case .token2022: "spl-token-2022"
+        }
+    }
+}
+
+struct WalletSolanaAssetIdentity: Codable, Equatable, Sendable {
+    let networkID: String
+    let program: WalletSolanaTokenProgram
+    let mint: String
+
+    var canonicalID: String { "\(networkID)/\(program.rawValue):\(mint)" }
+
+    static func parse(_ value: String) -> Self? {
+        let components = value.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 2 else { return nil }
+        let networkID = String(components[0])
+        let suffix = components[1].split(separator: ":", omittingEmptySubsequences: false)
+        guard suffix.count == 2,
+              let program = WalletSolanaTokenProgram(rawValue: String(suffix[0])),
+              let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.chain == .solana else { return nil }
+        let mint = String(suffix[1])
+        guard WalletSolanaBase58.decode(mint, exactLength: 32) != nil else { return nil }
+        let identity = Self(networkID: networkID, program: program, mint: mint)
+        return identity.canonicalID == value ? identity : nil
+    }
+}
+
+struct WalletSolanaTokenAccount: Codable, Equatable, Identifiable, Sendable {
+    var id: String { address }
+
+    let address: String
+    let owner: String
+    let identity: WalletSolanaAssetIdentity
+    let amountBaseUnits: String
+    let decimals: Int
+    let state: String
+    let isNative: Bool
 }
 
 enum WalletProviderKind: String, Codable, CaseIterable, Sendable {
@@ -337,6 +449,22 @@ struct WalletReviewRegistry: Sendable {
                 return (asset.kind == .nft || asset.kind == .collectible)
                     && identity.tokenID != nil
                     && (asset.decimals == nil || asset.decimals == 0)
+            }
+        }
+        if network.chain == .solana {
+            guard let identity = WalletSolanaAssetIdentity.parse(asset.id),
+                  identity.networkID == network.id,
+                  identity.mint == reference,
+                  let decimals = asset.decimals, (0...255).contains(decimals) else {
+                return false
+            }
+            switch asset.kind {
+            case .fungibleToken:
+                return true
+            case .nft, .collectible:
+                return decimals == 0
+            case .native:
+                return false
             }
         }
         return !reference.isEmpty && reference.count <= 512

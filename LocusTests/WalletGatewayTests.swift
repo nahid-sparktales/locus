@@ -63,6 +63,7 @@ private final class FakeWalletSigner: WalletSignerClient {
     var executionError: WalletGateway.Error?
     var browserRPCResponse: Any = "0x1"
     var balanceBaseUnits = "1234500000000000000"
+    var discoveredAssetRows: [[String: Any]] = []
     var indexedActivityRows: [[String: Any]] = []
     var indexedHeadBlock: String?
     var accountAddress = "0xabc"
@@ -144,6 +145,9 @@ private final class FakeWalletSigner: WalletSignerClient {
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
+        if tool == "wallet_get_assets" {
+            return ["text": "assets", "assets": discoveredAssetRows]
+        }
         if tool == "wallet_get_activity" {
             var result: [String: Any] = ["text": "indexed", "activity": indexedActivityRows]
             if let indexedHeadBlock { result["head_block_number"] = indexedHeadBlock }
@@ -458,6 +462,50 @@ final class WalletGatewayTests: XCTestCase {
             signer: FakeWalletSigner(), environment: [:], publicStore: store
         )
         XCTAssertTrue(gateway.assets.isEmpty)
+    }
+
+    func testSignedReviewManifestRequiresCanonicalSolanaMintIdentity() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let issuedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let asset = WalletAsset(
+            canonicalID: "solana:mainnet-beta/spl:\(mint)",
+            networkID: WalletNetworkCatalog.solanaMainnet.id,
+            chain: .solana, kind: .fungibleToken, reference: mint,
+            name: "Reviewed SPL Token", symbol: "SPL", decimals: 6,
+            trust: .curated, manifestRevision: 1
+        )
+        let manifest = WalletReviewManifest(
+            schemaVersion: 1, revision: 1, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [asset], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        let registry = try WalletReviewRegistry(
+            signedManifest: signedReview(manifest, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(registry.assets, [asset])
+
+        let mismatched = WalletAsset(
+            canonicalID: asset.canonicalID, networkID: asset.networkID,
+            chain: asset.chain, kind: asset.kind,
+            reference: WalletSolanaBase58.encode(Data(repeating: 5, count: 32)),
+            name: asset.name, symbol: asset.symbol, decimals: asset.decimals,
+            trust: asset.trust, manifestRevision: asset.manifestRevision
+        )
+        let invalid = WalletReviewManifest(
+            schemaVersion: 1, revision: 1, issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
+            assets: [mismatched], evmContracts: [], explorerTemplates: [:],
+            adapterIDs: []
+        )
+        XCTAssertThrowsError(try WalletReviewRegistry(
+            signedManifest: signedReview(invalid, key: key),
+            publicKey: key.publicKey,
+            now: issuedAt.addingTimeInterval(1)
+        ))
     }
 
     func testPublicWalletSQLiteStorePersistsOnlyPublicRecordsAndQuarantine() throws {
@@ -942,6 +990,88 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
+    func testSolanaAssetIdentityIsCanonicalAndProgramScoped() {
+        let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let legacy = "solana:devnet/spl:\(mint)"
+        let token2022 = "solana:devnet/token2022:\(mint)"
+        XCTAssertEqual(
+            WalletSolanaAssetIdentity.parse(legacy)?.program,
+            .spl
+        )
+        XCTAssertEqual(
+            WalletSolanaAssetIdentity.parse(token2022)?.program.programID,
+            WalletSolanaTokenProgram.token2022.programID
+        )
+        XCTAssertNil(WalletSolanaAssetIdentity.parse("solana:devnet/spl:0OIl"))
+        XCTAssertNil(WalletSolanaAssetIdentity.parse("eip155:1/spl:\(mint)"))
+        XCTAssertNil(WalletSolanaAssetIdentity.parse("solana:devnet/unknown:\(mint)"))
+    }
+
+    func testSolanaTokenDiscoveryValidatesBothProgramsAndRawBalances() async throws {
+        let owner = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let tokenAccount = WalletSolanaBase58.encode(Data(repeating: 6, count: 32))
+        var requestedPrograms: [String] = []
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            if method == "getGenesisHash" {
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            } else {
+                XCTAssertEqual(method, "getTokenAccountsByOwner")
+                let params = try XCTUnwrap(object["params"] as? [Any])
+                let filter = try XCTUnwrap(params[1] as? [String: Any])
+                let programID = try XCTUnwrap(filter["programId"] as? String)
+                requestedPrograms.append(programID)
+                let values: [Any]
+                if programID == WalletSolanaTokenProgram.spl.programID {
+                    values = [[
+                        "pubkey": tokenAccount,
+                        "account": [
+                            "data": [
+                                "program": "spl-token",
+                                "parsed": [
+                                    "type": "account",
+                                    "info": [
+                                        "isNative": false, "mint": mint,
+                                        "owner": owner, "state": "initialized",
+                                        "tokenAmount": [
+                                            "amount": "18446744073709551615",
+                                            "decimals": 6, "uiAmount": 1.25,
+                                            "uiAmountString": "ignored",
+                                        ],
+                                    ],
+                                ],
+                                "space": 165,
+                            ],
+                            "executable": false, "lamports": 2_039_280,
+                            "owner": programID, "space": 165,
+                        ],
+                    ]]
+                } else {
+                    values = []
+                }
+                result = ["context": ["slot": 42], "value": values]
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let accounts = try await client.tokenAccounts(owner: owner)
+        XCTAssertEqual(accounts.count, 1)
+        XCTAssertEqual(accounts[0].amountBaseUnits, "18446744073709551615")
+        XCTAssertEqual(accounts[0].decimals, 6)
+        XCTAssertEqual(accounts[0].identity.mint, mint)
+        XCTAssertEqual(Set(requestedPrograms), Set(
+            WalletSolanaTokenProgram.allCases.map(\.programID)
+        ))
+    }
+
     func testSolanaProviderBindsGenesisBlockhashFeeSimulationAndRecheck() async throws {
         let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
         let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
@@ -1154,6 +1284,38 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(gateway.transactionHistory.first?.state, .confirmed)
         XCTAssertEqual(gateway.transactionHistory.first?.finality, .finalized)
         XCTAssertEqual(gateway.transactionHistory.first?.blockNumber, "99")
+    }
+
+    func testGatewayQuarantinesDiscoveredSolanaTokensUntilExplicitTrust() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        signer.accountAddress = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let mint = WalletSolanaBase58.encode(Data(repeating: 4, count: 32))
+        let assetID = "solana:devnet/spl:\(mint)"
+        signer.discoveredAssetRows = [[
+            "asset_id": assetID, "mint": mint, "token_program": "spl",
+            "balance_base_units": "420000000000000", "decimals": 6,
+            "account_count": 1, "has_frozen_account": false,
+        ]]
+        let gateway = WalletGateway(
+            signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            publicStore: try WalletPublicStore(path: ":memory:")
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        await gateway.refreshAccountSnapshots()
+        XCTAssertEqual(gateway.assets.first(where: { $0.id == assetID })?.trust, .quarantined)
+        XCTAssertFalse(gateway.accountSnapshots.contains { $0.assetID == assetID })
+
+        gateway.trustQuarantinedAsset(id: assetID)
+        await gateway.refreshAccountSnapshots()
+        let snapshot = try XCTUnwrap(
+            gateway.accountSnapshots.first(where: { $0.assetID == assetID })
+        )
+        XCTAssertEqual(snapshot.balanceBaseUnits, "420000000000000")
+        XCTAssertEqual(snapshot.freshness, .current)
     }
 
     private func makeRPCClient(

@@ -64,6 +64,10 @@ signing adapter.
   blockhash lifetime, account privileges, fee, simulation, request source, and
   broadcast ID are rebound before the single signing operation. Capped SOL
   agent rules use the same signer-owned policy boundary.
+- SPL Token and Token-2022 account discovery validates genesis, program owner,
+  wallet owner, mint, token-account state, decimals, and canonical raw u64
+  balances. Unknown mints are stored as public quarantine records and remain
+  hidden until explicitly trusted.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
@@ -75,9 +79,10 @@ signing adapter.
 The code intentionally does not claim GA. These capabilities stay disabled
 until their implementation and evidence gates pass:
 
-- Solana SPL/Token-2022/NFT/compressed-collectible adapters, versioned-message
-  and lookup-table decoding, indexed history, priority fees, and local-validator
-  coverage; all Sui builders, signing, provider execution, and localnet suites;
+- Solana SPL/Token-2022 transfer and NFT/compressed-collectible adapters,
+  versioned-message and lookup-table decoding, indexed history, priority fees,
+  and local-validator coverage; all Sui builders, signing, provider execution,
+  and localnet suites;
 - full v2/v3/v4 Universal Router, Jupiter `/build`, and pinned Cetus V3 swaps;
 - live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
 - complete ERC-721/1155 holdings discovery, metadata/media sandboxing, and

@@ -68,6 +68,82 @@ func isHex(_ value: Substring) -> Bool {
     }
 }
 
+let solanaBase58Alphabet = Array(
+    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8
+)
+let solanaBase58Positions = Dictionary(
+    uniqueKeysWithValues: solanaBase58Alphabet.enumerated().map {
+        ($0.element, $0.offset)
+    }
+)
+
+func encodeBase58(_ value: [UInt8]) -> String {
+    let leadingZeroCount = value.prefix { $0 == 0 }.count
+    var digits: [UInt8] = []
+    for byte in value {
+        var carry = Int(byte)
+        for index in digits.indices {
+            let next = Int(digits[index]) * 256 + carry
+            digits[index] = UInt8(next % 58)
+            carry = next / 58
+        }
+        while carry > 0 {
+            digits.append(UInt8(carry % 58))
+            carry /= 58
+        }
+    }
+    return String(repeating: "1", count: leadingZeroCount) + String(
+        digits.reversed().map {
+            Character(UnicodeScalar(solanaBase58Alphabet[Int($0)]))
+        }
+    )
+}
+
+func isCanonicalSolanaAddress(_ value: String) -> Bool {
+    let encoded = Array(value.utf8)
+    guard !encoded.isEmpty, encoded.count <= 128 else { return false }
+    var littleEndian: [UInt8] = []
+    for character in encoded {
+        guard var carry = solanaBase58Positions[character] else { return false }
+        for index in littleEndian.indices {
+            let next = Int(littleEndian[index]) * 58 + carry
+            littleEndian[index] = UInt8(next & 0xff)
+            carry = next >> 8
+        }
+        while carry > 0 {
+            littleEndian.append(UInt8(carry & 0xff))
+            carry >>= 8
+        }
+    }
+    let leadingZeroCount = encoded.prefix { $0 == solanaBase58Alphabet[0] }.count
+    let decoded = Array(repeating: UInt8(0), count: leadingZeroCount)
+        + littleEndian.reversed()
+    return decoded.count == 32 && encodeBase58(Array(decoded)) == value
+}
+
+func isValidReviewAsset(_ asset: ReviewAsset, revision: Int) -> Bool {
+    guard !asset.canonicalID.isEmpty,
+          !asset.networkID.isEmpty,
+          ["evm", "solana", "sui"].contains(asset.chain),
+          ["native", "fungible_token", "nft", "collectible"].contains(asset.kind),
+          !asset.name.isEmpty, asset.name.count <= 128,
+          !asset.symbol.isEmpty, asset.symbol.count <= 32,
+          asset.decimals.map({ (0...255).contains($0) }) != false,
+          asset.trust == "curated", asset.manifestRevision == revision else {
+        return false
+    }
+    guard asset.chain == "solana" else { return true }
+    if asset.kind == "native" {
+        return asset.canonicalID == "\(asset.networkID)/slip44:501"
+            && asset.reference == nil && asset.decimals == 9
+    }
+    guard let mint = asset.reference, isCanonicalSolanaAddress(mint),
+          asset.canonicalID == "\(asset.networkID)/spl:\(mint)"
+            || asset.canonicalID == "\(asset.networkID)/token2022:\(mint)",
+          let decimals = asset.decimals else { return false }
+    return asset.kind == "fungible_token" || decimals == 0
+}
+
 func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
     let contractLocations = manifest.evmContracts.map {
         "\($0.networkID):\($0.checksumAddress.lowercased())"
@@ -86,15 +162,7 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         && Set(manifest.evmContracts.map(\.id)).count == manifest.evmContracts.count
         && Set(contractLocations).count == contractLocations.count
         && manifest.assets.allSatisfy {
-            !$0.canonicalID.isEmpty
-                && !$0.networkID.isEmpty
-                && ["evm", "solana", "sui"].contains($0.chain)
-                && ["native", "fungible_token", "nft", "collectible"].contains($0.kind)
-                && !$0.name.isEmpty && $0.name.count <= 128
-                && !$0.symbol.isEmpty && $0.symbol.count <= 32
-                && $0.decimals.map { (0...255).contains($0) } != false
-                && $0.trust == "curated"
-                && $0.manifestRevision == manifest.revision
+            isValidReviewAsset($0, revision: manifest.revision)
         }
         && manifest.evmContracts.allSatisfy {
             !$0.id.isEmpty && $0.id.count <= 128

@@ -560,7 +560,8 @@ final class WalletGateway: ObservableObject {
     static let suiMainnetNetworkID = "sui:mainnet"
     private static let maximumPreparedIntents = 32
     static let allowedOperations = [
-        "wallet_list_accounts", "wallet_get_balance", "wallet_get_activity",
+        "wallet_list_accounts", "wallet_get_balance", "wallet_get_assets",
+        "wallet_get_activity",
         "wallet_prepare_transaction", "wallet_simulate_transaction",
         "wallet_execute_transaction", "wallet_lock",
     ]
@@ -1441,8 +1442,37 @@ final class WalletGateway: ObservableObject {
         do {
             let publicAccounts = try await signer.listAccounts()
             accounts = publicAccounts
+            var discoveredSolanaBalances: [String: String] = [:]
+            for account in publicAccounts where account.chain == .solana {
+                for networkID in account.networkIDs where WalletNetworkCatalog.descriptor(
+                    id: networkID
+                )?.chain == .solana {
+                    guard let result = try? await signer.performRead(
+                        tool: "wallet_get_assets",
+                        arguments: [
+                            "account_id": account.id,
+                            "network_id": networkID,
+                        ]
+                    ), let rows = result["assets"] as? [[String: Any]],
+                       rows.count <= 10_000 else { continue }
+                    discoveredSolanaBalances.merge(
+                        reconcileSolanaAssets(
+                            rows, accountID: account.id, networkID: networkID
+                        ), uniquingKeysWith: { _, latest in latest }
+                    )
+                }
+            }
             synchronizeAccountSnapshots(with: publicAccounts)
             for snapshot in accountSnapshots where snapshot.chain != .sui {
+                if let discovered = discoveredSolanaBalances[snapshot.id] {
+                    guard let index = accountSnapshots.firstIndex(where: {
+                        $0.id == snapshot.id
+                    }) else { continue }
+                    accountSnapshots[index].balanceBaseUnits = discovered
+                    accountSnapshots[index].refreshedAt = Date()
+                    accountSnapshots[index].freshness = .current
+                    continue
+                }
                 do {
                     let result = try await signer.performRead(
                         tool: "wallet_get_balance",
@@ -1475,6 +1505,49 @@ final class WalletGateway: ObservableObject {
                 return stale
             }
         }
+    }
+
+    private func reconcileSolanaAssets(
+        _ rows: [[String: Any]],
+        accountID: String,
+        networkID: String
+    ) -> [String: String] {
+        var balances: [String: String] = [:]
+        for row in rows {
+            guard let assetID = row["asset_id"] as? String,
+                  let identity = WalletSolanaAssetIdentity.parse(assetID),
+                  identity.networkID == networkID,
+                  let mint = row["mint"] as? String, mint == identity.mint,
+                  row["token_program"] as? String == identity.program.rawValue,
+                  let rawBalance = row["balance_base_units"] as? String,
+                  let balance = WalletBaseUnits.normalize(rawBalance),
+                  balance == rawBalance,
+                  let decimals = row["decimals"] as? Int,
+                  (0...255).contains(decimals),
+                  let accountCount = row["account_count"] as? Int,
+                  (1...10_000).contains(accountCount),
+                  row["has_frozen_account"] is Bool else { continue }
+            if let known = assets.first(where: { $0.id == assetID }) {
+                guard known.chain == .solana, known.networkID == networkID,
+                      known.reference == mint, known.decimals == decimals else {
+                    continue
+                }
+            } else {
+                let abbreviated = "\(mint.prefix(4))…\(mint.suffix(4))"
+                let asset = WalletAsset(
+                    canonicalID: assetID, networkID: networkID,
+                    chain: .solana, kind: .fungibleToken, reference: mint,
+                    name: identity.program == .token2022
+                        ? "Unknown Token-2022 asset" : "Unknown SPL token",
+                    symbol: abbreviated, decimals: decimals,
+                    trust: .quarantined, manifestRevision: 0
+                )
+                assets.append(asset)
+                try? publicStore?.upsertAsset(asset)
+            }
+            balances["\(accountID):\(networkID):\(assetID)"] = balance
+        }
+        return balances
     }
 
     func diagnosticSnapshot(
@@ -2229,7 +2302,7 @@ final class WalletGateway: ObservableObject {
                     .map { "\($0.label) · \($0.chain.rawValue) · \($0.address)" }
                     .joined(separator: "\n")
                 return ["text": text, "accounts": try dictionary(accounts)]
-            case "wallet_get_balance", "wallet_get_activity":
+            case "wallet_get_balance", "wallet_get_assets", "wallet_get_activity":
                 return try await signer.performRead(tool: tool, arguments: arguments)
             case "wallet_simulate_transaction": return try await simulate(arguments, source: source)
             case "wallet_prepare_transaction": return response(for: try await prepare(arguments, source: source))

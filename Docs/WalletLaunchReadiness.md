@@ -18,8 +18,10 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   for provider-discovered ERC-20/ERC-721/ERC-1155 assets.
 - [x] Native SOL legacy message reconstruction, signing, simulation recheck,
   expiry handling, single-provider broadcast, status finality, and capped rules.
+- [x] Strict SPL and Token-2022 account discovery with raw base-unit balances,
+  program/mint/owner validation, signed curation, and unknown-mint quarantine.
 - [ ] Ethereum curated token and ERC-721/1155 discovery/transfer complete.
-- [ ] Solana native/SPL/Token-2022/NFT/compressed-collectible implementation complete.
+- [ ] Solana SPL/Token-2022 transfers and NFT/compressed-collectible implementation complete.
 - [ ] Sui gRPC/GraphQL native/Coin/object implementation complete.
 - [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets complete.
 - [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.

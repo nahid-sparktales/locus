@@ -387,14 +387,20 @@ final class XPCWalletSignerClient: WalletSignerClient {
                     )
                 }
             case .solana:
-                guard assetID == descriptor.nativeAssetID else {
-                    throw WalletGateway.Error.invalidArguments(
-                        "SPL token balance adapters are not active yet."
+                let coordinator = try solanaRPCClient(for: networkID)
+                if assetID == descriptor.nativeAssetID {
+                    balance = try await coordinator.balance(address: account.address)
+                } else {
+                    guard let identity = WalletSolanaAssetIdentity.parse(assetID),
+                          identity.networkID == networkID else {
+                        throw WalletGateway.Error.invalidArguments(
+                            "The requested Solana asset ID is not canonical for this network."
+                        )
+                    }
+                    balance = try await coordinator.tokenBalance(
+                        identity: identity, owner: account.address
                     )
                 }
-                balance = try await solanaRPCClient(for: networkID).balance(
-                    address: account.address
-                )
             case .sui:
                 throw WalletGateway.Error.invalidArguments(
                     "The reviewed Sui provider is not active."
@@ -406,6 +412,74 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 "network_id": networkID,
                 "asset_id": assetID,
                 "balance_base_units": balance,
+            ]
+        case "wallet_get_assets":
+            let accountID = arguments["account_id"] as? String
+            let networkID = arguments["network_id"] as? String
+                ?? WalletNetworkCatalog.solanaDevnet.id
+            let accounts = try await listAccounts()
+            guard let account = accounts.first(where: {
+                $0.id == accountID && $0.chain == .solana
+                    && $0.networkIDs.contains(networkID)
+            }) else {
+                throw WalletGateway.Error.invalidArguments(
+                    "Select the matching Locus Vault Solana account."
+                )
+            }
+            let tokenAccounts = try await solanaRPCClient(
+                for: networkID
+            ).tokenAccounts(owner: account.address)
+            struct Aggregate {
+                let identity: WalletSolanaAssetIdentity
+                let decimals: Int
+                var balance: String
+                var accountCount: Int
+                var frozen: Bool
+            }
+            var aggregates: [String: Aggregate] = [:]
+            for tokenAccount in tokenAccounts {
+                let key = tokenAccount.identity.canonicalID
+                if var existing = aggregates[key] {
+                    guard existing.decimals == tokenAccount.decimals,
+                          let total = WalletBaseUnits.add(
+                              existing.balance, tokenAccount.amountBaseUnits
+                          ) else {
+                        throw WalletGateway.Error.invalidArguments(
+                            "The provider returned inconsistent token accounts for one mint."
+                        )
+                    }
+                    existing.balance = total
+                    existing.accountCount += 1
+                    existing.frozen = existing.frozen || tokenAccount.state == "frozen"
+                    aggregates[key] = existing
+                } else {
+                    aggregates[key] = Aggregate(
+                        identity: tokenAccount.identity,
+                        decimals: tokenAccount.decimals,
+                        balance: tokenAccount.amountBaseUnits,
+                        accountCount: 1,
+                        frozen: tokenAccount.state == "frozen"
+                    )
+                }
+            }
+            let rows: [[String: Any]] = aggregates.values.sorted {
+                $0.identity.canonicalID < $1.identity.canonicalID
+            }.map { item in
+                [
+                    "asset_id": item.identity.canonicalID,
+                    "mint": item.identity.mint,
+                    "token_program": item.identity.program.rawValue,
+                    "balance_base_units": item.balance,
+                    "decimals": item.decimals,
+                    "account_count": item.accountCount,
+                    "has_frozen_account": item.frozen,
+                ]
+            }
+            return [
+                "text": "Loaded \(rows.count) Solana token assets.",
+                "account_id": account.id,
+                "network_id": networkID,
+                "assets": rows,
             ]
         case "wallet_get_activity":
             let accountID = arguments["account_id"] as? String

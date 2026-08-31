@@ -1860,66 +1860,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         "11111111111111111111111111111111"
 
     private static func isSolanaAddress(_ value: String) -> Bool {
-        guard let decoded = decodeSolanaBase58(value), decoded.count == 32 else {
-            return false
-        }
-        return encodeSolanaBase58(decoded) == value
-    }
-
-    private static let solanaBase58Alphabet = Array(
-        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8
-    )
-
-    private static let solanaBase58Positions = Dictionary(
-        uniqueKeysWithValues: solanaBase58Alphabet.enumerated().map {
-            ($0.element, $0.offset)
-        }
-    )
-
-    private static func decodeSolanaBase58(_ value: String) -> [UInt8]? {
-        let encoded = Array(value.utf8)
-        guard !encoded.isEmpty, encoded.count <= 128 else { return nil }
-        var littleEndian: [UInt8] = []
-        for character in encoded {
-            guard var carry = solanaBase58Positions[character] else { return nil }
-            for index in littleEndian.indices {
-                let next = Int(littleEndian[index]) * 58 + carry
-                littleEndian[index] = UInt8(next & 0xff)
-                carry = next >> 8
-            }
-            while carry > 0 {
-                littleEndian.append(UInt8(carry & 0xff))
-                carry >>= 8
-            }
-        }
-        let leadingZeroCount = encoded.prefix {
-            $0 == solanaBase58Alphabet[0]
-        }.count
-        return Array(repeating: 0, count: leadingZeroCount)
-            + littleEndian.reversed()
-    }
-
-    private static func encodeSolanaBase58(_ value: [UInt8]) -> String {
-        guard !value.isEmpty else { return "" }
-        let leadingZeroCount = value.prefix { $0 == 0 }.count
-        var digits: [UInt8] = []
-        for byte in value {
-            var carry = Int(byte)
-            for index in digits.indices {
-                let next = Int(digits[index]) * 256 + carry
-                digits[index] = UInt8(next % 58)
-                carry = next / 58
-            }
-            while carry > 0 {
-                digits.append(UInt8(carry % 58))
-                carry /= 58
-            }
-        }
-        let prefix = String(repeating: "1", count: leadingZeroCount)
-        let significant = digits.reversed().map {
-            Character(UnicodeScalar(solanaBase58Alphabet[Int($0)]))
-        }
-        return prefix + String(significant)
+        WalletSolanaBase58.decode(value, exactLength: 32) != nil
     }
 
     private static func solanaResolvedAccountsDigest(

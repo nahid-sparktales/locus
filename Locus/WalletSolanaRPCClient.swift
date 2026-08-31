@@ -1,62 +1,6 @@
 import CryptoKit
 import Foundation
 
-enum WalletSolanaBase58 {
-    private static let alphabet = Array(
-        "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".utf8
-    )
-    private static let positions = Dictionary(
-        uniqueKeysWithValues: alphabet.enumerated().map { ($0.element, $0.offset) }
-    )
-
-    static func decode(_ value: String, exactLength: Int? = nil) -> Data? {
-        let encoded = Array(value.utf8)
-        guard !encoded.isEmpty, encoded.count <= 128 else { return nil }
-        var littleEndian: [UInt8] = []
-        for character in encoded {
-            guard var carry = positions[character] else { return nil }
-            for index in littleEndian.indices {
-                let next = Int(littleEndian[index]) * 58 + carry
-                littleEndian[index] = UInt8(next & 0xff)
-                carry = next >> 8
-            }
-            while carry > 0 {
-                littleEndian.append(UInt8(carry & 0xff))
-                carry >>= 8
-            }
-        }
-        let leadingZeroCount = encoded.prefix { $0 == alphabet[0] }.count
-        let decoded = Data(
-            Array(repeatElement(UInt8(0), count: leadingZeroCount))
-                + Array(littleEndian.reversed())
-        )
-        guard exactLength.map({ decoded.count == $0 }) ?? true,
-              encode(decoded) == value else { return nil }
-        return decoded
-    }
-
-    static func encode(_ value: Data) -> String {
-        guard !value.isEmpty else { return "" }
-        let leadingZeroCount = value.prefix { $0 == 0 }.count
-        var digits: [UInt8] = []
-        for byte in value {
-            var carry = Int(byte)
-            for index in digits.indices {
-                let next = Int(digits[index]) * 256 + carry
-                digits[index] = UInt8(next % 58)
-                carry = next / 58
-            }
-            while carry > 0 {
-                digits.append(UInt8(carry % 58))
-                carry /= 58
-            }
-        }
-        let prefix = String(repeating: Character("1"), count: leadingZeroCount)
-        let significant = digits.reversed().map { Character(UnicodeScalar(alphabet[Int($0)])) }
-        return prefix + String(significant)
-    }
-}
-
 struct WalletSolanaCanonicalNativeTransfer: Equatable, Sendable {
     static let systemProgramID = "11111111111111111111111111111111"
 
@@ -378,6 +322,68 @@ actor WalletSolanaRPCClient {
         return String(value)
     }
 
+    func tokenAccounts(owner: String) async throws -> [WalletSolanaTokenAccount] {
+        guard WalletSolanaBase58.decode(owner, exactLength: 32) != nil else {
+            throw WalletGateway.Error.invalidArguments("The Solana owner address is malformed.")
+        }
+        _ = try await verifiedGenesisHash()
+        var accounts: [WalletSolanaTokenAccount] = []
+        var seenAddresses: Set<String> = []
+        for program in WalletSolanaTokenProgram.allCases {
+            let result = try await dictionaryResult(
+                method: "getTokenAccountsByOwner",
+                params: [
+                    owner,
+                    ["programId": program.programID],
+                    ["commitment": "confirmed", "encoding": "jsonParsed"],
+                ]
+            )
+            guard let context = result["context"] as? [String: Any],
+                  Self.unsigned(context["slot"]) != nil,
+                  let values = result["value"] as? [Any],
+                  accounts.count + values.count <= 10_000 else {
+                throw WalletRPCError.invalidResponse(
+                    "getTokenAccountsByOwner returned malformed or excessive data"
+                )
+            }
+            for value in values {
+                let account = try parseTokenAccount(
+                    value, expectedOwner: owner, program: program
+                )
+                guard seenAddresses.insert(account.address).inserted else {
+                    throw WalletRPCError.invalidResponse(
+                        "getTokenAccountsByOwner returned a duplicate account"
+                    )
+                }
+                accounts.append(account)
+            }
+        }
+        return accounts.sorted { $0.address < $1.address }
+    }
+
+    func tokenBalance(
+        identity: WalletSolanaAssetIdentity,
+        owner: String
+    ) async throws -> String {
+        guard identity.networkID == network.id else {
+            throw WalletGateway.Error.invalidArguments(
+                "The token identity belongs to another Solana network."
+            )
+        }
+        let matches = try await tokenAccounts(owner: owner).filter {
+            $0.identity == identity
+        }
+        guard !matches.isEmpty else { return "0" }
+        var total = "0"
+        for account in matches {
+            guard let next = WalletBaseUnits.add(total, account.amountBaseUnits) else {
+                throw WalletRPCError.invalidResponse("token balance overflowed wallet bounds")
+            }
+            total = next
+        }
+        return total
+    }
+
     func publicRead(method: String, params: [Any]) async throws -> Any {
         let allowed = Set([
             "getBalance", "getBlockHeight", "getGenesisHash", "getLatestBlockhash",
@@ -410,6 +416,62 @@ actor WalletSolanaRPCClient {
             )
         }
         return (blockhash, lastValid, slot)
+    }
+
+    private func parseTokenAccount(
+        _ value: Any,
+        expectedOwner: String,
+        program: WalletSolanaTokenProgram
+    ) throws -> WalletSolanaTokenAccount {
+        guard let keyed = value as? [String: Any],
+              let address = keyed["pubkey"] as? String,
+              WalletSolanaBase58.decode(address, exactLength: 32) != nil,
+              let account = keyed["account"] as? [String: Any],
+              account["owner"] as? String == program.programID,
+              account["executable"] as? Bool == false,
+              Self.unsigned(account["lamports"]) != nil,
+              let data = account["data"] as? [String: Any],
+              data["program"] as? String == program.parsedProgramName,
+              let parsed = data["parsed"] as? [String: Any],
+              parsed["type"] as? String == "account",
+              let info = parsed["info"] as? [String: Any],
+              info["owner"] as? String == expectedOwner,
+              let mint = info["mint"] as? String,
+              WalletSolanaBase58.decode(mint, exactLength: 32) != nil,
+              let state = info["state"] as? String,
+              ["initialized", "frozen"].contains(state),
+              let tokenAmount = info["tokenAmount"] as? [String: Any],
+              let rawAmount = tokenAmount["amount"] as? String,
+              let amount = WalletBaseUnits.normalize(rawAmount),
+              UInt64(amount) != nil, amount == rawAmount,
+              let decimalNumber = tokenAmount["decimals"] as? NSNumber,
+              CFGetTypeID(decimalNumber) != CFBooleanGetTypeID(),
+              decimalNumber.decimalValue >= 0,
+              decimalNumber.decimalValue == Decimal(decimalNumber.intValue),
+              (0...255).contains(decimalNumber.intValue) else {
+            throw WalletRPCError.invalidResponse(
+                "getTokenAccountsByOwner returned an invalid parsed token account"
+            )
+        }
+        let isNative: Bool
+        if let value = info["isNative"] {
+            guard let parsed = value as? Bool else {
+                throw WalletRPCError.invalidResponse(
+                    "getTokenAccountsByOwner returned an invalid native-token flag"
+                )
+            }
+            isNative = parsed
+        } else {
+            isNative = false
+        }
+        let identity = WalletSolanaAssetIdentity(
+            networkID: network.id, program: program, mint: mint
+        )
+        return WalletSolanaTokenAccount(
+            address: address, owner: expectedOwner, identity: identity,
+            amountBaseUnits: amount, decimals: decimalNumber.intValue,
+            state: state, isNative: isNative
+        )
     }
 
     private func feeForMessage(_ message: Data) async throws -> String {
@@ -638,6 +700,25 @@ actor WalletSolanaProviderCoordinator {
         catch {
             guard let fallback else { throw error }
             return try await fallback.balance(address: address)
+        }
+    }
+
+    func tokenAccounts(owner: String) async throws -> [WalletSolanaTokenAccount] {
+        do { return try await primary.tokenAccounts(owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.tokenAccounts(owner: owner)
+        }
+    }
+
+    func tokenBalance(
+        identity: WalletSolanaAssetIdentity,
+        owner: String
+    ) async throws -> String {
+        do { return try await primary.tokenBalance(identity: identity, owner: owner) }
+        catch {
+            guard let fallback else { throw error }
+            return try await fallback.tokenBalance(identity: identity, owner: owner)
         }
     }
 
