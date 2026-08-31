@@ -3471,6 +3471,129 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(RemoteEndpointTester.normalizeBaseURL("   "), "")
     }
 
+    func testSchemelessLocalEndpointsDefaultToHTTP() {
+        // A local llama server pasted as "ip:port/v1" speaks plain HTTP;
+        // guessing https there produced an SSL error that read as "Locus
+        // wouldn't accept my server". This table is mirrored verbatim in the
+        // agent's test_schemeless_local_endpoints_default_to_http — the saved
+        // endpoint travels as typed, so the two guesses must never disagree.
+        let expectations: [(String, String)] = [
+            // Private-network hosts get http.
+            ("192.168.1.50:9931/v1", "http://192.168.1.50:9931/v1"),
+            ("10.0.0.7:8000", "http://10.0.0.7:8000/v1"),
+            ("172.16.4.2:8000", "http://172.16.4.2:8000/v1"),
+            ("127.0.0.1:11434", "http://127.0.0.1:11434/v1"),
+            ("localhost:9931", "http://localhost:9931/v1"),
+            ("studio.local:1234", "http://studio.local:1234/v1"),
+            ("[::1]:9931", "http://[::1]:9931/v1"),
+            // A typed scheme is never rewritten.
+            ("https://192.168.1.50:9931", "https://192.168.1.50:9931/v1"),
+            // Public addresses and hostnames keep the safe https default.
+            ("34.120.10.5:8000", "https://34.120.10.5:8000/v1"),
+            ("172.32.0.1:8000", "https://172.32.0.1:8000/v1"),
+            ("myserver:9931", "https://myserver:9931/v1"),
+            // Not-quite-IPs are hostnames, exactly as Python's ipaddress
+            // reads them: out-of-range, zero-padded, or percent-encoded
+            // octets must not flip the guess on one side only.
+            ("256.168.1.50:9931", "https://256.168.1.50:9931/v1"),
+            ("192.168.001.050:9931", "https://192.168.001.050:9931/v1"),
+            ("192%2E168%2E1%2E50:9931", "https://192%2E168%2E1%2E50:9931/v1"),
+            // URL.host applies IDNA/UTS-46 mapping and Python's urlsplit does
+            // not, so a non-ASCII authority — what a CJK IME emits in
+            // full-width mode — is never guessed at on either side.
+            ("192。168。1。50:9931", "https://192。168。1。50:9931/v1"),
+            ("１９２.168.1.50:9931", "https://１９２.168.1.50:9931/v1"),
+            ("studio。local:1234", "https://studio。local:1234/v1"),
+            ("café.local:8080", "https://café.local:8080/v1"),
+            // Only the authority has to be ASCII. A combining mark right
+            // after the first slash is one grapheme cluster with it, so a
+            // Character-wise scan would read the whole path as the authority
+            // and refuse a guess Python still makes.
+            ("192.168.1.50:9931/\u{0301}abc", "http://192.168.1.50:9931/\u{0301}abc/v1"),
+            ("192.168.1.50:9931/café", "http://192.168.1.50:9931/café/v1"),
+        ]
+        for (given, expected) in expectations {
+            XCTAssertEqual(RemoteEndpointTester.normalizeBaseURL(given), expected, given)
+        }
+    }
+
+    func testKeylessAuthFailureNamesTheMissingKey() {
+        // A keyless custom endpoint whose server wants auth must not be told
+        // its (nonexistent) key was rejected.
+        XCTAssertEqual(
+            RemoteEndpointTester.failureMessage(status: 401, data: Data(), apiKey: ""),
+            "The endpoint requires an API key."
+        )
+        XCTAssertEqual(
+            RemoteEndpointTester.failureMessage(status: 401, data: Data(), apiKey: "sk-x"),
+            "The endpoint rejected the API key."
+        )
+    }
+
+    func testAccountEditorExplainsWhySaveIsRefused() {
+        // A keyless local llama server is a legitimate custom endpoint.
+        XCTAssertNil(AccountEditorView.blocker(
+            kind: .custom,
+            resolvedBaseURL: "http://192.168.1.50:9931/v1",
+            keyStored: false,
+            typedKey: ""
+        ))
+        // Hosted providers still require their key, and say so.
+        XCTAssertEqual(
+            AccountEditorView.blocker(
+                kind: .codex,
+                resolvedBaseURL: "https://api.openai.com/v1",
+                keyStored: false,
+                typedKey: ""
+            ),
+            "Add the OpenAI API key to save this account."
+        )
+        // A key over plain HTTP may not leave the Mac — typed or stored.
+        XCTAssertEqual(
+            AccountEditorView.blocker(
+                kind: .custom,
+                resolvedBaseURL: "http://192.168.1.50:9931/v1",
+                keyStored: false,
+                typedKey: "secret"
+            ),
+            "API keys require HTTPS unless the endpoint is on this Mac."
+        )
+        XCTAssertEqual(
+            AccountEditorView.blocker(
+                kind: .custom,
+                resolvedBaseURL: "http://192.168.1.50:9931/v1",
+                keyStored: true,
+                typedKey: ""
+            ),
+            "API keys require HTTPS unless the endpoint is on this Mac."
+        )
+        // A keyless endpoint still has its URL shape checked.
+        XCTAssertEqual(
+            AccountEditorView.blocker(
+                kind: .custom,
+                resolvedBaseURL: "http://192.168.1.50:9931/v1?debug=1",
+                keyStored: false,
+                typedKey: ""
+            ),
+            "The endpoint URL cannot contain a query or fragment."
+        )
+        XCTAssertEqual(
+            AccountEditorView.blocker(
+                kind: .custom,
+                resolvedBaseURL: "",
+                keyStored: false,
+                typedKey: ""
+            ),
+            "Enter the endpoint URL."
+        )
+        XCTAssertNil(AccountEditorView.blocker(
+            kind: .chatGPT,
+            resolvedBaseURL: "",
+            keyStored: false,
+            typedKey: ""
+        ))
+    }
+
     func testProviderCredentialsRequireHTTPSExceptOnLoopback() {
         XCTAssertNotNil(
             RemoteEndpointTester.securityError(

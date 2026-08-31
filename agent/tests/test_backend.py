@@ -860,6 +860,170 @@ def test_endpoint_urls_are_normalized():
     assert normalize_base_url("") == ""
 
 
+def test_schemeless_local_endpoints_default_to_http():
+    from ollama_code.remote import normalize_base_url
+
+    # A local llama server pasted as "ip:port/v1" speaks plain HTTP; guessing
+    # https there produced an opaque TLS failure. This table is mirrored
+    # verbatim in the app's testSchemelessLocalEndpointsDefaultToHTTP — the
+    # saved endpoint travels as typed, so the two guesses must never disagree.
+    for given, expected in [
+        # Private-network hosts get http.
+        ("192.168.1.50:9931/v1", "http://192.168.1.50:9931/v1"),
+        ("10.0.0.7:8000", "http://10.0.0.7:8000/v1"),
+        ("172.16.4.2:8000", "http://172.16.4.2:8000/v1"),
+        ("127.0.0.1:11434", "http://127.0.0.1:11434/v1"),
+        ("localhost:9931", "http://localhost:9931/v1"),
+        ("studio.local:1234", "http://studio.local:1234/v1"),
+        ("[::1]:9931", "http://[::1]:9931/v1"),
+        # A typed scheme is never rewritten.
+        ("https://192.168.1.50:9931", "https://192.168.1.50:9931/v1"),
+        # Public addresses and hostnames keep the safe https default.
+        ("34.120.10.5:8000", "https://34.120.10.5:8000/v1"),
+        ("172.32.0.1:8000", "https://172.32.0.1:8000/v1"),
+        ("myserver:9931", "https://myserver:9931/v1"),
+        # Not-quite-IPs are hostnames on both sides: out-of-range,
+        # zero-padded, or percent-encoded octets must not flip the guess.
+        ("256.168.1.50:9931", "https://256.168.1.50:9931/v1"),
+        ("192.168.001.050:9931", "https://192.168.001.050:9931/v1"),
+        ("192%2E168%2E1%2E50:9931", "https://192%2E168%2E1%2E50:9931/v1"),
+        # Swift's URL.host applies IDNA/UTS-46 mapping and urlsplit does not,
+        # so a non-ASCII authority — what a CJK IME emits in full-width mode —
+        # is never guessed at on either side.
+        ("192。168。1。50:9931", "https://192。168。1。50:9931/v1"),
+        ("１９２.168.1.50:9931", "https://１９２.168.1.50:9931/v1"),
+        ("studio。local:1234", "https://studio。local:1234/v1"),
+        ("café.local:8080", "https://café.local:8080/v1"),
+        # Only the authority has to be ASCII. A combining mark right after the
+        # first slash is one grapheme cluster with it, so Swift has to split
+        # the authority by code point as this does, or it would read the whole
+        # path as the authority and refuse a guess made here.
+        ("192.168.1.50:9931/́abc", "http://192.168.1.50:9931/́abc/v1"),
+        ("192.168.1.50:9931/café", "http://192.168.1.50:9931/café/v1"),
+    ]:
+        assert normalize_base_url(given) == expected, given
+
+
+def test_keyless_lan_endpoints_are_accepted():
+    from ollama_code.remote import RemoteClient, validate_remote_url
+
+    # No key means nothing secret travels, so plain HTTP on the LAN is the
+    # user's call — this is how a local llama.cpp/LM Studio box connects.
+    validate_remote_url("http://192.168.1.50:9931/v1", "")
+    client = RemoteClient("192.168.1.50:9931")
+    assert client.base_url == "http://192.168.1.50:9931/v1"
+    # With a key, the HTTPS rule still stands off-loopback.
+    with pytest.raises(ValueError):
+        validate_remote_url("http://192.168.1.50:9931/v1", "secret")
+
+
+def test_keyless_local_endpoint_sends_no_authorization(monkeypatch):
+    from ollama_code import remote as remote_mod
+
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None, allow_redirects=None):
+        seen["url"] = url
+        seen["headers"] = headers or {}
+        return FakeResponse(payload={"data": [{"id": "llama-3.1-8b-instruct"}]})
+
+    monkeypatch.setattr(remote_mod.requests, "get", fake_get)
+    # Exactly what the user types for a local llama server: bare host:port
+    # with /v1, no scheme, no key.
+    client = remote_mod.RemoteClient("192.168.1.50:9931/v1")
+
+    models = client.list_models()
+
+    assert client.base_url == "http://192.168.1.50:9931/v1"
+    assert seen["url"] == "http://192.168.1.50:9931/v1/models"
+    # A server with no auth must not be sent an empty bearer token.
+    assert "Authorization" not in seen["headers"]
+    assert models[0]["name"] == "llama-3.1-8b-instruct"
+
+
+def test_keyless_custom_team_route_is_accepted():
+    from ollama_code.orchestration import AgentProfile
+
+    def member(route):
+        return {
+            "id": "writer",
+            "name": "Local llama",
+            "model": "llama-3.1-8b-instruct",
+            "role": "implementer",
+            "instructions": "Write carefully",
+            "capabilities": [],
+            "access_ceiling": "workspace_write",
+            "timeout_seconds": 60,
+            "token_limit": 8_000,
+            "metering": "self_hosted",
+            "route": route,
+        }
+
+    remote = {
+        "provider": "remote",
+        "base_url": "http://192.168.1.50:9931/v1",
+        "api_key": "",
+        "account_label": "Local llama",
+    }
+    # A custom endpoint may legitimately have no key, and the app now lets one
+    # be saved and routed — refusing it here would fail the run rather than
+    # the pre-flight check.
+    parsed = AgentProfile.parse(member({**remote, "account_kind": "custom"}))
+    assert parsed.route["base_url"] == "http://192.168.1.50:9931/v1"
+    # A hosted provider's empty key really is a missing credential, and so is
+    # an unlabelled route from an app too old to say which kind it is.
+    for route in ({**remote, "account_kind": "codex"}, remote):
+        with pytest.raises(ValueError, match="credentials"):
+            AgentProfile.parse(member(route))
+
+
+def test_keyless_auth_failure_names_the_missing_key():
+    from ollama_code.remote import RemoteClient
+
+    class FakeResponse:
+        status_code = 401
+        text = ""
+
+        def json(self):
+            return {"error": {"message": "auth required"}}
+
+    keyless = RemoteClient("http://127.0.0.1:9931")
+    assert "requires an API key" in str(keyless._error(FakeResponse()))
+    keyed = RemoteClient("http://127.0.0.1:9931", api_key="sk-x")
+    assert "rejected the API key" in str(keyed._error(FakeResponse()))
+
+
+def test_env_api_key_cannot_crash_a_keyless_http_lan_boot(tmp_path, capsys):
+    # A saved keyless custom endpoint persists provider="remote" with a plain
+    # HTTP LAN URL. If the user also has OPENAI_API_KEY/HF_TOKEN exported,
+    # load_config injects it — and that key may not ride an http LAN URL. The
+    # agent must boot without the environment's key, not die before serving.
+    core = AgentCore(
+        cwd=str(tmp_path),
+        config={
+            "provider": "remote",
+            "remote_base_url": "http://192.168.1.50:9931/v1",
+            "remote_api_key": "sk-from-environment",
+            "model": "test-model",
+        },
+    )
+    assert core.provider == "remote"
+    assert core.client.api_key == ""
+    assert "ignoring environment API key" in capsys.readouterr().err
+    # A loopback endpoint may keep the injected key — the rule is about the
+    # key leaving the machine, not about env keys in general.
+    kept = AgentCore(
+        cwd=str(tmp_path),
+        config={
+            "provider": "remote",
+            "remote_base_url": "http://127.0.0.1:9931/v1",
+            "remote_api_key": "sk-from-environment",
+            "model": "test-model",
+        },
+    )
+    assert kept.client.api_key == "sk-from-environment"
+
+
 def test_remote_client_sends_bearer_token(monkeypatch):
     from ollama_code import remote as remote_mod
 

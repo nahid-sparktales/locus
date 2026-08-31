@@ -21,7 +21,10 @@ enum ProviderModelCatalog {
 
     static func fetch(for account: ProviderAccount) async -> Result {
         let key = CredentialStore.get(account: account.credentialAccount) ?? ""
-        guard !key.isEmpty else {
+        // A custom endpoint may genuinely have no key — a local llama.cpp or
+        // LM Studio server, say — so probe it unauthenticated rather than
+        // giving up before the request.
+        guard !key.isEmpty || account.kind.allowsEmptyAPIKey else {
             return Result(models: account.kind.curatedModels, status: .noKey)
         }
         // Kimi Code serves chat completions and nothing else. Asking it for a
@@ -55,7 +58,13 @@ enum ProviderModelCatalog {
             let (data, response) = try await session.current.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if status == 401 || status == 403 {
-                return Result(models: account.kind.curatedModels, status: .keyRejected)
+                // "Rejected the key" would be a riddle when none was sent.
+                return Result(
+                    models: account.kind.curatedModels,
+                    status: key.isEmpty
+                        ? .failed("The endpoint requires an API key.")
+                        : .keyRejected
+                )
             }
             guard (200..<300).contains(status) else {
                 // A single-model endpoint answering 404 here is normal, and its
