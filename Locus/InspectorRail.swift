@@ -9,6 +9,7 @@ import SwiftUI
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     @State private var hoveredTab: InspectorTab?
 
     /// Direct rail destinations stay one click away. The remaining workspace
@@ -162,7 +163,7 @@ struct InspectorRail: View {
                 .overlay(alignment: .topTrailing) {
                     // Changes lives in this menu, so its unseen dot surfaces
                     // here — the count itself waits in the menu title.
-                    if model.gitWorkspace.changesHaveUnseenUpdate {
+                    if gitWorkspace.changesHaveUnseenUpdate {
                         Circle()
                             .fill(LocusTheme.coral)
                             .frame(width: 5, height: 5)
@@ -181,8 +182,8 @@ struct InspectorRail: View {
     }
 
     private func menuTitle(for tab: InspectorTab) -> String {
-        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
-            return "\(tab.title) (\(model.gitWorkspace.changedFileCount))"
+        if tab == .changes, gitWorkspace.changedFileCount > 0 {
+            return "\(tab.title) (\(gitWorkspace.changedFileCount))"
         }
         if tab == .runs { return "Team Runs" }
         if tab == .router { return "Model Router" }
@@ -196,6 +197,7 @@ struct InspectorRail: View {
 struct WorkspaceActionsMenu: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     @State private var createBranchPresented = false
     @State private var branchName = ""
 
@@ -213,7 +215,7 @@ struct WorkspaceActionsMenu: View {
                 {
                     Button("Restore Worktree") { model.restoreActiveTaskCheckout() }
                 }
-            } else if model.gitWorkspace.isGitRepository {
+            } else if gitWorkspace.isGitRepository {
                 Button("Hand Off to Worktree") { model.handoffCurrentChat(to: .worktree) }
                     .disabled(model.isBusy || model.hasPendingPermission)
             }
@@ -232,14 +234,14 @@ struct WorkspaceActionsMenu: View {
                     model.newWorktreeSession(in: model.workspacePath, baseRef: "HEAD")
                 }
                 .accessibilityIdentifier("workspace.actions.worktree.head")
-                ForEach(model.gitWorkspace.localBranches, id: \.self) { branch in
+                ForEach(gitWorkspace.localBranches, id: \.self) { branch in
                     Button(branch) {
                         model.newWorktreeSession(in: model.workspacePath, baseRef: branch)
                     }
                     .accessibilityIdentifier("workspace.actions.worktree.branch.\(branch)")
                 }
             }
-            .disabled(!model.gitWorkspace.isGitRepository)
+            .disabled(!gitWorkspace.isGitRepository)
             .accessibilityIdentifier("workspace.actions.newWorktreeSession")
             Button("Start New Local Chat") {
                 model.newSession(in: model.workspacePath, environment: .local)

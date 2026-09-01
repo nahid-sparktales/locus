@@ -161,6 +161,8 @@ enum UsageWindow: String, CaseIterable, Identifiable {
 
 struct UsageDashboardView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.dismiss) private var dismiss
     @State private var window: UsageWindow = .month
 
@@ -168,7 +170,7 @@ struct UsageDashboardView: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(LocusTheme.line)
-            if let summary = model.providerAccountsModel.usageSummary {
+            if let summary = providerAccounts.usageSummary {
                 content(summary)
             } else {
                 VStack(spacing: 10) {
@@ -184,11 +186,11 @@ struct UsageDashboardView: View {
         .frame(width: 780, height: 620)
         .background(LocusTheme.panel)
         .onAppear {
-            model.providerAccountsModel.refreshUsageSummary(since: window.since)
-            Task { await model.providerAccountsModel.refreshActiveChatGPTUsage() }
+            providerAccounts.refreshUsageSummary(since: window.since)
+            Task { await providerAccounts.refreshActiveChatGPTUsage() }
         }
         .onChange(of: window) {
-            model.providerAccountsModel.refreshUsageSummary(since: window.since)
+            providerAccounts.refreshUsageSummary(since: window.since)
         }
     }
 
@@ -231,7 +233,7 @@ struct UsageDashboardView: View {
     private func content(_ summary: UsageSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let usage = model.providerAccountsModel.activeChatGPTUsage, usage.status == "signed_in" {
+                if let usage = providerAccounts.activeChatGPTUsage, usage.status == "signed_in" {
                     chatGPTPlanUsage(usage)
                 }
                 totals(summary)
@@ -534,6 +536,6 @@ struct UsageDashboardView: View {
     }
 
     private func agentName(_ agentID: String) -> String {
-        model.agentProfiles.first { $0.id.uuidString == agentID }?.name ?? "Removed agent"
+        agentTeams.agentProfiles.first { $0.id.uuidString == agentID }?.name ?? "Removed agent"
     }
 }

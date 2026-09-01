@@ -176,23 +176,24 @@ enum AgentInstructionsStarter: String, CaseIterable, Identifiable {
 
 struct InspectorAgentsTab: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentInstructions: AgentInstructionsModel
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            if model.agentInstructions.isLoadingAgentInstructions {
+            if agentInstructions.isLoadingAgentInstructions {
                 ProgressView("Loading AGENTS.md…")
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.agentInstructions.agentInstructionsExists {
+            } else if agentInstructions.agentInstructionsExists {
                 editor
             } else {
                 missingState
             }
         }
         .task(id: model.workspacePath) {
-            model.agentInstructions.refreshAgentInstructions()
+            agentInstructions.refreshAgentInstructions()
         }
     }
 
@@ -215,19 +216,19 @@ struct InspectorAgentsTab: View {
                 }
                 Spacer(minLength: 4)
                 Button {
-                    model.agentInstructions.refreshAgentInstructions()
+                    agentInstructions.refreshAgentInstructions()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.locus())
                 .foregroundStyle(LocusTheme.muted)
-                .disabled(model.agentInstructions.isLoadingAgentInstructions || model.agentInstructions.isSavingAgentInstructions)
+                .disabled(agentInstructions.isLoadingAgentInstructions || agentInstructions.isSavingAgentInstructions)
                 .help("Reload AGENTS.md from disk")
                 .accessibilityLabel("Reload AGENTS.md from disk")
                 .accessibilityIdentifier("agents.refresh")
-                if model.agentInstructions.agentInstructionsExists {
+                if agentInstructions.agentInstructionsExists {
                     Button {
-                        model.agentInstructions.revealAgentInstructionsInFinder()
+                        agentInstructions.revealAgentInstructionsInFinder()
                     } label: {
                         Image(systemName: "folder")
                             .accessibilityHidden(true)
@@ -264,7 +265,7 @@ struct InspectorAgentsTab: View {
                 .accessibilityLabel("How AGENTS.md works")
                 .accessibilityIdentifier("agents.explanation")
 
-            if let error = model.agentInstructions.agentInstructionsError {
+            if let error = agentInstructions.agentInstructionsError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.locus(size: 8, weight: .medium))
                     .foregroundStyle(LocusTheme.coral)
@@ -284,13 +285,13 @@ struct InspectorAgentsTab: View {
                 starterMenu
                 Spacer()
                 Label(
-                    model.agentInstructions.agentInstructionsHasUnsavedChanges ? "Unsaved" : "Saved",
-                    systemImage: model.agentInstructions.agentInstructionsHasUnsavedChanges
+                    agentInstructions.agentInstructionsHasUnsavedChanges ? "Unsaved" : "Saved",
+                    systemImage: agentInstructions.agentInstructionsHasUnsavedChanges
                         ? "circle.fill" : "checkmark.circle.fill"
                 )
                 .font(.locus(size: 8, weight: .semibold))
                 .foregroundStyle(
-                    model.agentInstructions.agentInstructionsHasUnsavedChanges
+                    agentInstructions.agentInstructionsHasUnsavedChanges
                         ? LocusTheme.warning
                         : LocusTheme.success
                 )
@@ -304,8 +305,8 @@ struct InspectorAgentsTab: View {
             }
 
             TextEditor(text: Binding(
-                get: { model.agentInstructions.agentInstructionsDraft },
-                set: { model.agentInstructions.agentInstructionsDraft = $0 }
+                get: { agentInstructions.agentInstructionsDraft },
+                set: { agentInstructions.agentInstructionsDraft = $0 }
             ))
                 .font(.locus(size: 10, design: .monospaced))
                 .lineSpacing(2)
@@ -321,16 +322,16 @@ struct InspectorAgentsTab: View {
                     .foregroundStyle(LocusTheme.muted)
                 Spacer(minLength: 4)
                 Button("Revert") {
-                    model.agentInstructions.revertAgentInstructions()
+                    agentInstructions.revertAgentInstructions()
                 }
                 .buttonStyle(.locus())
                 .font(.locus(size: 9, weight: .semibold))
-                .disabled(!model.agentInstructions.agentInstructionsHasUnsavedChanges || model.agentInstructions.isSavingAgentInstructions)
+                .disabled(!agentInstructions.agentInstructionsHasUnsavedChanges || agentInstructions.isSavingAgentInstructions)
                 .accessibilityIdentifier("agents.revert")
                 Button {
-                    model.agentInstructions.saveAgentInstructions()
+                    agentInstructions.saveAgentInstructions()
                 } label: {
-                    if model.agentInstructions.isSavingAgentInstructions {
+                    if agentInstructions.isSavingAgentInstructions {
                         ProgressView().controlSize(.mini)
                     } else {
                         Text("Save")
@@ -340,8 +341,8 @@ struct InspectorAgentsTab: View {
                 .tint(LocusTheme.ink)
                 .controlSize(.small)
                 .disabled(
-                    !model.agentInstructions.agentInstructionsHasUnsavedChanges
-                        || model.agentInstructions.isSavingAgentInstructions
+                    !agentInstructions.agentInstructionsHasUnsavedChanges
+                        || agentInstructions.isSavingAgentInstructions
                         || model.isBusy
                         || model.hasPendingPermission
                 )
@@ -361,8 +362,8 @@ struct InspectorAgentsTab: View {
             Section("Append sample guidance") {
                 ForEach(AgentInstructionsStarter.allCases) { starter in
                     Button {
-                        model.agentInstructions.agentInstructionsDraft = starter.appending(
-                            to: model.agentInstructions.agentInstructionsDraft
+                        agentInstructions.agentInstructionsDraft = starter.appending(
+                            to: agentInstructions.agentInstructionsDraft
                         )
                     } label: {
                         Label(starter.title, systemImage: starter.symbol)
@@ -395,21 +396,21 @@ struct InspectorAgentsTab: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
-                model.agentInstructions.createAgentInstructions()
+                agentInstructions.createAgentInstructions()
             } label: {
                 Label("Create AGENTS.md", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
             .tint(LocusTheme.ink)
             .controlSize(.small)
-            .disabled(model.isBusy || model.hasPendingPermission || model.agentInstructions.isSavingAgentInstructions)
+            .disabled(model.isBusy || model.hasPendingPermission || agentInstructions.isSavingAgentInstructions)
             .accessibilityIdentifier("agents.create")
 
             Menu {
                 ForEach(AgentInstructionsStarter.allCases) { starter in
                     Button {
-                        model.agentInstructions.agentInstructionsDraft = starter.document
-                        model.agentInstructions.saveAgentInstructions()
+                        agentInstructions.agentInstructionsDraft = starter.document
+                        agentInstructions.saveAgentInstructions()
                     } label: {
                         Label(starter.title, systemImage: starter.symbol)
                     }
@@ -421,7 +422,7 @@ struct InspectorAgentsTab: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .disabled(model.isBusy || model.hasPendingPermission || model.agentInstructions.isSavingAgentInstructions)
+            .disabled(model.isBusy || model.hasPendingPermission || agentInstructions.isSavingAgentInstructions)
             .accessibilityIdentifier("agents.createFromStarter")
         }
         .padding(24)

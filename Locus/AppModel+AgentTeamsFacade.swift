@@ -1,9 +1,8 @@
 import Foundation
 
-// Facade API — the routing state the send pipeline, split panes, chat
-// workers, and team ops read on nearly every turn, plus the three
-// collection members views observe broadly. Verbs and everything else
-// live on `model.agentTeamsModel` directly.
+// Compatibility facade for routing state used by the send pipeline, split
+// panes, chat workers, and team orchestration. Reactive views observe
+// AgentTeamsModel directly.
 extension AppModel {
     var primaryAgentBehavior: AgentBehavior { agentTeamsModel.primaryAgentBehavior }
     var teamRoutingConsentAccountIDs: Set<UUID> { agentTeamsModel.teamRoutingConsentAccountIDs }

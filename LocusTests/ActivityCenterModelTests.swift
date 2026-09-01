@@ -101,13 +101,4 @@ final class ActivityCenterModelTests: XCTestCase {
         XCTAssertEqual(defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs"), ["run-done"])
     }
 
-    func testAppModelRepublishesActivityChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.activity.activityCenterPresented = true
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

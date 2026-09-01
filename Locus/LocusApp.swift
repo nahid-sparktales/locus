@@ -60,9 +60,7 @@ struct LocusApp: App {
     var body: some Scene {
         Window("Locus", id: "main") {
             sceneContent
-                .environmentObject(model)
-                .environmentObject(model.sessionCatalog)
-                .environmentObject(model.transcriptPresentation)
+                .appFeatureEnvironment(from: model)
                 .environmentObject(updates)
                 .onAppear {
                     appDelegate.model = model
@@ -207,9 +205,7 @@ struct LocusApp: App {
 
         Settings {
             SettingsView(presentationContext: .settingsWindow)
-                .environmentObject(model)
-                .environmentObject(model.sessionCatalog)
-                .environmentObject(model.transcriptPresentation)
+                .appFeatureEnvironment(from: model)
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
@@ -219,9 +215,7 @@ struct LocusApp: App {
 
         MenuBarExtra {
             LocusMenuBarView(presenter: mainWindowPresenter)
-                .environmentObject(model)
-                .environmentObject(model.sessionCatalog)
-                .environmentObject(model.transcriptPresentation)
+                .appFeatureEnvironment(from: model)
         } label: {
             Image("MenuBarIcon")
                 .renderingMode(.template)
@@ -453,6 +447,8 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
 
 private struct LocusMenuBarView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
+    @EnvironmentObject private var schedule: ScheduleModel
     @Environment(\.openWindow) private var openWindow
     let presenter: MainWindowPresenter
 
@@ -469,7 +465,7 @@ private struct LocusMenuBarView: View {
         } else {
             Text("No work running")
         }
-        if let next = model.schedule.nextScheduledTask, let date = next.nextRunDate {
+        if let next = schedule.nextScheduledTask, let date = next.nextRunDate {
             Text("Next: \(next.name) · \(date.formatted(date: .omitted, time: .shortened))")
         } else {
             Text("No upcoming schedules")
@@ -482,7 +478,7 @@ private struct LocusMenuBarView: View {
     }
 
     private var runningCount: Int {
-        model.visibleActivityRuns.filter {
+        activityCenter.visibleActivityRuns.filter {
             ["queued", "dispatching", "running", "reviewing", "waiting_permission",
              "waiting_computer", "waiting_dispatch_approval", "paused"].contains($0.state)
         }.count
@@ -571,6 +567,10 @@ private final class MainWindowMarkerView: NSView {
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
+    @EnvironmentObject private var toastCenter: ToastCenter
+    @EnvironmentObject private var landingFlow: LandingFlowModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
+    @EnvironmentObject private var schedule: ScheduleModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var compactSidebarPresented = false
 
@@ -720,7 +720,7 @@ struct RootView: View {
         .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
-            if let toast = model.toastCenter.toast {
+            if let toast = toastCenter.toast {
                 HStack(spacing: 12) {
                     Label(toast.message, systemImage: toast.systemImage)
                         .font(.locus(size: 11, weight: .semibold))
@@ -742,7 +742,7 @@ struct RootView: View {
                 .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .animation(LocusMotion.content, value: model.toastCenter.toast?.id)
+        .animation(LocusMotion.content, value: toastCenter.toast?.id)
         // Reduced Motion is an app-wide contract. Individual components still
         // choose a gentler transition where useful, while this guard prevents
         // an overlooked state mutation from introducing spatial movement.
@@ -776,8 +776,8 @@ struct RootView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: Binding(
-            get: { model.landingFlow.reviewAndLandPresented },
-            set: { model.landingFlow.reviewAndLandPresented = $0 }
+            get: { landingFlow.reviewAndLandPresented },
+            set: { landingFlow.reviewAndLandPresented = $0 }
         )) {
             ReviewAndLandView()
                 .environmentObject(model)
@@ -815,15 +815,15 @@ struct RootView: View {
         }) {
             ConfigureAgentView(
                 automation: model.eventAutomations,
-                schedule: model.schedule
+                schedule: schedule
             )
             .environmentObject(model)
         }
         .sheet(item: Binding(
-            get: { model.extensionsModel.mcpInputRequest },
+            get: { extensionsModel.mcpInputRequest },
             set: { value in
-                if value == nil, model.extensionsModel.mcpInputRequest != nil {
-                    model.extensionsModel.answerMCPInput(action: "cancel")
+                if value == nil, extensionsModel.mcpInputRequest != nil {
+                    extensionsModel.answerMCPInput(action: "cancel")
                 }
             }
         )) { request in
@@ -888,6 +888,7 @@ struct RootView: View {
 
 private struct RememberConfirmationView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var knowledge: WorkspaceKnowledgeModel
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
     @State private var content: String
@@ -929,7 +930,7 @@ private struct RememberConfirmationView: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Save Memory") {
-                    model.knowledge.rememberWorkspaceFact(
+                    knowledge.rememberWorkspaceFact(
                         title: title,
                         content: content,
                         tags: tags.split(separator: ",").map {
@@ -956,6 +957,7 @@ private struct RememberConfirmationView: View {
 
 private struct MCPInputRequestView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     let request: MCPInputRequest
     @State private var textValues: [String: String] = [:]
     @State private var boolValues: [String: Bool] = [:]
@@ -1002,11 +1004,11 @@ private struct MCPInputRequestView: View {
                     .foregroundStyle(LocusTheme.muted)
             }
             HStack {
-                Button("Decline") { model.extensionsModel.answerMCPInput(action: "decline") }
-                Button("Cancel") { model.extensionsModel.answerMCPInput(action: "cancel") }
+                Button("Decline") { extensionsModel.answerMCPInput(action: "decline") }
+                Button("Cancel") { extensionsModel.answerMCPInput(action: "cancel") }
                 Spacer()
                 Button(request.mode == "url" ? "I've Completed It" : "Submit") {
-                    model.extensionsModel.answerMCPInput(action: "accept", content: formContent)
+                    extensionsModel.answerMCPInput(action: "accept", content: formContent)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)

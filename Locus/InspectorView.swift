@@ -6,6 +6,9 @@ import SwiftUI
 /// handle on its leading edge.
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
+    @EnvironmentObject private var workspaceFiles: WorkspaceFileModel
+    @EnvironmentObject private var simulatorControl: SimulatorControlService
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,15 +26,15 @@ struct InspectorView: View {
                 case .plan:
                     InspectorPlanTab()
                 case .changes:
-                    InspectorChangesTab(gitWorkspace: model.gitWorkspace)
+                    InspectorChangesTab(gitWorkspace: gitWorkspace)
                 case .files:
-                    InspectorFilesTab(workspaceFiles: model.workspaceFiles)
+                    InspectorFilesTab(workspaceFiles: workspaceFiles)
                 case .terminal:
                     InspectorTerminalTab()
                 case .preview:
                     InspectorBrowserTab()
                 case .simulator:
-                    InspectorSimulatorTab(service: model.simulatorControl)
+                    InspectorSimulatorTab(service: simulatorControl)
                 case .notes:
                     InspectorNotesTab(
                         workspacePath: model.workspacePath,
@@ -1182,17 +1185,18 @@ enum InspectorTabAppearance {
 /// vertical rail; the top bar uses only labels, badges, and close controls.
 private struct InspectorTextTabBadge: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     let tab: InspectorTab
 
     @ViewBuilder
     var body: some View {
-        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
-            Text(model.gitWorkspace.changedFileCount > 99 ? "99+" : "\(model.gitWorkspace.changedFileCount)")
+        if tab == .changes, gitWorkspace.changedFileCount > 0 {
+            Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background(model.gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
+                .background(gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
                 .clipShape(Capsule())
                 .accessibilityHidden(true)
         } else if tab == .plan, model.planHasUnseenUpdate {
@@ -1234,14 +1238,15 @@ struct InspectorPlaceholder: View {
 /// asking for eyes exactly the way an open panel does.
 struct InspectorTabBadge: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     let tab: InspectorTab
 
     var body: some View {
-        if tab == .changes, model.gitWorkspace.changedFileCount > 0 {
+        if tab == .changes, gitWorkspace.changedFileCount > 0 {
             // Coral only while the change is still unseen; once you have opened
             // the tab the count stays but stops asking for attention.
-            let unseen = model.gitWorkspace.changesHaveUnseenUpdate
-            Text(model.gitWorkspace.changedFileCount > 99 ? "99+" : "\(model.gitWorkspace.changedFileCount)")
+            let unseen = gitWorkspace.changesHaveUnseenUpdate
+            Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, 3)
@@ -1252,8 +1257,8 @@ struct InspectorTabBadge: View {
                 .accessibilityElement()
                 .accessibilityLabel(
                     unseen
-                        ? "\(model.gitWorkspace.changedFileCount) changed files, new since you last looked"
-                        : "\(model.gitWorkspace.changedFileCount) changed files"
+                        ? "\(gitWorkspace.changedFileCount) changed files, new since you last looked"
+                        : "\(gitWorkspace.changedFileCount) changed files"
                 )
                 .accessibilityIdentifier("inspector.tab.changes.badge")
         } else if tab == .plan, model.planHasUnseenUpdate {
@@ -1406,6 +1411,10 @@ private enum RunsStatusFilter: String, CaseIterable, Identifiable {
 
 struct InspectorRunsTab: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var landingFlow: LandingFlowModel
     @State private var scope: RunScope = .all
     @State private var statusFilter: RunsStatusFilter = .all
     @State private var runSearch = ""
@@ -1440,8 +1449,8 @@ struct InspectorRunsTab: View {
             }
         }
         .task(id: model.currentSessionID) {
-            if !model.isLoadingOrchestrationRuns {
-                await model.refreshOrchestrationRuns()
+            if !runs.isLoadingOrchestrationRuns {
+                await runs.refreshOrchestrationRuns()
             }
         }
         .onChange(of: model.pendingDispatchPlan) { _, value in draftPlan = value }
@@ -1455,7 +1464,7 @@ struct InspectorRunsTab: View {
                 return
             }
             detailRunID = request.runID
-            await model.loadOrchestrationRun(request.runID)
+            await runs.loadOrchestrationRun(request.runID)
             if let run = model.runRecord(for: request.runID) {
                 scope = run.isSoloSwarm ? .soloSwarm : (run.runKind == "team" ? .teams : .all)
                 showingRunDetail = true
@@ -1503,7 +1512,7 @@ struct InspectorRunsTab: View {
                     .tracking(0.7)
                 Spacer()
                 Button {
-                    Task { await model.refreshOrchestrationRuns() }
+                    Task { await runs.refreshOrchestrationRuns() }
                 } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.locus())
                     .help("Refresh run history")
@@ -1558,8 +1567,8 @@ struct InspectorRunsTab: View {
 
     private var runPickerRuns: [OrchestrationRun] {
         AppModel.orchestrationPickerRuns(
-            model.orchestrationRuns,
-            selected: model.selectedOrchestrationRun
+            runs.orchestrationRuns,
+            selected: runs.selectedOrchestrationRun
         )
     }
 
@@ -1645,7 +1654,7 @@ struct InspectorRunsTab: View {
 
     private var runList: some View {
         Group {
-            if model.isLoadingOrchestrationRuns && runPickerRuns.isEmpty {
+            if runs.isLoadingOrchestrationRuns && runPickerRuns.isEmpty {
                 ProgressView("Loading runs…")
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1689,7 +1698,7 @@ struct InspectorRunsTab: View {
             viewMode = "overview"
             filter = ""
             showingRunDetail = true
-            Task { await model.loadOrchestrationRun(run.id) }
+            Task { await runs.loadOrchestrationRun(run.id) }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top, spacing: 8) {
@@ -1818,10 +1827,10 @@ struct InspectorRunsTab: View {
             }
             if let task = model.activeTaskRecord, task.id == run.taskID {
                 HStack(spacing: 7) {
-                    Button("Review & Land") { model.prepareReviewAndLand() }
-                        .disabled(model.isBusy || !model.taskHasChanges)
+                    Button("Review & Land") { landingFlow.prepareReviewAndLand() }
+                        .disabled(model.isBusy || !landingFlow.taskHasChanges)
                     Button("Copy Patch") { model.copyActiveTaskPatch() }
-                        .disabled(model.isBusy || !model.taskHasChanges)
+                        .disabled(model.isBusy || !landingFlow.taskHasChanges)
                     Menu {
                         Button("Open Checkout") { model.openActiveTaskCheckout() }
                         Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
@@ -1941,6 +1950,8 @@ struct InspectorRunsTab: View {
         } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .accessibilityLabel("Run actions")
+            .accessibilityIdentifier("runs.actions")
     }
 
     private func overview(_ run: OrchestrationRun) -> some View {
@@ -1991,18 +2002,18 @@ struct InspectorRunsTab: View {
                         if let calls = run.usage?["model_calls"]?.integer {
                             metricRow("Model calls", calls.formatted())
                         }
-                        if run.id == model.orchestrationRunID, !model.gitWorkspace.gitChanges.isEmpty {
+                        if run.id == model.orchestrationRunID, !gitWorkspace.gitChanges.isEmpty {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Changed files")
                                     .font(.locus(size: 8))
                                     .foregroundStyle(LocusTheme.textSecondary)
-                                ForEach(model.gitWorkspace.gitChanges.prefix(8)) { change in
+                                ForEach(gitWorkspace.gitChanges.prefix(8)) { change in
                                     Text("\(change.status.marker)  \(change.path)")
                                         .font(.locus(size: 7, design: .monospaced))
                                         .lineLimit(1)
                                 }
-                                if model.gitWorkspace.gitChanges.count > 8 {
-                                    Text("+ \(model.gitWorkspace.gitChanges.count - 8) more")
+                                if gitWorkspace.gitChanges.count > 8 {
+                                    Text("+ \(gitWorkspace.gitChanges.count - 8) more")
                                         .font(.locus(size: 7))
                                         .foregroundStyle(LocusTheme.textSecondary)
                                 }
@@ -2381,7 +2392,7 @@ struct InspectorRunsTab: View {
     }
 
     private func runWork(_ run: OrchestrationRun) -> RunWork {
-        RunWork(events: model.orchestrationEvents(for: run.id))
+        RunWork(events: runs.orchestrationEvents(for: run.id))
     }
 
     private func technicalDetails(_ run: OrchestrationRun) -> some View {
@@ -2426,7 +2437,7 @@ struct InspectorRunsTab: View {
     /// Provider and model are reported on the turn's terminal event, which the
     /// run row itself does not carry.
     private func runModelLabel(_ run: OrchestrationRun) -> String? {
-        guard let terminal = model.orchestrationEvents(for: run.id).last(where: {
+        guard let terminal = runs.orchestrationEvents(for: run.id).last(where: {
             $0.type == "turn_done" || $0.type == "orchestration_completed"
         }) else { return nil }
         let name = terminal.text("model") ?? ""
@@ -3061,8 +3072,8 @@ struct InspectorRunsTab: View {
     }
 
     private func eligibleProfiles(for job: DispatchJob) -> [AgentProfile] {
-        guard let team = model.selectedAgentTeam else { return [] }
-        return model.agentProfiles.filter { profile in
+        guard let team = agentTeams.selectedAgentTeam else { return [] }
+        return agentTeams.agentProfiles.filter { profile in
             guard team.memberIDs.contains(profile.id) else { return false }
             switch job.kind {
             case "writer":
@@ -3097,7 +3108,7 @@ struct InspectorRunsTab: View {
 
     private func filteredEvents(_ run: OrchestrationRun) -> [OrchestrationEvent] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let durableEvents = model.orchestrationEvents(for: run.id)
+        let durableEvents = runs.orchestrationEvents(for: run.id)
             .filter { !$0.isTransientStream }
         guard !query.isEmpty else { return durableEvents }
         return durableEvents.filter { event in
@@ -3207,7 +3218,7 @@ struct InspectorRunsTab: View {
         // Phase headings describe a team's shape. A solo turn that delegated
         // nothing has one phase, and filing its whole timeline under a "Solo
         // workers" heading described workers that never existed.
-        if isSoloRun, agentTreeAttempts(model.selectedOrchestrationRun).isEmpty {
+        if isSoloRun, agentTreeAttempts(runs.selectedOrchestrationRun).isEmpty {
             return visible.isEmpty ? [] : [ActivityGroup(title: "Timeline", events: visible)]
         }
         let order = ["Solo workers", "Planning", "Approval", "Specialists", "Coding jobs", "Review", "Complete"]
@@ -3311,7 +3322,7 @@ struct InspectorRunsTab: View {
     }
 
     private var isSoloRun: Bool {
-        model.selectedOrchestrationRun?.runKind == "solo"
+        runs.selectedOrchestrationRun?.runKind == "solo"
     }
 
     private var soloWorkEventTypes: Set<String> {
@@ -3340,7 +3351,7 @@ struct InspectorRunsTab: View {
     }
 
     private func activityPhase(_ event: OrchestrationEvent) -> String {
-        let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
+        let isSoloSwarm = runs.selectedOrchestrationRun?.isSoloSwarm == true
         if isSoloSwarm,
            ["run_started", "agent_spawned", "agent_branch_stopped",
             "swarm_telemetry", "turn_done", "note"].contains(event.type)
@@ -3374,7 +3385,7 @@ struct InspectorRunsTab: View {
     }
 
     private func friendlyEventTitle(_ event: OrchestrationEvent) -> String {
-        let isSoloSwarm = model.selectedOrchestrationRun?.isSoloSwarm == true
+        let isSoloSwarm = runs.selectedOrchestrationRun?.isSoloSwarm == true
         return switch event.type {
         case "run_started": isSoloSwarm ? "Solo run started" : "Run started"
         case "agent_spawned": isSoloSwarm ? "Solo worker started" : "Agent started"

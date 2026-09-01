@@ -80,13 +80,4 @@ final class OrchestrationRunsModelTests: XCTestCase {
         XCTAssertEqual(toasts, [])
     }
 
-    func testAppModelRepublishesRunChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.runs.objectWillChange.send()
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

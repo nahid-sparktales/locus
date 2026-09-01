@@ -29,6 +29,13 @@ enum ComposerMetrics {
 
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var voiceControl: VoiceControlModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
+    @EnvironmentObject private var workspaceFiles: WorkspaceFileModel
+    @EnvironmentObject private var applicationContext: ApplicationContextService
+    @EnvironmentObject private var simulatorControl: SimulatorControlService
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contextPresented = false
     @State private var permissionModesPresented = false
@@ -136,9 +143,9 @@ struct ComposerView: View {
                     }
 
                     if model.settings.voiceControlsEnabled,
-                       model.voiceControl.isVoiceModeActive
-                        || model.voiceControl.state != .idle {
-                        VoiceComposerStrip(voice: model.voiceControl)
+                       voiceControl.isVoiceModeActive
+                        || voiceControl.state != .idle {
+                        VoiceComposerStrip(voice: voiceControl)
                             .environmentObject(model)
                     }
 
@@ -182,23 +189,23 @@ struct ComposerView: View {
         .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
         .animation(LocusMotion.spatial, value: model.planApprovalPending)
         .sheet(isPresented: $quickTeamPresented) {
-            QuickTeamBuilderView(suggestedName: model.agentTeamsModel.suggestedQuickTeamName())
+            QuickTeamBuilderView(suggestedName: agentTeams.suggestedQuickTeamName())
                 .environmentObject(model)
         }
         .onAppear { restoreFocus() }
-        .onDisappear { model.voiceControl.cancelRecording() }
+        .onDisappear { voiceControl.cancelRecording() }
         .alert(
             "Allow Apple Online Speech Recognition?",
             isPresented: Binding(
-                get: { model.voiceControl.networkRecognitionConsentRequested },
-                set: { model.voiceControl.networkRecognitionConsentRequested = $0 }
+                get: { voiceControl.networkRecognitionConsentRequested },
+                set: { voiceControl.networkRecognitionConsentRequested = $0 }
             )
         ) {
             Button("Not Now", role: .cancel) {
-                model.voiceControl.respondToAppleNetworkConsent(allowed: false)
+                voiceControl.respondToAppleNetworkConsent(allowed: false)
             }
             Button("Allow") {
-                model.voiceControl.respondToAppleNetworkConsent(allowed: true)
+                voiceControl.respondToAppleNetworkConsent(allowed: true)
             }
         } message: {
             Text("On-device recognition is unavailable for this language. If allowed, Apple may process dictation audio online. Locus will remember this choice and will never switch to a provider speech service automatically.")
@@ -216,8 +223,8 @@ struct ComposerView: View {
         .onChange(of: model.composerFocusToken) {
             restoreFocus()
         }
-        .onChange(of: model.teamRunLive.shouldShowTeamDispatchApproval) {
-            if !model.teamRunLive.shouldShowTeamDispatchApproval && !model.teamRunLive.shouldShowTeamDispatchProgress {
+        .onChange(of: teamRunLive.shouldShowTeamDispatchApproval) {
+            if !teamRunLive.shouldShowTeamDispatchApproval && !teamRunLive.shouldShowTeamDispatchProgress {
                 restoreFocus()
             }
         }
@@ -228,7 +235,7 @@ struct ComposerView: View {
             }
             if !model.justChatEnabled,
                WorkspaceIndex.activeMention(in: model.draftText) != nil {
-                model.workspaceFiles.refresh()
+                workspaceFiles.refresh()
             }
         }
     }
@@ -257,8 +264,8 @@ struct ComposerView: View {
         if let mention = WorkspaceIndex.activeMention(in: model.draftText) {
             let query = mention.query.lowercased()
             let targets: [TeamMentionTarget] = (
-                model.agentTeams.map(TeamMentionTarget.team)
-                    + model.agentProfiles.map(TeamMentionTarget.agent)
+                agentTeams.agentTeams.map(TeamMentionTarget.team)
+                    + agentTeams.agentProfiles.map(TeamMentionTarget.agent)
             ).filter {
                 query.isEmpty || $0.name.lowercased().contains(query)
             }
@@ -267,13 +274,13 @@ struct ComposerView: View {
             }
             let matches = WorkspaceIndex.matches(
                 query: mention.query,
-                in: model.workspaceFiles.files,
+                in: workspaceFiles.files,
                 root: model.workspacePath
             )
             return matches.isEmpty ? nil : .mention(matches)
         }
         if let query = activeSkillQuery {
-            let matches = model.extensionsModel.extensions.skills.filter {
+            let matches = extensionsModel.extensions.skills.filter {
                 $0.enabled && $0.error == nil
                     && (query.isEmpty || $0.id.localizedCaseInsensitiveContains(query))
             }
@@ -604,13 +611,13 @@ struct ComposerView: View {
                 teamPickerPresented.toggle()
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: model.agentTeamsModel.teamModeEnabled
+                    Image(systemName: agentTeams.teamModeEnabled
                         ? "person.2.fill" : "person.fill")
-                    Text(model.selectedAgentTeam?.name ?? "Solo")
+                    Text(agentTeams.selectedAgentTeam?.name ?? "Solo")
                         .lineLimit(1)
                 }
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(model.agentTeamsModel.teamModeEnabled ? accentAction : LocusTheme.muted)
+                .foregroundStyle(agentTeams.teamModeEnabled ? accentAction : LocusTheme.muted)
                 .padding(.horizontal, 8)
                 .frame(height: 24)
                     .background(LocusTheme.paperDeep.opacity(0.8))
@@ -636,7 +643,7 @@ struct ComposerView: View {
                 .environmentObject(model)
             }
             .accessibilityLabel("Solo or team routing")
-            .accessibilityValue(model.selectedAgentTeam?.name ?? "Solo")
+            .accessibilityValue(agentTeams.selectedAgentTeam?.name ?? "Solo")
             .accessibilityIdentifier("composer.team")
         }
     }
@@ -739,7 +746,7 @@ struct ComposerView: View {
             Spacer()
 
             if model.settings.voiceControlsEnabled {
-                VoiceComposerButtons(voice: model.voiceControl)
+                VoiceComposerButtons(voice: voiceControl)
                     .environmentObject(model)
                 Divider()
                     .frame(height: 17)
@@ -1034,11 +1041,11 @@ struct ComposerView: View {
                         title: target.device.name + (
                             model.justChatEnabled
                                 ? " · paused"
-                                : (model.simulatorControl.nativeAvailable ? "" : " · disconnected")
+                                : (simulatorControl.nativeAvailable ? "" : " · disconnected")
                         ),
                         symbol: serviceSymbol,
                         iconData: nil,
-                        warning: !model.simulatorControl.nativeAvailable,
+                        warning: !simulatorControl.nativeAvailable,
                         open: {
                             if !model.justChatEnabled { model.selectInspectorTab(.simulator) }
                         },
@@ -1053,7 +1060,7 @@ struct ComposerView: View {
     }
 
     private var serviceSymbol: String {
-        model.simulatorControl.nativeAvailable
+        simulatorControl.nativeAvailable
             ? "ipad.and.iphone" : "exclamationmark.triangle"
     }
 
@@ -1197,6 +1204,8 @@ enum ComposerReturnAction: Equatable {
 
 private struct ComposerTeamPickerPopover: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     let dismiss: () -> Void
     let createQuickTeam: () -> Void
     let manageAdvanced: () -> Void
@@ -1235,7 +1244,7 @@ private struct ComposerTeamPickerPopover: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 9) {
                     soloCard
-                    if model.agentTeams.isEmpty {
+                    if agentTeams.agentTeams.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("No saved teams yet")
                                 .font(.locus(size: 10, weight: .semibold))
@@ -1252,7 +1261,7 @@ private struct ComposerTeamPickerPopover: View {
                             .tracking(0.7)
                             .foregroundStyle(LocusTheme.muted)
                             .padding(.top, 3)
-                        ForEach(model.agentTeams) { team in
+                        ForEach(agentTeams.agentTeams) { team in
                             teamCard(team)
                         }
                     }
@@ -1287,9 +1296,9 @@ private struct ComposerTeamPickerPopover: View {
     }
 
     private var soloCard: some View {
-        let selected = model.agentTeamsModel.selectedAgentTeamID == nil
+        let selected = agentTeams.selectedAgentTeamID == nil
         return Button {
-            model.agentTeamsModel.selectSoloRoute()
+            agentTeams.selectSoloRoute()
             dismiss()
         } label: {
             HStack(spacing: 10) {
@@ -1326,9 +1335,9 @@ private struct ComposerTeamPickerPopover: View {
     }
 
     private func teamCard(_ team: AgentTeam) -> some View {
-        let selected = model.agentTeamsModel.selectedAgentTeamID == team.id
+        let selected = agentTeams.selectedAgentTeamID == team.id
         let profiles = team.memberIDs.compactMap { id in
-            model.agentProfiles.first(where: { $0.id == id })
+            agentTeams.agentProfiles.first(where: { $0.id == id })
         }
         let dispatcher = team.dispatcherID.flatMap { id in
             profiles.first(where: { $0.id == id })
@@ -1340,7 +1349,7 @@ private struct ComposerTeamPickerPopover: View {
         let issue = teamIssue(team)
 
         return Button {
-            model.agentTeamsModel.selectAgentTeam(team.id)
+            agentTeams.selectAgentTeam(team.id)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 7) {
@@ -1416,14 +1425,14 @@ private struct ComposerTeamPickerPopover: View {
     }
 
     private func teamIssue(_ team: AgentTeam) -> String? {
-        if let error = AgentTeamValidation.errors(team: team, profiles: model.agentProfiles).first {
+        if let error = AgentTeamValidation.errors(team: team, profiles: agentTeams.agentProfiles).first {
             return error
         }
         let memberAccountIDs = Set(team.memberIDs.compactMap { id in
-            model.agentProfiles.first(where: { $0.id == id })?.route.accountID
+            agentTeams.agentProfiles.first(where: { $0.id == id })?.route.accountID
         })
         for accountID in memberAccountIDs {
-            guard let account = model.providerAccounts.first(where: { $0.id == accountID }) else {
+            guard let account = providerAccounts.providerAccounts.first(where: { $0.id == accountID }) else {
                 return "A hosted provider used by this team is unavailable."
             }
             if !account.isCredentialReady {
@@ -1432,14 +1441,14 @@ private struct ComposerTeamPickerPopover: View {
         }
         if let error = AgentTeamValidation.routeErrors(
             team: team,
-            profiles: model.agentProfiles,
-            accounts: model.providerAccounts,
-            accountModels: model.accountModels
+            profiles: agentTeams.agentProfiles,
+            accounts: providerAccounts.providerAccounts,
+            accountModels: providerAccounts.accountModels
         ).first {
             return error
         }
-        if let missingID = memberAccountIDs.subtracting(model.agentTeamsModel.teamRoutingConsentAccountIDs).first {
-            let name = model.providerAccounts.first(where: { $0.id == missingID })?.displayName
+        if let missingID = memberAccountIDs.subtracting(agentTeams.teamRoutingConsentAccountIDs).first {
+            let name = providerAccounts.providerAccounts.first(where: { $0.id == missingID })?.displayName
                 ?? "a hosted provider"
             return "Allow automatic routing for \(name) in Advanced settings."
         }
@@ -1450,7 +1459,7 @@ private struct ComposerTeamPickerPopover: View {
         switch route {
         case .localOllama: "Local"
         case .providerAccount(let accountID):
-            model.providerAccounts.first(where: { $0.id == accountID })?.shortName
+            providerAccounts.providerAccounts.first(where: { $0.id == accountID })?.shortName
                 ?? "Unavailable"
         }
     }
@@ -1495,6 +1504,8 @@ private enum ComposerAttachmentMenuStyle {
 
 private struct ComposerAttachmentSourceMenu: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var applicationContext: ApplicationContextService
+    @EnvironmentObject private var simulatorControl: SimulatorControlService
     @State private var reviewPresented = false
     @State private var refreshRevision = 0
     let style: ComposerAttachmentMenuStyle
@@ -1512,7 +1523,7 @@ private struct ComposerAttachmentSourceMenu: View {
             .disabled(model.isLoadingChatAttachments)
 
             if ApplicationContextService.isAvailable {
-                if let current = model.applicationContext.lastExternalApplication {
+                if let current = applicationContext.lastExternalApplication {
                     Button {
                         model.attachApplicationSnapshot(current)
                     } label: {
@@ -1530,11 +1541,11 @@ private struct ComposerAttachmentSourceMenu: View {
 
             if !model.justChatEnabled {
                 Menu("Attach live application…", systemImage: "scope") {
-                    if model.applicationContext.runningApplications.isEmpty {
+                    if applicationContext.runningApplications.isEmpty {
                         Button("No applications are available") {}
                             .disabled(true)
                     }
-                    ForEach(model.applicationContext.runningApplications) { target in
+                    ForEach(applicationContext.runningApplications) { target in
                         Button {
                             model.attachLiveApplication(target)
                         } label: {
@@ -1556,12 +1567,12 @@ private struct ComposerAttachmentSourceMenu: View {
                     if !SimulatorControlService.isSupportedBuild {
                         Button("Requires the direct-download build") {}
                             .disabled(true)
-                    } else if model.simulatorControl.devices.isEmpty {
+                    } else if simulatorControl.devices.isEmpty {
                         Button("No iPhone or iPad simulators found") {
                             model.refreshSimulatorDevices()
                         }
                     }
-                    ForEach(model.simulatorControl.devices) { device in
+                    ForEach(simulatorControl.devices) { device in
                         Button {
                             model.attachSimulator(device)
                         } label: {
@@ -1571,7 +1582,7 @@ private struct ComposerAttachmentSourceMenu: View {
                             )
                         }
                     }
-                    if model.simulatorControl.isRefreshing {
+                    if simulatorControl.isRefreshing {
                         Button("Refreshing simulators…") {}
                             .disabled(true)
                     } else {
@@ -1600,20 +1611,20 @@ private struct ComposerAttachmentSourceMenu: View {
             // workspace launch/termination notifications. Avoid refreshing on
             // every identity-driven menu rebuild, which otherwise forms a
             // publish → rebuild → onAppear loop.
-            if model.applicationContext.runningApplications.isEmpty {
-                model.applicationContext.refreshRunningApplications()
+            if applicationContext.runningApplications.isEmpty {
+                applicationContext.refreshRunningApplications()
             }
             if !model.justChatEnabled,
-               model.simulatorControl.devices.isEmpty,
-               !model.simulatorControl.isRefreshing
+               simulatorControl.devices.isEmpty,
+               !simulatorControl.isRefreshing
             {
                 model.refreshSimulatorDevices()
             }
         }
-        .onReceive(model.applicationContext.objectWillChange) { _ in
+        .onReceive(applicationContext.objectWillChange) { _ in
             refreshRevision &+= 1
         }
-        .onReceive(model.simulatorControl.objectWillChange) { _ in
+        .onReceive(simulatorControl.objectWillChange) { _ in
             refreshRevision &+= 1
         }
     }
