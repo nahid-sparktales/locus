@@ -1,8 +1,7 @@
 import Foundation
 
-// Facade API — kept for InspectorView (a concurrent branch owns it),
-// AppModelTests, and the dispatcher/run-queue seams. Shrinks to nothing
-// once that branch lands and the tests are re-pointed in the follow-up.
+// Compatibility facade for AppModel tests and dispatcher/run-queue seams.
+// Reactive views observe OrchestrationRunsModel directly.
 extension AppModel {
     var orchestrationRuns: [OrchestrationRun] {
         get { runs.orchestrationRuns }

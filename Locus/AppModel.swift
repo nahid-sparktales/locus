@@ -22,16 +22,14 @@ final class AppModel: ObservableObject {
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
     let providerAccountsModel = ProviderAccountsModel()
-    private var providerAccountsBridge: AnyCancellable?
+    private var providerAccountsCapabilityObservation: AnyCancellable?
     let voiceControl = VoiceControlModel()
-    private var voiceControlBridge: AnyCancellable?
 
     #if !LOCUS_APP_STORE
     /// The ChatGPT-plan helpers ship as a downloadable component in the direct
     /// download. Owned here so the account editor and the settings row observe
     /// the same install rather than racing two of them.
     let codexComponent = CodexComponentInstaller()
-    private var codexComponentBridge: AnyCancellable?
     #endif
 
     #if !LOCUS_APP_STORE
@@ -61,36 +59,26 @@ final class AppModel: ObservableObject {
         #endif
     }
     let agentTeamsModel = AgentTeamsModel()
-    private var agentTeamsBridge: AnyCancellable?
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
     @Published var activeWorkerID: String?  // internal(for: AppModel extension files)
     @Published var taskConversationStates: [String: TaskConversationState] = [:]  // internal(for: AppModel+UITestFixtures)
     let teamRunLive = TeamRunLiveModel()
-    private var teamRunLiveBridge: AnyCancellable?
     @Published var activeTaskRecord: TaskRecord?  // internal(for: AppModel+UITestFixtures)
     var pendingProviderSwitch: (accountID: UUID?, model: String)?  // internal(for: AppModel extension files)
     let landingFlow = LandingFlowModel()
-    private var landingFlowBridge: AnyCancellable?
     let runs = OrchestrationRunsModel()
-    private var runsBridge: AnyCancellable?
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
     let evaluations = EvaluationsModel()
-    private var evaluationsBridge: AnyCancellable?
     let knowledge = WorkspaceKnowledgeModel()
-    private var knowledgeBridge: AnyCancellable?
     let activity = ActivityCenterModel()
-    private var activityBridge: AnyCancellable?
     let schedule = ScheduleModel()
-    private var scheduleBridge: AnyCancellable?
     let companionGateway = CompanionGateway()
     @Published private(set) var companionGatewayState = CompanionGatewayState.disabled
     @Published var companionPairingPayload: CompanionPairingPayload?  // internal(for: AppModel+MobileCompanion)
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
     let backgroundServicesModel = BackgroundServicesModel()
-    private var backgroundServicesBridge: AnyCancellable?
     let extensionsModel = ExtensionsModel()
-    private var extensionsBridge: AnyCancellable?
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
     var sessions: [SessionSummary] {
@@ -229,10 +217,7 @@ final class AppModel: ObservableObject {
     /// observes this directly, and republishing here would invalidate the whole
     /// workspace view every time its list changed.
     let notebook = NotebookModel()
-    private var gitWorkspaceBridge: AnyCancellable?
-    private var workspaceFilesBridge: AnyCancellable?
     let agentInstructions = AgentInstructionsModel()
-    private var agentInstructionsBridge: AnyCancellable?
     @Published var contextFiles: [ContextFile] = []
     @Published var chatAttachments: [ChatAttachment] = []
     @Published var chatAttachmentNotice: String?
@@ -340,7 +325,6 @@ final class AppModel: ObservableObject {
     @Published var transcriptJumpTarget: UUID?
     @Published var streamRevision = 0
     let toastCenter = ToastCenter()
-    private var toastCenterBridge: AnyCancellable?
     var toastMessage: String? { toast?.message }
     @Published var lifecycleRecoveryMessage: String?  // internal(for: AppModel+UITestFixtures)
     @Published var backendLogHint = ""
@@ -353,7 +337,7 @@ final class AppModel: ObservableObject {
     let applicationContext = ApplicationContextService()
     let simulatorControl = SimulatorControlService()
     let eventAutomations = EventAutomationModel()
-    private var applicationContextBridge: AnyCancellable?
+    private var applicationContextCapabilityObservation: AnyCancellable?
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
     let browser = BrowserService()
@@ -826,21 +810,13 @@ final class AppModel: ObservableObject {
             }
         }
 
-        applicationContextBridge = applicationContext.objectWillChange.sink { [weak self] _ in
+        applicationContextCapabilityObservation = applicationContext.objectWillChange.sink { [weak self] _ in
             Task { @MainActor [weak self] in
                 // @Published sends before replacing its value. Recalculate on
                 // the next actor turn so a terminated scoped app loses tools.
                 await Task.yield()
-                guard let self else { return }
-                self.objectWillChange.send()
-                self.announceComputerControlCapability()
+                self?.announceComputerControlCapability()
             }
-        }
-        gitWorkspaceBridge = gitWorkspace.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
-        workspaceFilesBridge = workspaceFiles.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
         }
         agentInstructions.configure(
             backend: backend,
@@ -853,9 +829,6 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) },
             workspaceFilesChanged: { [weak self] in self?.workspaceFiles.refresh(force: true) }
         )
-        agentInstructionsBridge = agentInstructions.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         knowledge.configure(
             backend: backend,
             isUITesting: isUITesting,
@@ -867,9 +840,6 @@ final class AppModel: ObservableObject {
             knowledgePageVisible: { [weak self] in self?.settingsPage == .knowledge },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        knowledgeBridge = knowledge.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         evaluations.configure(
             backend: backend,
             workspacePathProvider: { [weak self] in self?.workspacePath ?? "" },
@@ -879,29 +849,17 @@ final class AppModel: ObservableObject {
             },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        evaluationsBridge = evaluations.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         extensionsModel.configure(
             backend: backend,
             isUITesting: isUITesting,
             workspacePathProvider: { [weak self] in self?.workspacePath ?? "" },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        extensionsBridge = extensionsModel.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         activity.configure(
             backend: backend,
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        activityBridge = activity.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         toastCenter.onToastReplaced = { [weak self] in self?.pendingDeletedChat = nil }
-        toastCenterBridge = toastCenter.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         backgroundServicesModel.configure(
             transportProvider: { [weak self] in self?.conversationBackend },
             recordingSessionIDProvider: { [weak self] in self?.sessionOverview.activeSessionID ?? "" },
@@ -910,9 +868,6 @@ final class AppModel: ObservableObject {
             },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        backgroundServicesBridge = backgroundServicesModel.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         transcriptSearch.configure(backend: backend)
         schedule.configure(
             backend: backend,
@@ -935,9 +890,6 @@ final class AppModel: ObservableObject {
             },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        scheduleBridge = schedule.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         eventAutomations.configure(
             backend: backend,
             onQueuedRun: { [weak self] run in
@@ -984,8 +936,7 @@ final class AppModel: ObservableObject {
             },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        providerAccountsBridge = providerAccountsModel.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
+        providerAccountsCapabilityObservation = providerAccountsModel.objectWillChange.sink { [weak self] _ in
             self?.voiceControl.invalidateCapabilityTest()
         }
         voiceControl.configure(
@@ -999,9 +950,6 @@ final class AppModel: ObservableObject {
                 self?.setAppleNetworkRecognitionConsent(allowed)
             }
         )
-        voiceControlBridge = voiceControl.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         agentTeamsModel.configure(
             isBusyProvider: { [weak self] in self?.isBusy ?? false },
             workspacePersistenceRequested: { [weak self] in self?.scheduleWorkspacePersistence() },
@@ -1010,9 +958,6 @@ final class AppModel: ObservableObject {
             accountModelsProvider: { [weak self] id in self?.accountModels[id] },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        agentTeamsBridge = agentTeamsModel.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         runs.configure(
             backend: backend,
             sessionIDProvider: { [weak self] in self?.currentSessionID ?? "" },
@@ -1024,9 +969,6 @@ final class AppModel: ObservableObject {
             setLiveState: { [weak self] state in self?.orchestrationState = state },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        runsBridge = runs.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         teamRunLive.configure(
             isBusyProvider: { [weak self] in self?.isBusy ?? false },
             liveRunID: { [weak self] in self?.orchestrationRunID },
@@ -1037,9 +979,6 @@ final class AppModel: ObservableObject {
             },
             selectedTeamProvider: { [weak self] in self?.selectedAgentTeam }
         )
-        teamRunLiveBridge = teamRunLive.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         landingFlow.configure(
             backend: backend,
             isUITesting: isUITesting,
@@ -1061,14 +1000,9 @@ final class AppModel: ObservableObject {
             gitRefresh: { [weak self] in self?.gitWorkspace.refreshStatus() },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
-        landingFlowBridge = landingFlow.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         simulatorControl.capabilityDidChange = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.objectWillChange.send()
-                self.announceSimulatorControlCapability()
+                self?.announceSimulatorControlCapability()
             }
         }
 
@@ -1185,16 +1119,6 @@ final class AppModel: ObservableObject {
             scheduleProxyHealthMonitoring()
         }
 
-        #if !LOCUS_APP_STORE
-        // `codexComponent` is a nested ObservableObject. A view holding
-        // `@EnvironmentObject var model: AppModel` subscribes to AppModel's
-        // publisher only, so without this the installer's progress and its
-        // final state never invalidate anything and the download UI sits
-        // frozen on "Download and Continue" while the work actually happens.
-        codexComponentBridge = codexComponent.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
-        #endif
         walletGateway.configureRPCURL(loadedSettings.walletSepoliaRPCURL)
         walletGateway.applyFeatureAccess(
             walletEnabled: loadedSettings.walletAlphaEnabled,

@@ -183,7 +183,6 @@ extension AppModel {
                     sessionID: currentSessionID,
                     udid: device.udid
                 )
-                objectWillChange.send()
                 sendSimulatorControlCapability()
                 selectInspectorTab(.simulator)
                 showToast("Attached \(device.name)")
@@ -198,13 +197,11 @@ extension AppModel {
         guard let target = simulatorControl.target(for: owner) else { return }
         cancelSimulatorActions(sessionID: owner)
         simulatorControl.detach(sessionID: owner)
-        objectWillChange.send()
         announceSimulatorControlCapability()
         showToast("Detached \(target.device.name)")
     }
 
     func simulatorDidDetachNatively() {
-        objectWillChange.send()
         announceSimulatorControlCapability()
         showToast("Simulator shut down and detached")
     }
@@ -219,7 +216,6 @@ extension AppModel {
         if !enabled {
             cancelSimulatorActions()
             simulatorControl.detachAll()
-            objectWillChange.send()
         }
         announceSimulatorControlCapability()
         showToast(enabled ? "iOS Simulator control enabled" : "iOS Simulator control disabled")

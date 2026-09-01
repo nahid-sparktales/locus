@@ -85,13 +85,4 @@ final class ExtensionsModelTests: XCTestCase {
         XCTAssertEqual(Set(runtime.keys), ["access_token", "headers"])
     }
 
-    func testAppModelRepublishesExtensionsChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.extensionsModel.objectWillChange.send()
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

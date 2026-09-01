@@ -125,7 +125,6 @@ extension AppModel {
                 "result": result,
             ])
             if tool == "simulator_detach" {
-                self.objectWillChange.send()
                 self.announceSimulatorControlCapability()
             }
         }

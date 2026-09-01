@@ -6,8 +6,8 @@ import Foundation
 /// per-account ChatGPT plan state, the usage rollup, and the last reported
 /// Ollama host. Routing decisions — which account the session uses, provider
 /// switches — stay with the composition root and reach it through closures.
-/// AppModel wires it via configure(...) and bridges its publication; it
-/// never retains AppModel.
+/// AppModel wires it via configure(...), while views observe this model
+/// directly. It never retains AppModel.
 @MainActor
 final class ProviderAccountsModel: ObservableObject {
     @Published var models: [ModelInfo] = []

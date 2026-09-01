@@ -12,6 +12,7 @@ struct InspectorTerminalTab: View {
 
 private struct TerminalPanel: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var backgroundServices: BackgroundServicesModel
     @ObservedObject var terminal: TerminalSession
 
     var body: some View {
@@ -36,7 +37,7 @@ private struct TerminalPanel: View {
             configure()
             terminal.ensureStarted()
             terminal.focus()
-            model.backgroundServicesModel.refreshBackgroundServices()
+            backgroundServices.refreshBackgroundServices()
         }
         .onChange(of: model.workspacePath) { configure() }
         .onChange(of: model.settings.terminalShell) { configure() }
@@ -65,13 +66,13 @@ private struct TerminalPanel: View {
                 Label("Managed services", systemImage: "server.rack")
                     .font(.locus(size: 8, weight: .semibold))
                 Spacer()
-                Button { model.backgroundServicesModel.refreshBackgroundServices() } label: {
+                Button { backgroundServices.refreshBackgroundServices() } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.locus())
                 .help("Refresh managed services")
             }
-            ForEach(model.backgroundServicesModel.backgroundServices) { service in
+            ForEach(backgroundServices.backgroundServices) { service in
                 HStack(spacing: 7) {
                     Circle()
                         .fill(service.running ? LocusTheme.success : LocusTheme.warning)
@@ -87,7 +88,7 @@ private struct TerminalPanel: View {
                     Spacer()
                     if service.running {
                         Button("Stop", role: .destructive) {
-                            model.backgroundServicesModel.stopBackgroundService(service)
+                            backgroundServices.stopBackgroundService(service)
                         }
                         .buttonStyle(.locus())
                         .font(.locus(size: 8))
@@ -97,7 +98,7 @@ private struct TerminalPanel: View {
                                 .font(.locus(size: 7, design: .monospaced))
                                 .foregroundStyle(LocusTheme.warning)
                             Button("Dismiss") {
-                                model.backgroundServicesModel.stopBackgroundService(service)
+                                backgroundServices.stopBackgroundService(service)
                             }
                             .buttonStyle(.locus())
                             .font(.locus(size: 8))
@@ -105,7 +106,7 @@ private struct TerminalPanel: View {
                     }
                 }
             }
-            if model.backgroundServicesModel.backgroundServices.isEmpty {
+            if backgroundServices.backgroundServices.isEmpty {
                 Text("No managed services. Agents use these for servers and watchers that should survive Stop.")
                     .font(.locus(size: 7))
                     .foregroundStyle(LocusTheme.muted)
