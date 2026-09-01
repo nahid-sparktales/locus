@@ -229,11 +229,7 @@ extension AppModel {
     }
 
     func persistExpandedWorkspaces() {
-        guard persistenceEnabled else { return }
-        UserDefaults.standard.set(
-            expandedWorkspaceIDs.sorted(),
-            forKey: "Locus.expandedWorkspaces"
-        )
+        sessionCatalog.persistExpansionState()
     }
 
     func persistSettings() {

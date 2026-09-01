@@ -95,6 +95,8 @@ final class TranscriptFollowTests: XCTestCase {
     private func mount(_ model: AppModel, size: NSSize) -> NSView {
         let host = NSHostingView(rootView: FollowProbeRoot()
             .environmentObject(model)
+            .environmentObject(model.sessionCatalog)
+            .environmentObject(model.transcriptPresentation)
             .environmentObject(AppUpdateController(startImmediately: false)))
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(

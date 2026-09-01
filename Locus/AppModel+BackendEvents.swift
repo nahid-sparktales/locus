@@ -135,7 +135,9 @@ extension AppModel {
                 ? (event["sections"] as? [String] ?? [])
                 : nil
             if let phase = event["phase"] as? String, kind == "message" {
-                blocks[index].assistantPhase = AssistantPhase.resolved(phase)
+                updateTranscriptBlocks {
+                    $0[index].assistantPhase = AssistantPhase.resolved(phase)
+                }
             }
             if blocks[index].id == streamingAssistantID {
                 commitStreamingReply(
@@ -146,12 +148,18 @@ extension AppModel {
                 )
                 streamingAssistantID = nil
             } else {
-                if let authoritativeText { blocks[index].text = authoritativeText }
-                if let sections {
-                    blocks[index].reasoningSections = sections.isEmpty ? nil : sections
-                    blocks[index].reasoningText = sections.joined(separator: "\n\n").nilIfEmpty
+                updateTranscriptBlocks { transcriptBlocks in
+                    if let authoritativeText {
+                        transcriptBlocks[index].text = authoritativeText
+                    }
+                    if let sections {
+                        transcriptBlocks[index].reasoningSections = sections.isEmpty ? nil : sections
+                        transcriptBlocks[index].reasoningText = sections
+                            .joined(separator: "\n\n")
+                            .nilIfEmpty
+                    }
+                    transcriptBlocks[index].isStreaming = false
                 }
-                blocks[index].isStreaming = false
             }
             if wasStreaming, let runtime = taskWorkers[currentSessionID] {
                 runtime.streamingBlockID = nil
@@ -217,16 +225,20 @@ extension AppModel {
                 let explanation = "The agent sent a permission request the app cannot answer"
                     + " (missing request id). Stop the run if it does not continue."
                 if let index = blocks.lastIndex(where: { $0.tool?.toolID == toolID }), !toolID.isEmpty {
-                    blocks[index].tool?.status = .error
-                    blocks[index].tool?.result = explanation
+                    updateTranscriptBlocks {
+                        $0[index].tool?.status = .error
+                        $0[index].tool?.result = explanation
+                    }
                 } else {
                     blocks.append(ChatBlock(kind: .error, text: explanation))
                 }
                 return
             }
             if let index = blocks.lastIndex(where: { $0.tool?.toolID == toolID }), !toolID.isEmpty {
-                blocks[index].tool?.status = .awaitingPermission
-                blocks[index].tool?.requestID = requestID
+                updateTranscriptBlocks {
+                    $0[index].tool?.status = .awaitingPermission
+                    $0[index].tool?.requestID = requestID
+                }
                 // Publish the in-place tool-card upgrade even though the
                 // block count did not change. The native scroll coordinator
                 // decides independently whether the viewport should follow.
@@ -261,8 +273,10 @@ extension AppModel {
             let denied = event["denied"] as? Bool == true
             let ok = event["ok"] as? Bool == true
             if let index = blocks.firstIndex(where: { $0.tool?.toolID == toolID }) {
-                blocks[index].tool?.status = denied ? .denied : ok ? .done : .error
-                blocks[index].tool?.result = event["result"] as? String
+                updateTranscriptBlocks {
+                    $0[index].tool?.status = denied ? .denied : ok ? .done : .error
+                    $0[index].tool?.result = event["result"] as? String
+                }
             } else {
                 // Never drop a result: without a matching card the outcome of
                 // a tool the user approved would vanish silently.
@@ -960,8 +974,10 @@ extension AppModel {
         if let id = streamingAssistantID {
             commitStreamingReply(id, finished: true)
         }
-        for index in blocks.indices where blocks[index].isStreaming {
-            blocks[index].isStreaming = false
+        updateTranscriptBlocks { transcriptBlocks in
+            for index in transcriptBlocks.indices where transcriptBlocks[index].isStreaming {
+                transcriptBlocks[index].isStreaming = false
+            }
         }
     }
 
@@ -978,12 +994,14 @@ extension AppModel {
         ),
               let index = blocks.firstIndex(where: { $0.id == id })
         else { return }
-        blocks[index].text = snapshot.text
-        blocks[index].reasoningText = snapshot.reasoning.nilIfEmpty
-        blocks[index].reasoningSections = snapshot.reasoningSections.isEmpty
-            ? nil
-            : snapshot.reasoningSections
-        if finished { blocks[index].isStreaming = false }
+        updateTranscriptBlocks {
+            $0[index].text = snapshot.text
+            $0[index].reasoningText = snapshot.reasoning.nilIfEmpty
+            $0[index].reasoningSections = snapshot.reasoningSections.isEmpty
+                ? nil
+                : snapshot.reasoningSections
+            if finished { $0[index].isStreaming = false }
+        }
     }
 
     /// A normally completed Build turn is authoritative evidence that the
@@ -1031,9 +1049,13 @@ extension AppModel {
     /// longer matter, and a stuck awaiting card would disable send and
     /// clear-chat forever.
     private func resolveDanglingPermissions() {
-        for index in blocks.indices where blocks[index].tool?.status == .awaitingPermission {
-            blocks[index].tool?.status = .error
-            blocks[index].tool?.result = "The turn ended before this request was answered."
+        updateTranscriptBlocks { transcriptBlocks in
+            for index in transcriptBlocks.indices
+            where transcriptBlocks[index].tool?.status == .awaitingPermission {
+                transcriptBlocks[index].tool?.status = .error
+                transcriptBlocks[index].tool?.result =
+                    "The turn ended before this request was answered."
+            }
         }
     }
 
@@ -1060,11 +1082,15 @@ extension AppModel {
         pendingCheckpointRestore = nil
         pendingRewindDraft = nil
         sessionResetWatchdog?.cancel()
-        for index in blocks.indices where blocks[index].tool?.status == .awaitingPermission
-            || blocks[index].tool?.status == .running
-        {
-            blocks[index].tool?.status = .error
-            blocks[index].tool?.result = "The connection to the local agent was lost before this finished."
+        updateTranscriptBlocks { transcriptBlocks in
+            for index in transcriptBlocks.indices
+            where transcriptBlocks[index].tool?.status == .awaitingPermission
+                || transcriptBlocks[index].tool?.status == .running
+            {
+                transcriptBlocks[index].tool?.status = .error
+                transcriptBlocks[index].tool?.result =
+                    "The connection to the local agent was lost before this finished."
+            }
         }
     }
 

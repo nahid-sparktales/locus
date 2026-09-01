@@ -71,13 +71,19 @@ final class TranscriptSearchModelTests: XCTestCase {
         XCTAssertTrue(BackendStub.requests[0].url?.query?.contains("second") ?? false)
     }
 
-    func testAppModelRepublishesSearchChanges() async throws {
+    func testSearchChangesPublishOnlyTheDirectlyObservedChildModel() {
         let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
+        var appPublications = 0
+        var searchPublications = 0
+        let appCancellable = app.objectWillChange.sink { _ in appPublications += 1 }
+        let searchCancellable = app.transcriptSearch.objectWillChange.sink {
+            searchPublications += 1
+        }
+
         app.transcriptSearch.transcriptHits = []
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
+
+        XCTAssertEqual(searchPublications, 1)
+        XCTAssertEqual(appPublications, 0)
+        withExtendedLifetime((appCancellable, searchCancellable)) {}
     }
 }
