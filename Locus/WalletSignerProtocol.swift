@@ -1372,6 +1372,27 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     let error: String
 }
 
+/// Code-signing requirements enforced by NSXPCConnection before either side
+/// accepts privileged wallet messages. Foundation performs this check from the
+/// connection's audit token, so sandboxed helpers never need to open and
+/// inspect a peer executable by PID.
+enum WalletXPCCodeSigningRequirement {
+    static let hostApplication = requirement(identifier: "io.sparktales.locus")
+    static let signerService = requirement(identifier: "io.sparktales.locus.WalletSigner")
+    static let recoveryService = requirement(identifier: "io.sparktales.locus.WalletRecovery")
+
+    private static func requirement(identifier: String) -> String {
+        #if DEBUG
+        // Contributor and CI debug builds may be ad-hoc signed. The embedded
+        // service namespace still scopes lookup to this application bundle.
+        return "identifier \"\(identifier)\""
+        #else
+        return "identifier \"\(identifier)\" and anchor apple generic "
+            + "and certificate leaf[subject.OU] = \"4X4RJA7GMD\""
+        #endif
+    }
+}
+
 /// The Objective-C-compatible boundary uses Data, while every payload inside
 /// that Data is a specific Codable type. NSDictionary is deliberately avoided:
 /// selector spelling and allowed classes cannot silently widen the protocol.

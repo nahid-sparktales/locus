@@ -6417,15 +6417,45 @@ final class WalletGatewayTests: XCTestCase {
 
     #if LOCUS_DIRECT_DOWNLOAD
     func testEmbeddedSignerProcessReportsAConnectionLocalLockedSession() async throws {
-        let client = XPCWalletSignerClient()
-        guard client.isAvailable else {
-            throw XCTSkip("The direct-download test host did not embed WalletSigner.xpc.")
-        }
+        let client = XPCWalletSignerClient(bundle: Bundle.main)
+        XCTAssertTrue(client.isAvailable, "The direct build must embed WalletSigner.xpc.")
         let status = try await client.signerStatus()
         XCTAssertEqual(status.protocolVersion, WalletGateway.protocolVersion)
         XCTAssertNil(status.sessionID)
         XCTAssertNotEqual(status.vaultState, .unlocked)
         client.lock()
+    }
+
+    func testEmbeddedRecoveryProcessAcceptsTheCodeSignedHostConnection() async throws {
+        let client = XPCWalletRecoveryViewClient(bundle: Bundle.main)
+        guard client.isAvailable else {
+            return XCTFail("The direct build must embed WalletRecovery.xpc.")
+        }
+
+        let endpointSource = NSXPCListener.anonymous()
+        let connection = NSXPCConnection(serviceName: "io.sparktales.locus.WalletRecovery")
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryService)
+        connection.remoteObjectInterface = NSXPCInterface(
+            with: WalletRecoveryServiceXPCProtocol.self
+        )
+        connection.resume()
+        defer { connection.invalidate() }
+
+        let response: Data = try await withCheckedThrowingContinuation { continuation in
+            let gate = WalletXPCReplyGate()
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                if gate.take() { continuation.resume(throwing: error) }
+            }) as? WalletRecoveryServiceXPCProtocol else {
+                return continuation.resume(throwing: WalletGateway.Error.signerUnavailable)
+            }
+            proxy.presentCeremony(
+                Data([0]), signerEndpoint: endpointSource.endpoint
+            ) { data in
+                if gate.take() { continuation.resume(returning: data) }
+            }
+        }
+        let failure = try JSONDecoder().decode(WalletSignerErrorPayload.self, from: response)
+        XCTAssertEqual(failure.error, "The recovery request is invalid.")
     }
     #endif
 

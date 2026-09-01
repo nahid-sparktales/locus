@@ -96,6 +96,7 @@ final class XPCWalletRecoveryViewClient: WalletRecoveryViewClient {
 
     private func makeConnection() -> NSXPCConnection {
         let connection = NSXPCConnection(serviceName: "io.sparktales.locus.WalletRecovery")
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryService)
         connection.remoteObjectInterface = NSXPCInterface(
             with: WalletRecoveryServiceXPCProtocol.self
         )

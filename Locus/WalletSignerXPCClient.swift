@@ -1415,6 +1415,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
 
     private func makeConnection() -> NSXPCConnection {
         let connection = NSXPCConnection(serviceName: "io.sparktales.locus.WalletSigner")
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.signerService)
         connection.remoteObjectInterface = NSXPCInterface(with: WalletSignerXPCProtocol.self)
         connection.interruptionHandler = { [weak self] in
             Task { @MainActor in self?.invalidate() }

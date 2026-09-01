@@ -46,6 +46,7 @@ private final class RecoveryCeremonyController {
         self.reply = reply
         self.onFinish = onFinish
         connection = NSXPCConnection(listenerEndpoint: endpoint)
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.signerService)
         connection.remoteObjectInterface = NSXPCInterface(
             with: WalletRecoveryBrokerXPCProtocol.self
         )

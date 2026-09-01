@@ -248,6 +248,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.tests
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
   LocusWalletChainTests:
     type: bundle.unit-test
     platform: macOS

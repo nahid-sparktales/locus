@@ -4416,8 +4416,6 @@ private final class WalletRecoveryBroker: NSObject, WalletRecoveryBrokerXPCProto
 }
 
 private final class WalletRecoveryBrokerListenerDelegate: NSObject, NSXPCListenerDelegate {
-    private static let recoveryBundleIdentifier = "io.sparktales.locus.WalletRecovery"
-    private static let teamIdentifier = "4X4RJA7GMD"
     private weak var owner: WalletSignerService?
     private let ceremonyID: String
     private let lock = NSLock()
@@ -4433,9 +4431,10 @@ private final class WalletRecoveryBrokerListenerDelegate: NSObject, NSXPCListene
     ) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !acceptedConnection, let owner, Self.isTrustedRecoveryService(connection) else {
+        guard !acceptedConnection, let owner else {
             return false
         }
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryService)
         acceptedConnection = true
         let broker = WalletRecoveryBroker(owner: owner, ceremonyID: ceremonyID)
         connection.exportedInterface = NSXPCInterface(with: WalletRecoveryBrokerXPCProtocol.self)
@@ -4448,31 +4447,6 @@ private final class WalletRecoveryBrokerListenerDelegate: NSObject, NSXPCListene
         }
         connection.resume()
         return true
-    }
-
-    private static func isTrustedRecoveryService(_ connection: NSXPCConnection) -> Bool {
-        let attributes = [
-            kSecGuestAttributePid as String: NSNumber(value: connection.processIdentifier),
-        ] as CFDictionary
-        var guest: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &guest) == errSecSuccess,
-              let guest else { return false }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(guest, [], &staticCode) == errSecSuccess,
-              let staticCode else { return false }
-        var rawInformation: CFDictionary?
-        guard SecCodeCopySigningInformation(
-            staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &rawInformation
-        ) == errSecSuccess,
-              let information = rawInformation as? [String: Any],
-              information[kSecCodeInfoIdentifier as String] as? String
-                == recoveryBundleIdentifier else { return false }
-        let team = information[kSecCodeInfoTeamIdentifier as String] as? String
-        #if DEBUG
-        return team == nil || team == teamIdentifier
-        #else
-        return team == teamIdentifier
-        #endif
     }
 }
 
