@@ -450,6 +450,12 @@ class AgentCore:
         #: mid-turn budget guard extends this with whatever was appended since.
         self._last_call_tokens = 0
         self._messages_at_last_call = 0
+        #: The input tokens the provider charged for the most recent model
+        #: call. Kept apart from `_last_call_tokens`, which is reset every
+        #: turn and deliberately inflated by the overflow recovery path: this
+        #: one is only ever a measurement, and it outlives the turn so the
+        #: context meter still reads true once a turn has finished.
+        self._measured_prompt_tokens = 0
         # Just Chat is enforced at the model boundary, not merely suggested in
         # its prompt. These are separate so Retry preserves the safety mode of
         # the answer being regenerated.
@@ -1414,6 +1420,7 @@ class AgentCore:
 
     def reset_conversation(self) -> None:
         self.messages = [self.system_message()]
+        self._measured_prompt_tokens = 0
         self._clear_chatgpt_thread()
         self.tool_ctx.todos = []
         self.tool_ctx.plan_document = None
@@ -1574,8 +1581,43 @@ class AgentCore:
         # count, not a character count.
         return total // 4 + image_tokens
 
+    def measured_context_tokens(self) -> int:
+        """The conversation's share of the last measured request, or 0.
+
+        Scaled to match `approx_tokens`: the provider counts the whole request
+        while the estimate and `budget_tokens` both work on what the
+        conversation itself occupies, so the parts that ride along on every
+        request come back off.
+        """
+        if self._measured_prompt_tokens <= 0:
+            return 0
+        return max(
+            self._measured_prompt_tokens
+            - self._tool_schema_tokens()
+            - self._extension_prompt_tokens(),
+            0,
+        )
+
+    def context_tokens(self) -> int:
+        """What the conversation actually occupies, best available answer.
+
+        `approx_tokens` can only see `self.messages`. A managed ChatGPT turn
+        keeps its working context in the helper thread, so the estimate reads
+        near-empty for a turn that really sent tens of thousands of tokens —
+        the meter said 1.4k while the run was billed 91k across seven calls.
+        A measurement always wins over an estimate; the estimate wins over a
+        stale or prefix-cached measurement, which is why this is a max and not
+        a preference.
+
+        Reported, not enforced. Compaction still runs off `approx_tokens`: on
+        the managed path the working context belongs to the helper thread, and
+        summarizing Locus's own near-empty transcript because the helper's
+        window is filling would discard the wrong conversation.
+        """
+        return max(self.approx_tokens(), self.measured_context_tokens())
+
     def session_info(self) -> dict[str, Any]:
-        approx = self.approx_tokens()
+        approx = self.context_tokens()
         environment = {
             "type": "worktree" if self.task_metadata is not None else "local",
             "isolation": "managed_worktree" if self.task_metadata is not None else "local",
@@ -2157,6 +2199,11 @@ class AgentCore:
                                     native_model_calls += 1
                                     native_prompt_tokens += prompt
                                     native_completion_tokens += completion
+                                if prompt:
+                                    # The helper holds the working context, so
+                                    # this is the only honest measure of what
+                                    # the window is carrying.
+                                    self._measured_prompt_tokens = prompt
                     elif method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                         raise RuntimeError("ChatGPT helper requested a disabled native approval")
 
@@ -2569,6 +2616,9 @@ class AgentCore:
             # an optimistic shrink, so the tally stays slightly high — erring
             # toward evicting one more rather than one too few.
             self._last_call_tokens = max(0, self._last_call_tokens - dropped // 4)
+            self._measured_prompt_tokens = max(
+                0, self._measured_prompt_tokens - dropped // 4
+            )
             evicted += 1
         return evicted
 
@@ -2804,6 +2854,8 @@ class AgentCore:
             # the totals swallow them.
             self._last_call_tokens = resp.prompt_eval_count + resp.eval_count
             self._messages_at_last_call = len(self.messages)
+            if resp.prompt_eval_count > 0:
+                self._measured_prompt_tokens = resp.prompt_eval_count
             # A response proves the model is resident, so a window this turn
             # started without (cold start: nothing on /api/ps yet) is readable
             # now instead of a turn late. Free once known — refresh never
@@ -3652,6 +3704,10 @@ class AgentCore:
                 "content": "[Summary of the earlier conversation, compacted to save context]\n" + summary,
             },
         ]
+        # The measurement described the conversation that was just replaced.
+        # Left standing it would hold the meter at the pre-compaction reading
+        # until the next model call, which is exactly when someone looks.
+        self._measured_prompt_tokens = 0
         # The helper thread still holds the full uncompacted history; keeping
         # it would silently undo the compaction on the next ChatGPT turn.
         self._clear_chatgpt_thread()

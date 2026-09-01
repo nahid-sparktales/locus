@@ -77,4 +77,85 @@ final class EventAutomationTests: XCTestCase {
         XCTAssertEqual(predicates[0]["op"] as? String, "equals")
         XCTAssertNil(predicates[0]["id"])
     }
+
+    @MainActor
+    func testFinancialChatShortcutPrefillsInspectablePriceDraft() throws {
+        let condition = try XCTUnwrap(EventAutomationModel.suggestedPriceCondition(
+            from: "When bitcoin hits 100k implement the safety plan"
+        ))
+        XCTAssertEqual(condition.providerSymbol, "BTCUSDT")
+        XCTAssertEqual(condition.displaySymbol, "Bitcoin")
+        XCTAssertEqual(condition.assetClass, "crypto")
+        XCTAssertEqual(condition.threshold, "100000")
+        XCTAssertEqual(condition.comparison, .crossesAbove)
+
+        let below = try XCTUnwrap(EventAutomationModel.suggestedPriceCondition(
+            from: "If AAPL drops below $175 implement X"
+        ))
+        XCTAssertEqual(below.providerSymbol, "AAPL")
+        XCTAssertEqual(below.threshold, "175")
+        XCTAssertEqual(below.comparison, .crossesBelow)
+    }
+
+    func testPriceJSONPathAndCanonicalDecimalParsingAreBounded() throws {
+        let object: [String: Any] = [
+            "data": ["ticks": [["last": "100000.5000"]]],
+        ]
+        let value = EventConnectorClient.resolveJSONPath(
+            object, path: "data.ticks.0.last"
+        )
+        XCTAssertEqual(EventConnectorClient.canonicalPrice(try XCTUnwrap(value)), "100000.5")
+        XCTAssertNil(EventConnectorClient.resolveJSONPath(object, path: "data..last"))
+        XCTAssertNil(EventConnectorClient.canonicalPrice("nan"))
+        XCTAssertNil(EventConnectorClient.canonicalPrice("-1"))
+    }
+
+    func testPriceSourceURLRejectsCredentialsAndPrivateHostsByDefault() {
+        XCTAssertNil(EventConnectorClient.priceFeedSecurityError(
+            endpoint: "https://api.example.com/ticker/BTCUSDT", allowLocalNetwork: false
+        ))
+        XCTAssertNotNil(EventConnectorClient.priceFeedSecurityError(
+            endpoint: "http://api.example.com/ticker/BTCUSDT", allowLocalNetwork: false
+        ))
+        XCTAssertNotNil(EventConnectorClient.priceFeedSecurityError(
+            endpoint: "https://user:secret@example.com/ticker/BTCUSDT",
+            allowLocalNetwork: false
+        ))
+        XCTAssertNotNil(EventConnectorClient.priceFeedSecurityError(
+            endpoint: "https://192.168.1.5/ticker/BTCUSDT", allowLocalNetwork: false
+        ))
+        XCTAssertNil(EventConnectorClient.priceFeedSecurityError(
+            endpoint: "https://192.168.1.5/ticker/BTCUSDT", allowLocalNetwork: true
+        ))
+    }
+
+    func testPriceSourceConfigurationRejectsDuplicateCredentialNames() throws {
+        let config = PriceFeedConfiguration(
+            endpointTemplate: "https://api.example.com/{symbol}",
+            priceJSONPath: "data.price",
+            secretFields: [
+                PriceFeedSecretField(key: "Authorization", placement: .header),
+                PriceFeedSecretField(key: "authorization", placement: .query),
+            ]
+        )
+        let data = try JSONEncoder().encode(config)
+        let object = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        XCTAssertThrowsError(try EventConnectorClient.priceFeedConfiguration(object))
+    }
+
+    @MainActor
+    func testPriceSourcePublicConfigContainsNamesButNotSecretValues() throws {
+        let config = PriceFeedConfiguration(
+            endpointTemplate: "https://api.example.com/{symbol}",
+            priceJSONPath: "data.price",
+            timestampJSONPath: "data.time",
+            secretFields: [PriceFeedSecretField(key: "Authorization", placement: .header)]
+        )
+        let object = try XCTUnwrap(EventAutomationModel.encodedObject(config))
+        XCTAssertEqual(object["endpoint_template"] as? String, "https://api.example.com/{symbol}")
+        XCTAssertFalse(String(describing: object).contains("super-secret"))
+        let fields = try XCTUnwrap(object["secret_fields"] as? [[String: Any]])
+        XCTAssertEqual(fields[0]["key"] as? String, "Authorization")
+        XCTAssertNil(fields[0]["value"])
+    }
 }

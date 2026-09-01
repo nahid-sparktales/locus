@@ -337,30 +337,17 @@ struct SessionSidebarView: View {
 
             newChatButton
 
-            // Schedule Task and Activities share a line: both are secondary to
-            // New chat, and the bell needs only its glyph.
+            // The configuration host is mounted before any optional editor is
+            // presented, so global shortcuts always have a live sheet anchor.
             HStack(spacing: 7) {
                 secondaryButton(
-                    symbol: ComposerSymbols.schedule,
-                    title: "Schedule Task",
-                    help: "Schedule this draft to run later",
-                    accessibilityLabel: "Schedule Task",
-                    identifier: "sidebar.schedule"
+                    symbol: "gearshape.2",
+                    title: "Configure Agent",
+                    help: "Start work on a schedule, event, or price condition",
+                    accessibilityLabel: "Configure Agent",
+                    identifier: "sidebar.configureAgent"
                 ) {
-                    model.presentScheduleEditor(prompt: model.draftText)
-                }
-
-                secondaryButton(
-                    symbol: "bolt.badge.clock",
-                    title: "Watch for Event",
-                    help: "Turn this request into a draft event trigger",
-                    accessibilityLabel: "Watch for Event",
-                    identifier: "sidebar.eventTrigger"
-                ) {
-                    model.eventAutomations.presentEditor(
-                        targetSessionID: model.currentSessionID,
-                        naturalLanguageRequest: model.draftText
-                    )
+                    model.presentConfigureAgent(draftText: model.draftText)
                 }
 
                 activityButton

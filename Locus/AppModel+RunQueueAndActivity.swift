@@ -46,8 +46,23 @@ extension AppModel {
     }
 
     func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
+        let wasPresented = configureAgentPresented
+
+        let presentDraft: (ScheduleEditorDraft) -> Void = { [weak self] draft in
+            guard let self else { return }
+            self.configureAgentTab = .configurations
+            if wasPresented {
+                self.schedule.scheduleEditorDraft = draft
+            } else {
+                // The root-level hub consumes this after it mounts. Keeping the
+                // child intent explicit avoids losing a global presentation
+                // request while SwiftUI is still constructing the sheet host.
+                self.configureAgentPendingScheduleDraft = draft
+                self.configureAgentPresented = true
+            }
+        }
         if let task {
-            schedule.scheduleEditorDraft = ScheduleEditorDraft(task: task)
+            presentDraft(ScheduleEditorDraft(task: task))
             return
         }
         var draft = ScheduleEditorDraft()
@@ -71,7 +86,7 @@ extension AppModel {
             draft.provider = "ollama"
             draft.model = selectedModel
         }
-        schedule.scheduleEditorDraft = draft
+        presentDraft(draft)
     }
 
     func rememberScheduleWorkspace(_ url: URL) -> String? {
@@ -80,11 +95,32 @@ extension AppModel {
     }
 
     func openSchedules() {
-        activity.activityCenterSection = .schedules
-        activity.activityCenterPresented = true
+        presentConfigureAgent(draftText: "")
+    }
+
+    func presentConfigureAgent(draftText: String) {
+        configureAgentDraftSuggestion = String(
+            draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
+        )
+        activity.activityCenterPresented = false
+        configureAgentTab = .configurations
+        configureAgentPresented = true
         Task { @MainActor [weak self] in
             await self?.schedule.refreshScheduledTasks()
+            await self?.eventAutomations.refresh()
         }
+    }
+
+    func dismissConfigureAgent() {
+        configureAgentPresented = false
+        configureAgentDraftSuggestion = ""
+        configureAgentPendingScheduleDraft = nil
+    }
+
+    func mountPendingConfigureAgentEditor() {
+        guard let draft = configureAgentPendingScheduleDraft else { return }
+        configureAgentPendingScheduleDraft = nil
+        schedule.scheduleEditorDraft = draft
     }
 
     func scheduleConfigurationIssue(for draft: ScheduleEditorDraft) -> String? {

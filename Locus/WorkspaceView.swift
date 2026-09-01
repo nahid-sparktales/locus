@@ -1101,44 +1101,23 @@ struct ActivityCenterView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text(activitySubtitle)
+                    Text("Work keeps running when you move between chats.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                Picker("Section", selection: Binding(
-                    get: { model.activity.activityCenterSection },
-                    set: { model.activity.activityCenterSection = $0 }
-                )) {
-                    ForEach(ActivityCenterSection.allCases) { section in
-                        Text(section.title).tag(section)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 270)
                 Spacer()
-                if model.activity.activityCenterSection == .activity,
-                   model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
+                if model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
                     Button("Mark All Seen") { model.activity.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if model.activity.activityCenterSection == .activity,
-                   model.visibleActivityRuns.contains(where: {
+                if model.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
                     Button("Clear Finished") { model.activity.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
-                    Task {
-                        if model.activity.activityCenterSection == .activity {
-                            await model.activity.refreshActivityRuns()
-                        } else if model.activity.activityCenterSection == .schedules {
-                            await model.schedule.refreshScheduledTasks()
-                        } else {
-                            await model.eventAutomations.refresh()
-                        }
-                    }
+                    Task { await model.activity.refreshActivityRuns() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -1160,12 +1139,7 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.activity.activityCenterSection == .eventTriggers {
-                EventAutomationsView(automation: model.eventAutomations)
-                    .environmentObject(model)
-            } else if model.activity.activityCenterSection == .schedules {
-                schedulesView
-            } else if model.visibleActivityRuns.isEmpty {
+            if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -1205,68 +1179,11 @@ struct ActivityCenterView: View {
         }
         .task {
             while !Task.isCancelled {
-                if model.activity.activityCenterSection == .activity {
-                    await model.activity.refreshActivityRuns()
-                } else if model.activity.activityCenterSection == .schedules {
-                    await model.schedule.refreshScheduledTasks(announceFailure: false)
-                } else {
-                    await model.eventAutomations.refresh(announceFailure: false)
-                }
+                await model.activity.refreshActivityRuns()
                 try? await Task.sleep(for: .seconds(2))
             }
         }
         .accessibilityIdentifier("activity.center")
-    }
-
-    private var activitySubtitle: String {
-        switch model.activity.activityCenterSection {
-        case .activity:
-            "Work keeps running when you move between chats."
-        case .schedules:
-            "Create recurring work that starts in a fresh chat."
-        case .eventTriggers:
-            "React to Gmail, Telegram, or signed webhook events in an existing chat."
-        }
-    }
-
-    private var schedulesView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Schedules")
-                    .font(.locus(size: 11, weight: .bold))
-                Spacer()
-                Button {
-                    model.presentScheduleEditor()
-                } label: {
-                    Label("New Schedule", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("schedules.new")
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-
-            if model.schedule.scheduledTasks.isEmpty {
-                ContentUnavailableView(
-                    "No Scheduled Tasks",
-                    systemImage: "calendar.badge.clock",
-                    description: Text("Schedule a prompt once or repeat it on your own cadence.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("schedules.empty")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(model.schedule.scheduledTasks) { task in
-                            ScheduleRow(task: task)
-                                .environmentObject(model)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-                }
-            }
-        }
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {

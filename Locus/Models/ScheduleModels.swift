@@ -115,17 +115,42 @@ enum ScheduleIntervalUnit: String, CaseIterable, Codable, Identifiable {
     var title: String { rawValue.capitalized }
 }
 
-enum ActivityCenterSection: String, CaseIterable, Identifiable {
-    case activity
-    case schedules
-    case eventTriggers = "event_triggers"
+enum AgentConfigurationKind: String, CaseIterable, Identifiable {
+    case schedule
+    case event
+    case price
 
     var id: String { rawValue }
+
     var title: String {
         switch self {
-        case .activity: "Activity"
-        case .schedules: "Schedules"
-        case .eventTriggers: "Event Triggers"
+        case .schedule: "Time Trigger"
+        case .event: "Incoming Event"
+        case .price: "Price Alert"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .schedule: "calendar.badge.clock"
+        case .event: "bolt.badge.clock"
+        case .price: "chart.line.uptrend.xyaxis"
+        }
+    }
+}
+
+enum ConfigureAgentTab: String, CaseIterable, Identifiable {
+    case configurations
+    case sources
+    case runHistory = "run_history"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .configurations: "Configurations"
+        case .sources: "Sources"
+        case .runHistory: "Run History"
         }
     }
 }

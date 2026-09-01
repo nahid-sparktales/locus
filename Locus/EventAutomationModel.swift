@@ -111,7 +111,8 @@ final class EventAutomationModel: ObservableObject {
     func presentEditor(
         trigger: EventTrigger? = nil,
         targetSessionID: String,
-        naturalLanguageRequest: String = ""
+        naturalLanguageRequest: String = "",
+        triggerKind requestedKind: EventTriggerKind? = nil
     ) {
         if let trigger {
             editorDraft = EventTriggerEditorDraft(trigger: trigger)
@@ -121,12 +122,28 @@ final class EventAutomationModel: ObservableObject {
         draft.targetSessionID = targetSessionID
         draft.instruction = naturalLanguageRequest.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.name = Self.suggestedName(from: naturalLanguageRequest)
-        if let connection = connections.first(where: { $0.enabled }) {
+        let priceSuggestion = Self.suggestedPriceCondition(from: naturalLanguageRequest)
+        draft.triggerKind = requestedKind ?? (priceSuggestion == nil ? .event : .price)
+        if draft.triggerKind == .price {
+            draft.filters.priceCondition = priceSuggestion ?? PriceCondition()
+        }
+        let connection = connections.first { connection in
+            guard connection.enabled else { return false }
+            return draft.triggerKind == .price
+                ? [.priceFeed, .webhook].contains(connection.kind)
+                : connection.kind != .priceFeed
+        }
+        if let connection {
             draft.connectionID = connection.id
-            draft.actionConnectionIDs = [connection.id]
-            draft.filters = Self.suggestedFilters(
-                from: naturalLanguageRequest, kind: connection.kind
-            )
+            if draft.triggerKind == .price {
+                draft.actionConnectionIDs = []
+                if connection.kind == .webhook { draft.filters.eventNames = ["price.quote"] }
+            } else {
+                draft.actionConnectionIDs = connection.kind == .webhook ? [] : [connection.id]
+                draft.filters = Self.suggestedFilters(
+                    from: naturalLanguageRequest, kind: connection.kind
+                )
+            }
         }
         editorDraft = draft
     }
@@ -144,14 +161,30 @@ final class EventAutomationModel: ObservableObject {
             showMessage?("The trigger filters could not be saved.")
             return false
         }
-        let actions = draft.actionConnectionIDs.isEmpty
-            ? [draft.connectionID] : draft.actionConnectionIDs
+        if draft.triggerKind == .price {
+            guard let condition = draft.filters.priceCondition,
+                  let threshold = condition.thresholdDecimal, threshold > 0 else {
+                showMessage?("Add a positive price threshold.")
+                return false
+            }
+            if condition.lifecycle == .repeat && condition.repeatIntervalSeconds < 900 {
+                showMessage?("Repeating price alerts must wait at least 15 minutes.")
+                return false
+            }
+        }
+        let actions = draft.triggerKind == .price
+            ? draft.actionConnectionIDs.filter { id in
+                connections.first(where: { $0.id == id })?.kind != .priceFeed
+            }
+            : (draft.actionConnectionIDs.isEmpty
+                ? [draft.connectionID] : draft.actionConnectionIDs)
         let body: [String: Any] = [
             "name": name,
             "connection_id": draft.connectionID,
             "target_session_id": draft.targetSessionID,
             "instruction": instruction,
             "mode": draft.mode.rawValue,
+            "trigger_kind": draft.triggerKind.rawValue,
             "filters": filters,
             "action_connection_ids": actions,
             "enabled": draft.enabled,
@@ -170,8 +203,10 @@ final class EventAutomationModel: ObservableObject {
                 )
             }
             replace(saved)
+            runtimeFingerprint = ""
+            restartNativeRuntimeIfNeeded()
             editorDraft = nil
-            showMessage?(draft.id == nil ? "Event trigger activated" : "Event trigger updated")
+            showMessage?(draft.id == nil ? "Agent configuration activated" : "Agent configuration updated")
             return true
         } catch {
             showMessage?("Could not save event trigger: \(error.localizedDescription)")
@@ -221,6 +256,22 @@ final class EventAutomationModel: ObservableObject {
                 replace(retried)
             } catch {
                 showMessage?("Could not retry this event: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func rearm(_ trigger: EventTrigger) {
+        Task { [weak self] in
+            guard let self, let backend else { return }
+            do {
+                let updated: EventTrigger = try await backend.post(
+                    "/api/event-triggers/\(trigger.id)/rearm", body: [:],
+                    as: EventTrigger.self
+                )
+                replace(updated)
+                showMessage?("Price alert re-armed")
+            } catch {
+                showMessage?("Could not re-arm price alert: \(error.localizedDescription)")
             }
         }
     }
@@ -312,6 +363,48 @@ final class EventAutomationModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func connectPriceFeed(
+        displayName: String,
+        configuration: PriceFeedConfiguration,
+        secrets: [String: String],
+        testCondition: PriceCondition
+    ) async -> Bool {
+        guard let backend, let publicConfig = Self.encodedObject(configuration) else {
+            return false
+        }
+        do {
+            let quote = try await client.testPriceFeed(
+                configuration: configuration, secrets: secrets,
+                condition: testCondition,
+                displayName: displayName.nilIfBlank ?? "Price Source"
+            )
+            let identifier = "price-feed-\(UUID().uuidString.lowercased())"
+            if !secrets.isEmpty { try credentials.save(secrets, for: identifier) }
+            do {
+                let connection: ConnectorConnection = try await backend.post(
+                    "/api/connectors", body: [
+                        "id": identifier, "kind": ConnectorKind.priceFeed.rawValue,
+                        "display_name": displayName.nilIfBlank ?? "Price Source",
+                        "public_config": publicConfig, "cursor": [:],
+                    ], as: ConnectorConnection.self
+                )
+                connections.append(connection)
+                runtimeFingerprint = ""
+                restartNativeRuntimeIfNeeded()
+                onCapabilityChanged?()
+                showMessage?("Price source connected · \(quote.price) \(quote.quoteCurrency)")
+                return true
+            } catch {
+                try? credentials.delete(for: identifier)
+                throw error
+            }
+        } catch {
+            showMessage?("Could not connect price source: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     func deleteConnection(_ connection: ConnectorConnection) {
         Task { [weak self] in
             guard let self, let backend else { return }
@@ -332,7 +425,9 @@ final class EventAutomationModel: ObservableObject {
 
     func connectorCapability() -> [String: Any] {
         let available = connections.filter { connection in
-            guard connection.enabled, connection.kind != .webhook else { return false }
+            guard connection.enabled,
+                  connection.kind != .webhook,
+                  connection.kind != .priceFeed else { return false }
             return (try? credentials.load(for: connection.id)) != nil
         }
         return [
@@ -461,25 +556,51 @@ final class EventAutomationModel: ObservableObject {
     }
 
     private func pollLoop(connectionID: String) async {
+        var consecutiveFailures = 0
         while !Task.isCancelled {
             guard let connection = connections.first(where: { $0.id == connectionID && $0.enabled })
             else { return }
             do {
-                let result = try await client.poll(connection)
+                let priceConditions = triggers.compactMap { trigger -> PriceCondition? in
+                    guard trigger.enabled, trigger.connectionID == connectionID,
+                          trigger.triggerKind == .price else { return nil }
+                    return trigger.filters.priceCondition
+                }
+                let result = try await client.poll(
+                    connection, priceConditions: priceConditions
+                )
                 for event in result.events {
                     try await ingest(connectionID: connectionID, event: event)
                 }
                 try await updateCursor(connectionID, cursor: result.cursor, health: "connected", error: "")
+                consecutiveFailures = 0
             } catch is CancellationError {
                 return
+            } catch EventConnectorClientError.retryAfter(let seconds) {
+                try? await updateCursor(
+                    connectionID, cursor: connection.cursor,
+                    health: "rate_limited", error: "The source asked Locus to retry later."
+                )
+                try? await Task.sleep(for: .seconds(min(max(seconds, 1), 900)))
+                continue
             } catch {
+                consecutiveFailures += 1
                 try? await updateCursor(
                     connectionID, cursor: connection.cursor,
                     health: "error", error: error.localizedDescription
                 )
+                if connection.kind == .priceFeed {
+                    let base = connection.publicConfig["poll_interval_seconds"]?.integerValue ?? 60
+                    let multiplier = pow(2.0, Double(min(consecutiveFailures - 1, 6)))
+                    try? await Task.sleep(for: .seconds(min(Double(base) * multiplier, 900)))
+                    continue
+                }
             }
             if connection.kind == .gmail {
                 try? await Task.sleep(for: .seconds(30))
+            } else if connection.kind == .priceFeed {
+                let interval = connection.publicConfig["poll_interval_seconds"]?.integerValue ?? 60
+                try? await Task.sleep(for: .seconds(min(max(interval, 15), 86_400)))
             } else {
                 try? await Task.sleep(for: .seconds(1))
             }
@@ -612,11 +733,69 @@ final class EventAutomationModel: ObservableObject {
         }
         return filters
     }
+
+    static func suggestedPriceCondition(from request: String) -> PriceCondition? {
+        let lowered = request.lowercased()
+        guard lowered.contains("price") || lowered.contains("hits")
+            || lowered.contains("above") || lowered.contains("below")
+            || lowered.contains("over") || lowered.contains("under") else { return nil }
+        let pattern = #"(?i)(?:hits?|reaches?|cross(?:es)?|above|below|over|under)\s*\$?([0-9][0-9,.]*\s*[km]?)"#
+        guard let range = request.range(of: pattern, options: .regularExpression),
+              let numberRange = request[range].range(
+                of: #"(?i)[0-9][0-9,.]*\s*[km]?"#, options: .regularExpression
+              ) else { return nil }
+        var number = String(request[numberRange]).lowercased()
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        var multiplier = Decimal(1)
+        if number.hasSuffix("k") { number.removeLast(); multiplier = 1_000 }
+        if number.hasSuffix("m") { number.removeLast(); multiplier = 1_000_000 }
+        guard let raw = Decimal(
+            string: number, locale: Locale(identifier: "en_US_POSIX")
+        ), raw > 0 else { return nil }
+        let threshold = NSDecimalNumber(decimal: raw * multiplier).stringValue
+        let comparison: PriceComparison = (
+            lowered.contains("below") || lowered.contains("under")
+                || lowered.contains("drops") || lowered.contains("falls")
+        ) ? .crossesBelow : .crossesAbove
+        if lowered.contains("bitcoin") || lowered.contains("btc") {
+            return PriceCondition(
+                providerSymbol: "BTCUSDT", displaySymbol: "Bitcoin",
+                assetClass: "crypto", quoteCurrency: "USD",
+                comparison: comparison, threshold: threshold
+            )
+        }
+        if lowered.contains("ethereum") || lowered.contains("ether")
+            || lowered.contains("eth") {
+            return PriceCondition(
+                providerSymbol: "ETHUSDT", displaySymbol: "Ethereum",
+                assetClass: "crypto", quoteCurrency: "USD",
+                comparison: comparison, threshold: threshold
+            )
+        }
+        let tickerPattern = #"\b[A-Z]{1,6}\b"#
+        let ticker = request.range(of: tickerPattern, options: .regularExpression)
+            .map { String(request[$0]) } ?? ""
+        guard !ticker.isEmpty else { return nil }
+        return PriceCondition(
+            providerSymbol: ticker, displaySymbol: ticker,
+            assetClass: "stock", quoteCurrency: "USD",
+            comparison: comparison, threshold: threshold
+        )
+    }
 }
 
 private extension JSONValue {
     var strings: [String]? {
         guard case .array(let values) = self else { return nil }
         return values.compactMap(\.string)
+    }
+
+    var integerValue: Int? {
+        switch self {
+        case .number(let value): Int(value)
+        case .string(let value): Int(value)
+        default: nil
+        }
     }
 }

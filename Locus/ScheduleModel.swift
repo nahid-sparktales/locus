@@ -12,6 +12,7 @@ final class ScheduleModel: ObservableObject {
     @Published var scheduleEditorDraft: ScheduleEditorDraft?
     @Published private(set) var isSavingSchedule = false
     @Published private(set) var isRefreshingSchedules = false
+    @Published private(set) var occurrencesBySchedule: [String: [ScheduleOccurrence]] = [:]
 
     private var scheduleCoordinatorTask: Task<Void, Never>?
     private var isDispatchingSchedules = false
@@ -182,6 +183,20 @@ final class ScheduleModel: ObservableObject {
                 task, trigger: "manual", requestID: UUID().uuidString,
                 announceFailure: true
             )
+        }
+    }
+
+    func refreshOccurrences(for task: ScheduledTask) async {
+        guard let backend else { return }
+        do {
+            let response: ScheduleOccurrencesResponse = try await backend.get(
+                "/api/schedules/\(task.id)/occurrences",
+                query: [URLQueryItem(name: "limit", value: "100")],
+                as: ScheduleOccurrencesResponse.self
+            )
+            occurrencesBySchedule[task.id] = response.occurrences
+        } catch {
+            toastHandler("Could not load time-trigger history: \(error.localizedDescription)")
         }
     }
 

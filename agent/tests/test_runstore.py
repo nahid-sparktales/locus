@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from ollama_code.runstore import RunStore, sanitize_event
+from ollama_code.runstore import SCHEMA_VERSION, RunStore, sanitize_event
 
 
 def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
@@ -29,6 +29,26 @@ def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
     assert detail is not None
     assert [event["seq"] for event in detail["events"]] == [1, 2]
     assert detail["attempts"][0]["result"]["output"] == "done"
+
+
+def test_append_event_stamps_run_id_without_overwriting_a_caller_stamp(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.start_run("run-1", state="running")
+
+    plain = store.append_event("run-1", {
+        "type": "landing_checks_started", "state": "running",
+    })
+    stamped = store.append_event("run-1", {
+        "type": "landing_check_completed", "run_id": "pre-stamped",
+    })
+
+    assert plain["run_id"] == "run-1"
+    assert stamped["run_id"] == "pre-stamped"
+    assert [event["run_id"] for event in store.events("run-1")] == ["run-1", "pre-stamped"]
+
+    store.read_only = True
+    echoed = store.append_event("run-1", {"type": "landing_checks_started"})
+    assert echoed["run_id"] == "run-1"
 
 
 def test_solo_swarm_identity_survives_queue_execution_completion_and_restore(tmp_path) -> None:
@@ -329,7 +349,7 @@ def test_current_schema_reopens_writable_without_reapplying_migrations(tmp_path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_meta WHERE singleton=1"
-        ).fetchone()[0] == 9
+        ).fetchone()[0] == SCHEMA_VERSION
 
 
 def test_schema_v4_migrates_a_v3_store_and_records_turn_usage(tmp_path) -> None:

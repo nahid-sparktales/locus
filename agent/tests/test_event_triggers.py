@@ -139,7 +139,7 @@ def test_webhook_hmac_rejects_stale_and_modified_requests() -> None:
     )
 
 
-def test_schema_nine_adds_event_tables_without_losing_schedules(tmp_path) -> None:
+def test_schema_ten_adds_price_state_without_losing_schedules(tmp_path) -> None:
     path = tmp_path / "runs.sqlite3"
     store = RunStore(path)
     store.create_schedule({
@@ -172,11 +172,32 @@ def test_schema_nine_adds_event_tables_without_losing_schedules(tmp_path) -> Non
         tables = {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
-    assert version == 9
+    assert version == 10
     assert {
         "connector_connections", "event_triggers", "event_deliveries",
         "connector_action_receipts",
     } <= tables
+    with sqlite3.connect(path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(event_triggers)")}
+    assert {"trigger_kind", "runtime_state_json"} <= columns
+
+
+def test_schema_nine_event_trigger_rows_migrate_in_place(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    store = RunStore(path)
+    _connection(store)
+    _trigger(store)
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE event_triggers DROP COLUMN trigger_kind")
+        connection.execute("ALTER TABLE event_triggers DROP COLUMN runtime_state_json")
+        connection.execute("UPDATE schema_meta SET version=9 WHERE singleton=1")
+
+    reopened = RunStore(path)
+
+    migrated = reopened.event_trigger("trigger")
+    assert migrated is not None
+    assert migrated["trigger_kind"] == "event"
+    assert migrated["runtime_state"] == {}
 
 
 def test_ingestion_deduplicates_and_dispatches_fifo_per_chat(tmp_path) -> None:
@@ -289,3 +310,111 @@ def test_queue_backpressure_is_per_trigger_and_history_survives_deletion(
     store.delete_connector_connection("source")
     assert store.connector_connection("source") is None
     assert store.event_deliveries()[0]["source_event_id"] == "message-1"
+
+
+def _price_trigger(
+    store: RunStore, *, lifecycle: str = "once", comparison: str = "crosses_above"
+):
+    _connection(store, kind="price_feed", connection_id="prices")
+    return store.create_event_trigger({
+        "id": "price-trigger",
+        "trigger_kind": "price",
+        "name": "Bitcoin threshold",
+        "connection_id": "prices",
+        "target_session_id": "session",
+        "instruction": "Implement the configured response.",
+        "mode": "work",
+        "filters": {"price_condition": {
+            "provider_symbol": "BTCUSDT",
+            "display_symbol": "Bitcoin",
+            "asset_class": "crypto",
+            "quote_currency": "USD",
+            "comparison": comparison,
+            "threshold": "100000.00",
+            "lifecycle": lifecycle,
+            "repeat_interval_seconds": 900,
+        }},
+    })
+
+
+def _quote(identifier: str, price: str, occurred_at: float) -> dict:
+    return {
+        "source_event_id": identifier,
+        "occurred_at": occurred_at,
+        "event_type": "price.quote",
+        "subject": "Bitcoin price quote",
+        "data": {
+            "provider_symbol": "BTCUSDT",
+            "display_symbol": "Bitcoin",
+            "asset_class": "crypto",
+            "quote_currency": "USD",
+            "price": price,
+            "provider_timestamp": occurred_at,
+            "venue": "Test Feed",
+        },
+    }
+
+
+def test_price_once_baselines_crosses_and_requires_explicit_rearm(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    trigger = _price_trigger(store)
+    assert trigger["action_connection_ids"] == []
+    assert trigger["filters"]["price_condition"]["threshold"] == "100000"
+
+    assert store.ingest_event("prices", _quote("q1", "99000", 100), now=100) == []
+    fired = store.ingest_event("prices", _quote("q2", "100000", 101), now=101)
+    assert len(fired) == 1
+    assert store.event_trigger("price-trigger")["runtime_state"]["fired"] is True
+    assert store.ingest_event("prices", _quote("q3", "99000", 102), now=102) == []
+    assert store.ingest_event("prices", _quote("q4", "101000", 103), now=103) == []
+
+    rearmed = store.rearm_price_trigger("price-trigger")
+    assert rearmed["runtime_state"] == {}
+    assert store.ingest_event("prices", _quote("q5", "101000", 104), now=104) == []
+    assert store.ingest_event("prices", _quote("q6", "99000", 105), now=105) == []
+    assert len(store.ingest_event("prices", _quote("q7", "100001", 106), now=106)) == 1
+
+
+def test_price_rearm_fires_on_each_recross_and_ignores_stale_or_old_quotes(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _price_trigger(store, lifecycle="rearm", comparison="crosses_below")
+    assert store.ingest_event("prices", _quote("q1", "101000", 1_000), now=1_000) == []
+    assert len(store.ingest_event("prices", _quote("q2", "100000", 1_001), now=1_001)) == 1
+    assert store.ingest_event("prices", _quote("old", "99000", 999), now=1_002) == []
+    assert store.ingest_event("prices", _quote("stale", "110000", 1_003), now=2_000) == []
+    assert store.ingest_event("prices", _quote("q3", "101000", 2_001), now=2_001) == []
+    assert len(store.ingest_event("prices", _quote("q4", "99999", 2_002), now=2_002)) == 1
+
+
+def test_price_repeat_respects_cooldown_and_outstanding_delivery(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _price_trigger(store, lifecycle="repeat")
+    first = store.ingest_event("prices", _quote("q1", "101000", 10_000), now=10_000)
+    assert len(first) == 1
+    assert store.ingest_event("prices", _quote("q2", "102000", 10_899), now=10_899) == []
+    assert store.ingest_event("prices", _quote("q3", "103000", 10_900), now=10_900) == []
+    store.finish_event_dispatch(first[0]["id"], state="failed", error="test")
+    assert len(store.ingest_event("prices", _quote("q4", "104000", 10_901), now=10_901)) == 1
+
+
+def test_price_trigger_validation_and_webhook_contract(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _connection(store, kind="webhook", connection_id="relay")
+    base = {
+        "trigger_kind": "price", "name": "Relay price", "connection_id": "relay",
+        "target_session_id": "session", "instruction": "Respond", "mode": "work",
+        "filters": {"event_names": ["price.quote"], "price_condition": {
+            "provider_symbol": "AAPL", "display_symbol": "Apple", "asset_class": "stock",
+            "quote_currency": "USD", "comparison": "crosses_above", "threshold": "250",
+            "lifecycle": "repeat", "repeat_interval_seconds": 899,
+        }},
+    }
+    with pytest.raises(RunStoreError, match="at least 15 minutes"):
+        store.create_event_trigger(base)
+    base["filters"]["price_condition"]["repeat_interval_seconds"] = 900
+    created = store.create_event_trigger(base)
+    assert created["trigger_kind"] == "price"
+    base["id"] = "huge-price"
+    base["filters"]["price_condition"]["threshold"] = "1e1000000"
+    with pytest.raises(RunStoreError, match="bounded positive decimal"):
+        store.create_event_trigger(base)

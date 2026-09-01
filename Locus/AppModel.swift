@@ -254,6 +254,12 @@ final class AppModel: ObservableObject {
     @Published var launchAtLoginError: String?  // internal(for: AppModel extension files)
     @Published var automaticInspectorPrompt: AutomaticInspectorPrompt?  // internal(for: AppModel extension files)
     @Published var usageDashboardPresented = false
+    @Published var configureAgentPresented = false
+    @Published var configureAgentTab: ConfigureAgentTab = .configurations
+    /// A snapshot of the composer taken when Configure Agent opens. The live
+    /// composer remains untouched while the user decides whether to reuse it.
+    @Published var configureAgentDraftSuggestion = ""
+    @Published var configureAgentPendingScheduleDraft: ScheduleEditorDraft?
     @Published var lastModelRoutingDecision: ModelRoutingDecision?  // internal(for: AppModel extension files)
     @Published var modelRouterMessage = "No scorecard has been run yet."  // internal(for: AppModel extension files)
     @Published var proxyHealthRecords: [ProxyHealthRecord] = []  // internal(for: AppModel extension files)

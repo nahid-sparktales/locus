@@ -7,16 +7,19 @@ import json
 import math
 import re
 import time
+from decimal import Decimal, InvalidOperation
 from fnmatch import fnmatchcase
 from typing import Any
 
-CONNECTION_KINDS = {"gmail", "telegram", "webhook"}
+CONNECTION_KINDS = {"gmail", "telegram", "webhook", "price_feed"}
+TRIGGER_KINDS = {"event", "price"}
 TRIGGER_MODES = {"ask", "work", "plan", "grill", "build"}
 DELIVERY_STATES = {"pending", "claiming", "queued", "failed"}
 MAX_EVENT_BYTES = 256 * 1024
 MAX_PENDING_PER_TRIGGER = 1_000
 MAX_FILTER_VALUES = 100
 MAX_TEXT = 120_000
+MIN_PRICE_REPEAT_SECONDS = 15 * 60
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}")
 _BLOCKED_KEY = re.compile(
     r"(?:authorization|cookie|credential|password|secret|signature|token|api[_-]?key)$",
@@ -40,7 +43,9 @@ def normalize_connection(value: Any) -> dict[str, Any]:
         raise EventTriggerValidationError("connection must be an object")
     kind = str(value.get("kind") or "").strip().lower()
     if kind not in CONNECTION_KINDS:
-        raise EventTriggerValidationError("connection kind must be gmail, telegram, or webhook")
+        raise EventTriggerValidationError(
+            "connection kind must be gmail, telegram, webhook, or price_feed"
+        )
     display_name = " ".join(str(value.get("display_name") or "").split())[:120]
     if not display_name:
         raise EventTriggerValidationError("connection display_name is required")
@@ -76,13 +81,16 @@ def normalize_trigger(value: Any) -> dict[str, Any]:
     mode = str(value.get("mode") or "work").strip().lower()
     if mode not in TRIGGER_MODES:
         raise EventTriggerValidationError("mode must be ask, work, plan, grill, or build")
+    trigger_kind = str(value.get("trigger_kind") or "event").strip().lower()
+    if trigger_kind not in TRIGGER_KINDS:
+        raise EventTriggerValidationError("trigger_kind must be event or price")
     filters = value.get("filters") or {}
     if not isinstance(filters, dict):
         raise EventTriggerValidationError("filters must be an object")
     normalized_filters = normalize_filters(filters)
     action_ids = value.get("action_connection_ids")
     if action_ids is None:
-        action_ids = [connection_id]
+        action_ids = [] if trigger_kind == "price" else [connection_id]
     if not isinstance(action_ids, list):
         raise EventTriggerValidationError("action_connection_ids must be a list")
     normalized_action_ids = list(dict.fromkeys(
@@ -97,6 +105,7 @@ def normalize_trigger(value: Any) -> dict[str, Any]:
         "target_session_id": target_session_id,
         "instruction": instruction,
         "mode": mode,
+        "trigger_kind": trigger_kind,
         "filters": normalized_filters,
         "action_connection_ids": normalized_action_ids,
         "enabled": enabled,
@@ -139,13 +148,17 @@ def normalize_filters(value: dict[str, Any]) -> dict[str, Any]:
                 item["value"] = _clean_json(raw.get("value"), depth=0)
             clean.append(item)
         result["predicates"] = clean
+    if "price_condition" in value:
+        result["price_condition"] = normalize_price_condition(value["price_condition"])
     unknown = set(value) - set(result)
     if unknown:
         raise EventTriggerValidationError(f"unknown filter field: {sorted(unknown)[0]}")
     return result
 
 
-def validate_filters_for_source(source: str, filters: dict[str, Any]) -> None:
+def validate_filters_for_source(
+    source: str, filters: dict[str, Any], *, trigger_kind: str = "event"
+) -> None:
     """Reject filters that cannot be evaluated for a connector's event shape."""
     allowed = {
         "gmail": {
@@ -154,7 +167,8 @@ def validate_filters_for_source(source: str, filters: dict[str, Any]) -> None:
         "telegram": {
             "chat_ids", "sender_ids", "command_prefixes", "message_types",
         },
-        "webhook": {"event_names", "predicates"},
+        "webhook": {"event_names", "predicates", "price_condition"},
+        "price_feed": {"price_condition"},
     }.get(source)
     if allowed is None:
         raise EventTriggerValidationError("event source is invalid")
@@ -167,8 +181,152 @@ def validate_filters_for_source(source: str, filters: dict[str, Any]) -> None:
         raise EventTriggerValidationError(
             "Telegram triggers require an allowed chat, sender, command prefix, or message type"
         )
+    if trigger_kind == "price":
+        if source not in {"price_feed", "webhook"}:
+            raise EventTriggerValidationError(
+                "price triggers require a price feed or signed webhook connection"
+            )
+        if not filters.get("price_condition"):
+            raise EventTriggerValidationError("price triggers require a price condition")
+        if source == "webhook" and filters.get("event_names") != ["price.quote"]:
+            raise EventTriggerValidationError(
+                "webhook price triggers require event_names to contain only price.quote"
+            )
+        return
+    if source == "price_feed":
+        raise EventTriggerValidationError("price feed connections require a price trigger")
+    if "price_condition" in filters:
+        raise EventTriggerValidationError("price_condition is valid only for price triggers")
     if source == "webhook" and not filters.get("event_names"):
         raise EventTriggerValidationError("webhook triggers require at least one event name")
+
+
+def normalize_price_condition(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise EventTriggerValidationError("price_condition must be an object")
+    provider_symbol = " ".join(str(value.get("provider_symbol") or "").split())[:120]
+    display_symbol = " ".join(
+        str(value.get("display_symbol") or provider_symbol).split()
+    )[:120]
+    asset_class = str(value.get("asset_class") or "").strip().lower()
+    quote_currency = str(value.get("quote_currency") or "USD").strip().upper()[:20]
+    comparison = str(value.get("comparison") or "").strip().lower()
+    lifecycle = str(value.get("lifecycle") or "once").strip().lower()
+    if not provider_symbol:
+        raise EventTriggerValidationError("price provider_symbol is required")
+    if not quote_currency:
+        raise EventTriggerValidationError("price quote_currency is required")
+    if asset_class not in {"stock", "crypto"}:
+        raise EventTriggerValidationError("price asset_class must be stock or crypto")
+    if comparison not in {"crosses_above", "crosses_below"}:
+        raise EventTriggerValidationError(
+            "price comparison must be crosses_above or crosses_below"
+        )
+    if lifecycle not in {"once", "rearm", "repeat"}:
+        raise EventTriggerValidationError("price lifecycle must be once, rearm, or repeat")
+    threshold = canonical_decimal(value.get("threshold"), label="price threshold")
+    try:
+        interval = int(value.get("repeat_interval_seconds") or MIN_PRICE_REPEAT_SECONDS)
+    except (TypeError, ValueError) as exc:
+        raise EventTriggerValidationError("price repeat interval must be whole seconds") from exc
+    if interval < 1:
+        raise EventTriggerValidationError("price repeat interval must be positive")
+    if lifecycle == "repeat" and interval < MIN_PRICE_REPEAT_SECONDS:
+        raise EventTriggerValidationError("repeating price alerts must wait at least 15 minutes")
+    if interval > 31_536_000:
+        raise EventTriggerValidationError("price repeat interval is too large")
+    return {
+        "provider_symbol": provider_symbol,
+        "display_symbol": display_symbol,
+        "asset_class": asset_class,
+        "quote_currency": quote_currency,
+        "comparison": comparison,
+        "threshold": threshold,
+        "lifecycle": lifecycle,
+        "repeat_interval_seconds": interval,
+    }
+
+
+def canonical_decimal(value: Any, *, label: str = "price") -> str:
+    if isinstance(value, bool):
+        raise EventTriggerValidationError(f"{label} must be a positive decimal")
+    raw = str(value).strip()
+    if len(raw) > 128:
+        raise EventTriggerValidationError(f"{label} must be a bounded positive decimal")
+    try:
+        number = Decimal(raw)
+    except (InvalidOperation, ValueError) as exc:
+        raise EventTriggerValidationError(f"{label} must be a positive decimal") from exc
+    if not number.is_finite() or number <= 0:
+        raise EventTriggerValidationError(f"{label} must be a positive decimal")
+    if abs(number.adjusted()) > 120:
+        raise EventTriggerValidationError(f"{label} must be a bounded positive decimal")
+    normalized = format(number.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized
+
+
+def evaluate_price_event(
+    condition: dict[str, Any], state: dict[str, Any], event: dict[str, Any], *,
+    now: float, max_quote_age_seconds: float = 300,
+) -> tuple[dict[str, Any], bool]:
+    """Return updated durable state and whether this quote should create a delivery."""
+    if event.get("event_type") != "price.quote":
+        return state, False
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    symbol = str(data.get("provider_symbol") or data.get("instrument_id") or "")
+    if symbol.casefold() != str(condition["provider_symbol"]).casefold():
+        return state, False
+    if str(data.get("asset_class") or "").lower() != condition["asset_class"]:
+        return state, False
+    if str(data.get("quote_currency") or "").upper() != condition["quote_currency"]:
+        return state, False
+    try:
+        price_text = canonical_decimal(data.get("price"), label="quote price")
+        price = Decimal(price_text)
+        quote_at = _finite_timestamp(data.get("provider_timestamp", event["occurred_at"]))
+    except EventTriggerValidationError:
+        return state, False
+    if quote_at > now + 300 or now - quote_at > max(1.0, max_quote_age_seconds):
+        return state, False
+    previous_at = float(state.get("last_quote_at") or 0)
+    if quote_at <= previous_at:
+        return state, False
+
+    threshold = Decimal(condition["threshold"])
+    triggered = (
+        price >= threshold
+        if condition["comparison"] == "crosses_above"
+        else price <= threshold
+    )
+    side = "triggered" if triggered else "safe"
+    previous_side = str(state.get("last_side") or "")
+    lifecycle = condition["lifecycle"]
+    fired = bool(state.get("fired"))
+    should_fire = False
+    if lifecycle == "repeat":
+        last_fired_at = float(state.get("last_fired_at") or 0)
+        should_fire = triggered and (
+            not last_fired_at
+            or now - last_fired_at >= int(condition["repeat_interval_seconds"])
+        )
+    elif previous_side:
+        should_fire = previous_side == "safe" and triggered
+        if lifecycle == "once" and fired:
+            should_fire = False
+
+    updated = dict(state)
+    updated.update({
+        "last_price": price_text,
+        "last_quote_at": quote_at,
+        "last_side": side,
+    })
+    if should_fire:
+        updated["last_fired_at"] = now
+        if lifecycle == "once":
+            updated["fired"] = True
+    return updated, should_fire
 
 
 def normalize_event(value: Any, *, source: str = "") -> dict[str, Any]:
@@ -336,8 +494,10 @@ def _clean_json(value: Any, *, depth: int) -> Any:
 
 __all__ = [
     "CONNECTION_KINDS", "DELIVERY_STATES", "EventTriggerValidationError",
-    "MAX_EVENT_BYTES", "MAX_PENDING_PER_TRIGGER", "matches_trigger",
+    "MAX_EVENT_BYTES", "MAX_PENDING_PER_TRIGGER", "MIN_PRICE_REPEAT_SECONDS",
+    "TRIGGER_KINDS", "canonical_decimal", "evaluate_price_event", "matches_trigger",
     "normalize_connection", "normalize_event", "normalize_filters",
-    "normalize_trigger", "valid_identifier", "validate_filters_for_source",
+    "normalize_price_condition", "normalize_trigger", "valid_identifier",
+    "validate_filters_for_source",
     "verify_webhook_signature",
 ]

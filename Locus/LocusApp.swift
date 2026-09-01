@@ -439,11 +439,9 @@ private struct LocusMenuBarView: View {
     var body: some View {
         Button("Open Locus") { revealMainWindow() }
             .keyboardShortcut("o")
-        Button("Automations…") {
+        Button("Configure Agent…") {
             revealMainWindow()
-            model.activity.activityCenterSection = .eventTriggers
-            model.activity.activityCenterPresented = true
-            Task { await model.eventAutomations.refresh() }
+            model.presentConfigureAgent(draftText: "")
         }
         Divider()
         if runningCount > 0 {
@@ -791,14 +789,15 @@ struct RootView: View {
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
         }
-        .sheet(isPresented: Binding(
-            get: { model.schedule.scheduleEditorDraft != nil },
-            set: { if !$0 { model.schedule.scheduleEditorDraft = nil } }
-        )) {
-            if let draft = model.schedule.scheduleEditorDraft {
-                ScheduleEditorView(draft: draft)
-                    .environmentObject(model)
-            }
+        .sheet(isPresented: $model.configureAgentPresented, onDismiss: {
+            model.configureAgentDraftSuggestion = ""
+            model.configureAgentPendingScheduleDraft = nil
+        }) {
+            ConfigureAgentView(
+                automation: model.eventAutomations,
+                schedule: model.schedule
+            )
+            .environmentObject(model)
         }
         .sheet(item: Binding(
             get: { model.extensionsModel.mcpInputRequest },

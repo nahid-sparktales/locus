@@ -9,6 +9,7 @@ transaction that records it.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -23,6 +24,7 @@ from . import paths
 from .event_triggers import (
     MAX_PENDING_PER_TRIGGER,
     EventTriggerValidationError,
+    evaluate_price_event,
     matches_trigger,
     normalize_connection,
     normalize_event,
@@ -37,7 +39,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -523,6 +525,24 @@ class RunStore:
                 )
                 connection.execute("UPDATE schema_meta SET version=9 WHERE singleton=1")
                 connection.commit()
+            if version < 10:
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(event_triggers)")
+                }
+                if "trigger_kind" not in columns:
+                    connection.execute(
+                        "ALTER TABLE event_triggers ADD COLUMN trigger_kind TEXT"
+                        " NOT NULL DEFAULT 'event'"
+                    )
+                if "runtime_state_json" not in columns:
+                    connection.execute(
+                        "ALTER TABLE event_triggers ADD COLUMN runtime_state_json TEXT"
+                        " NOT NULL DEFAULT '{}'"
+                    )
+                connection.execute("UPDATE schema_meta SET version=10 WHERE singleton=1")
+                connection.commit()
             # Dispatch claims and run creation intentionally use separate
             # transactions. A crash between them is therefore recoverable:
             # link a run that was already created, otherwise make the event
@@ -791,6 +811,7 @@ class RunStore:
         safe = sanitize_event(event)
         if not isinstance(safe, dict):
             safe = {"type": "unknown"}
+        safe.setdefault("run_id", run_id)
         event_type = str(safe.get("type") or "unknown")[:128]
         now = time.time()
         event_id = str(safe.get("event_id") or uuid.uuid4().hex)
@@ -1101,7 +1122,9 @@ class RunStore:
             "target_session_id": row["target_session_id"],
             "instruction": row["instruction"],
             "mode": row["mode"],
+            "trigger_kind": row["trigger_kind"],
             "filters": json.loads(row["filters_json"] or "{}"),
+            "runtime_state": json.loads(row["runtime_state_json"] or "{}"),
             "action_connection_ids": json.loads(
                 row["action_connection_ids_json"] or "[]"
             ),
@@ -1293,13 +1316,17 @@ class RunStore:
             raise RunStoreError("connector connection not found")
         try:
             validate_filters_for_source(
-                str(source_connection["kind"]), normalized["filters"]
+                str(source_connection["kind"]), normalized["filters"],
+                trigger_kind=normalized["trigger_kind"],
             )
         except EventTriggerValidationError as exc:
             raise RunStoreError(str(exc)) from exc
         for action_id in normalized["action_connection_ids"]:
-            if self.connector_connection(action_id) is None:
+            action_connection = self.connector_connection(action_id)
+            if action_connection is None:
                 raise RunStoreError(f"action connector connection not found: {action_id}")
+            if action_connection["kind"] == "price_feed":
+                raise RunStoreError("price feed connections cannot perform actions")
         trigger_id = str(value.get("id") or uuid.uuid4().hex)
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", trigger_id):
             raise RunStoreError("trigger id is invalid")
@@ -1310,14 +1337,16 @@ class RunStore:
                     """
                     INSERT INTO event_triggers(
                         id, name, connection_id, target_session_id, instruction,
-                        mode, filters_json, action_connection_ids_json, enabled,
+                        mode, trigger_kind, filters_json, runtime_state_json,
+                        action_connection_ids_json, enabled,
                         created_at, updated_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
                     """,
                     (
                         trigger_id, normalized["name"], normalized["connection_id"],
                         normalized["target_session_id"], normalized["instruction"],
-                        normalized["mode"], _json(normalized["filters"]),
+                        normalized["mode"], normalized["trigger_kind"],
+                        _json(normalized["filters"]),
                         _json(normalized["action_connection_ids"]),
                         int(normalized["enabled"]), created, created,
                     ),
@@ -1336,7 +1365,7 @@ class RunStore:
             raise RunStoreError("event trigger not found")
         allowed = {
             "name", "connection_id", "target_session_id", "instruction", "mode",
-            "filters", "action_connection_ids", "enabled",
+            "trigger_kind", "filters", "action_connection_ids", "enabled",
         }
         unknown = set(updates) - allowed
         if unknown:
@@ -1352,19 +1381,23 @@ class RunStore:
             raise RunStoreError("connector connection not found")
         try:
             validate_filters_for_source(
-                str(source_connection["kind"]), normalized["filters"]
+                str(source_connection["kind"]), normalized["filters"],
+                trigger_kind=normalized["trigger_kind"],
             )
         except EventTriggerValidationError as exc:
             raise RunStoreError(str(exc)) from exc
         for action_id in normalized["action_connection_ids"]:
-            if self.connector_connection(action_id) is None:
+            action_connection = self.connector_connection(action_id)
+            if action_connection is None:
                 raise RunStoreError(f"action connector connection not found: {action_id}")
+            if action_connection["kind"] == "price_feed":
+                raise RunStoreError("price feed connections cannot perform actions")
         current = float(now if now is not None else time.time())
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
                 UPDATE event_triggers SET name=?, connection_id=?, target_session_id=?,
-                    instruction=?, mode=?, filters_json=?,
+                    instruction=?, mode=?, trigger_kind=?, filters_json=?,
                     action_connection_ids_json=?, enabled=?, updated_at=?,
                     last_error=CASE WHEN ? THEN NULL ELSE last_error END
                 WHERE id=?
@@ -1372,13 +1405,41 @@ class RunStore:
                 (
                     normalized["name"], normalized["connection_id"],
                     normalized["target_session_id"], normalized["instruction"],
-                    normalized["mode"], _json(normalized["filters"]),
+                    normalized["mode"], normalized["trigger_kind"],
+                    _json(normalized["filters"]),
                     _json(normalized["action_connection_ids"]), int(normalized["enabled"]),
                     current, int(normalized["enabled"] and not existing["enabled"]),
                     trigger_id,
                 ),
             )
+            if (normalized["trigger_kind"] == "price"
+                    or existing["trigger_kind"] == "price") and any(
+                key in updates for key in {"connection_id", "trigger_kind", "filters"}
+            ):
+                connection.execute(
+                    "UPDATE event_triggers SET runtime_state_json='{}' WHERE id=?",
+                    (trigger_id,),
+                )
         return self.event_trigger(trigger_id) or existing
+
+    def rearm_price_trigger(self, trigger_id: str) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT trigger_kind FROM event_triggers WHERE id=? AND deleted=0",
+                (trigger_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("event trigger not found")
+            if row["trigger_kind"] != "price":
+                raise RunStoreError("only price triggers can be re-armed")
+            connection.execute(
+                "UPDATE event_triggers SET runtime_state_json='{}', enabled=1,"
+                " last_error=NULL, updated_at=? WHERE id=?",
+                (time.time(), trigger_id),
+            )
+        return self.event_trigger(trigger_id) or {}
 
     def pause_event_trigger(self, trigger_id: str, reason: str) -> dict[str, Any]:
         if self.read_only:
@@ -1428,10 +1489,10 @@ class RunStore:
                 " ORDER BY created_at, id",
                 (connection_id,),
             ).fetchall()
-            matching = [row for row in rows if matches_trigger(
-                json.loads(row["filters_json"] or "{}"), event
-            )]
-            for row in matching:
+            for row in rows:
+                filters = json.loads(row["filters_json"] or "{}")
+                if not matches_trigger(filters, event):
+                    continue
                 existing = connection.execute(
                     "SELECT id FROM event_deliveries WHERE trigger_id=? AND source_event_id=?",
                     (row["id"], event["source_event_id"]),
@@ -1439,6 +1500,33 @@ class RunStore:
                 if existing is not None:
                     created_ids.append(str(existing["id"]))
                     continue
+                runtime_state = json.loads(row["runtime_state_json"] or "{}")
+                should_deliver = True
+                if row["trigger_kind"] == "price":
+                    public_config = connector.get("public_config") or {}
+                    try:
+                        max_quote_age = float(
+                            public_config.get("max_quote_age_seconds") or 300
+                        )
+                    except (TypeError, ValueError):
+                        max_quote_age = 300
+                    if not math.isfinite(max_quote_age):
+                        max_quote_age = 300
+                    max_quote_age = min(max(max_quote_age, 30), 86_400)
+                    updated_state, should_deliver = evaluate_price_event(
+                        filters["price_condition"], runtime_state, event,
+                        now=received, max_quote_age_seconds=max_quote_age,
+                    )
+                    if updated_state == runtime_state:
+                        continue
+                    connection.execute(
+                        "UPDATE event_triggers SET runtime_state_json=?,"
+                        " last_event_at=?, updated_at=? WHERE id=?",
+                        (_json(updated_state), received, received, row["id"]),
+                    )
+                    runtime_state = updated_state
+                    if not should_deliver:
+                        continue
                 pending = int(connection.execute(
                     """
                     SELECT COUNT(*) FROM event_deliveries AS deliveries
@@ -1454,6 +1542,21 @@ class RunStore:
                     """,
                     (row["id"],),
                 ).fetchone()[0])
+                if row["trigger_kind"] == "price" and (
+                    filters["price_condition"]["lifecycle"] == "repeat" and pending
+                ):
+                    # The quote is remembered, but the cooldown remains available
+                    # once the existing automatic turn finishes.
+                    previous_state = json.loads(row["runtime_state_json"] or "{}")
+                    if "last_fired_at" in previous_state:
+                        runtime_state["last_fired_at"] = previous_state["last_fired_at"]
+                    else:
+                        runtime_state.pop("last_fired_at", None)
+                    connection.execute(
+                        "UPDATE event_triggers SET runtime_state_json=? WHERE id=?",
+                        (_json(runtime_state), row["id"]),
+                    )
+                    continue
                 if pending >= MAX_PENDING_PER_TRIGGER:
                     connection.rollback()
                     raise RunStoreError("event trigger queue is full")
@@ -1473,6 +1576,14 @@ class RunStore:
                         received, event["occurred_at"], _json(event), received, received,
                     ),
                 )
+                if row["trigger_kind"] == "price" and (
+                    filters["price_condition"]["lifecycle"] == "once"
+                ):
+                    runtime_state["one_shot_delivery_id"] = delivery_id
+                    connection.execute(
+                        "UPDATE event_triggers SET runtime_state_json=? WHERE id=?",
+                        (_json(runtime_state), row["id"]),
+                    )
                 connection.execute(
                     "UPDATE event_triggers SET last_event_at=?, updated_at=? WHERE id=?",
                     (received, received, row["id"]),

@@ -5193,6 +5193,44 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(mapped.y, 549.5, accuracy: 0.01)
     }
 
+    @MainActor
+    func testConfigureAgentSnapshotsComposerWithoutChangingIt() {
+        let model = AppModel(startImmediately: false)
+        model.draftText = "When bitcoin hits 100k, run the safety plan"
+
+        model.presentConfigureAgent(draftText: model.draftText)
+
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(
+            model.configureAgentDraftSuggestion,
+            "When bitcoin hits 100k, run the safety plan"
+        )
+        XCTAssertEqual(model.draftText, "When bitcoin hits 100k, run the safety plan")
+
+        model.dismissConfigureAgent()
+        XCTAssertFalse(model.configureAgentPresented)
+        XCTAssertTrue(model.configureAgentDraftSuggestion.isEmpty)
+        XCTAssertEqual(model.draftText, "When bitcoin hits 100k, run the safety plan")
+    }
+
+    @MainActor
+    func testScheduleEditorMountsInsideConfigureAgentHub() {
+        let model = AppModel(startImmediately: false)
+
+        model.presentScheduleEditor(prompt: "Send the weekly report")
+
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(
+            model.configureAgentPendingScheduleDraft?.prompt,
+            "Send the weekly report"
+        )
+        model.mountPendingConfigureAgentEditor()
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.prompt, "Send the weekly report")
+        XCTAssertFalse(model.activity.activityCenterPresented)
+    }
+
     private func sessionInfo(id: String) -> [String: Any] {
         [
             "model": "qwen3:8b",

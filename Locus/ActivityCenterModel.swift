@@ -7,7 +7,6 @@ import Foundation
 @MainActor
 final class ActivityCenterModel: ObservableObject {
     @Published var activityCenterPresented = false
-    @Published var activityCenterSection: ActivityCenterSection = .activity
     @Published var activityRuns: [OrchestrationRun] = []
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
