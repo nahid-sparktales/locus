@@ -87,7 +87,7 @@ struct ConfigureAgentView: View {
     private var header: some View {
         HStack(spacing: 13) {
             Image(systemName: "gearshape.2.fill")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.locus(size: 18, weight: .semibold))
                 .foregroundStyle(LocusTheme.signalDeep)
                 .frame(width: 38, height: 38)
                 .background(LocusTheme.signal.opacity(0.16))
@@ -418,7 +418,7 @@ struct ConfigureAgentView: View {
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.locus(size: 15, weight: .semibold))
                     .foregroundStyle(LocusTheme.signalDeep)
                     .frame(width: 28, height: 28)
                     .background(LocusTheme.signal.opacity(0.14))
@@ -481,7 +481,7 @@ struct ConfigureAgentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Image(systemName: kind.symbol)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.locus(size: 17, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                     Spacer()
                     Image(systemName: "plus.circle.fill")
@@ -511,7 +511,7 @@ struct ConfigureAgentView: View {
         }
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: connection.kind.symbol)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.locus(size: 15, weight: .semibold))
                 .frame(width: 34, height: 34)
                 .foregroundStyle(connection.health == "error"
                     ? LocusTheme.warning : LocusTheme.signalDeep)
