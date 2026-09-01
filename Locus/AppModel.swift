@@ -91,8 +91,16 @@ final class AppModel: ObservableObject {
     private var backgroundServicesBridge: AnyCancellable?
     let extensionsModel = ExtensionsModel()
     private var extensionsBridge: AnyCancellable?
-    @Published var sessions: [SessionSummary] = []
-    @Published var chatFolders: [ChatFolderRecord] = []
+    let sessionCatalog = SessionCatalogModel()
+    let transcriptPresentation = TranscriptPresentationModel()
+    var sessions: [SessionSummary] {
+        get { sessionCatalog.snapshot.sessions }
+        set { sessionCatalog.replaceSessions(newValue) }
+    }
+    var chatFolders: [ChatFolderRecord] {
+        get { sessionCatalog.snapshot.chatFolders }
+        set { sessionCatalog.replaceChatFolders(newValue) }
+    }
     @Published var currentSessionID = ""
     @Published var chatSplitRestoration = ChatSplitRestoration.empty  // internal(for: AppModel extension files)
     let primaryChatPaneState = ChatPaneState(id: .primary)
@@ -111,6 +119,11 @@ final class AppModel: ObservableObject {
             // Session changes must retarget the app-owned PTY even when its
             // inspector tab is hidden. Ignore a transient nil while the local
             // backend reconnects so the shell survives agent restarts.
+            if let cwd = sessionInfo?.cwd, !cwd.isEmpty {
+                sessionCatalog.setActiveWorkspacePath(cwd)
+            } else if let initialWorkspacePath {
+                sessionCatalog.setActiveWorkspacePath(initialWorkspacePath)
+            }
             guard let cwd = sessionInfo?.cwd, !cwd.isEmpty else { return }
             terminal.configure(
                 workspacePath: cwd,
@@ -123,9 +136,18 @@ final class AppModel: ObservableObject {
             )
         }
     }
-    @Published var blocks: [ChatBlock] = []
+    var blocks: [ChatBlock] {
+        get { transcriptPresentation.snapshot.blocks }
+        set { transcriptPresentation.replaceBlocks(newValue) }
+    }
+
+    func updateTranscriptBlocks(_ update: (inout [ChatBlock]) -> Void) {
+        transcriptPresentation.updateBlocks(update)
+    }
+
     @Published var todos: [TodoItem] = []
     @Published var isBusy = false
+    @Published private(set) var hasPendingPermission = false
     /// A short, truthful description of where an in-flight steering request
     /// is waiting. It is cleared when the direction joins the active turn.
     @Published var steeringState: String?  // internal(for: AppModel extension files)
@@ -219,7 +241,10 @@ final class AppModel: ObservableObject {
     /// memory; reconnects and app relaunches require a fresh scoped consent.
     @Published var liveApplicationTargets: [String: ApplicationTarget] = [:]  // internal(for: AppModel extension files)
     @Published var checkpoints: [SessionCheckpoint] = []
-    @Published var workspaceProfiles: [WorkspaceProfile] = []
+    var workspaceProfiles: [WorkspaceProfile] {
+        get { sessionCatalog.snapshot.workspaceProfiles }
+        set { sessionCatalog.replaceWorkspaceProfiles(newValue) }
+    }
     @Published var draftText = "" {
         didSet {
             resetHistoryCursorIfEdited()
@@ -237,6 +262,10 @@ final class AppModel: ObservableObject {
     }
     @Published var settings: AppSettings {
         didSet {
+            transcriptPresentation.setPresentationVisibility(
+                toolActivity: settings.resolvedToolActivityVisibility,
+                thinking: settings.resolvedThinkingVisibility
+            )
             scheduleWorkspacePersistence()
             // Without this, anything a view writes into `settings` is lost on
             // relaunch: the only other writer is applySettings(), so the
@@ -279,18 +308,27 @@ final class AppModel: ObservableObject {
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
-    @Published var showArchivedSessions = false
-    @Published var searchQuery = "" {
-        didSet { transcriptSearch.scheduleHitSearch(query: searchQuery) }
+    var showArchivedSessions: Bool {
+        get { sessionCatalog.snapshot.showArchivedSessions }
+        set { sessionCatalog.setShowArchivedSessions(newValue) }
+    }
+    var searchQuery: String {
+        get { sessionCatalog.snapshot.searchQuery }
+        set { sessionCatalog.setSearchQuery(newValue) }
     }
     let transcriptSearch = TranscriptSearchModel()
-    private var transcriptSearchBridge: AnyCancellable?
-    @Published var sidebarSearchFocusToken = UUID()
+    var sidebarSearchFocusToken: UUID {
+        get { sessionCatalog.snapshot.sidebarSearchFocusToken }
+        set { sessionCatalog.replaceSidebarSearchFocusToken(newValue) }
+    }
     @Published var globalNewFolderPresented = false
     @Published var globalNewFolderName = ""
     @Published var composerFocusToken = UUID()
     private var pendingSearchHit: TranscriptSearchHit?
-    @Published var expandedWorkspaceIDs: Set<String> = []
+    var expandedWorkspaceIDs: Set<String> {
+        get { sessionCatalog.snapshot.expandedWorkspaceIDs }
+        set { sessionCatalog.replaceExpandedWorkspaceIDs(newValue) }
+    }
     @Published var transcriptSearchPresented = false
     @Published var transcriptSearchQuery = "" {
         didSet { transcriptSearchSelection = 0 }
@@ -665,12 +703,13 @@ final class AppModel: ObservableObject {
         {
             checkpoints = saved
         }
+        var restoredWorkspaceProfiles: [WorkspaceProfile] = []
         var restoredWorkspacePaths: [String] = []
         if !isUITesting,
            let data = defaults.data(forKey: "Locus.workspaceProfiles"),
            let saved = try? JSONDecoder().decode([WorkspaceProfile].self, from: data)
         {
-            var recent = saved.sorted { $0.lastOpened > $1.lastOpened }
+            let recent = saved.sorted { $0.lastOpened > $1.lastOpened }
             if migrateLegacyBuildMode {
                 if persistenceEnabled,
                    let migratedData = try? JSONEncoder().encode(recent)
@@ -678,13 +717,8 @@ final class AppModel: ObservableObject {
                     defaults.set(migratedData, forKey: "Locus.workspaceProfiles")
                 }
             }
-            workspaceProfiles = recent
+            restoredWorkspaceProfiles = recent
             restoredWorkspacePaths = recent.map(\.path)
-        }
-        if !isUITesting, persistenceEnabled {
-            expandedWorkspaceIDs = Set(
-                defaults.stringArray(forKey: "Locus.expandedWorkspaces") ?? []
-            )
         }
         let access = WorkspaceAccess(defaults: defaults)
         workspaceAccess = access
@@ -708,6 +742,24 @@ final class AppModel: ObservableObject {
 
         backend = backendOverride ?? BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
+        )
+        sessionCatalog.configure(
+            persistenceEnabled: !isUITesting && persistenceEnabled,
+            defaults: defaults,
+            searchQueryDidChange: { [weak self] query in
+                self?.transcriptSearch.scheduleHitSearch(query: query)
+            }
+        )
+        sessionCatalog.replaceWorkspaceProfiles(restoredWorkspaceProfiles)
+        sessionCatalog.setActiveWorkspacePath(
+            initialWorkspacePath ?? FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        transcriptPresentation.configure(
+            toolActivityVisibility: loadedSettings.resolvedToolActivityVisibility,
+            thinkingVisibility: loadedSettings.resolvedThinkingVisibility,
+            pendingPermissionDidChange: { [weak self] value in
+                self?.hasPendingPermission = value
+            }
         )
         providerAccountsModel.providerAccounts = restoredProviderAccounts
         gitWorkspace.configure(
@@ -862,9 +914,6 @@ final class AppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         transcriptSearch.configure(backend: backend)
-        transcriptSearchBridge = transcriptSearch.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         schedule.configure(
             backend: backend,
             persistenceEnabled: persistenceEnabled,
@@ -1335,32 +1384,10 @@ final class AppModel: ObservableObject {
     }
 
     var filteredSessions: [SessionSummary] {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = sessions
-            .filter { showArchivedSessions || !$0.isArchived }
-            .sorted { lhs, rhs in
-                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.mtime > rhs.mtime
-            }
-        guard !query.isEmpty else { return filtered }
-        let directlyMatchingFolders = Set(chatFolders.filter {
-            $0.name.lowercased().contains(query)
-        }.map(\.id))
-        var matchingFolderTree = directlyMatchingFolders
-        var changed = true
-        while changed {
-            changed = false
-            for folder in chatFolders where folder.parentID.map(matchingFolderTree.contains) == true {
-                if matchingFolderTree.insert(folder.id).inserted { changed = true }
-            }
-        }
-        return filtered.filter {
-            "\($0.displayTitle) \($0.name)".lowercased().contains(query)
-                || $0.folderID.map(matchingFolderTree.contains) == true
-        }
+        sessionCatalog.snapshot.filteredSessions
     }
 
-    static let otherWorkspaceID = "locus.other-chats"
+    static let otherWorkspaceID = SessionCatalogModel.otherWorkspaceID
 
     var activeWorkspaceID: String {
         SessionSummary.canonicalWorkspacePath(workspacePath)
@@ -1373,112 +1400,37 @@ final class AppModel: ObservableObject {
     /// Folder-backed workspace sections plus a compatibility bucket for old
     /// transcripts whose meta record predates cwd provenance.
     var workspaceChatGroups: [WorkspaceChatGroup] {
-        let queryActive = !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let chats = filteredSessions
-        var chatsByPath = Dictionary(grouping: chats.compactMap { session -> (String, SessionSummary)? in
-            guard let path = session.workspacePath else { return nil }
-            return (path, session)
-        }, by: \.0).mapValues { $0.map(\.1) }
-
-        var profilesByPath: [String: WorkspaceProfile] = [:]
-        for profile in workspaceProfiles {
-            let path = SessionSummary.canonicalWorkspacePath(profile.path)
-            if let existing = profilesByPath[path], existing.lastOpened >= profile.lastOpened {
-                continue
-            }
-            profilesByPath[path] = profile
-        }
-
-        var paths = Set(profilesByPath.keys)
-        paths.formUnion(chatsByPath.keys)
-        paths.insert(activeWorkspaceID)
-
-        var groups = paths.compactMap { path -> WorkspaceChatGroup? in
-            let groupChats = (chatsByPath.removeValue(forKey: path) ?? []).sorted(by: Self.sessionSort)
-            let folderMatches = queryActive && chatFolders.contains { folder in
-                SessionSummary.canonicalWorkspacePath(folder.workspace) == path
-                    && folder.name.localizedCaseInsensitiveContains(
-                        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-                    )
-            }
-            if queryActive && groupChats.isEmpty && !folderMatches { return nil }
-            let profile = profilesByPath[path]
-            let chatDate = groupChats.map(\.date).max() ?? .distantPast
-            let lastOpened = max(profile?.lastOpened ?? .distantPast, chatDate)
-            return WorkspaceChatGroup(
-                id: path,
-                path: path,
-                title: URL(fileURLWithPath: path).lastPathComponent,
-                chats: groupChats,
-                lastOpened: lastOpened,
-                isAvailable: FileManager.default.fileExists(atPath: path),
-                isOther: false
-            )
-        }
-        groups.sort { lhs, rhs in
-            if lhs.id == activeWorkspaceID { return true }
-            if rhs.id == activeWorkspaceID { return false }
-            return lhs.lastOpened > rhs.lastOpened
-        }
-
-        let otherChats = chats.filter { $0.workspacePath == nil }.sorted(by: Self.sessionSort)
-        if !otherChats.isEmpty {
-            groups.append(
-                WorkspaceChatGroup(
-                    id: Self.otherWorkspaceID,
-                    path: nil,
-                    title: "Other Chats",
-                    chats: otherChats,
-                    lastOpened: otherChats.map(\.date).max() ?? .distantPast,
-                    isAvailable: true,
-                    isOther: true
-                )
-            )
-        }
-        return groups
+        sessionCatalog.snapshot.sidebarGroups.map(\.group)
     }
 
     func folders(in group: WorkspaceChatGroup, parentID: String? = nil) -> [ChatFolderRecord] {
-        guard let path = group.path else { return [] }
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return chatFolders
-            .filter { folder in
-                SessionSummary.canonicalWorkspacePath(folder.workspace) == canonical
-                    && folder.parentID == parentID
-                    && (query.isEmpty || folderMatchesSearch(folder, query: query, group: group))
-            }
-            .sorted { lhs, rhs in
-                if lhs.order != rhs.order { return lhs.order < rhs.order }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
+        guard let sidebarGroup = sessionCatalog.snapshot.sidebarGroups.first(where: {
+            $0.id == group.id
+        }) else { return [] }
+        if let parentID {
+            return Self.folderNode(id: parentID, in: sidebarGroup.rootFolders)?
+                .children.map(\.folder) ?? []
+        }
+        return sidebarGroup.rootFolders.map(\.folder)
     }
 
     func chats(in group: WorkspaceChatGroup, folderID: String?) -> [SessionSummary] {
-        group.chats
-            .filter { $0.folderID == folderID }
-            .sorted { lhs, rhs in
-                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                if lhs.sortOrder != rhs.sortOrder {
-                    return (lhs.sortOrder ?? .max) < (rhs.sortOrder ?? .max)
-                }
-                return lhs.mtime > rhs.mtime
-            }
+        guard let sidebarGroup = sessionCatalog.snapshot.sidebarGroups.first(where: {
+            $0.id == group.id
+        }) else { return [] }
+        guard let folderID else { return sidebarGroup.unfiledChats }
+        return Self.folderNode(id: folderID, in: sidebarGroup.rootFolders)?.chats ?? []
     }
 
-    private func folderMatchesSearch(
-        _ folder: ChatFolderRecord, query: String, group: WorkspaceChatGroup
-    ) -> Bool {
-        if folder.name.lowercased().contains(query) { return true }
-        if group.chats.contains(where: { $0.folderID == folder.id }) { return true }
-        return chatFolders.contains { child in
-            child.parentID == folder.id && folderMatchesSearch(child, query: query, group: group)
+    private static func folderNode(
+        id: String,
+        in nodes: [SessionSidebarFolderSnapshot]
+    ) -> SessionSidebarFolderSnapshot? {
+        for node in nodes {
+            if node.id == id { return node }
+            if let match = folderNode(id: id, in: node.children) { return match }
         }
-    }
-
-    private static func sessionSort(_ lhs: SessionSummary, _ rhs: SessionSummary) -> Bool {
-        if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-        return lhs.mtime > rhs.mtime
+        return nil
     }
 
     func teamRunState(for session: SessionSummary) -> TeamRunState? {
@@ -1502,16 +1454,11 @@ final class AppModel: ObservableObject {
     }
 
     func isWorkspaceExpanded(_ id: String) -> Bool {
-        expandedWorkspaceIDs.contains(id)
+        sessionCatalog.snapshot.expandedWorkspaceIDs.contains(id)
     }
 
     func setWorkspaceExpanded(_ id: String, expanded: Bool) {
-        if expanded {
-            expandedWorkspaceIDs.insert(id)
-        } else {
-            expandedWorkspaceIDs.remove(id)
-        }
-        persistExpandedWorkspaces()
+        sessionCatalog.setWorkspaceExpanded(id, expanded: expanded)
     }
 
     var includedContextTokens: Int {
@@ -1534,10 +1481,6 @@ final class AppModel: ObservableObject {
 
     var contextBudgetTokens: Int {
         Int(Double(contextWindowTokens ?? Self.assumedContextWindowTokens) * 0.60)
-    }
-
-    var hasPendingPermission: Bool {
-        blocks.contains { $0.tool?.status == .awaitingPermission }
     }
 
     /// Bridged into settings so the choice persists; views observe it through

@@ -195,6 +195,7 @@ struct InspectorRail: View {
 /// header. This keeps them separate from the inspector's panel picker.
 struct WorkspaceActionsMenu: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @State private var createBranchPresented = false
     @State private var branchName = ""
 
@@ -254,7 +255,7 @@ struct WorkspaceActionsMenu: View {
                     Button("\(format.title)…") { model.exportCurrentSession(format: format) }
                 }
             }
-            .disabled(!model.sessions.contains { $0.id == model.currentSessionID })
+            .disabled(sessionCatalog.snapshot.sessionsByID[model.currentSessionID] == nil)
             .accessibilityIdentifier("workspace.actions.export")
             Divider()
             Picker("Tool activity", selection: Binding(

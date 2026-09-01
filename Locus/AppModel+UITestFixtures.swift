@@ -907,8 +907,10 @@ extension AppModel {
             exportAttempts: 0
         )
         if let requestIndex = blocks.firstIndex(where: { $0.kind == .user }) {
-            blocks[requestIndex].text = run.request
-            blocks[requestIndex].runID = run.id
+            updateTranscriptBlocks {
+                $0[requestIndex].text = run.request
+                $0[requestIndex].runID = run.id
+            }
         }
         orchestrationRuns = [run]
         selectedOrchestrationRun = run

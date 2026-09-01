@@ -324,7 +324,7 @@ extension AppModel {
         fileCaptureUntil = .max
         sessionOutputWatchTeardown?.cancel()
         sessionOutputWatchTeardown = nil
-        guard !isUITesting else { return }
+        guard persistenceEnabled else { return }
         let started = Date()
         let root = workspacePath
         sessionOutputWatcher.start(path: root, since: started) { [weak self] changes in

@@ -2572,7 +2572,11 @@ final class AppModelTests: XCTestCase {
 
     @MainActor
     func testQueueDrainsAfterTurnDone() async throws {
-        let model = AppModel(startImmediately: false)
+        BackendStub.reset()
+        let model = AppModel(
+            startImmediately: false,
+            backendOverride: stubbedBackendService()
+        )
         model.agentRuntimePhase = .online
         model.isBusy = true
         model.send("queued message")
@@ -2580,7 +2584,9 @@ final class AppModelTests: XCTestCase {
 
         model.draftText = "typed while waiting"
         model.handleEventForTesting(["type": "turn_done"])
-        try await Task.sleep(for: .milliseconds(200))
+        for _ in 0..<100 where model.queuedMessages.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         // With no live socket the drained message returns to the queue —
         // writing it into the draft would destroy what the user typed since.

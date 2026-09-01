@@ -11,6 +11,102 @@ private struct ChatFolderEditorRequest: Identifiable {
     var title: String { folder == nil ? "New Chat Folder" : "Rename Chat Folder" }
 }
 
+/// Cross-session transcript results observe their child model at the smallest
+/// owning boundary, so result updates do not invalidate the whole sidebar or AppModel.
+private struct TranscriptHitsSection: View {
+    let snapshot: SessionCatalogSnapshot
+    @ObservedObject var transcriptSearch: TranscriptSearchModel
+    let navigationDisabled: Bool
+    let onOpen: (TranscriptSearchHit) -> Void
+
+    @ViewBuilder
+    var body: some View {
+        let query = snapshot.searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 2 {
+            SectionLabel("In conversations")
+                .padding(.top, 8)
+            if transcriptSearch.isSearchingTranscripts || transcriptSearch.transcriptSearchIndexing {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(transcriptSearch.transcriptSearchIndexing
+                        ? "Indexing conversations…" : "Searching…")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, SidebarMetrics.rowInset)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("sidebar.search.progress")
+            }
+            if transcriptSearch.transcriptHits.isEmpty,
+               !transcriptSearch.isSearchingTranscripts,
+               !transcriptSearch.transcriptSearchIndexing {
+                Text("No matching messages")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, SidebarMetrics.rowInset)
+                    .padding(.vertical, 6)
+            }
+            ForEach(transcriptSearch.transcriptHits) { hit in
+                transcriptHitRow(hit)
+            }
+        }
+    }
+
+    private func transcriptHitRow(_ hit: TranscriptSearchHit) -> some View {
+        Button { onOpen(hit) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Image(systemName: hit.role == "user" ? "person" : "sparkle")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                    Text(hit.title?.nilIfEmpty ?? "Untitled chat")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    Text(
+                        Date(timeIntervalSince1970: hit.mtime)
+                            .formatted(.relative(presentation: .named))
+                    )
+                    .font(.locus(size: 7))
+                    .foregroundStyle(LocusTheme.muted)
+                }
+                Text(highlightedSnippet(hit))
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.horizontal, SidebarMetrics.rowInset)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.001))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .disabled(navigationDisabled)
+        .accessibilityIdentifier("sidebar.hit.\(hit.id)")
+    }
+
+    private func highlightedSnippet(_ hit: TranscriptSearchHit) -> AttributedString {
+        var text = AttributedString(hit.snippet)
+        for highlight in hit.highlights {
+            // Offsets are Unicode scalars (Python str positions); the hit
+            // converts them on the string, then the range maps across.
+            guard let stringRange = hit.stringRange(of: highlight),
+                  let range = Range(stringRange, in: text)
+            else { continue }
+            text[range].font = .system(size: 9, weight: .bold)
+            text[range].foregroundColor = LocusTheme.signalDeep
+        }
+        return text
+    }
+}
+
 /// The sidebar's shared rail. Every leading glyph — plus, magnifying glass,
 /// bell, and the nav rows above them — is drawn in a fixed-width column at
 /// the same inset, so they line up down the edge whatever each symbol's own
@@ -35,6 +131,7 @@ enum SidebarIconMetrics {
 
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
@@ -46,30 +143,32 @@ struct SessionSidebarView: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
+        let snapshot = sessionCatalog.snapshot
         VStack(spacing: 0) {
             header
             controls
 
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    workspacesHeader
+                    workspacesHeader(snapshot: snapshot)
                     if searchExpanded {
-                        searchField
+                        searchField(snapshot: snapshot)
                             .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                     }
-                    if model.workspaceChatGroups.isEmpty {
-                        emptyState
+                    if snapshot.sidebarGroups.isEmpty {
+                        emptyState(snapshot: snapshot)
                     } else {
-                        ForEach(model.workspaceChatGroups) { group in
+                        ForEach(snapshot.sidebarGroups) { sidebarGroup in
+                            let group = sidebarGroup.group
                             WorkspaceGroupRow(
                                 group: group,
-                                expanded: model.isWorkspaceExpanded(group.id),
-                                active: group.id == model.activeWorkspaceID,
+                                expanded: snapshot.expandedWorkspaceIDs.contains(group.id),
+                                active: group.id == snapshot.activeWorkspaceID,
                                 actionsDisabled: model.chatNavigationDisabled,
                                 onToggle: {
                                     model.setWorkspaceExpanded(
                                         group.id,
-                                        expanded: !model.isWorkspaceExpanded(group.id)
+                                        expanded: !snapshot.expandedWorkspaceIDs.contains(group.id)
                                     )
                                 },
                                 onOpen: { model.openWorkspace(group) },
@@ -88,7 +187,7 @@ struct SessionSidebarView: View {
                                         requestWorkspaceRemoval(group)
                                     }
                                     .disabled(
-                                        group.id == model.activeWorkspaceID
+                                        group.id == snapshot.activeWorkspaceID
                                             || model.workspaceHasActiveRun(group)
                                     )
                                     .accessibilityIdentifier("workspace.group.\(group.id).remove")
@@ -99,8 +198,8 @@ struct SessionSidebarView: View {
                                 index: nil,
                                 targetWorkspace: group.path
                             ))
-                            if model.isWorkspaceExpanded(group.id) {
-                                if group.chats.isEmpty && model.folders(in: group).isEmpty {
+                            if snapshot.expandedWorkspaceIDs.contains(group.id) {
+                                if group.chats.isEmpty && sidebarGroup.rootFolders.isEmpty {
                                     Text("No chats yet")
                                         .font(.locus(size: 9))
                                         .foregroundStyle(LocusTheme.muted)
@@ -108,10 +207,9 @@ struct SessionSidebarView: View {
                                         .padding(.leading, 42)
                                         .padding(.vertical, 7)
                                 } else {
-                                    ForEach(model.folders(in: group)) { folder in
+                                    ForEach(sidebarGroup.rootFolders) { folderNode in
                                         ChatFolderBranchView(
-                                            group: group,
-                                            folder: folder,
+                                            node: folderNode,
                                             depth: 0,
                                             onCreateFolder: { workspace, parentID in
                                                 requestFolderEditor(
@@ -128,20 +226,25 @@ struct SessionSidebarView: View {
                                             },
                                             onDeleteFolder: { folderToDelete = $0 },
                                             sessionContent: { session in
-                                                AnyView(sessionRow(session))
+                                                AnyView(sessionRow(session, snapshot: snapshot))
                                             }
                                         )
                                         .environmentObject(model)
                                     }
-                                    ForEach(model.chats(in: group, folderID: nil)) { session in
-                                        sessionRow(session)
+                                    ForEach(sidebarGroup.unfiledChats) { session in
+                                        sessionRow(session, snapshot: snapshot)
                                             .padding(.leading, 18)
                                     }
                                 }
                             }
                         }
                     }
-                    transcriptHitsSection
+                    TranscriptHitsSection(
+                        snapshot: snapshot,
+                        transcriptSearch: model.transcriptSearch,
+                        navigationDisabled: model.chatNavigationDisabled,
+                        onOpen: model.openSearchHit
+                    )
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Workspaces and chats")
@@ -150,7 +253,7 @@ struct SessionSidebarView: View {
             }
             .frame(maxHeight: .infinity)
 
-            footer
+            footer(snapshot: snapshot)
         }
         .frame(maxHeight: .infinity)
         .locusSurface(.structural)
@@ -166,7 +269,7 @@ struct SessionSidebarView: View {
                 // column boundary should meet the top of the window chrome.
                 .ignoresSafeArea(.container, edges: .top)
         }
-        .onChange(of: model.sidebarSearchFocusToken) {
+        .onChange(of: snapshot.sidebarSearchFocusToken) {
             withAnimation(LocusMotion.spatial) { searchExpanded = true }
             // The field is created by this same update, so focus has to wait
             // one main-actor turn for it to exist.
@@ -495,12 +598,14 @@ struct SessionSidebarView: View {
 
     /// Search is a section control now: the glyph beside WORKSPACES reveals
     /// the field, so an unused search box no longer occupies the sidebar.
-    private var workspacesHeader: some View {
+    private func workspacesHeader(snapshot: SessionCatalogSnapshot) -> some View {
         HStack(spacing: 0) {
-            SectionLabel(model.showArchivedSessions ? "All Workspaces" : "Workspaces")
+            SectionLabel(
+                snapshot.showArchivedSessions ? "All Workspaces" : "Workspaces"
+            )
             Button {
                 withAnimation(LocusMotion.spatial) {
-                    if searchExpanded, model.searchQuery.isEmpty {
+                    if searchExpanded, snapshot.searchQuery.isEmpty {
                         searchExpanded = false
                     } else {
                         searchExpanded = true
@@ -520,7 +625,10 @@ struct SessionSidebarView: View {
             .accessibilityValue(searchExpanded ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.search.toggle")
             Button {
-                requestFolderEditor(workspace: model.activeWorkspaceID, parentID: nil)
+                requestFolderEditor(
+                    workspace: snapshot.activeWorkspaceID,
+                    parentID: nil
+                )
             } label: {
                 Image(systemName: "folder.badge.plus")
                     .font(.locus(size: 10, weight: .semibold))
@@ -536,19 +644,22 @@ struct SessionSidebarView: View {
         .padding(.trailing, 6)
     }
 
-    private var searchField: some View {
+    private func searchField(snapshot: SessionCatalogSnapshot) -> some View {
         HStack(spacing: SidebarMetrics.iconGap) {
             Image(systemName: "magnifyingglass")
                 .font(.locus(size: 11, weight: .medium))
                 .frame(width: SidebarMetrics.iconColumn)
                 .foregroundStyle(LocusTheme.muted)
-            TextField("Search sessions", text: $model.searchQuery)
+            TextField("Search sessions", text: Binding(
+                get: { snapshot.searchQuery },
+                set: { sessionCatalog.setSearchQuery($0) }
+            ))
                 .textFieldStyle(.plain)
                 .font(.locus(size: 11))
                 .focused($searchFocused)
-            if !model.searchQuery.isEmpty {
+            if !snapshot.searchQuery.isEmpty {
                 Button {
-                    model.searchQuery = ""
+                    sessionCatalog.setSearchQuery("")
                     searchFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -571,14 +682,17 @@ struct SessionSidebarView: View {
         .padding(.bottom, 4)
         // Escape leaves the way it arrived: empty query, field put away.
         .onExitCommand {
-            model.searchQuery = ""
+            sessionCatalog.setSearchQuery("")
             withAnimation(LocusMotion.spatial) { searchExpanded = false }
         }
         .accessibilityIdentifier("sidebar.search")
     }
 
     @ViewBuilder
-    private func sessionRow(_ session: SessionSummary) -> some View {
+    private func sessionRow(
+        _ session: SessionSummary,
+        snapshot: SessionCatalogSnapshot
+    ) -> some View {
         SessionRow(
             session: session,
             isActive: session.id == model.currentSessionID,
@@ -614,24 +728,19 @@ struct SessionSidebarView: View {
                 }
                 .disabled(
                     session.isArchived || model.chatHasActiveRun(session)
-                        || session.task.map {
-                            !FileManager.default.fileExists(atPath: $0.executionPath)
-                        } ?? true
+                        || !snapshot.availableExecutionSessionIDs.contains(session.id)
                 )
                 .accessibilityIdentifier("session.\(session.id).duplicateWorktree")
             }
             Menu("Move to Folder") {
                 Button("Workspace Root") { model.moveChat(session, to: nil) }
                     .disabled(session.folderID == nil)
-                let workspace = session.workspacePath
-                ForEach(
-                    model.chatFolders.filter {
-                        SessionSummary.canonicalWorkspacePath($0.workspace) == workspace
-                    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                ) { folder in
+                let workspace = snapshot.workspaceIDBySessionID[session.id]
+                let folderTargets = workspace.flatMap { snapshot.foldersByWorkspaceID[$0] } ?? []
+                ForEach(folderTargets) { folder in
                     Button(folder.name) { model.moveChat(session, to: folder.id) }
                         .disabled(session.folderID == folder.id)
-                    }
+                }
             }
             Button("Move Earlier") { model.reorderChat(session, offset: -1) }
                 .accessibilityIdentifier("session.\(session.id).moveEarlier")
@@ -653,8 +762,8 @@ struct SessionSidebarView: View {
                 session.id == model.currentSessionID || model.chatHasActiveRun(session)
             )
             .accessibilityIdentifier("session.\(session.id).archive")
-            if let task = session.task,
-               !FileManager.default.fileExists(atPath: task.executionPath) {
+            if session.task != nil,
+               !snapshot.availableExecutionSessionIDs.contains(session.id) {
                 Button("Restore Worktree") { model.restoreWorktree(for: session) }
                     .accessibilityIdentifier("session.\(session.id).restoreWorktree")
             }
@@ -673,7 +782,7 @@ struct SessionSidebarView: View {
         .modifier(ChatSidebarDropTarget(
             targetFolderID: session.folderID,
             index: session.sortOrder,
-            targetWorkspace: session.workspacePath
+            targetWorkspace: snapshot.workspaceIDBySessionID[session.id]
         ))
         .accessibilityAction(named: "Move Earlier") {
             model.reorderChat(session, offset: -1)
@@ -683,103 +792,15 @@ struct SessionSidebarView: View {
         }
     }
 
-    /// Cross-session transcript hits under the title matches. Rendered only
-    /// while the search has enough characters to have queried the index.
-    @ViewBuilder
-    private var transcriptHitsSection: some View {
-        let query = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.count >= 2 {
-            SectionLabel("In conversations")
-                .padding(.top, 8)
-            if model.transcriptSearch.isSearchingTranscripts || model.transcriptSearch.transcriptSearchIndexing {
-                HStack(spacing: 7) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text(model.transcriptSearch.transcriptSearchIndexing
-                        ? "Indexing conversations…" : "Searching…")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, SidebarMetrics.rowInset)
-                .padding(.vertical, 6)
-                .accessibilityIdentifier("sidebar.search.progress")
-            }
-            if model.transcriptSearch.transcriptHits.isEmpty,
-               !model.transcriptSearch.isSearchingTranscripts, !model.transcriptSearch.transcriptSearchIndexing {
-                Text("No matching messages")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, SidebarMetrics.rowInset)
-                    .padding(.vertical, 6)
-            }
-            ForEach(model.transcriptSearch.transcriptHits) { hit in
-                transcriptHitRow(hit)
-            }
-        }
-    }
-
-    private func transcriptHitRow(_ hit: TranscriptSearchHit) -> some View {
-        Button {
-            model.openSearchHit(hit)
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    Image(systemName: hit.role == "user" ? "person" : "sparkle")
-                        .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                    Text(hit.title?.nilIfEmpty ?? "Untitled chat")
-                        .font(.locus(size: 9, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer()
-                    Text(
-                        Date(timeIntervalSince1970: hit.mtime)
-                            .formatted(.relative(presentation: .named))
-                    )
-                    .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.muted)
-                }
-                Text(highlightedSnippet(hit))
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .padding(.horizontal, SidebarMetrics.rowInset)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(0.001))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.locus())
-        .disabled(model.chatNavigationDisabled)
-        .accessibilityIdentifier("sidebar.hit.\(hit.id)")
-    }
-
-    private func highlightedSnippet(_ hit: TranscriptSearchHit) -> AttributedString {
-        var text = AttributedString(hit.snippet)
-        for highlight in hit.highlights {
-            // Offsets are Unicode scalars (Python str positions); the hit
-            // converts them on the string, then the range maps across.
-            guard let stringRange = hit.stringRange(of: highlight),
-                  let range = Range(stringRange, in: text)
-            else { continue }
-            text[range].font = .system(size: 9, weight: .bold)
-            text[range].foregroundColor = LocusTheme.signalDeep
-        }
-        return text
-    }
-
-    private var emptyState: some View {
+    private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
                 .font(.locus(size: 18))
                 .foregroundStyle(LocusTheme.muted)
-            Text(model.searchQuery.isEmpty ? "No saved sessions yet" : "No matching sessions")
+            Text(snapshot.searchQuery.isEmpty
+                ? "No saved sessions yet" : "No matching sessions")
                 .font(.locus(size: 10, weight: .semibold))
-            if model.searchQuery.isEmpty {
+            if snapshot.searchQuery.isEmpty {
                 Text("Start a conversation and it will appear here.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
@@ -796,14 +817,14 @@ struct SessionSidebarView: View {
     /// The service indicators live with the composer, where they remain fixed
     /// as panels resize. The sidebar footer only owns workspace and app-wide
     /// controls now.
-    private var footer: some View {
+    private func footer(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 8) {
-            workspaceMenu
+            workspaceMenu(snapshot: snapshot)
 
             HStack {
                 agentStatus
                 Spacer()
-                settingsMenu
+                settingsMenu(snapshot: snapshot)
             }
         }
         .padding(.horizontal, SidebarMetrics.gutter)
@@ -814,7 +835,7 @@ struct SessionSidebarView: View {
         }
     }
 
-    private var settingsMenu: some View {
+    private func settingsMenu(snapshot: SessionCatalogSnapshot) -> some View {
         Menu {
             Button("Settings…") { model.presentSettings() }
                 .accessibilityIdentifier("sidebar.settings")
@@ -826,9 +847,11 @@ struct SessionSidebarView: View {
                 .accessibilityIdentifier("sidebar.notebook")
             Divider()
             Button("Archived Sessions") {
-                model.setShowArchived(!model.showArchivedSessions)
+                model.setShowArchived(!snapshot.showArchivedSessions)
             }
-            .accessibilityValue(model.showArchivedSessions ? "Shown" : "Hidden")
+            .accessibilityValue(
+                snapshot.showArchivedSessions ? "Shown" : "Hidden"
+            )
             .accessibilityIdentifier("sidebar.showArchived")
             Button(model.isClearingSessions ? "Clearing Saved Sessions…" : "Clear Saved Sessions…") {
                 model.requestClearSavedSessions()
@@ -855,31 +878,37 @@ struct SessionSidebarView: View {
         .accessibilityIdentifier("sidebar.more")
     }
 
-    private var workspaceMenu: some View {
+    private func workspaceMenu(snapshot: SessionCatalogSnapshot) -> some View {
         Menu {
             Button("Choose Workspace…") { model.chooseWorkspace() }
             Button("New Workspace…") { model.createWorkspace() }
                 .accessibilityIdentifier("workspace.new")
             Button("Reveal in Finder") { model.openWorkspaceInFinder() }
-            if !model.recentWorkspaceProfiles.isEmpty {
+            if !snapshot.recentWorkspaceProfiles.isEmpty {
                 Divider()
                 Section("Recent Workspaces") {
-                    ForEach(model.recentWorkspaceProfiles) { profile in
+                    ForEach(snapshot.recentWorkspaceProfiles) { profile in
+                        let isAvailable = snapshot.workspaceAvailabilityByProfileID[profile.id]
+                            == true
                         Button {
                             model.switchWorkspace(to: profile.path)
                         } label: {
                             Label(
                                 profile.displayName,
-                                systemImage: profile.isAvailable ? "folder" : "exclamationmark.triangle"
+                                systemImage: isAvailable ? "folder" : "exclamationmark.triangle"
                             )
                         }
-                        .disabled(!profile.isAvailable)
+                        .disabled(!isAvailable)
                         .accessibilityIdentifier("workspace.profile.\(profile.path)")
                     }
                 }
-                if model.recentWorkspaceProfiles.contains(where: { !$0.isAvailable }) {
+                if snapshot.recentWorkspaceProfiles.contains(where: {
+                    snapshot.workspaceAvailabilityByProfileID[$0.id] != true
+                }) {
                     Button("Remove Missing Entries") {
-                        for profile in model.recentWorkspaceProfiles where !profile.isAvailable {
+                        for profile in snapshot.recentWorkspaceProfiles where
+                            snapshot.workspaceAvailabilityByProfileID[profile.id] != true
+                        {
                             model.removeWorkspaceProfile(profile.path)
                         }
                     }
@@ -1425,9 +1454,9 @@ private struct ChatSidebarDropTarget: ViewModifier {
 
 private struct ChatFolderBranchView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let group: WorkspaceChatGroup
-    let folder: ChatFolderRecord
+    let node: SessionSidebarFolderSnapshot
     let depth: Int
     let onCreateFolder: (String, String?) -> Void
     let onRenameFolder: (ChatFolderRecord) -> Void
@@ -1436,12 +1465,13 @@ private struct ChatFolderBranchView: View {
     @State private var isDropTarget = false
     @State private var hoverExpansion: Task<Void, Never>?
 
-    private var expanded: Bool {
-        !model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || model.isChatFolderExpanded(folder.id)
-    }
+    private var folder: ChatFolderRecord { node.folder }
 
     var body: some View {
+        let snapshot = sessionCatalog.snapshot
+        let expanded = !snapshot.searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || snapshot.expandedChatFolderIDs.contains(folder.id)
         VStack(spacing: 2) {
             Button {
                 withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
@@ -1459,7 +1489,7 @@ private struct ChatFolderBranchView: View {
                         .font(.locus(size: 10, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text("\(model.chats(in: group, folderID: folder.id).count)")
+                    Text("\(node.chats.count)")
                         .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -1478,11 +1508,7 @@ private struct ChatFolderBranchView: View {
                 Menu("Move to Folder") {
                     Button("Workspace Root") { model.moveChatFolder(folder, to: nil) }
                         .disabled(folder.parentID == nil)
-                    ForEach(model.chatFolders.filter {
-                        model.canMoveChatFolder(folder, into: $0)
-                    }.sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }) { target in
+                    ForEach(snapshot.folderMoveTargetsByFolderID[folder.id] ?? []) { target in
                         Button(target.name) { model.moveChatFolder(folder, to: target.id) }
                             .disabled(folder.parentID == target.id)
                     }
@@ -1535,10 +1561,9 @@ private struct ChatFolderBranchView: View {
             }
 
             if expanded {
-                ForEach(model.folders(in: group, parentID: folder.id)) { child in
+                ForEach(node.children) { child in
                     ChatFolderBranchView(
-                        group: group,
-                        folder: child,
+                        node: child,
                         depth: depth + 1,
                         onCreateFolder: onCreateFolder,
                         onRenameFolder: onRenameFolder,
@@ -1547,7 +1572,7 @@ private struct ChatFolderBranchView: View {
                     )
                     .environmentObject(model)
                 }
-                ForEach(model.chats(in: group, folderID: folder.id)) { session in
+                ForEach(node.chats) { session in
                     sessionContent(session)
                         .padding(.leading, 32 + CGFloat(depth) * 14)
                 }

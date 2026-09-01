@@ -7,15 +7,9 @@ struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modelPickerPresented = false
-    @State private var effortPickerPresented = false
     @State private var teamProgressPresented = false
     let sidebarVisible: Bool
     let showSidebar: () -> Void
-
-    private var sessionTitle: String {
-        model.sessions.first(where: { $0.id == model.currentSessionID })?.displayTitle
-            ?? (model.blocks.isEmpty ? "New session" : "Active session")
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -99,10 +93,9 @@ struct WorkspaceView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(sessionTitle)
-                    .font(.locus(size: 13, weight: .bold))
-                    .lineLimit(1)
-                    .accessibilityIdentifier("workspace.sessionTitle")
+                WorkspaceSessionTitle(
+                    sessionID: model.currentSessionID
+                )
 
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
@@ -182,7 +175,8 @@ struct WorkspaceView: View {
             }
 
             if !model.reasoningEffortOptions.isEmpty {
-                effortPicker
+                WorkspaceEffortPicker()
+                    .environmentObject(model)
             }
 
             Button {
@@ -238,104 +232,6 @@ struct WorkspaceView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
         }
-    }
-
-    /// How hard the current model should think, beside the model it applies to.
-    ///
-    /// Only rendered when the route advertises efforts at all — most models
-    /// take no effort parameter, and a disabled control for them would be
-    /// permanent dead chrome for anyone on a local model.
-    private var effortPicker: some View {
-        Button {
-            effortPickerPresented.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "gauge.with.dots.needle.33percent")
-                    .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-                Text(effortLabel)
-                    .font(.locus(size: 9, weight: .semibold))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .background(LocusTheme.white.opacity(0.78))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.locus())
-        .help("Reasoning effort · \(effortLabel)")
-        .accessibilityLabel("Reasoning effort, \(effortLabel)")
-        .accessibilityIdentifier("workspace.effortPicker")
-        .frame(height: 28)
-        .popover(isPresented: $effortPickerPresented, arrowEdge: .top) {
-            effortPopover
-        }
-    }
-
-    /// "Auto" rather than "Default": the closed chip has no room to say what
-    /// the default is, and Auto reads as a choice the model makes.
-    private var effortLabel: String {
-        let effort = model.resolvedReasoningEffort
-        return effort.isEmpty ? "Auto" : effort.capitalized
-    }
-
-    private var effortPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Reasoning effort")
-                .font(.locus(size: 10, weight: .bold))
-
-            effortRow(effort: "", title: "Auto")
-            ForEach(model.reasoningEffortOptions, id: \.self) { effort in
-                effortRow(effort: effort, title: effort.capitalized)
-            }
-
-            Divider().overlay(LocusTheme.line)
-
-            Text(
-                "Applies to this workspace and takes effect on the next message. "
-                + "Higher efforts think longer and cost more."
-            )
-            .font(.locus(size: 8))
-            .foregroundStyle(LocusTheme.muted)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .frame(width: 240)
-        .background(LocusTheme.white)
-        .accessibilityIdentifier("workspace.effortPicker.popover")
-    }
-
-    private func effortRow(effort: String, title: String) -> some View {
-        let selected = model.resolvedReasoningEffort == effort
-        return Button {
-            model.setReasoningEffort(effort)
-            effortPickerPresented = false
-        } label: {
-            HStack(spacing: 8) {
-                Text(title)
-                Spacer(minLength: 12)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.locus(size: 8, weight: .bold))
-                }
-            }
-            .font(.locus(size: 9, weight: .semibold))
-            .foregroundStyle(LocusTheme.inkSoft)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .background(selected ? LocusTheme.paperDeep : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.locus())
-        .accessibilityIdentifier("workspace.effortPicker.\(effort.isEmpty ? "auto" : effort)")
     }
 
     private var shouldShowWorkStatus: Bool {
@@ -424,6 +320,135 @@ struct WorkspaceView: View {
     }
 }
 
+private struct WorkspaceSessionTitle: View {
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    let sessionID: String
+
+    var body: some View {
+        Text(
+            sessionCatalog.snapshot.sessionsByID[sessionID]?.displayTitle
+                ?? (transcriptPresentation.snapshot.isEmpty ? "New session" : "Active session")
+        )
+        .font(.locus(size: 13, weight: .bold))
+        .lineLimit(1)
+        .accessibilityIdentifier("workspace.sessionTitle")
+    }
+}
+
+/// Keeps workspace-profile publications scoped to the one header control that
+/// needs them instead of invalidating the full conversation workspace.
+private struct WorkspaceEffortPicker: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @State private var isPresented = false
+
+    var body: some View {
+        let effort = resolvedEffort
+        let label = effort.isEmpty ? "Auto" : effort.capitalized
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "gauge.with.dots.needle.33percent")
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+                Text(label)
+                    .font(.locus(size: 9, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(LocusTheme.white.opacity(0.78))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(LocusTheme.line, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.locus())
+        .help("Reasoning effort · \(label)")
+        .accessibilityLabel("Reasoning effort, \(label)")
+        .accessibilityIdentifier("workspace.effortPicker")
+        .frame(height: 28)
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            effortPopover(selectedEffort: effort)
+        }
+    }
+
+    private var resolvedEffort: String {
+        let path = SessionSummary.canonicalWorkspacePath(model.workspacePath)
+        if let workspaceEffort = sessionCatalog.snapshot.workspaceProfiles.first(where: {
+            SessionSummary.canonicalWorkspacePath($0.path) == path
+        })?.reasoningEffort {
+            return workspaceEffort
+        }
+        return model.activeAccount?.codexReasoningEffortValue ?? ""
+    }
+
+    private func effortPopover(selectedEffort: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reasoning effort")
+                .font(.locus(size: 10, weight: .bold))
+
+            effortRow(effort: "", title: "Auto", selectedEffort: selectedEffort)
+            ForEach(model.reasoningEffortOptions, id: \.self) { effort in
+                effortRow(
+                    effort: effort,
+                    title: effort.capitalized,
+                    selectedEffort: selectedEffort
+                )
+            }
+
+            Divider().overlay(LocusTheme.line)
+
+            Text(
+                "Applies to this workspace and takes effect on the next message. "
+                + "Higher efforts think longer and cost more."
+            )
+            .font(.locus(size: 8))
+            .foregroundStyle(LocusTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(width: 240)
+        .background(LocusTheme.white)
+        .accessibilityIdentifier("workspace.effortPicker.popover")
+    }
+
+    private func effortRow(
+        effort: String,
+        title: String,
+        selectedEffort: String
+    ) -> some View {
+        Button {
+            model.setReasoningEffort(effort)
+            isPresented = false
+        } label: {
+            HStack(spacing: 8) {
+                Text(title)
+                Spacer(minLength: 12)
+                if selectedEffort == effort {
+                    Image(systemName: "checkmark")
+                        .font(.locus(size: 8, weight: .bold))
+                }
+            }
+            .font(.locus(size: 9, weight: .semibold))
+            .foregroundStyle(LocusTheme.inkSoft)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(selectedEffort == effort ? LocusTheme.paperDeep : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("workspace.effortPicker.\(effort.isEmpty ? "auto" : effort)")
+    }
+}
+
 /// Two fully addressable chat slots backed by the app's shared worker registry.
 /// The focused slot owns the live runtime UI; the other remains readable and
 /// editable from its cached transcript while its worker continues in the background.
@@ -438,6 +463,7 @@ enum ChatWorkspacePresentation: Equatable {
 
 struct SplitChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let sidebarVisible: Bool
     let showSidebar: () -> Void
@@ -491,7 +517,7 @@ struct SplitChatWorkspaceView: View {
                 }
                 .accessibilityIdentifier("split.pane.\(pane.rawValue).focused")
         } else if let sessionID = model.splitSessionID(for: pane),
-                  let session = model.sessions.first(where: { $0.id == sessionID })
+                  let session = sessionCatalog.snapshot.sessionsByID[sessionID]
         {
             BackgroundChatPane(
                 pane: pane,
@@ -1094,6 +1120,7 @@ struct ActivityActionButtonStyle: ButtonStyle {
 
 struct ActivityCenterView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1312,7 +1339,7 @@ struct ActivityCenterView: View {
 
     private func chatTitle(for run: OrchestrationRun) -> String {
         guard let sessionID = run.sessionID else { return "Unknown chat" }
-        return model.sessions.first(where: { $0.id == sessionID })?.displayTitle ?? "Saved chat"
+        return sessionCatalog.snapshot.sessionsByID[sessionID]?.displayTitle ?? "Saved chat"
     }
 
     private func workspaceTitle(for run: OrchestrationRun) -> String {
@@ -2232,6 +2259,7 @@ struct TranscriptFollowState: Equatable {
 
 private struct ConversationView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -2241,25 +2269,28 @@ private struct ConversationView: View {
     private let bottomID = "conversation-bottom"
 
     var body: some View {
-        let items = model.blocks.isEmpty ? [] : presentationItems
+        let transcript = transcriptPresentation.snapshot
+        let items = transcript.items
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if model.blocks.isEmpty {
+                    if transcript.isEmpty {
                         EmptyConversationView()
                             .environmentObject(model)
                     } else {
-                        let markerIDs = TranscriptPresentation.assistantMarkerItemIDs(in: items)
-                        let actionIDs = TranscriptPresentation.assistantActionItemIDs(in: items)
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             presentationRow(
                                 item,
-                                assistantMarkerItemIDs: markerIDs,
-                                assistantActionItemIDs: actionIDs
+                                assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
+                                assistantActionItemIDs: transcript.assistantActionItemIDs,
+                                toolActivityVisibility: transcript.toolActivityVisibility,
+                                thinkingVisibility: transcript.thinkingVisibility
                             )
                             .padding(.top, topSpacing(
                                 before: item,
-                                previous: index > 0 ? items[index - 1] : nil
+                                previous: index > 0 ? items[index - 1] : nil,
+                                toolActivityVisibility: transcript.toolActivityVisibility,
+                                thinkingVisibility: transcript.thinkingVisibility
                             ))
                         }
                     }
@@ -2278,14 +2309,14 @@ private struct ConversationView: View {
                 .background { TranscriptScrollBridge(coordinator: scrollCoordinator) }
                 .frame(maxWidth: 780)
                 .padding(.horizontal, 24)
-                .padding(.top, model.blocks.isEmpty ? 0 : 24)
+                .padding(.top, transcript.isEmpty ? 0 : 24)
                 .padding(.bottom, 40)
                 .frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
-                if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
+                if scrollCoordinator.followState.showsJumpToLatest, !transcript.isEmpty {
                     Button {
                         scrollCoordinator.jumpToLatest(animated: true)
                     } label: {
@@ -2304,10 +2335,10 @@ private struct ConversationView: View {
                     .accessibilityIdentifier("conversation.jumpToLatest")
                 }
             }
-            .onChange(of: model.blocks.count) { oldCount, newCount in
+            .onChange(of: transcript.blocks.count) { oldCount, newCount in
                 // Sending a message re-engages following even after the
                 // reader scrolled up, so the reply streams into view.
-                if newCount > oldCount, model.blocks.last?.kind == .user {
+                if newCount > oldCount, transcript.blocks.last?.kind == .user {
                     scrollCoordinator.jumpToLatest()
                 }
                 scrollCoordinator.contentMayHaveChanged()
@@ -2327,12 +2358,20 @@ private struct ConversationView: View {
             .onChange(of: model.currentSessionID) {
                 selection.reset()
             }
-            .onAppear { configureSelection(for: items) }
-            .onChange(of: items.map(\.id.stableKey)) { _, _ in
-                configureSelection(for: items)
+            .onAppear {
+                configureSelection(
+                    for: items,
+                    thinkingVisibility: transcript.thinkingVisibility
+                )
             }
-            .onChange(of: model.thinkingVisibility) { _, _ in
-                configureSelection(for: items)
+            .onChange(of: items.map(\.id.stableKey)) { _, _ in
+                configureSelection(
+                    for: items,
+                    thinkingVisibility: transcript.thinkingVisibility
+                )
+            }
+            .onChange(of: transcript.thinkingVisibility) { _, visibility in
+                configureSelection(for: items, thinkingVisibility: visibility)
             }
             .environment(\.runInTerminalAction) { [weak model] command in
                 model?.runCommandInTerminal(command)
@@ -2343,7 +2382,10 @@ private struct ConversationView: View {
     /// Keeps the store's idea of the transcript in step with what is rendered,
     /// and teaches it how to read a row that has not been realized — which is
     /// what lets Copy return a whole passage after a long scroll.
-    private func configureSelection(for items: [TranscriptPresentationItem]) {
+    private func configureSelection(
+        for items: [TranscriptPresentationItem],
+        thinkingVisibility: ThinkingVisibility
+    ) {
         let sources = Dictionary(
             items.compactMap { item -> (String, RowSelectionSource)? in
                 guard let source = Self.selectionSource(of: item) else { return nil }
@@ -2351,10 +2393,13 @@ private struct ConversationView: View {
             },
             uniquingKeysWith: { first, _ in first }
         )
-        let visibility = model.thinkingVisibility
         selection.spanProvider = { rowID in
             guard let source = sources[rowID] else { return [] }
-            return Self.spans(for: source, rowID: rowID, thinkingVisibility: visibility)
+            return Self.spans(
+                for: source,
+                rowID: rowID,
+                thinkingVisibility: thinkingVisibility
+            )
         }
         selection.onDragActiveChange = { active in
             scrollCoordinator.setSelectionDragActive(active)
@@ -2420,19 +2465,13 @@ private struct ConversationView: View {
         }
     }
 
-    private var presentationItems: [TranscriptPresentationItem] {
-        TranscriptPresentation.items(
-            from: model.blocks,
-            toolVisibility: model.toolActivityVisibility,
-            thinkingVisibility: model.thinkingVisibility
-        )
-    }
-
     @ViewBuilder
     private func presentationRow(
         _ item: TranscriptPresentationItem,
         assistantMarkerItemIDs: Set<TranscriptPresentationItem.ID>,
-        assistantActionItemIDs: Set<TranscriptPresentationItem.ID>
+        assistantActionItemIDs: Set<TranscriptPresentationItem.ID>,
+        toolActivityVisibility: ToolActivityVisibility,
+        thinkingVisibility: ThinkingVisibility
     ) -> some View {
         switch item {
         case .block(let block):
@@ -2450,6 +2489,7 @@ private struct ConversationView: View {
                     accessibilityIdentifier: block.completion == nil
                         ? "message.\(block.id.uuidString)"
                         : "turnCompletion.\(block.id.uuidString)",
+                    thinkingVisibility: thinkingVisibility,
                     showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
                     showsAssistantActions: assistantActionItemIDs.contains(item.id)
                 )
@@ -2463,6 +2503,7 @@ private struct ConversationView: View {
                 accessibilityIdentifier: segment.id.ordinal == 0
                     ? "message.\(segment.id.sourceBlockID.uuidString)"
                     : "message.\(segment.id.sourceBlockID.uuidString).segment.\(segment.id.ordinal)",
+                thinkingVisibility: thinkingVisibility,
                 showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
                 showsAssistantActions: assistantActionItemIDs.contains(item.id)
             )
@@ -2471,7 +2512,7 @@ private struct ConversationView: View {
             ToolActivityView(
                 groupID: id,
                 tools: tools,
-                visibility: model.toolActivityVisibility,
+                visibility: toolActivityVisibility,
                 accent: model.effectiveAccent,
                 showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
@@ -2481,7 +2522,7 @@ private struct ConversationView: View {
             ThinkingActivityView(
                 groupID: id,
                 entries: entries,
-                visibility: model.thinkingVisibility,
+                visibility: thinkingVisibility,
                 accent: model.effectiveAccent,
                 showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
@@ -2512,6 +2553,7 @@ private struct ConversationView: View {
         sourceBlock: ChatBlock,
         presentationID: TranscriptPresentationItem.ID,
         accessibilityIdentifier: String,
+        thinkingVisibility: ThinkingVisibility,
         showsAssistantMarker: Bool,
         showsAssistantActions: Bool
     ) -> some View {
@@ -2521,7 +2563,7 @@ private struct ConversationView: View {
             {
                 ActiveAssistantBlockView(
                     reply: streamingReply,
-                    thinkingVisibility: model.thinkingVisibility,
+                    thinkingVisibility: thinkingVisibility,
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
                     showsMarker: showsAssistantMarker,
@@ -2535,7 +2577,7 @@ private struct ConversationView: View {
             } else {
                 MessageBlockView(
                     block: displayBlock,
-                    thinkingVisibility: model.thinkingVisibility,
+                    thinkingVisibility: thinkingVisibility,
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
                     actionsDisabled: model.isBusy || model.hasPendingPermission,
@@ -2594,7 +2636,7 @@ private struct ConversationView: View {
 
     private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {
         guard let match = model.currentTranscriptMatch else { return }
-        let destination = presentationItems.first(where: {
+        let destination = transcriptPresentation.snapshot.items.first(where: {
             $0.sourceBlockIDs.contains(match)
         })?.id ?? .block(match)
         withAnimation(LocusMotion.scroll) {
@@ -2603,10 +2645,11 @@ private struct ConversationView: View {
     }
 
     private func scrollToOverviewTarget(_ proxy: ScrollViewProxy) {
+        let transcript = transcriptPresentation.snapshot
         guard let target = model.transcriptJumpTarget,
-              let block = model.blocks.first(where: { $0.id == target })
+              let block = transcript.blocksByID[target]
         else { return }
-        let destination = presentationItems.first(where: { item in
+        let destination = transcript.items.first(where: { item in
             switch item {
             case .block(let candidate): return candidate.id == target
             case .assistantSegment(let segment):
@@ -2626,11 +2669,21 @@ private struct ConversationView: View {
 
     private func topSpacing(
         before item: TranscriptPresentationItem,
-        previous: TranscriptPresentationItem?
+        previous: TranscriptPresentationItem?,
+        toolActivityVisibility: ToolActivityVisibility,
+        thinkingVisibility: ThinkingVisibility
     ) -> CGFloat {
         guard let previous else { return 0 }
         if isTurnBoundary(item) || isTurnBoundary(previous) { return 24 }
-        if isCompactFlowItem(item) || isCompactFlowItem(previous) { return 14 }
+        if isCompactFlowItem(
+            item,
+            toolActivityVisibility: toolActivityVisibility,
+            thinkingVisibility: thinkingVisibility
+        ) || isCompactFlowItem(
+            previous,
+            toolActivityVisibility: toolActivityVisibility,
+            thinkingVisibility: thinkingVisibility
+        ) { return 14 }
         return 24
     }
 
@@ -2639,14 +2692,18 @@ private struct ConversationView: View {
         return block.kind == .user || block.completion != nil
     }
 
-    private func isCompactFlowItem(_ item: TranscriptPresentationItem) -> Bool {
+    private func isCompactFlowItem(
+        _ item: TranscriptPresentationItem,
+        toolActivityVisibility: ToolActivityVisibility,
+        thinkingVisibility: ThinkingVisibility
+    ) -> Bool {
         switch item {
         case .assistantSegment(let segment):
             return segment.sourceBlock.assistantPhase == .commentary
         case .toolGroup:
-            return model.toolActivityVisibility == .collapsed
+            return toolActivityVisibility == .collapsed
         case .thinkingGroup:
-            return model.thinkingVisibility == .collapsed
+            return thinkingVisibility == .collapsed
         case .block:
             return false
         }
@@ -3360,6 +3417,49 @@ private struct IncomingEventTranscriptCard: View {
     }
 }
 
+/// Gives user prompts a stable trailing measure at every window width. A fixed
+/// leading spacer only approximates this relationship and lets compact windows
+/// grow the prompt well beyond the intended reading-column proportion.
+private struct TrailingFractionLayout: Layout {
+    let maximumFraction: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let childProposal = ProposedViewSize(
+            width: proposal.width.map { $0 * maximumFraction },
+            height: proposal.height
+        )
+        let childSize = subview.sizeThatFits(childProposal)
+        return CGSize(
+            width: proposal.width ?? childSize.width,
+            height: childSize.height
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let subview = subviews.first else { return }
+        let childProposal = ProposedViewSize(
+            width: bounds.width * maximumFraction,
+            height: proposal.height
+        )
+        let childSize = subview.sizeThatFits(childProposal)
+        subview.place(
+            at: CGPoint(x: bounds.maxX - childSize.width, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: childProposal
+        )
+    }
+}
+
 private struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
@@ -3403,8 +3503,7 @@ private struct MessageBlockView: View, Equatable {
         Group {
             switch block.kind {
             case .user:
-                HStack(alignment: .top) {
-                    Spacer(minLength: 68)
+                TrailingFractionLayout(maximumFraction: 0.81) {
                     VStack(alignment: .trailing, spacing: 4) {
                         if let eventTrigger = block.eventTrigger {
                             IncomingEventTranscriptCard(context: eventTrigger)

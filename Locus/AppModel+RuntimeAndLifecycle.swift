@@ -514,12 +514,13 @@ extension AppModel {
                 ? "?include_archived=true&limit=500"
                 : "?limit=500"
             let response = try await backend.get("/api/sessions\(suffix)", as: SessionsResponse.self)
-            sessions = response.sessions
-            if let folders = try? await backend.get(
+            let folders = try? await backend.get(
                 "/api/chat-folders", as: ChatFoldersResponse.self
-            ) {
-                chatFolders = folders.folders
-            }
+            )
+            sessionCatalog.replaceRemoteCatalog(
+                sessions: response.sessions,
+                chatFolders: folders?.folders
+            )
             if taskWorkers[currentSessionID] == nil {
                 currentSessionID = response.current
             }

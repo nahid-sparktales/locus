@@ -3,7 +3,7 @@ import Foundation
 /// Owns the cross-session transcript search: the debounced FTS request and
 /// its hits/indexing state. Opening a hit stays with AppModel — it resumes
 /// sessions and drives the in-conversation find bar. AppModel wires it via
-/// configure(...) and bridges its publication; it never retains AppModel.
+/// configure(...); the sidebar observes this model directly.
 @MainActor
 final class TranscriptSearchModel: ObservableObject {
     @Published var transcriptHits: [TranscriptSearchHit] = []

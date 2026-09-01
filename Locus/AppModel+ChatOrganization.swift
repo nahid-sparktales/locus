@@ -183,8 +183,8 @@ extension AppModel {
     }
 
     var expandedChatFolderIDs: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "Locus.expandedChatFolders") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "Locus.expandedChatFolders") }
+        get { sessionCatalog.snapshot.expandedChatFolderIDs }
+        set { sessionCatalog.replaceExpandedChatFolderIDs(newValue) }
     }
 
     func isChatFolderExpanded(_ id: String) -> Bool {
@@ -192,27 +192,28 @@ extension AppModel {
     }
 
     func setChatFolderExpanded(_ id: String, expanded: Bool) {
-        var values = expandedChatFolderIDs
-        if expanded { values.insert(id) } else { values.remove(id) }
-        expandedChatFolderIDs = values
+        sessionCatalog.setChatFolderExpanded(id, expanded: expanded)
     }
 
     private func persistExpandedChatFolders() {
-        expandedChatFolderIDs = expandedChatFolderIDs
+        sessionCatalog.persistExpansionState()
     }
 
     private func refreshChatOrganization() async {
-        if let response = try? await backend.get(
+        let folders = try? await backend.get(
             "/api/chat-folders", as: ChatFoldersResponse.self
-        ) {
-            chatFolders = response.folders
-        }
+        )
         let suffix = showArchivedSessions ? "?include_archived=true&limit=500" : "?limit=500"
         if let response = try? await backend.get(
             "/api/sessions\(suffix)", as: SessionsResponse.self
         ) {
-            sessions = response.sessions
+            sessionCatalog.replaceRemoteCatalog(
+                sessions: response.sessions,
+                chatFolders: folders?.folders
+            )
             reconcileChatSplitRestoration()
+        } else if let folders {
+            chatFolders = folders.folders
         }
     }
 

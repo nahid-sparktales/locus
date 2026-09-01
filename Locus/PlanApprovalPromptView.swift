@@ -518,6 +518,7 @@ struct TeamRunBoardView: View {
 /// diagnostics without presenting provider reasoning or raw structured output.
 struct TeamDispatchProgressView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
@@ -695,7 +696,7 @@ struct TeamDispatchProgressView: View {
         if let request = model.runs.selectedOrchestrationRun?.request, !request.isEmpty {
             return request
         }
-        return model.blocks.last(where: { $0.kind == .user })?.text ?? ""
+        return transcriptPresentation.snapshot.blocks.last(where: { $0.kind == .user })?.text ?? ""
     }
 
     private func duration(_ seconds: TimeInterval) -> String {

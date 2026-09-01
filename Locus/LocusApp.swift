@@ -61,6 +61,8 @@ struct LocusApp: App {
         Window("Locus", id: "main") {
             sceneContent
                 .environmentObject(model)
+                .environmentObject(model.sessionCatalog)
+                .environmentObject(model.transcriptPresentation)
                 .environmentObject(updates)
                 .onAppear {
                     appDelegate.model = model
@@ -115,9 +117,10 @@ struct LocusApp: App {
             CommandMenu("Locus") {
                 Button("Command Palette") { model.commandPalettePresented = true }
                     .keyboardShortcut("k", modifiers: .command)
-                Button("Find in Conversation") { model.openTranscriptSearch() }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .disabled(model.blocks.isEmpty)
+                FindInConversationCommand(
+                    transcriptPresentation: model.transcriptPresentation,
+                    open: model.openTranscriptSearch
+                )
                 Button("Search All Conversations") {
                     if model.sidebarCollapsed { model.toggleSidebar() }
                     model.sidebarSearchFocusToken = UUID()
@@ -205,6 +208,8 @@ struct LocusApp: App {
         Settings {
             SettingsView(presentationContext: .settingsWindow)
                 .environmentObject(model)
+                .environmentObject(model.sessionCatalog)
+                .environmentObject(model.transcriptPresentation)
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
@@ -215,6 +220,8 @@ struct LocusApp: App {
         MenuBarExtra {
             LocusMenuBarView(presenter: mainWindowPresenter)
                 .environmentObject(model)
+                .environmentObject(model.sessionCatalog)
+                .environmentObject(model.transcriptPresentation)
         } label: {
             Image("MenuBarIcon")
                 .renderingMode(.template)
@@ -330,6 +337,19 @@ struct LocusApp: App {
         default:
             RootView()
         }
+    }
+}
+
+/// Observes only transcript availability for the menu item whose enabled
+/// state depends on it. The app scene remains free of transcript publications.
+private struct FindInConversationCommand: View {
+    @ObservedObject var transcriptPresentation: TranscriptPresentationModel
+    let open: () -> Void
+
+    var body: some View {
+        Button("Find in Conversation", action: open)
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(transcriptPresentation.snapshot.isEmpty)
     }
 }
 
