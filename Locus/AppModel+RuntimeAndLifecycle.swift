@@ -22,6 +22,7 @@ extension AppModel {
         await schedule.refreshScheduledTasks(announceFailure: false)
         await schedule.processDueSchedules()
         schedule.startScheduleCoordinator()
+        eventAutomations.start()
         requestNotificationAuthorization()
         startRuntimeMonitor()
     }
@@ -376,6 +377,7 @@ extension AppModel {
         agentInstructions.cancelAll()
         runs.cancelAll()
         schedule.cancelAll()
+        eventAutomations.stop()
         backend.disconnect()
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }

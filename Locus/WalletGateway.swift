@@ -2395,7 +2395,7 @@ final class WalletGateway: ObservableObject {
             let policy = WalletSessionPolicy(
                 id: "wallet-fixture-policy", accountID: evm.id,
                 networkID: Self.sepoliaNetworkID,
-                allowedAssetIDs: ["slip44:60"],
+                allowedAssetIDs: [WalletNetworkCatalog.ethereumSepolia.nativeAssetID],
                 allowedRecipients: ["0x1111111111111111111111111111111111111111"],
                 allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
                 maximumTransactionBaseUnits: "5000000000000000",
@@ -2443,12 +2443,14 @@ final class WalletGateway: ObservableObject {
                 summary: "Send 0.01 Sepolia ETH",
                 effects: [WalletDecodedEffect(
                     id: "wallet-fixture-effect", kind: "native_transfer",
-                    assetID: "slip44:60", amountBaseUnits: "10000000000000000",
+                    assetID: WalletNetworkCatalog.ethereumSepolia.nativeAssetID,
+                    amountBaseUnits: "10000000000000000",
                     from: evmAddress, to: "0x1111111111111111111111111111111111111111",
                     spender: nil
                 )],
                 riskFlags: [], contract: nil, adapterID: "native-eth-transfer-v1",
-                budgetAssetID: "slip44:60", spendBaseUnits: "10000000000000000",
+                budgetAssetID: WalletNetworkCatalog.ethereumSepolia.nativeAssetID,
+                spendBaseUnits: "10000000000000000",
                 maximumFeeBaseUnits: "1000000000000000",
                 feeQuoteBaseUnits: "42000000000000", simulation: "Transfer succeeds",
                 simulationSucceeded: true, nonce: "7", createdAt: Date(),

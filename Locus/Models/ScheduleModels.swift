@@ -118,9 +118,16 @@ enum ScheduleIntervalUnit: String, CaseIterable, Codable, Identifiable {
 enum ActivityCenterSection: String, CaseIterable, Identifiable {
     case activity
     case schedules
+    case eventTriggers = "event_triggers"
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .activity: "Activity"
+        case .schedules: "Schedules"
+        case .eventTriggers: "Event Triggers"
+        }
+    }
 }
 
 struct ScheduleRule: Codable, Hashable {

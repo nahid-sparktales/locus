@@ -20,3 +20,17 @@ repository. Matched by generic-api-key on entropy plus the "auth" substring in
 LOCUS_GITHUB_OAUTH_CLIENT_ID.
 """
 regexes = ['''Iv23liCL3tit1VOgBjWF''']
+
+[[allowlists]]
+description = "The Alchemy API-key path validation checks a variable, not a credential"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)Locus/WalletRPCClient\.swift$''']
+regexes = ['''guard !apiKey\.isEmpty, apiKey\.utf8\.count <= 512,''']
+
+[[allowlists]]
+description = "The wallet review test accepts an in-memory private-key value, not a credential"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)LocusTests/WalletGatewayTests\.swift$''']
+regexes = ['''key: Curve25519\.Signing\.PrivateKey''']

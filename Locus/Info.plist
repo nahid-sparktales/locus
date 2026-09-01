@@ -43,6 +43,8 @@
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
+	<key>LocusGoogleOAuthClientID</key>
+	<string>$(LOCUS_GOOGLE_OAUTH_CLIENT_ID)</string>
 	<key>LocusWalletAlchemyEthereumMainnetRPCURL</key>
 	<string>$(LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL)</string>
 	<key>LocusWalletQuickNodeEthereumMainnetRPCURL</key>

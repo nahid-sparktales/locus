@@ -32,6 +32,7 @@ enum ChatTranscriptBuilder {
                     kind: .user,
                     text: displayUserText(message.content),
                     runID: message.runID,
+                    eventTrigger: message.eventTrigger,
                     historyIndex: index
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

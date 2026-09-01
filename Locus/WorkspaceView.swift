@@ -1080,7 +1080,7 @@ private enum ActivityGroup: String, CaseIterable, Identifiable {
 /// Activity rows use restrained text actions, but each still needs a reliable
 /// macOS click target. Padding lives inside the button style so the visible and
 /// accessibility frames agree instead of exposing a ten-point-tall link.
-private struct ActivityActionButtonStyle: ButtonStyle {
+struct ActivityActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 5)
@@ -1101,9 +1101,7 @@ struct ActivityCenterView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text(model.activity.activityCenterSection == .activity
-                        ? "Work keeps running when you move between chats."
-                        : "Create recurring work that starts in a fresh chat.")
+                    Text(activitySubtitle)
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -1117,7 +1115,7 @@ struct ActivityCenterView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .frame(width: 270)
                 Spacer()
                 if model.activity.activityCenterSection == .activity,
                    model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
@@ -1135,8 +1133,10 @@ struct ActivityCenterView: View {
                     Task {
                         if model.activity.activityCenterSection == .activity {
                             await model.activity.refreshActivityRuns()
-                        } else {
+                        } else if model.activity.activityCenterSection == .schedules {
                             await model.schedule.refreshScheduledTasks()
+                        } else {
+                            await model.eventAutomations.refresh()
                         }
                     }
                 } label: {
@@ -1160,7 +1160,10 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.activity.activityCenterSection == .schedules {
+            if model.activity.activityCenterSection == .eventTriggers {
+                EventAutomationsView(automation: model.eventAutomations)
+                    .environmentObject(model)
+            } else if model.activity.activityCenterSection == .schedules {
                 schedulesView
             } else if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
@@ -1204,13 +1207,26 @@ struct ActivityCenterView: View {
             while !Task.isCancelled {
                 if model.activity.activityCenterSection == .activity {
                     await model.activity.refreshActivityRuns()
-                } else {
+                } else if model.activity.activityCenterSection == .schedules {
                     await model.schedule.refreshScheduledTasks(announceFailure: false)
+                } else {
+                    await model.eventAutomations.refresh(announceFailure: false)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
         .accessibilityIdentifier("activity.center")
+    }
+
+    private var activitySubtitle: String {
+        switch model.activity.activityCenterSection {
+        case .activity:
+            "Work keeps running when you move between chats."
+        case .schedules:
+            "Create recurring work that starts in a fresh chat."
+        case .eventTriggers:
+            "React to Gmail, Telegram, or signed webhook events in an existing chat."
+        }
     }
 
     private var schedulesView: some View {
@@ -2354,10 +2370,7 @@ private struct ConversationView: View {
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !model.blocks.isEmpty {
                     Button {
-                        scrollCoordinator.jumpToLatest()
-                        withAnimation(LocusMotion.scroll) {
-                            proxy.scrollTo(bottomID, anchor: .bottom)
-                        }
+                        scrollCoordinator.jumpToLatest(animated: true)
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
                             .font(.locus(size: 9, weight: .semibold))
@@ -2898,10 +2911,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
         }
     }
 
-    func jumpToLatest() {
+    func jumpToLatest(animated: Bool = false) {
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
+        if animated { scrollToBottom(animated: true) }
     }
 
     func detachAll() {
@@ -3350,6 +3364,85 @@ struct LocusMessageMarker: View {
     }
 }
 
+private struct IncomingEventTranscriptCard: View {
+    let context: EventTranscriptContext
+
+    private var actor: String {
+        context.event.actor["email"]?.string
+            ?? context.event.actor["username"]?.string
+            ?? context.event.actor["name"]?.string
+            ?? context.event.actor["id"]?.string
+            ?? "Unknown sender"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label(context.source.title, systemImage: context.source.symbol)
+                    .font(.locus(size: 10, weight: .bold))
+                Spacer()
+                Text("AUTOMATION EVENT")
+                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.signalDeep)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("TRUSTED INSTRUCTION")
+                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.signalDeep)
+                Text(context.instruction)
+                    .font(.locus(size: 9, weight: .medium))
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LocusTheme.signal.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("UNTRUSTED EVENT DATA")
+                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.warning)
+                Text(context.event.subject.isEmpty
+                    ? context.event.eventType : context.event.subject)
+                    .font(.locus(size: 11, weight: .bold))
+                Text("From \(actor)")
+                    .font(.locus(size: 8, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+                if !context.event.text.isEmpty {
+                    Text(context.event.text)
+                        .font(.locus(size: 9))
+                        .lineLimit(12)
+                }
+                HStack(spacing: 10) {
+                    if !context.event.labels.isEmpty {
+                        Label(context.event.labels.joined(separator: ", "), systemImage: "tag")
+                    }
+                    if !context.event.attachments.isEmpty {
+                        Label(
+                            "\(context.event.attachments.count) attachment\(context.event.attachments.count == 1 ? "" : "s")",
+                            systemImage: "paperclip"
+                        )
+                    }
+                }
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+            }
+            Text("Normal chat permissions still apply · source event \(context.sourceEventID)")
+                .font(.locus(size: 7, design: .monospaced))
+                .foregroundStyle(LocusTheme.muted)
+        }
+        .padding(12)
+        .frame(maxWidth: 620, alignment: .leading)
+        .background(LocusTheme.paperDeep.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(LocusTheme.signalDeep.opacity(0.28), lineWidth: 1)
+        }
+        .textSelection(.enabled)
+        .accessibilityIdentifier("eventTranscript.\(context.deliveryID)")
+    }
+}
+
 private struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
@@ -3396,14 +3489,17 @@ private struct MessageBlockView: View, Equatable {
                 HStack(alignment: .top) {
                     Spacer(minLength: 68)
                     VStack(alignment: .trailing, spacing: 4) {
-                        MarkdownBodyView(
-                            text: block.text,
-                            workspacePath: workspacePath,
-                            selectionStore: selectionStore,
-                            selectionRootPath: [0],
-                            selectionRowID: selectionRowID,
-                            onOpenWorkspaceReference: onOpenWorkspaceReference
-                        )
+                        if let eventTrigger = block.eventTrigger {
+                            IncomingEventTranscriptCard(context: eventTrigger)
+                        } else {
+                            MarkdownBodyView(
+                                text: block.text,
+                                workspacePath: workspacePath,
+                                selectionStore: selectionStore,
+                                selectionRootPath: [0],
+                                selectionRowID: selectionRowID,
+                                onOpenWorkspaceReference: onOpenWorkspaceReference
+                            )
                             .padding(.horizontal, 13)
                             .padding(.vertical, 11)
                             .background(LocusTheme.paperDeep.opacity(0.88))
@@ -3419,6 +3515,7 @@ private struct MessageBlockView: View, Equatable {
                                     .allowsHitTesting(false)
                             }
                             .accessibilityIdentifier("message.\(block.id.uuidString).bubble")
+                        }
                         messageActionBar(name: "You")
                     }
                     .frame(maxWidth: 620, alignment: .trailing)

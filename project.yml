@@ -103,6 +103,9 @@ targetTemplates:
         # targets inherit it, so local and distribution builds can connect to
         # the bundled GitHub MCP preset without a developer-only environment.
         LOCUS_GITHUB_OAUTH_CLIENT_ID: Iv23liCL3tit1VOgBjWF
+        # Public OAuth client id for Gmail's native PKCE flow. Release builds
+        # set this in signing configuration after Google verification.
+        LOCUS_GOOGLE_OAUTH_CLIENT_ID: ""
 targets:
   WalletRecoveryService:
     type: xpc-service

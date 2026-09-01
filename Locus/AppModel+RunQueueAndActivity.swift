@@ -275,17 +275,28 @@ extension AppModel {
 
     func dispatchPersistedQueuedRun(_ run: OrchestrationRun) async {  // internal(for: AppModel extension files)
         guard let sessionID = run.sessionID,
-              let workspace = run.workspaceRoot,
-              let worker = await ensureChatWorker(
-                for: sessionID,
-                workspaceRoot: workspace,
-                provider: run.manifest?["provider"]?.string,
-                providerAccountID: run.manifest?["provider_account_id"]?.string,
-                model: run.manifest?["model"]?.string
-              )
+              let workspace = run.workspaceRoot
         else {
             restoredQueuedRunIDs.remove(run.id)
+            await markEventRunNeedsAttention(
+                run, message: "The target chat or workspace is no longer available."
+            )
             showToast("A saved queued run needs its original chat and workspace")
+            return
+        }
+        guard let worker = await ensureChatWorker(
+            for: sessionID,
+            workspaceRoot: workspace,
+            provider: run.manifest?["provider"]?.string,
+            providerAccountID: run.manifest?["provider_account_id"]?.string,
+            model: run.manifest?["model"]?.string
+        ) else {
+            restoredQueuedRunIDs.remove(run.id)
+            await markEventRunNeedsAttention(
+                run,
+                message: "The target chat, workspace, or model account is unavailable."
+            )
+            showToast("A saved queued run needs its original chat, workspace, and model account")
             return
         }
         let mode = run.manifest?["mode"]?.string.flatMap { WorkMode.canonical($0) } ?? .work
@@ -338,6 +349,18 @@ extension AppModel {
                     request["solo_swarm"] = ["enabled": true]
                 }
             }
+            if currentSessionID == sessionID,
+               !blocks.contains(where: { $0.runID == run.id }),
+               let context = eventAutomations.transcriptContext(for: run) {
+                blocks.append(ChatBlock(
+                    kind: .user,
+                    text: context.instruction,
+                    runID: run.id,
+                    eventTrigger: context
+                ))
+                splitPaneBlocks[sessionID] = blocks
+                paneState(containing: sessionID)?.blocks = blocks
+            }
             guard worker.service.send(request) else {
                 finishChatRuntime(worker, state: .interrupted, error: "The saved run could not be delivered")
                 return
@@ -346,6 +369,24 @@ extension AppModel {
             updateBackgroundChatState(worker)
         } catch {
             finishChatRuntime(worker, state: .interrupted, error: error.localizedDescription)
+        }
+    }
+
+    private func markEventRunNeedsAttention(
+        _ run: OrchestrationRun,
+        message: String
+    ) async {
+        guard let deliveryID = run.manifest?["event_delivery_id"]?.string else { return }
+        do {
+            let _: EventDelivery = try await backend.post(
+                "/api/event-deliveries/\(deliveryID)/fail",
+                body: ["error": message, "pause_trigger": true],
+                as: EventDelivery.self
+            )
+            await eventAutomations.refresh(announceFailure: false)
+        } catch {
+            // The durable queued run remains visible even if the local backend
+            // is itself the unavailable component.
         }
     }
 
