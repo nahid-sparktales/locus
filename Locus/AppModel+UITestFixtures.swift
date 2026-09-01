@@ -74,6 +74,9 @@ extension AppModel {
             permissions: SessionPermissions(skipAll: false, allowed: [])
         )
         currentSessionID = "seed-current"
+        if let voiceState = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_VOICE_STATE"] {
+            voiceControl.seedUITestState(voiceState, sessionID: currentSessionID)
+        }
         sessions = [
             SessionSummary(
                 id: "seed-current",

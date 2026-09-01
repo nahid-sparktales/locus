@@ -76,6 +76,17 @@ extension AppModel {
                 != newSettings.browserAgentPaymentCardsEnabled
         let browserProfileChanged = settings.browserPersistProfile
             != newSettings.browserPersistProfile
+        let voiceConfigurationChanged = settings.voiceSpeechEngineRaw
+            != newSettings.voiceSpeechEngineRaw
+            || settings.voiceCloudAccountID != newSettings.voiceCloudAccountID
+            || settings.voiceLanguageIdentifier != newSettings.voiceLanguageIdentifier
+            || settings.voiceSystemVoiceIdentifier != newSettings.voiceSystemVoiceIdentifier
+            || settings.voiceAppleNetworkRecognitionAllowed
+                != newSettings.voiceAppleNetworkRecognitionAllowed
+            || settings.voiceCloudTranscriptionModel
+                != newSettings.voiceCloudTranscriptionModel
+            || settings.voiceCloudSpeechModel != newSettings.voiceCloudSpeechModel
+            || settings.voiceCloudVoiceIdentifier != newSettings.voiceCloudVoiceIdentifier
         let proxyChanged = proxyCredentialChanged
             || settings.proxyModeRaw != newSettings.proxyModeRaw
             || settings.proxyTypeRaw != newSettings.proxyTypeRaw
@@ -103,6 +114,12 @@ extension AppModel {
         }
         LocusAccentRuntime.shared.configure(newSettings.resolvedAccent)
         settings = newSettings
+        if voiceConfigurationChanged {
+            voiceControl.invalidateCapabilityTest()
+        }
+        if !newSettings.voiceControlsEnabled {
+            voiceControl.exitVoiceMode()
+        }
         appearancePreview = nil
         persistSettings()
         if mobileAccessChanged {

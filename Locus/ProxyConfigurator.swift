@@ -806,6 +806,33 @@ final class ProxyRuntime: @unchecked Sendable {
         }
     }
 
+    /// A short-lived session for traffic deliberately attributed to a provider
+    /// account other than the active chat route, such as explicitly selected
+    /// cloud speech. This preserves provider-specific proxy assignments without
+    /// mutating the process-wide routing context used by model traffic.
+    func urlSession(
+        for scope: ProxyTrafficScope,
+        workspacePath: String?,
+        providerAccountID: String?
+    ) -> URLSession {
+        lock.lock()
+        let resolved: ResolvedProxy?
+        if let settings = lastSettings {
+            resolved = resolvedLocked(
+                settings: settings,
+                scope: scope,
+                workspacePath: workspacePath ?? lastWorkspacePath,
+                providerAccountID: providerAccountID
+            )
+        } else {
+            resolved = nil
+        }
+        lock.unlock()
+        let configuration = URLSessionConfiguration.default
+        ProxyConfigurator.apply(resolved, to: configuration)
+        return URLSession(configuration: configuration)
+    }
+
     /// Proxy env for helper processes that are not the agent — `ollama serve`
     /// downloads models itself, so it needs the route. Never the credential:
     /// that reaches the agent alone, and only out of band.

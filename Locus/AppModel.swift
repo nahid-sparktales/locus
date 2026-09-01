@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
     let providerAccountsModel = ProviderAccountsModel()
     private var providerAccountsBridge: AnyCancellable?
+    let voiceControl = VoiceControlModel()
+    private var voiceControlBridge: AnyCancellable?
 
     #if !LOCUS_APP_STORE
     /// The ChatGPT-plan helpers ship as a downloadable component in the direct
@@ -928,6 +930,21 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         providerAccountsBridge = providerAccountsModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+            self?.voiceControl.invalidateCapabilityTest()
+        }
+        voiceControl.configure(
+            settings: { [weak self] in self?.settings ?? AppSettings() },
+            cloudConfiguration: { [weak self] in self?.voiceCloudConfiguration },
+            sessionID: { [weak self] in self?.currentSessionID ?? "" },
+            transcript: { [weak self] text, purpose in
+                self?.acceptVoiceTranscript(text, purpose: purpose) ?? false
+            },
+            appleNetworkConsent: { [weak self] allowed in
+                self?.setAppleNetworkRecognitionConsent(allowed)
+            }
+        )
+        voiceControlBridge = voiceControl.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         agentTeamsModel.configure(

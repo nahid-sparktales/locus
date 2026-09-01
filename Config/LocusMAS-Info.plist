@@ -54,7 +54,9 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Locus uses the microphone only when you allow a website to access it.</string>
+	<string>Locus uses the microphone for dictation, voice conversations, and websites you explicitly allow.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Locus turns speech into editable dictation or voice messages when you use a voice control.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

@@ -31,6 +31,7 @@ extension AppModel {
             return
         }
         guard !isBusy || taskWorkers[currentSessionID] != nil, !pendingSessionReset else { return }
+        voiceControl.exitVoiceMode()
         detachForegroundWorkerUIIfNeeded()
         pendingSessionReset = true
         armSessionResetWatchdog()
@@ -107,6 +108,7 @@ extension AppModel {
             showToast("Wait for the current chat change to finish")
             return
         }
+        voiceControl.exitVoiceMode()
         detachForegroundWorkerUIIfNeeded()
         let path = SessionSummary.canonicalWorkspacePath(rawPath)
         guard FileManager.default.fileExists(atPath: path) else {
@@ -195,6 +197,7 @@ extension AppModel {
 
     func resume(_ session: SessionSummary) {
         activity.activityCenterPresented = false
+        if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
         if let path = session.workspacePath {
             guard FileManager.default.fileExists(atPath: path) else {
