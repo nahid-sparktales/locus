@@ -222,6 +222,12 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.notesScope", page: .chat, title: "Conversation notes", keywords: ["workspace", "scratchpad"]),
         .init("settings.thinkingVisibility", page: .chat, title: "Reasoning display", keywords: ["thinking", "collapsed"]),
         .init("settings.toolActivityVisibility", page: .chat, title: "Tool activity display", keywords: ["tools", "collapsed"]),
+        .init(
+            "settings.voice",
+            page: .chat,
+            title: "Voice and dictation",
+            keywords: ["microphone", "speech", "push to talk", "transcription", "spoken replies", "OpenAI audio"]
+        ),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
         .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "account", "lock", "unlock"]),
         .init("settings.wallet.connectors", page: .wallet, title: "External wallets", keywords: ["Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),

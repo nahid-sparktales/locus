@@ -12,6 +12,36 @@ enum ProxyType: String, CaseIterable {
     case socks5
 }
 
+/// Voice input never changes engines implicitly. System speech stays local
+/// when the Mac supports it; choosing a provider is the explicit cloud opt-in.
+enum VoiceSpeechEngine: String, Codable, CaseIterable, Identifiable {
+    case system
+    case openAICompatible = "openai_compatible"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "System Speech"
+        case .openAICompatible: "Provider speech"
+        }
+    }
+}
+
+enum VoiceSendBehavior: String, Codable, CaseIterable, Identifiable {
+    case sendOnStop = "send_on_stop"
+    case reviewBeforeSend = "review_before_send"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sendOnStop: "Send when released"
+        case .reviewBeforeSend: "Review before sending"
+        }
+    }
+}
+
 /// Independently routable classes of network traffic. The main agent owns
 /// model-provider calls, web tools, extensions, and its model-visible child
 /// processes, so those stay one class until the agent can isolate them safely.
@@ -158,6 +188,21 @@ struct AppSettings: Codable, Hashable {
     var previewURL = "http://localhost:3000"
     var notifyOnCompletion = true
     var notifyOnNeedsAttention = true
+    /// Dictation and voice mode are visible by default. Cloud audio remains
+    /// separately opt-in through `voiceSpeechEngineRaw` and an eligible account.
+    var voiceControlsEnabled = true
+    var voiceSpeechEngineRaw = VoiceSpeechEngine.system.rawValue
+    var voiceCloudAccountID: String?
+    /// Empty follows the current macOS language and default installed voice.
+    var voiceLanguageIdentifier = ""
+    var voiceSystemVoiceIdentifier = ""
+    /// Off means SFSpeechRecognizer must remain on-device. The app asks before
+    /// setting this when a Mac cannot satisfy that requirement.
+    var voiceAppleNetworkRecognitionAllowed = false
+    var voiceSendBehaviorRaw = VoiceSendBehavior.sendOnStop.rawValue
+    var voiceCloudTranscriptionModel = "gpt-4o-mini-transcribe"
+    var voiceCloudSpeechModel = "gpt-4o-mini-tts"
+    var voiceCloudVoiceIdentifier = "alloy"
     /// Registers the main application with macOS login items. Off by default;
     /// registration is applied only after Settings is saved successfully.
     var launchAtLogin = false
@@ -497,6 +542,16 @@ struct AppSettings: Codable, Hashable {
         mobileAccessEnabled = draft.mobileAccessEnabled
         notifyOnCompletion = draft.notifyOnCompletion
         notifyOnNeedsAttention = draft.notifyOnNeedsAttention
+        voiceControlsEnabled = draft.voiceControlsEnabled
+        voiceSpeechEngineRaw = draft.voiceSpeechEngineRaw
+        voiceCloudAccountID = draft.voiceCloudAccountID
+        voiceLanguageIdentifier = draft.voiceLanguageIdentifier
+        voiceSystemVoiceIdentifier = draft.voiceSystemVoiceIdentifier
+        voiceAppleNetworkRecognitionAllowed = draft.voiceAppleNetworkRecognitionAllowed
+        voiceSendBehaviorRaw = draft.voiceSendBehaviorRaw
+        voiceCloudTranscriptionModel = draft.voiceCloudTranscriptionModel
+        voiceCloudSpeechModel = draft.voiceCloudSpeechModel
+        voiceCloudVoiceIdentifier = draft.voiceCloudVoiceIdentifier
         browserEnabled = draft.browserEnabled
         walletSepoliaRPCURL = draft.walletSepoliaRPCURL
         walletAlphaEnabled = draft.walletAlphaEnabled
@@ -651,6 +706,14 @@ struct AppSettings: Codable, Hashable {
         NotesScope(rawValue: notesScopeRaw) ?? .workspace
     }
 
+    var resolvedVoiceSpeechEngine: VoiceSpeechEngine {
+        VoiceSpeechEngine(rawValue: voiceSpeechEngineRaw) ?? .system
+    }
+
+    var resolvedVoiceSendBehavior: VoiceSendBehavior {
+        VoiceSendBehavior(rawValue: voiceSendBehaviorRaw) ?? .sendOnStop
+    }
+
     var preferredPermissionMode: PermissionMode? {
         PermissionMode(rawValue: permissionModeRaw)
     }
@@ -670,6 +733,36 @@ struct AppSettings: Codable, Hashable {
         notifyOnNeedsAttention = try container.decodeIfPresent(
             Bool.self, forKey: .notifyOnNeedsAttention
         ) ?? notifyOnCompletion
+        voiceControlsEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .voiceControlsEnabled
+        ) ?? defaults.voiceControlsEnabled
+        voiceSpeechEngineRaw = try container.decodeIfPresent(
+            String.self, forKey: .voiceSpeechEngineRaw
+        ) ?? defaults.voiceSpeechEngineRaw
+        voiceCloudAccountID = try container.decodeIfPresent(
+            String.self, forKey: .voiceCloudAccountID
+        )
+        voiceLanguageIdentifier = try container.decodeIfPresent(
+            String.self, forKey: .voiceLanguageIdentifier
+        ) ?? defaults.voiceLanguageIdentifier
+        voiceSystemVoiceIdentifier = try container.decodeIfPresent(
+            String.self, forKey: .voiceSystemVoiceIdentifier
+        ) ?? defaults.voiceSystemVoiceIdentifier
+        voiceAppleNetworkRecognitionAllowed = try container.decodeIfPresent(
+            Bool.self, forKey: .voiceAppleNetworkRecognitionAllowed
+        ) ?? defaults.voiceAppleNetworkRecognitionAllowed
+        voiceSendBehaviorRaw = try container.decodeIfPresent(
+            String.self, forKey: .voiceSendBehaviorRaw
+        ) ?? defaults.voiceSendBehaviorRaw
+        voiceCloudTranscriptionModel = try container.decodeIfPresent(
+            String.self, forKey: .voiceCloudTranscriptionModel
+        ) ?? defaults.voiceCloudTranscriptionModel
+        voiceCloudSpeechModel = try container.decodeIfPresent(
+            String.self, forKey: .voiceCloudSpeechModel
+        ) ?? defaults.voiceCloudSpeechModel
+        voiceCloudVoiceIdentifier = try container.decodeIfPresent(
+            String.self, forKey: .voiceCloudVoiceIdentifier
+        ) ?? defaults.voiceCloudVoiceIdentifier
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
             ?? defaults.launchAtLogin
         mobileAccessEnabled = try container.decodeIfPresent(

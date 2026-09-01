@@ -246,6 +246,7 @@ extension AppModel {
                 )))
             }
             notifyNeedsAttentionIfInactive()
+            announceVoiceAttention(.permission, token: requestID)
             if let runtime = taskWorkers[currentSessionID] {
                 runtime.executionState = .waitingPermission
                 updateBackgroundChatState(runtime)
@@ -687,6 +688,7 @@ extension AppModel {
                     && !(activePlan?.steps.isEmpty ?? true)
                     && !PlanSignalDetector.isClarifyingResponse(assistantText)
             }
+            completeVoiceTurnIfNeeded()
             planTodosChangedThisTurn = false
             planReadyThisTurn = false
             capturedQuestionThisTurn = nil
@@ -720,6 +722,7 @@ extension AppModel {
             }
 
         case "error":
+            voiceControl.turnFailed()
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
@@ -819,6 +822,9 @@ extension AppModel {
         sessionInfo = info
         syncBrowserProfile()
         currentSessionID = info.sessionID
+        if previousSessionID != info.sessionID {
+            voiceControl.sessionDidChange()
+        }
         activeTaskRecord = info.task
         let startsFreshOverview = pendingSessionReset
             || reason == "clear_chat"

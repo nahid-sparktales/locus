@@ -18,7 +18,9 @@ extension AppModel {
         requeueingOnFailure: Bool = false,
         includeAttachments: Bool = true,
         automaticRoutingPrepared: Bool = false,
-        preparedModelRoute: ModelRoutingPreparedTurn? = nil
+        preparedModelRoute: ModelRoutingPreparedTurn? = nil,
+        consumeMatchingDraft: Bool = true,
+        allowLocalCommands: Bool = true
     ) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         let availableAttachments = includeAttachments ? availableChatAttachments : []
@@ -27,8 +29,11 @@ extension AppModel {
 
         // Slash commands that Locus can run itself execute immediately, even
         // mid-run; anything else starting with "/" goes to the agent verbatim.
-        if !text.isEmpty, let command = SlashCommand.command(invokedBy: text) {
-            if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+        if allowLocalCommands,
+           !text.isEmpty,
+           let command = SlashCommand.command(invokedBy: text) {
+            if consumeMatchingDraft,
+               draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
             }
             recordPrompt(text)
@@ -43,7 +48,8 @@ extension AppModel {
             }
             queuedMessages.append(text)
             taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
-            if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+            if consumeMatchingDraft,
+               draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
                 draftText = ""
             }
             showToast(
@@ -58,7 +64,7 @@ extension AppModel {
             return
         }
 
-        let isSlashPassthrough = SlashCommand.query(from: text) != nil
+        let isSlashPassthrough = allowLocalCommands && SlashCommand.query(from: text) != nil
         // Capture the mode before any asynchronous context work. A user can
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
@@ -101,7 +107,9 @@ extension AppModel {
                     requeueingOnFailure: requeueingOnFailure,
                     includeAttachments: includeAttachments,
                     automaticRoutingPrepared: true,
-                    preparedModelRoute: route
+                    preparedModelRoute: route,
+                    consumeMatchingDraft: consumeMatchingDraft,
+                    allowLocalCommands: allowLocalCommands
                 )
             }
             return
@@ -185,7 +193,8 @@ extension AppModel {
             sessionOverview.emit(.sourceProvided(items: providedItems, at: Self.sessionTimestamp))
         }
         if !text.isEmpty { recordPrompt(text) }
-        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+        if consumeMatchingDraft,
+           draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
         }
         // Adaptive workers stay inside the ordinary Solo experience. The Runs

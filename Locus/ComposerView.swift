@@ -135,6 +135,13 @@ struct ComposerView: View {
                         attachmentChipsRow
                     }
 
+                    if model.settings.voiceControlsEnabled,
+                       model.voiceControl.isVoiceModeActive
+                        || model.voiceControl.state != .idle {
+                        VoiceComposerStrip(voice: model.voiceControl)
+                            .environmentObject(model)
+                    }
+
                     actionRow
                 }
                 .frame(maxWidth: 740)
@@ -179,6 +186,23 @@ struct ComposerView: View {
                 .environmentObject(model)
         }
         .onAppear { restoreFocus() }
+        .onDisappear { model.voiceControl.cancelRecording() }
+        .alert(
+            "Allow Apple Online Speech Recognition?",
+            isPresented: Binding(
+                get: { model.voiceControl.networkRecognitionConsentRequested },
+                set: { model.voiceControl.networkRecognitionConsentRequested = $0 }
+            )
+        ) {
+            Button("Not Now", role: .cancel) {
+                model.voiceControl.respondToAppleNetworkConsent(allowed: false)
+            }
+            Button("Allow") {
+                model.voiceControl.respondToAppleNetworkConsent(allowed: true)
+            }
+        } message: {
+            Text("On-device recognition is unavailable for this language. If allowed, Apple may process dictation audio online. Locus will remember this choice and will never switch to a provider speech service automatically.")
+        }
         .onChange(of: model.activePermissionRequest?.requestID) {
             // Focus returns to the editor after any decision — option 3 is
             // "tell Locus what to do differently", so typing must just work.
@@ -713,6 +737,14 @@ struct ComposerView: View {
             }
 
             Spacer()
+
+            if model.settings.voiceControlsEnabled {
+                VoiceComposerButtons(voice: model.voiceControl)
+                    .environmentObject(model)
+                Divider()
+                    .frame(height: 17)
+                    .padding(.horizontal, 1)
+            }
 
             if model.isBusy {
                 if primaryAction != .stop, !isWaitingForTeamApproval, !isStopping {

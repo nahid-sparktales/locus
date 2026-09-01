@@ -1416,6 +1416,58 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("settings.content.developer").exists)
     }
 
+    func testVoiceControlsAndSettingsAreDiscoverableWithoutMicrophoneAccess() {
+        let dictation = anyElement("composer.voice.dictation")
+        let voiceMode = anyElement("composer.voice.mode")
+        XCTAssertTrue(dictation.waitForExistence(timeout: 3))
+        XCTAssertTrue(voiceMode.exists)
+
+        voiceMode.click()
+        XCTAssertTrue(anyElement("composer.voice.strip").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("composer.voice.pushToTalk").exists)
+        XCTAssertTrue(anyElement("composer.voice.exit").exists)
+        XCTAssertTrue(
+            app.textViews["composer.input"].exists,
+            "Voice mode must leave the regular editor available"
+        )
+        anyElement("composer.voice.exit").click()
+
+        app.typeKey(",", modifierFlags: .command)
+        let search = anyElement("settings.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("push to talk")
+        let result = anyElement("settings.search.result.settings.voice")
+        XCTAssertTrue(result.waitForExistence(timeout: 3))
+        result.click()
+
+        XCTAssertTrue(anyElement("settings.voice.enabled").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.voice.engine").exists)
+        XCTAssertTrue(anyElement("settings.voice.language").exists)
+        XCTAssertTrue(anyElement("settings.voice.sendBehavior").exists)
+        XCTAssertTrue(anyElement("settings.voice.test").exists)
+    }
+
+    func testVoiceAttentionFixtureRequiresVisibleControls() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_VOICE_STATE"] = "permission"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+
+        XCTAssertTrue(
+            anyElement("composer.voice.strip").waitForExistence(
+                timeout: Self.launchContentTimeout
+            )
+        )
+        XCTAssertTrue(anyElement("composer.voice.pushToTalk").exists)
+        XCTAssertTrue(anyElement("composer.voice.exit").exists)
+        XCTAssertTrue(app.textViews["composer.input"].exists)
+        let attentionText = anyElement("composer.voice.transcript")
+        let exposedAttention = [attentionText.label, String(describing: attentionText.value)]
+            .joined(separator: " ")
+        XCTAssertTrue(exposedAttention.localizedCaseInsensitiveContains("permission"))
+    }
+
     func testAppearanceSettingsExposeAndApplySystemLightDarkChoices() {
         XCTAssertFalse(
             anyElement("workspace.contextUsage").exists,

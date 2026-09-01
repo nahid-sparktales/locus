@@ -1,3 +1,5 @@
+import AVFoundation
+import Speech
 import SwiftUI
 
 struct CommandPaletteView: View {
@@ -1863,6 +1865,12 @@ struct SettingsView: View {
             draft.newGitChatsUseWorktree.description, draft.launchAtLogin.description,
             draft.mobileAccessEnabled.description, draft.notifyOnCompletion.description,
             draft.notifyOnNeedsAttention.description, draft.browserEnabled.description,
+            draft.voiceControlsEnabled.description, draft.voiceSpeechEngineRaw,
+            draft.voiceCloudAccountID ?? "", draft.voiceLanguageIdentifier,
+            draft.voiceSystemVoiceIdentifier,
+            draft.voiceAppleNetworkRecognitionAllowed.description,
+            draft.voiceSendBehaviorRaw, draft.voiceCloudTranscriptionModel,
+            draft.voiceCloudSpeechModel, draft.voiceCloudVoiceIdentifier,
             draft.browserViewportRaw, draft.browserPersistProfile.description,
             draft.browserRealInput.description, draft.browserEmulateDevice.description,
             draft.browserWebInspector.description, draft.webSearchDestinationRaw,
@@ -2223,6 +2231,108 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .id("settings.thinkingVisibility")
+
+                Section("Voice") {
+                    Toggle("Show dictation and voice controls", isOn: $draft.voiceControlsEnabled)
+                        .accessibilityIdentifier("settings.voice.enabled")
+
+                    if draft.voiceControlsEnabled {
+                        Picker("Speech engine", selection: $draft.voiceSpeechEngineRaw) {
+                            ForEach(VoiceSpeechEngine.allCases) { engine in
+                                Text(engine.title).tag(engine.rawValue)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.voice.engine")
+
+                        if draft.resolvedVoiceSpeechEngine == .openAICompatible {
+                            Picker("Speech account", selection: $draft.voiceCloudAccountID) {
+                                Text("Choose an account").tag(String?.none)
+                                ForEach(model.eligibleVoiceAccounts) { account in
+                                    Text(account.displayName).tag(Optional(account.id.uuidString))
+                                }
+                            }
+                            .accessibilityIdentifier("settings.voice.account")
+
+                            if model.eligibleVoiceAccounts.isEmpty {
+                                HStack {
+                                    Text("Add an OpenAI API or compatible custom account first.")
+                                        .font(.locus(size: 9))
+                                        .foregroundStyle(LocusTheme.warning)
+                                    Spacer()
+                                    Button("Open Providers") { model.settingsPage = .accounts }
+                                }
+                            }
+
+                            TextField(
+                                "Transcription model",
+                                text: $draft.voiceCloudTranscriptionModel
+                            )
+                            .accessibilityIdentifier("settings.voice.transcriptionModel")
+                            TextField("Speech model", text: $draft.voiceCloudSpeechModel)
+                                .accessibilityIdentifier("settings.voice.speechModel")
+                            TextField("Voice identifier", text: $draft.voiceCloudVoiceIdentifier)
+                                .accessibilityIdentifier("settings.voice.voiceIdentifier")
+                        }
+
+                        Picker("Recognition language", selection: $draft.voiceLanguageIdentifier) {
+                            Text("System language").tag("")
+                            ForEach(voiceLanguageIdentifiers, id: \.self) { identifier in
+                                Text(Locale.current.localizedString(forIdentifier: identifier) ?? identifier)
+                                    .tag(identifier)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.voice.language")
+
+                        if draft.resolvedVoiceSpeechEngine == .system {
+                            Picker("Spoken voice", selection: $draft.voiceSystemVoiceIdentifier) {
+                                Text("System voice").tag("")
+                                ForEach(systemSpeechVoices, id: \.identifier) { voice in
+                                    Text("\(voice.name) — \(voice.language)")
+                                        .tag(voice.identifier)
+                                }
+                            }
+                            .accessibilityIdentifier("settings.voice.systemVoice")
+
+                            Toggle(
+                                "Allow Apple online recognition when on-device speech is unavailable",
+                                isOn: $draft.voiceAppleNetworkRecognitionAllowed
+                            )
+                            .accessibilityIdentifier("settings.voice.appleNetworkConsent")
+                        }
+
+                        Picker("After push-to-talk", selection: $draft.voiceSendBehaviorRaw) {
+                            ForEach(VoiceSendBehavior.allCases) { behavior in
+                                Text(behavior.title).tag(behavior.rawValue)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.voice.sendBehavior")
+
+                        Button(
+                            model.voiceControl.isCapabilityTesting
+                                ? "Stop and Play Back" : "Test Voice"
+                        ) {
+                            model.voiceControl.startCapabilityTest()
+                        }
+                        .disabled(
+                            draft.resolvedVoiceSpeechEngine == .openAICompatible
+                                && draft.voiceCloudAccountID == nil
+                        )
+                        .accessibilityIdentifier("settings.voice.test")
+
+                        if !model.voiceControl.capabilityTestMessage.isEmpty {
+                            Text(model.voiceControl.capabilityTestMessage)
+                                .font(.locus(size: 9, weight: .semibold))
+                                .foregroundStyle(LocusTheme.muted)
+                                .accessibilityIdentifier("settings.voice.testResult")
+                        }
+
+                        Text(voicePrivacyExplanation)
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .id("settings.voice")
             }
 
             if model.settingsPage == .general {
@@ -2354,6 +2464,33 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .accessibilityIdentifier("settings.\(model.settingsPage.accessibilityKey).content")
+    }
+
+    private var voiceLanguageIdentifiers: [String] {
+        SFSpeechRecognizer.supportedLocales()
+            .map(\.identifier)
+            .filter { !$0.isEmpty }
+            .sorted {
+                let lhs = Locale.current.localizedString(forIdentifier: $0) ?? $0
+                let rhs = Locale.current.localizedString(forIdentifier: $1) ?? $1
+                return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+            }
+    }
+
+    private var systemSpeechVoices: [AVSpeechSynthesisVoice] {
+        let language = draft.voiceLanguageIdentifier
+        return AVSpeechSynthesisVoice.speechVoices()
+            .filter { language.isEmpty || $0.language.hasPrefix(language.split(separator: "-").first.map(String.init) ?? language) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var voicePrivacyExplanation: String {
+        if draft.resolvedVoiceSpeechEngine == .system {
+            return draft.voiceAppleNetworkRecognitionAllowed
+                ? "Recognition uses Apple Speech. On-device processing is preferred; Apple online recognition is allowed only because you enabled it. Recordings are limited to 60 seconds."
+                : "Recognition and playback use macOS System Speech. Locus requires on-device recognition and will ask before allowing Apple online processing. Recordings are limited to 60 seconds."
+        }
+        return "Audio is sent only to the account selected above, using that account’s credentials and proxy route. Locus never falls back to cloud speech automatically and deletes temporary recordings after each request."
     }
 
     private func localModelRow(_ localModel: ModelInfo) -> some View {
