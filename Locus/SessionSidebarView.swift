@@ -147,6 +147,7 @@ struct SessionSidebarView: View {
     @State private var folderEditor: ChatFolderEditorRequest?
     @State private var folderEditorName = ""
     @State private var collapsedAgentIDs: Set<String> = []
+    @State private var agentToDelete: EventTrigger?
     @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
 
@@ -368,6 +369,23 @@ struct SessionSidebarView: View {
             )
         }
         .confirmationDialog(
+            "Delete \(agentToDelete?.name ?? "this agent")?",
+            isPresented: Binding(
+                get: { agentToDelete != nil },
+                set: { if !$0 { agentToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Agent", role: .destructive) {
+                if let agentToDelete { model.eventAutomations.deleteTrigger(agentToDelete) }
+                agentToDelete = nil
+            }
+            .accessibilityIdentifier("agent.delete.confirm")
+            Button("Cancel", role: .cancel) { agentToDelete = nil }
+        } message: {
+            Text("It stops listening for events. Its chats stay where they are.")
+        }
+        .confirmationDialog(
             "Delete \(folderToDelete?.name ?? "this folder")?",
             isPresented: Binding(
                 get: { folderToDelete != nil },
@@ -471,10 +489,9 @@ struct SessionSidebarView: View {
             HStack(spacing: 7) {
                 secondaryButton(
                     symbol: "gearshape.2",
-                    title: model.sidebarDestination == .agents ? "Manage Agents" : "Configure Agent",
-                    help: "Configure schedules, incoming events, and price conditions",
-                    accessibilityLabel: model.sidebarDestination == .agents
-                        ? "Manage Agents" : "Configure Agent",
+                    title: "Manage Agents",
+                    help: "Agents, their sources, and the events they have handled",
+                    accessibilityLabel: "Manage Agents",
                     identifier: "sidebar.configureAgent"
                 ) {
                     model.presentConfigureAgent(draftText: model.draftText)
@@ -487,16 +504,18 @@ struct SessionSidebarView: View {
         .padding(.bottom, 12)
     }
 
-    /// One button, one label, in both destinations. In Agents mode a new chat
-    /// belongs to the selected agent, so it starts that agent's next chat.
+    /// Each destination creates the object it is about: a chat in Ask, an agent
+    /// in Agents. Chatting with a particular agent lives on that agent's row,
+    /// where which agent it belongs to is unambiguous.
     private var primaryCreationButton: some View {
-        Button {
+        let isAgents = model.sidebarDestination == .agents
+        return Button {
             model.newChatForSidebarDestination()
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text("New chat")
+                Text(isAgents ? "New agent" : "New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -511,12 +530,11 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .help(model.sidebarDestination == .agents
-            ? "Start a new chat with the selected agent (⌘N)"
+        .help(isAgents
+            ? "Configure an agent that wakes on email, messages, webhooks, or a price (⌘N)"
             : "Start a new chat (⌘N)")
-        .accessibilityLabel("New chat")
-        .accessibilityValue(model.sidebarDestination == .agents ? "Agent chat" : "Chat")
-        .accessibilityIdentifier("sidebar.newSession")
+        .accessibilityLabel(isAgents ? "New agent" : "New chat")
+        .accessibilityIdentifier(isAgents ? "sidebar.newAgent" : "sidebar.newSession")
     }
 
     private var activityButton: some View {
@@ -833,6 +851,12 @@ struct SessionSidebarView: View {
         }
     }
 
+    /// Distinct agents, which is what the footer's label promises — several
+    /// chats can belong to one agent.
+    private func agentCount(snapshot: SessionCatalogSnapshot) -> Int {
+        Set(snapshot.agentSessions.compactMap { $0.agentTriggerID?.nilIfEmpty }).count
+    }
+
     private func agentGroups(snapshot: SessionCatalogSnapshot) -> [AgentSidebarGroupModel] {
         Dictionary(grouping: snapshot.agentSessions) { session in
             session.agentTriggerID ?? session.id
@@ -853,6 +877,8 @@ struct SessionSidebarView: View {
 
     private func agentGroupRow(_ agent: AgentSidebarGroupModel) -> some View {
         let expanded = !collapsedAgentIDs.contains(agent.id)
+        let trigger = model.eventAutomations.triggers.first { $0.id == agent.id }
+        let status = AgentOverview.status(for: trigger)
         return Button {
             withAnimation(LocusMotion.spatial) {
                 if expanded {
@@ -869,13 +895,20 @@ struct SessionSidebarView: View {
                     .frame(width: 9)
                 Image(locusSymbol: LocusSymbol.robot)
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
                     .frame(width: 21, height: 21)
                     .accessibilityHidden(true)
                 Text(agent.name)
                     .font(.locus(size: 10, weight: .semibold))
                     .foregroundStyle(LocusTheme.ink)
                     .lineLimit(1)
+                if status != .active {
+                    Image(systemName: agentStatusSymbol(status))
+                        .font(.locus(size: 8, weight: .semibold))
+                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
+                        .help(status.detail)
+                        .accessibilityHidden(true)
+                }
                 Spacer(minLength: 4)
                 Text("\(agent.tasks.count)")
                     .font(.locus(size: 8, weight: .semibold, design: .monospaced))
@@ -887,9 +920,44 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
+        .contextMenu {
+            Button("New Chat with \(agent.name)") {
+                model.newAgentChat(triggerID: agent.id)
+            }
+            .accessibilityIdentifier("agent.\(agent.id).newChat")
+            if let trigger {
+                Button("Edit Agent…") {
+                    model.editAgentTrigger(trigger, isDedicatedAgent: true)
+                }
+                .accessibilityIdentifier("agent.\(agent.id).edit")
+                Button(trigger.enabled ? "Pause Agent" : "Resume Agent") {
+                    model.eventAutomations.setTrigger(trigger, enabled: !trigger.enabled)
+                }
+                .accessibilityIdentifier("agent.\(agent.id).toggle")
+                Divider()
+                Button("Delete Agent…", role: .destructive) {
+                    agentToDelete = trigger
+                }
+                .accessibilityIdentifier("agent.\(agent.id).delete")
+            }
+        }
+        .help(status.detail)
         .accessibilityLabel("\(agent.name) agent")
-        .accessibilityValue("\(agent.tasks.count) tasks, \(expanded ? "expanded" : "collapsed")")
+        .accessibilityValue(
+            "\(status.title), \(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
+                + (expanded ? "expanded" : "collapsed")
+        )
         .accessibilityIdentifier("agent.\(agent.id)")
+    }
+
+    private func agentStatusSymbol(_ status: AgentOverview.Status) -> String {
+        switch status {
+        case .active: "circle"
+        case .paused: "pause.circle.fill"
+        case .stopped, .missingTrigger: "exclamationmark.triangle.fill"
+        case .failing: "exclamationmark.circle.fill"
+        case .fired: "checkmark.circle.fill"
+        }
     }
 
     private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
@@ -949,7 +1017,7 @@ struct SessionSidebarView: View {
                     Text("Agents")
                         .font(.locus(size: 10, weight: .semibold))
                     Spacer()
-                    Text("\(snapshot.agentSessions.count)")
+                    Text("\(agentCount(snapshot: snapshot))")
                         .font(.locus(size: 8, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -960,7 +1028,10 @@ struct SessionSidebarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Agents")
-                .accessibilityValue("\(snapshot.agentSessions.count) chats")
+                .accessibilityValue(
+                    "\(agentCount(snapshot: snapshot)) agents, "
+                        + "\(snapshot.agentSessions.count) chats"
+                )
             }
 
             HStack {

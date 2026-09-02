@@ -755,9 +755,43 @@ extension AppModel {
             lastRunID: nil,
             lastError: nil
         )
+        // A third agent Locus switched off itself after a dispatch failure, so
+        // the stopped state and its recovery are visible and assertable.
+        let stoppedChat = SessionSummary(
+            id: "seed-stopped-chat",
+            name: "seed-stopped-chat.jsonl",
+            preview: "Watch the deploy channel",
+            mtime: now - 21_600,
+            size: 210,
+            title: "Deploy Watch",
+            cwd: workspace,
+            agentTriggerID: "seed-stopped-agent",
+            agentName: "Deploy Watch"
+        )
+        sessions.append(stoppedChat)
+        var stoppedFilters = EventTriggerFilters()
+        stoppedFilters.commandPrefixes = ["/deploy"]
+        let stoppedAgent = EventTrigger(
+            id: "seed-stopped-agent",
+            name: "Deploy Watch",
+            connectionID: connection.id,
+            targetSessionID: stoppedChat.id,
+            instruction: "Summarize each deploy notice and flag failed steps.",
+            mode: .work,
+            triggerKind: .event,
+            filters: stoppedFilters,
+            runtimeState: PriceTriggerState(),
+            actionConnectionIDs: [],
+            enabled: false,
+            createdAt: now - 259_200,
+            updatedAt: now - 21_600,
+            lastEventAt: now - 21_600,
+            lastRunID: nil,
+            lastError: "the target chat model is unavailable"
+        )
         eventAutomations.seedForUITesting(
             connections: [connection, priceFeed],
-            triggers: [trigger, priceAlert],
+            triggers: [trigger, priceAlert, stoppedAgent],
             deliveries: deliveries
         )
         // Set last: the destination change is what swaps the open Overview

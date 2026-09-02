@@ -34,6 +34,7 @@ final class EventAutomationModel: ObservableObject {
     private var agentProviderRoute: (() -> [String: String])?
     private var openAgentSession: ((SessionSummary) -> Void)?
     private var showMessage: ((String) -> Void)?
+    private var notifyPaused: ((String) -> Void)?
 
     init(credentials: ConnectorCredentialStore = .shared) {
         self.credentials = credentials
@@ -54,7 +55,8 @@ final class EventAutomationModel: ObservableObject {
         refreshSessions: @escaping () async -> Void,
         agentProviderRoute: @escaping () -> [String: String],
         openAgentSession: @escaping (SessionSummary) -> Void,
-        showMessage: @escaping (String) -> Void
+        showMessage: @escaping (String) -> Void,
+        notifyPaused: @escaping (String) -> Void = { _ in }
     ) {
         self.backend = backend
         self.onQueuedRun = onQueuedRun
@@ -64,6 +66,7 @@ final class EventAutomationModel: ObservableObject {
         self.agentProviderRoute = agentProviderRoute
         self.openAgentSession = openAgentSession
         self.showMessage = showMessage
+        self.notifyPaused = notifyPaused
     }
 
     /// UI-test fixtures need agents without a backend. The stored arrays are
@@ -117,9 +120,11 @@ final class EventAutomationModel: ObservableObject {
             let (loadedConnections, loadedTriggers, loadedDeliveries) = try await (
                 connectionResponse, triggerResponse, deliveryResponse
             )
+            let previous = triggers
             connections = loadedConnections.connections
             triggers = loadedTriggers.triggers
             deliveries = loadedDeliveries.deliveries
+            announceAgentsStoppedByLocus(previous: previous, current: triggers)
             lastError = nil
             restartNativeRuntimeIfNeeded()
             onCapabilityChanged?()
@@ -129,6 +134,29 @@ final class EventAutomationModel: ObservableObject {
             guard !Task.isCancelled else { return }
             lastError = error.localizedDescription
             if announceFailure { showMessage?("Could not load event automations: \(error.localizedDescription)") }
+        }
+    }
+
+    /// A failed dispatch disables the trigger in the backend and records why.
+    /// Nothing restarts it, so a person who is not looking at the Agent panel
+    /// would never learn their agent stopped. Schedules already announce this;
+    /// event agents now do too.
+    private func announceAgentsStoppedByLocus(
+        previous: [EventTrigger],
+        current: [EventTrigger]
+    ) {
+        guard !previous.isEmpty else { return }
+        let wasStopped = Set(
+            previous.filter { !$0.enabled && $0.lastError?.isEmpty == false }.map(\.id)
+        )
+        for trigger in current
+        where !trigger.enabled
+            && trigger.lastError?.isEmpty == false
+            && !wasStopped.contains(trigger.id)
+        {
+            let reason = AgentOverview.humanizedError(trigger.lastError ?? "")
+            showMessage?("\(trigger.name) was stopped: \(reason)")
+            notifyPaused?("\(trigger.name) was stopped: \(reason)")
         }
     }
 

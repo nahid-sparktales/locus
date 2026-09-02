@@ -8,8 +8,12 @@ import Foundation
 struct AgentOverview: Equatable {
     enum Status: Equatable {
         case active
+        /// The person paused it. Nothing is wrong.
         case paused
-        case needsAttention
+        /// Locus stopped it after a failure and will not restart it by itself.
+        case stopped
+        /// Still listening, but the last event did not get through.
+        case failing
         case fired
         /// The chats survived but their trigger was deleted or never loaded.
         case missingTrigger
@@ -18,7 +22,8 @@ struct AgentOverview: Equatable {
             switch self {
             case .active: "Active"
             case .paused: "Paused"
-            case .needsAttention: "Needs attention"
+            case .stopped: "Stopped"
+            case .failing: "Last event failed"
             case .fired: "Fired"
             case .missingTrigger: "No trigger"
             }
@@ -27,16 +32,25 @@ struct AgentOverview: Equatable {
         var detail: String {
             switch self {
             case .active: "Listening for matching events"
-            case .paused: "Events are recorded but no chat starts"
-            case .needsAttention: "The last delivery or poll failed"
+            case .paused: "You paused this agent. Events are recorded but no chat starts."
+            case .stopped: "Locus stopped this agent after a failure. Resume to start listening again."
+            case .failing: "The last event did not get through. The agent is still listening."
             case .fired: "This one-shot alert already fired; re-arm to watch again"
             case .missingTrigger: "The trigger behind these chats no longer exists"
             }
         }
 
+        /// Whether the agent has stopped acting on events. Paused is deliberate
+        /// and quiet; stopped and missing are not, and lead the fleet list.
         var isWarning: Bool {
-            self == .needsAttention || self == .missingTrigger
+            switch self {
+            case .stopped, .failing, .missingTrigger: true
+            case .active, .paused, .fired: false
+            }
         }
+
+        /// Only a stopped agent needs a person to switch it back on.
+        var needsResume: Bool { self == .stopped }
     }
 
     struct Chat: Identifiable, Equatable {
@@ -44,6 +58,10 @@ struct AgentOverview: Equatable {
         let isCurrent: Bool
         let isRunning: Bool
         let startedAt: Date?
+        /// Every delivery is dispatched into the trigger's one target chat, so
+        /// exactly one of an agent's chats receives events and the rest are
+        /// side conversations a person started.
+        var isEventTarget = false
 
         var id: String { session.id }
     }
@@ -115,6 +133,11 @@ struct AgentOverview: Equatable {
     let priceState: String?
 
     var currentChat: Chat? { chats.first(where: \.isCurrent) }
+    /// The chat every event lands in, when it still exists.
+    var eventChat: Chat? { chats.first(where: \.isEventTarget) }
+    /// The agent has chats but its event chat is gone — deleting it leaves the
+    /// trigger pointing at nothing, which no amount of resuming repairs.
+    var hasLostEventChat: Bool { trigger != nil && eventChat == nil }
     var runningChatCount: Int { chats.filter(\.isRunning).count }
     var isPriceAlert: Bool { trigger?.triggerKind == .price }
     var canRearm: Bool { isPriceAlert && trigger?.runtimeState.fired == true }
@@ -141,12 +164,14 @@ struct AgentOverview: Equatable {
                 if lhs.mtime != rhs.mtime { return lhs.mtime > rhs.mtime }
                 return lhs.id < rhs.id
             }
+        let targetSessionID = trigger?.targetSessionID.nilIfEmpty
         let chats = ownChats.map { session in
             Chat(
                 session: session,
                 isCurrent: session.id == currentSessionID,
                 isRunning: runningSessionIDs.contains(session.id),
-                startedAt: startedAt[session.id]
+                startedAt: startedAt[session.id],
+                isEventTarget: session.id == targetSessionID
             )
         }
         let name = trigger?.name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -221,16 +246,52 @@ struct AgentOverview: Equatable {
             eventCount: ownDeliveries.count,
             failedEventCount: failedCount,
             lastEventAt: lastEventAt,
-            lastError: trigger?.lastError?.nilIfEmpty ?? connection?.lastError?.nilIfEmpty,
+            lastError: (trigger?.lastError?.nilIfEmpty ?? connection?.lastError?.nilIfEmpty)
+                .map(humanizedError),
             priceState: trigger.flatMap { priceState(for: $0, now: now) }
         )
     }
 
+    /// The backend records only `enabled` and a free-text `last_error`, but the
+    /// pair carries four distinct meanings. A disabled trigger with an error is
+    /// one Locus switched off itself (`pause_event_trigger` on a dispatch
+    /// failure); a disabled trigger without one is a deliberate pause.
     static func status(for trigger: EventTrigger?) -> Status {
         guard let trigger else { return .missingTrigger }
-        if let error = trigger.lastError, !error.isEmpty { return .needsAttention }
+        if let error = trigger.lastError, !error.isEmpty {
+            return trigger.enabled ? .failing : .stopped
+        }
         if trigger.triggerKind == .price, trigger.runtimeState.fired == true { return .fired }
         return trigger.enabled ? .active : .paused
+    }
+
+    /// Dispatch failures are re-raised as the agent's status line, so the raw
+    /// HTTP detail from the backend would otherwise be what a person reads.
+    /// Translate the ones Locus itself produces and leave anything else alone
+    /// beyond sentence-casing it.
+    static func humanizedError(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        let known: [String: String] = [
+            "target chat not found":
+                "This agent's chat was deleted, so events have nowhere to go.",
+            "the target chat workspace is unavailable":
+                "The agent's workspace folder is missing or was moved.",
+            "the target chat checkout is unavailable":
+                "The agent's worktree checkout is missing.",
+            "the target chat model is unavailable":
+                "The model this agent runs on is no longer available.",
+            "the agent provider is not supported":
+                "The model provider this agent runs on is no longer supported.",
+            "this configuration does not own a dedicated agent":
+                "This configuration has no agent chat of its own.",
+            "capability is disabled: event_triggers":
+                "Event agents are turned off in this build of Locus.",
+        ]
+        if let match = known[trimmed.lowercased()] { return match }
+        guard let first = trimmed.first else { return trimmed }
+        let sentence = first.uppercased() + trimmed.dropFirst()
+        return sentence.hasSuffix(".") ? sentence : sentence + "."
     }
 
     static func summary(trigger: EventTrigger?, connection: ConnectorConnection?) -> String {

@@ -125,7 +125,10 @@ extension AppModel {
             eventAutomations.presentEditor(
                 trigger: edit.trigger,
                 targetSessionID: edit.targetSessionID,
-                isDedicatedAgent: edit.isDedicatedAgent
+                isDedicatedAgent: edit.isDedicatedAgent,
+                naturalLanguageRequest: edit.trigger == nil
+                    ? configureAgentDraftSuggestion : "",
+                triggerKind: edit.trigger == nil ? edit.triggerKind : nil
             )
         }
         guard let draft = configureAgentPendingScheduleDraft else { return }

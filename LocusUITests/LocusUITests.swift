@@ -1791,11 +1791,14 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        // The creation button keeps its identity in Agents mode: New chat
-        // there starts the selected agent's next chat.
-        XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
-        XCTAssertEqual(newChat.label, "New chat")
+        // Each destination creates the object it is about, so the primary
+        // button becomes New agent rather than another chat.
+        let newAgent = anyElement("sidebar.newAgent")
+        XCTAssertTrue(newAgent.waitForExistence(timeout: 3))
+        XCTAssertEqual(newAgent.label, "New agent")
+        XCTAssertFalse(anyElement("sidebar.newSession").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
+        // One name for the sheet, in both destinations.
         XCTAssertEqual(configureAgent.label, "Manage Agents")
 
         configureAgent.click()
@@ -1817,11 +1820,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
 
-        // Agents mode keeps the Ask-mode controls: New chat with its plus
-        // glyph, Manage Agents with the Configure Agent glyph.
-        let newChat = anyElement("sidebar.newSession")
-        XCTAssertTrue(newChat.exists)
-        XCTAssertEqual(newChat.label, "New chat")
+        // Agents mode creates agents; chatting with one is a per-agent action.
+        let newAgent = anyElement("sidebar.newAgent")
+        XCTAssertTrue(newAgent.exists)
+        XCTAssertEqual(newAgent.label, "New agent")
+        XCTAssertFalse(anyElement("sidebar.newSession").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
         XCTAssertTrue(manage.exists)
@@ -1846,8 +1849,17 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agentOverview.stats.chats").exists)
         XCTAssertTrue(anyElement("agentOverview.source").exists)
         XCTAssertTrue(anyElement("agentOverview.instruction").exists)
-        XCTAssertTrue(anyElement("agentOverview.chat.seed-agent-chat").exists)
-        XCTAssertTrue(anyElement("agentOverview.chat.seed-agent-chat-older").exists)
+        // Exactly one chat receives events, and the panel says which.
+        let eventChat = anyElement("agentOverview.chat.seed-agent-chat")
+        XCTAssertTrue(eventChat.exists)
+        XCTAssertTrue(
+            eventChat.label.contains("receives events"),
+            "the event chat is named as such, not left to guesswork"
+        )
+        let sideChat = anyElement("agentOverview.chat.seed-agent-chat-older")
+        XCTAssertTrue(sideChat.exists)
+        XCTAssertFalse(sideChat.label.contains("receives events"))
+        XCTAssertTrue(anyElement("agentOverview.chats.explainer").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
 
@@ -1857,13 +1869,46 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.rail.agent")))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.tab.agent")))
-        XCTAssertEqual(anyElement("sidebar.configureAgent").label, "Configure Agent")
+        // The sheet has one name in both destinations now.
+        XCTAssertEqual(anyElement("sidebar.configureAgent").label, "Manage Agents")
         XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
 
         anyElement("sidebar.mode.agents").click()
         XCTAssertTrue(anyElement("agentOverview.identity").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
+    }
+
+    func testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet() {
+        relaunchWithAgentFixture("fleet")
+
+        // The fixture's third agent was switched off by Locus after a failure.
+        let stopped = anyElement("agent.seed-stopped-agent")
+        XCTAssertTrue(stopped.waitForExistence(timeout: Self.launchContentTimeout))
+        let spoken = stopped.label + " " + (stopped.value as? String ?? "")
+        XCTAssertTrue(spoken.contains("Stopped"), "Locus stopping an agent is not the same as pausing it")
+        XCTAssertTrue(spoken.contains("chat"), "an agent's conversations are chats, not tasks")
+
+        // The fleet ranks it above the healthy agents and repeats the state.
+        let fleetRow = anyElement("agentOverview.fleet.seed-stopped-agent")
+        XCTAssertTrue(fleetRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(fleetRow.label.contains("Stopped"))
+        XCTAssertLessThan(
+            fleetRow.frame.minY,
+            anyElement("agentOverview.fleet.seed-agent").frame.minY,
+            "an agent that needs a person comes first"
+        )
+        let summary = anyElement("agentOverview.fleet.summary")
+        XCTAssertTrue(
+            (summary.label + " " + (summary.value as? String ?? "")).contains("stopped by Locus")
+        )
+
+        // Per-agent actions live on the agent, where which agent is unambiguous.
+        stopped.rightClick()
+        XCTAssertTrue(
+            app.menuItems["agent.seed-stopped-agent.newChat"].waitForExistence(timeout: 3)
+                || app.descendants(matching: .any)["agent.seed-stopped-agent.newChat"].exists
+        )
     }
 
     func testAskAgentsDestinationKeepsConversationWorkControlsAvailable() {
@@ -1888,8 +1933,8 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        let newChat = anyElement("sidebar.newSession")
-        XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
+        XCTAssertTrue(anyElement("sidebar.newAgent").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sidebar.newSession").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("composer.context").exists)
@@ -1897,8 +1942,8 @@ final class LocusUITests: XCTestCase {
 
         ask.click()
         XCTAssertTrue(waitUntil { ask.isSelected })
-        XCTAssertTrue(waitUntil { newChat.value as? String == "Chat" })
-        XCTAssertFalse(anyElement("sidebar.newTask").exists)
+        XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
     }
 
     func testWorkspaceActionsSitBesideModelPickerAndRailMoreMenuRestoresTabs() {
@@ -3064,9 +3109,11 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
 
-    private func relaunchWithAgentFixture() {
+    /// `variant` "1" opens on an agent's chat; "fleet" leaves an ordinary chat
+    /// selected so the Agent panel shows every configured agent.
+    private func relaunchWithAgentFixture(_ variant: String = "1") {
         app.terminate()
-        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = variant
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
