@@ -5,6 +5,10 @@ import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
+    @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
+    @EnvironmentObject private var landingFlow: LandingFlowModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var modelPickerPresented = false
     @State private var teamProgressPresented = false
@@ -25,7 +29,7 @@ struct WorkspaceView: View {
                 chatContent
                     .frame(width: proxy.size.width, height: proxy.size.height)
 
-                if model.activity.activityCenterPresented {
+                if activityCenter.activityCenterPresented {
                     ActivityCenterView()
                         .environmentObject(model)
                         .frame(
@@ -103,7 +107,7 @@ struct WorkspaceView: View {
                         .accessibilityHidden(true)
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                         .accessibilityIdentifier("workspace.breadcrumb.path")
-                    if let branch = model.gitWorkspace.gitBranch {
+                    if let branch = gitWorkspace.gitBranch {
                         HStack(spacing: 3) {
                             Image(systemName: "arrow.triangle.branch")
                                 .font(.locus(size: 7))
@@ -122,7 +126,7 @@ struct WorkspaceView: View {
 
             Spacer()
 
-            if model.showTeamProgressInHeader, model.selectedAgentTeam != nil {
+            if model.showTeamProgressInHeader, agentTeams.selectedAgentTeam != nil {
                 Button {
                     teamProgressPresented.toggle()
                 } label: {
@@ -164,8 +168,8 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
-            if model.activeTaskRecord != nil, model.landingFlow.taskHasChanges {
-                Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
+            if model.activeTaskRecord != nil, landingFlow.taskHasChanges {
+                Button("Review & Land") { landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(LocusTheme.ink)
@@ -204,10 +208,10 @@ struct WorkspaceView: View {
                 .frame(maxWidth: 176)
             }
             .buttonStyle(.locus())
-            .help(model.agentTeamsModel.teamModeEnabled
+            .help(agentTeams.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
                 : "Select model")
-            .accessibilityLabel(model.agentTeamsModel.teamModeEnabled
+            .accessibilityLabel(agentTeams.teamModeEnabled
                 ? "Active team, \(model.modelPickerLabel), \(runtimeHealthTitle)"
                 : "Select model, \(model.modelPickerLabel), \(runtimeHealthTitle)")
             .accessibilityIdentifier("workspace.modelPicker")
@@ -781,6 +785,7 @@ private struct PassiveChatBlockView: View {
 
 struct ReviewAndLandView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var landingFlow: LandingFlowModel
     @Environment(\.dismiss) private var dismiss
     @State private var destination = "local"
     @State private var branchName = ""
@@ -795,7 +800,7 @@ struct ReviewAndLandView: View {
     }
 
     private var checksAreCurrentAndPassing: Bool {
-        guard let check = model.landingFlow.landingCheckRun, let preflight = model.landingFlow.landingPreflight else {
+        guard let check = landingFlow.landingCheckRun, let preflight = landingFlow.landingPreflight else {
             return false
         }
         return check.passed && check.tree == preflight.tree
@@ -806,8 +811,8 @@ struct ReviewAndLandView: View {
     }
 
     private var canLand: Bool {
-        guard let preflight = model.landingFlow.landingPreflight, preflight.patchBytes > 0,
-              !model.landingFlow.isLandingOperationRunning else { return false }
+        guard let preflight = landingFlow.landingPreflight, preflight.patchBytes > 0,
+              !landingFlow.isLandingOperationRunning else { return false }
         if destination == "local" { return preflight.canApplyLocal }
         return branchProblem == nil
             && !commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -835,7 +840,7 @@ struct ReviewAndLandView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         stageHeader("1", "Review changes")
-                        if let preflight = model.landingFlow.landingPreflight {
+                        if let preflight = landingFlow.landingPreflight {
                             HStack {
                                 Text("\(preflight.paths.count) file\(preflight.paths.count == 1 ? "" : "s")")
                                 Text(ByteCountFormatter.string(
@@ -849,7 +854,7 @@ struct ReviewAndLandView: View {
                             .foregroundStyle(LocusTheme.muted)
 
                             ScrollView([.horizontal, .vertical]) {
-                                Text(model.landingFlow.landingPatch.isEmpty ? "No changes." : model.landingFlow.landingPatch)
+                                Text(landingFlow.landingPatch.isEmpty ? "No changes." : landingFlow.landingPatch)
                                     .font(.locus(size: 9, design: .monospaced))
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -877,24 +882,24 @@ struct ReviewAndLandView: View {
                             .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
                             .accessibilityIdentifier("landing.checkCommands")
                         HStack {
-                            if model.landingFlow.activeLandingCheckRunID != nil {
+                            if landingFlow.activeLandingCheckRunID != nil {
                                 ProgressView().controlSize(.small)
                                 Text("Running checks…")
                                     .font(.locus(size: 9))
-                                Button("Stop") { model.landingFlow.stopLandingChecks() }
+                                Button("Stop") { landingFlow.stopLandingChecks() }
                                     .accessibilityIdentifier("landing.stopChecks")
                             } else {
-                                Button("Run Checks") { model.landingFlow.runLandingChecks(commands: commands) }
-                                    .disabled(commands.isEmpty || model.landingFlow.isLandingOperationRunning)
+                                Button("Run Checks") { landingFlow.runLandingChecks(commands: commands) }
+                                    .disabled(commands.isEmpty || landingFlow.isLandingOperationRunning)
                                     .accessibilityIdentifier("landing.runChecks")
                             }
                             Spacer()
                             if checksAreCurrentAndPassing {
                                 Label("Checks passed", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(LocusTheme.success)
-                            } else if let check = model.landingFlow.landingCheckRun {
+                            } else if let check = landingFlow.landingCheckRun {
                                 Label(
-                                    check.tree == model.landingFlow.landingPreflight?.tree
+                                    check.tree == landingFlow.landingPreflight?.tree
                                         ? "Checks did not pass" : "Checks are stale",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -906,7 +911,7 @@ struct ReviewAndLandView: View {
                         }
                         .font(.locus(size: 9, weight: .semibold))
 
-                        if let run = model.landingFlow.landingCheckRun {
+                        if let run = landingFlow.landingCheckRun {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(run.results) { result in
                                     DisclosureGroup {
@@ -941,13 +946,13 @@ struct ReviewAndLandView: View {
                         landingDestinationControl
 
                         if destination == "local" {
-                            if model.landingFlow.landingPreflight?.canApplyLocal == true {
+                            if landingFlow.landingPreflight?.canApplyLocal == true {
                                 Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
                                     .font(.locus(size: 9))
                                     .foregroundStyle(LocusTheme.muted)
                             } else {
                                 Label(
-                                    model.landingFlow.landingPreflight?.conflict.nilIfEmpty
+                                    landingFlow.landingPreflight?.conflict.nilIfEmpty
                                         ?? "The patch conflicts with Local. Both checkouts are unchanged.",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
@@ -960,7 +965,7 @@ struct ReviewAndLandView: View {
                                     .foregroundStyle(LocusTheme.success)
                                 HStack {
                                     Button("Publish") { model.publishLandedWorktree() }
-                                        .disabled(model.landingFlow.isLandingOperationRunning)
+                                        .disabled(landingFlow.isLandingOperationRunning)
                                     Button("Open Pull Request") { model.openLandedPullRequest() }
                                     Text(task.landingCommit?.prefix(10) ?? "")
                                         .font(.locus(size: 8, design: .monospaced))
@@ -1025,7 +1030,7 @@ struct ReviewAndLandView: View {
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                await model.landingFlow.refreshLandingReview()
+                await landingFlow.refreshLandingReview()
             }
         }
         .alert("Land without passing current checks?", isPresented: $confirmOverride) {
@@ -1085,7 +1090,7 @@ struct ReviewAndLandView: View {
     }
 
     private func land(override: Bool) {
-        model.landingFlow.landActiveTask(
+        landingFlow.landActiveTask(
             destination: destination,
             branch: branchName,
             commitMessage: commitMessage,
@@ -1121,6 +1126,7 @@ struct ActivityActionButtonStyle: ButtonStyle {
 struct ActivityCenterView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1133,25 +1139,25 @@ struct ActivityCenterView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                if model.visibleActivityRuns.contains(where: { model.activity.activityIsUnseen($0) }) {
-                    Button("Mark All Seen") { model.activity.markAllActivitySeen() }
+                if activityCenter.visibleActivityRuns.contains(where: { activityCenter.activityIsUnseen($0) }) {
+                    Button("Mark All Seen") { activityCenter.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if model.visibleActivityRuns.contains(where: {
+                if activityCenter.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
-                    Button("Clear Finished") { model.activity.clearFinishedActivityRuns() }
+                    Button("Clear Finished") { activityCenter.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
-                    Task { await model.activity.refreshActivityRuns() }
+                    Task { await activityCenter.refreshActivityRuns() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .accessibilityIdentifier("activity.refresh")
                 Button {
                     withAnimation(LocusMotion.spatial) {
-                        model.activity.toggleActivityCenter()
+                        activityCenter.toggleActivityCenter()
                     }
                 } label: {
                     Image(systemName: "xmark")
@@ -1166,7 +1172,7 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.visibleActivityRuns.isEmpty {
+            if activityCenter.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -1206,7 +1212,7 @@ struct ActivityCenterView: View {
         }
         .task {
             while !Task.isCancelled {
-                await model.activity.refreshActivityRuns()
+                await activityCenter.refreshActivityRuns()
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -1214,7 +1220,7 @@ struct ActivityCenterView: View {
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
-        let values = model.visibleActivityRuns.filter { activityGroup(for: $0) == group }
+        let values = activityCenter.visibleActivityRuns.filter { activityGroup(for: $0) == group }
         if group == .queued {
             return values.sorted {
                 ($0.queuePosition ?? .max, $0.createdAt)
@@ -1253,7 +1259,7 @@ struct ActivityCenterView: View {
                         Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(color(for: run))
-                        if model.activity.activityIsUnseen(run) {
+                        if activityCenter.activityIsUnseen(run) {
                             Text("NEW")
                                 .font(.locus(size: 7, weight: .bold, design: .monospaced))
                                 .foregroundStyle(LocusTheme.brandInk)
@@ -1308,7 +1314,7 @@ struct ActivityCenterView: View {
                     Button("Retry") { model.retryRun(run) }
                 }
                 if TeamRunState(rawValue: run.state)?.isTerminal == true {
-                    Button("Remove") { model.activity.dismissActivityRun(run) }
+                    Button("Remove") { activityCenter.dismissActivityRun(run) }
                         .help("Remove from Activity; the run timeline is preserved")
                         .accessibilityIdentifier("activity.remove.\(run.id)")
                 }
@@ -1391,6 +1397,7 @@ struct ActivityCenterView: View {
 
 private struct ScheduleRow: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedule: ScheduleModel
     let task: ScheduledTask
     @State private var confirmsDelete = false
 
@@ -1431,15 +1438,15 @@ private struct ScheduleRow: View {
             }
 
             HStack(spacing: 7) {
-                Button("Run Now") { model.schedule.runScheduleNow(task) }
+                Button("Run Now") { schedule.runScheduleNow(task) }
                 Button("Edit") { model.presentScheduleEditor(task: task) }
                 if task.enabled {
-                    Button("Pause") { model.schedule.setScheduleEnabled(task, enabled: false) }
+                    Button("Pause") { schedule.setScheduleEnabled(task, enabled: false) }
                 } else if task.rule.kind != .once || task.nextRunAt != nil {
-                    Button("Resume") { model.schedule.setScheduleEnabled(task, enabled: true) }
+                    Button("Resume") { schedule.setScheduleEnabled(task, enabled: true) }
                 }
                 if task.lastRunID != nil {
-                    Button("Latest Result") { model.schedule.openLatestRun(for: task) }
+                    Button("Latest Result") { schedule.openLatestRun(for: task) }
                 }
                 Spacer()
                 Button("Delete", role: .destructive) { confirmsDelete = true }
@@ -1455,7 +1462,7 @@ private struct ScheduleRow: View {
         .accessibilityIdentifier("schedule.row.\(task.id)")
         .alert("Delete \(task.name)?", isPresented: $confirmsDelete) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { model.schedule.deleteSchedule(task) }
+            Button("Delete", role: .destructive) { schedule.deleteSchedule(task) }
         } message: {
             Text("Its generated chats and run history will be kept.")
         }
@@ -1489,6 +1496,9 @@ private struct ScheduleRow: View {
 
 struct ScheduleEditorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var draft: ScheduleEditorDraft
     @State private var routeSelection: String
 
@@ -1508,12 +1518,12 @@ struct ScheduleEditorView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                Button("Cancel") { model.schedule.scheduleEditorDraft = nil }
+                Button("Cancel") { schedule.scheduleEditorDraft = nil }
                 Button(draft.id == nil ? "Create" : "Save") {
-                    Task { _ = await model.schedule.saveSchedule(draft) }
+                    Task { _ = await schedule.saveSchedule(draft) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.schedule.isSavingSchedule)
+                .disabled(schedule.isSavingSchedule)
                 .accessibilityIdentifier("scheduleEditor.save")
             }
             .padding(18)
@@ -1564,19 +1574,19 @@ struct ScheduleEditorView: View {
                     if draft.runner == .team {
                         Picker("Team", selection: $draft.teamID) {
                             Text("Choose a team").tag(String?.none)
-                            ForEach(model.agentTeams) { team in
+                            ForEach(agentTeams.agentTeams) { team in
                                 Text(team.name).tag(Optional(team.id.uuidString))
                             }
                         }
                         .onChange(of: draft.teamID) { _, value in
                             draft.teamName = value.flatMap { id in
-                                model.agentTeams.first(where: { $0.id.uuidString == id })?.name
+                                agentTeams.agentTeams.first(where: { $0.id.uuidString == id })?.name
                             } ?? ""
                         }
                     }
                     Picker("Model account", selection: $routeSelection) {
                         Text("Local Ollama").tag("ollama")
-                        ForEach(model.providerAccounts) { account in
+                        ForEach(providerAccounts.providerAccounts) { account in
                             Text(account.displayName).tag(account.id.uuidString)
                         }
                     }
@@ -1661,13 +1671,13 @@ struct ScheduleEditorView: View {
 
     private var availableModels: [String] {
         if routeSelection == "ollama" {
-            let names = model.providerAccountsModel.installedLocalModels.map(\.name)
+            let names = providerAccounts.installedLocalModels.map(\.name)
             return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
         }
         guard let id = UUID(uuidString: routeSelection),
-              let account = model.providerAccounts.first(where: { $0.id == id })
+              let account = providerAccounts.providerAccounts.first(where: { $0.id == id })
         else { return [draft.model].filter { !$0.isEmpty } }
-        let names = model.accountModels[id] ?? account.kind.curatedModels
+        let names = providerAccounts.accountModels[id] ?? account.kind.curatedModels
         return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
     }
 
@@ -1676,7 +1686,7 @@ struct ScheduleEditorView: View {
             draft.provider = "ollama"
             draft.providerAccountID = nil
         } else if let id = UUID(uuidString: value),
-                  let account = model.providerAccounts.first(where: { $0.id == id }) {
+                  let account = providerAccounts.providerAccounts.first(where: { $0.id == id }) {
             draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
             draft.providerAccountID = value
         }
@@ -1705,6 +1715,8 @@ struct ScheduleEditorView: View {
 /// its contents scroll, so a long route can never resize the app or its menu.
 private struct ModelPickerPopover: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     let dismiss: () -> Void
 
     var body: some View {
@@ -1730,7 +1742,7 @@ private struct ModelPickerPopover: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let team = model.selectedAgentTeam {
+                    if let team = agentTeams.selectedAgentTeam {
                         teamSection(team)
                         Divider()
                     }
@@ -1761,7 +1773,7 @@ private struct ModelPickerPopover: View {
                 ) {
                     Task {
                         await model.refreshMetadata()
-                        await model.providerAccountsModel.refreshAccountCatalogs(force: true)
+                        await providerAccounts.refreshAccountCatalogs(force: true)
                     }
                 }
                 pickerAction(
@@ -1812,7 +1824,7 @@ private struct ModelPickerPopover: View {
                 }
                 .accessibilityIdentifier("workspace.modelPicker.manageTeam")
                 Button("Switch to Solo") {
-                    model.agentTeamsModel.selectAgentTeam(nil)
+                    agentTeams.selectAgentTeam(nil)
                 }
                 .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
             }
@@ -1823,7 +1835,7 @@ private struct ModelPickerPopover: View {
 
     private func routeSection(_ section: ModelPickerSection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionLabel(model.agentTeamsModel.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            sectionLabel(agentTeams.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
             if let message = section.emptyMessage {
                 Text(message)
                     .font(.locus(size: 9))
@@ -1831,7 +1843,7 @@ private struct ModelPickerPopover: View {
             }
             ForEach(section.models, id: \.self) { name in
                 Button {
-                    if model.agentTeamsModel.teamModeEnabled { model.agentTeamsModel.selectAgentTeam(nil) }
+                    if agentTeams.teamModeEnabled { agentTeams.selectAgentTeam(nil) }
                     model.selectModel(account: section.account, model: name)
                     dismiss()
                 } label: {
@@ -1886,6 +1898,8 @@ private struct ModelPickerPopover: View {
 
 private struct TeamActivityPanel: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var landingFlow: LandingFlowModel
     @State private var expanded = true
 
     var body: some View {
@@ -1924,7 +1938,7 @@ private struct TeamActivityPanel: View {
             if expanded {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(model.teamRunLive.agentActivities) { activity in
+                        ForEach(teamRunLive.agentActivities) { activity in
                             AgentActivityRow(
                                 activity: activity,
                                 thinkingVisibility: model.thinkingVisibility
@@ -1948,18 +1962,18 @@ private struct TeamActivityPanel: View {
     private func taskActions(_ task: TaskRecord) -> some View {
         HStack(spacing: 8) {
             Label(
-                model.landingFlow.taskHasChanges
-                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(model.landingFlow.taskPatchBytes), countStyle: .file)) ready"
+                landingFlow.taskHasChanges
+                    ? "\(ByteCountFormatter.string(fromByteCount: Int64(landingFlow.taskPatchBytes), countStyle: .file)) ready"
                     : "Private checkout",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.locus(size: 8, design: .monospaced))
             .foregroundStyle(LocusTheme.muted)
             Spacer()
-            Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
-                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
+            Button("Review & Land") { landingFlow.prepareReviewAndLand() }
+                .disabled(model.isBusy || !landingFlow.taskHasChanges)
             Button("Copy Patch") { model.copyActiveTaskPatch() }
-                .disabled(model.isBusy || !model.landingFlow.taskHasChanges)
+                .disabled(model.isBusy || !landingFlow.taskHasChanges)
             Menu {
                 Button("Open Checkout") { model.openActiveTaskCheckout() }
                 Button("Reveal in Finder") { model.revealActiveTaskCheckout() }
@@ -2075,6 +2089,7 @@ private struct AgentActivityRow: View {
 
 private struct WorkStatusStrip: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @ObservedObject var streamingReply: StreamingReplyState
 
     var body: some View {
@@ -2098,9 +2113,9 @@ private struct WorkStatusStrip: View {
                         Text("~\(model.estimatedStreamingTokens.formatted()) streamed tokens")
                     }
                     if model.orchestrationState != nil {
-                        Text("\(model.teamRunLive.teamModelCalls.formatted()) team calls")
-                        if model.teamRunLive.teamMeteredTokens > 0 {
-                            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
+                        Text("\(teamRunLive.teamModelCalls.formatted()) team calls")
+                        if teamRunLive.teamMeteredTokens > 0 {
+                            Text("\(teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
                         }
                     }
                     if let info = model.sessionInfo {
@@ -2255,6 +2270,8 @@ struct TranscriptFollowState: Equatable {
 private struct ConversationView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -2603,7 +2620,7 @@ private struct ConversationView: View {
                 .equatable()
             }
             if sourceBlock.kind == .user, let runID = sourceBlock.runID {
-                if model.runKind(for: runID) == "team" {
+                if runKind(for: runID) == "team" {
                     TeamRunBoardView(runID: runID, request: sourceBlock.text)
                         .environmentObject(model)
                         .id("team-board-\(runID)")
@@ -2627,6 +2644,15 @@ private struct ConversationView: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    private func runKind(for runID: String) -> String {
+        if model.turnDispatchedTeamRunID == runID { return "team" }
+        if runs.selectedOrchestrationRun?.id == runID {
+            return runs.selectedOrchestrationRun?.runKind ?? "solo"
+        }
+        if let kind = runs.runDetailsByID[runID]?.runKind { return kind }
+        return runs.orchestrationRuns.first(where: { $0.id == runID })?.runKind ?? "solo"
     }
 
     private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {

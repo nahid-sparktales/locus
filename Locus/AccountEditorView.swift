@@ -7,6 +7,10 @@ import SwiftUI
 /// written while the sheet is open, so Cancel really does leave no trace.
 struct AccountEditorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+#if !LOCUS_APP_STORE
+    @EnvironmentObject private var codexComponent: CodexComponentInstaller
+#endif
     @Environment(\.dismiss) private var dismiss
 
     /// The account being edited, or a fresh one for the chosen provider.
@@ -241,14 +245,14 @@ struct AccountEditorView: View {
                 nativeMode = account.codexNativeModeEnabled
                 webSearch = account.codexWebSearchEnabled
                 reasoningEffort = account.codexReasoningEffortValue
-                Task { await model.providerAccountsModel.refreshChatGPTAccount(for: account) }
+                Task { await providerAccounts.refreshChatGPTAccount(for: account) }
             }
         }
     }
 
     @ViewBuilder
     private var chatGPTControls: some View {
-        let status = model.providerAccountsModel.chatGPTAccounts[account.id]
+        let status = providerAccounts.chatGPTAccounts[account.id]
         VStack(alignment: .leading, spacing: 10) {
             if let status, status.status == "signed_in" {
                 Label("Signed in", systemImage: "checkmark.circle.fill")
@@ -264,25 +268,25 @@ struct AccountEditorView: View {
                 HStack {
                     Button("Refresh") {
                         Task {
-                            await model.providerAccountsModel.refreshChatGPTAccount(
+                            await providerAccounts.refreshChatGPTAccount(
                                 for: account,
                                 forceTokenRefresh: true
                             )
                         }
                     }
                     Button("Sign Out") {
-                        Task { await model.providerAccountsModel.signOutChatGPT(from: account) }
+                        Task { await providerAccounts.signOutChatGPT(from: account) }
                     }
                 }
-            } else if model.providerAccountsModel.chatGPTLoginIDs[account.id] != nil {
+            } else if providerAccounts.chatGPTLoginIDs[account.id] != nil {
                 Label("Finish signing in in your browser", systemImage: "safari")
                     .font(.locus(size: 10, weight: .semibold))
                 HStack {
                     Button("Refresh Status") {
-                        Task { await model.providerAccountsModel.refreshChatGPTAccount(for: account) }
+                        Task { await providerAccounts.refreshChatGPTAccount(for: account) }
                     }
                     Button("Cancel Login") {
-                        Task { await model.providerAccountsModel.cancelChatGPTLogin(for: account) }
+                        Task { await providerAccounts.cancelChatGPTLogin(for: account) }
                     }
                 }
             } else if model.chatGPTComponentMissing {
@@ -295,7 +299,7 @@ struct AccountEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button("Sign in with ChatGPT") {
-                    Task { await model.providerAccountsModel.startChatGPTLogin(for: account) }
+                    Task { await providerAccounts.startChatGPTLogin(for: account) }
                 }
                 .disabled(status?.runtimeAvailable == false)
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")
@@ -338,7 +342,7 @@ struct AccountEditorView: View {
     /// catalog; a fixed list stands in before the catalog has arrived. The
     /// stored choice is kept selectable even when the catalog drops it.
     private var reasoningEffortOptions: [String] {
-        var efforts = model.providerAccountsModel.accountModelCatalogs[account.id]?
+        var efforts = providerAccounts.accountModelCatalogs[account.id]?
             .first(where: { $0.id == account.preferredModel })?
             .supportedReasoningEfforts?
             .map(\.effort) ?? []
@@ -362,7 +366,7 @@ struct AccountEditorView: View {
     @ViewBuilder
     private var componentDownload: some View {
         VStack(alignment: .leading, spacing: 8) {
-            switch model.codexComponent.state {
+            switch codexComponent.state {
             case .idle:
                 Text(
                     "Using a ChatGPT plan needs a one-time component from SparkTales. "
@@ -382,7 +386,7 @@ struct AccountEditorView: View {
                     "Downloading \(byteLabel(received)) of \(byteLabel(total))…",
                     fraction: total > 0 ? Double(received) / Double(total) : nil
                 )
-                Button("Cancel") { model.codexComponent.cancel() }
+                Button("Cancel") { codexComponent.cancel() }
             case .verifying:
                 progressRow("Verifying the signature…", fraction: nil)
             case .installing:

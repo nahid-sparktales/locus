@@ -847,7 +847,6 @@ extension AppModel {
         if startsFreshOverview, !previousSessionID.isEmpty, previousSessionID != info.sessionID {
             liveApplicationTargets.removeValue(forKey: previousSessionID)
             simulatorControl.detach(sessionID: previousSessionID)
-            objectWillChange.send()
         }
         activateSessionOverview(info, reset: startsFreshOverview)
         sendComputerControlCapability()

@@ -123,13 +123,4 @@ final class AgentTeamsModelTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: AgentTeamStore.consentKey))
     }
 
-    func testAppModelRepublishesTeamChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.soloSwarmEnabled.toggle()
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

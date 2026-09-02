@@ -53,11 +53,12 @@ files hold the few deliberately permanent forwarders (for example
 `showToast` and the turn-critical provider/team state); each facade
 documents why its members survive.
 
-Views for a feature should observe its feature model directly
-(`model.knowledge`, `model.extensionsModel`, …). A composition view may read
-a child model through `AppModel`; when it does, `AppModel` must deliberately
-bridge publication rather than assuming nested observable objects invalidate
-their parent — every feature model is bridged in `AppModel.init` today.
+Views observe feature models directly through the scene-level
+`AppFeatureEnvironmentModifier`, or receive an existing model explicitly as an
+`@ObservedObject`. Reactive views must not reach through `AppModel` feature
+facades. `AppModel` does not republish child `objectWillChange` events; its two
+remaining child subscriptions perform capability side effects only. Computed
+facades remain temporarily for non-reactive orchestration and extension code.
 
 Dependencies flow toward feature models. A feature model must not import or
 retain `AppModel`; the composition root supplies narrow callbacks for shared
