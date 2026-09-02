@@ -156,7 +156,7 @@ private struct AgentDetailView: View {
                         title: "New chat",
                         symbol: "plus",
                         prominent: true,
-                        help: "Start another chat with this agent",
+                        help: "Start a side conversation with this agent. It does not receive events.",
                         identifier: "agentOverview.newChat"
                     ) {
                         model.newAgentChat(triggerID: overview.triggerID)
@@ -174,9 +174,10 @@ private struct AgentDetailView: View {
                     AgentActionButton(
                         title: trigger.enabled ? "Pause" : "Resume",
                         symbol: trigger.enabled ? "pause" : "play",
+                        prominent: overview.status.needsResume,
                         help: trigger.enabled
                             ? "Keep recording events without starting chats"
-                            : "Start chats for matching events again",
+                            : "Start chats for matching events again, and clear the error",
                         identifier: "agentOverview.toggle"
                     ) {
                         automation.setTrigger(trigger, enabled: !trigger.enabled)
@@ -213,6 +214,8 @@ private struct AgentDetailView: View {
                 model.presentConfigureAgent(draftText: "")
             }
             .accessibilityIdentifier("agentOverview.menu.manage")
+            Button("New Agent…") { model.presentNewAgent() }
+                .accessibilityIdentifier("agentOverview.menu.newAgent")
             if let path = overview.chats.compactMap(\.session.workspacePath).first {
                 Button("Reveal Workspace in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -262,11 +265,18 @@ private struct AgentDetailView: View {
                 Text(overview.status.isWarning ? overview.status.detail : "Last error")
                     .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(error)
                     .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
+                if overview.hasLostEventChat {
+                    Text("Its chat cannot be restored. Delete this agent and configure a new one.")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -454,15 +464,22 @@ private struct AgentDetailView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.locus())
-                    .help("Start another chat with this agent")
+                    .help("Start a side conversation with this agent. It does not receive events.")
                     .accessibilityLabel("New chat with \(overview.name)")
                     .accessibilityIdentifier("agentOverview.chats.new")
                 }
             }
+            if let eventChat = overview.eventChat, overview.chats.count > 1 {
+                Text("Events arrive in \(eventChat.session.displayTitle). Other chats are side conversations.")
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("agentOverview.chats.explainer")
+            }
             if overview.chats.isEmpty {
                 Text(overview.trigger == nil
                     ? "No chats survived for this agent."
-                    : "No chats yet. New chat gives this agent its first conversation; matching events also start one.")
+                    : "No chats yet. Every event arrives in this agent's event chat; New chat starts a side conversation that does not receive events.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -544,7 +561,7 @@ private struct AgentFleetView: View {
     @ObservedObject var automation: EventAutomationModel
 
     private var activeCount: Int { entries.filter { $0.status == .active }.count }
-    private var attentionCount: Int { entries.filter { $0.status.isWarning }.count }
+    private var stoppedCount: Int { entries.filter { $0.status.needsResume }.count }
 
     var body: some View {
         ScrollView {
@@ -594,18 +611,19 @@ private struct AgentFleetView: View {
                     title: "New agent",
                     symbol: "plus",
                     prominent: true,
-                    help: "Configure a new agent",
+                    help: "Configure an agent that wakes on email, messages, webhooks, or a price",
                     identifier: "agentOverview.fleet.create"
                 ) {
-                    model.presentConfigureAgent(draftText: model.draftText)
+                    model.presentNewAgent()
                 }
                 AgentActionButton(
-                    title: "Manage",
-                    symbol: "gearshape.2",
-                    help: "Open Configure Agent",
+                    title: "Sources",
+                    symbol: "point.3.connected.trianglepath.dotted",
+                    help: "Connect Gmail, Telegram, a webhook, or a price feed",
                     identifier: "agentOverview.fleet.manage"
                 ) {
                     model.presentConfigureAgent(draftText: "")
+                    model.configureAgentTab = .sources
                 }
                 Spacer(minLength: 0)
             }
@@ -618,7 +636,9 @@ private struct AgentFleetView: View {
     private var fleetSummary: String {
         guard !entries.isEmpty else { return "Persistent agents that wake on events" }
         var parts = ["\(entries.count) configured", "\(activeCount) active"]
-        if attentionCount > 0 { parts.append("\(attentionCount) need attention") }
+        if stoppedCount > 0 {
+            parts.append("\(stoppedCount) stopped by Locus")
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -665,7 +685,7 @@ private struct AgentGlyph: View {
         switch status {
         case .active, .fired: LocusTheme.signalDeep
         case .paused: LocusTheme.muted
-        case .needsAttention, .missingTrigger: LocusTheme.warning
+        case .stopped, .failing, .missingTrigger: LocusTheme.warning
         }
     }
 
@@ -687,7 +707,8 @@ private struct AgentStatusPill: View {
         switch status {
         case .active: LocusTheme.success
         case .paused: LocusTheme.muted
-        case .needsAttention, .missingTrigger: LocusTheme.warning
+        case .stopped, .missingTrigger: LocusTheme.warning
+        case .failing: LocusTheme.coral
         case .fired: LocusTheme.blue
         }
     }
@@ -843,10 +864,23 @@ private struct AgentChatRow: View {
                     .frame(width: 6, height: 6)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(chat.session.displayTitle)
-                        .font(.locus(size: 10, weight: chat.isCurrent ? .semibold : .medium))
-                        .foregroundStyle(LocusTheme.ink)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(chat.session.displayTitle)
+                            .font(.locus(size: 10, weight: chat.isCurrent ? .semibold : .medium))
+                            .foregroundStyle(LocusTheme.ink)
+                            .lineLimit(1)
+                        if chat.isEventTarget {
+                            Text("EVENTS")
+                                .font(.locus(size: 7, weight: .bold))
+                                .tracking(0.4)
+                                .foregroundStyle(LocusTheme.signalDeep)
+                                .padding(.horizontal, 5)
+                                .frame(height: 15)
+                                .background(LocusTheme.signal.opacity(0.16))
+                                .clipShape(Capsule())
+                                .accessibilityHidden(true)
+                        }
+                    }
                     HStack(spacing: 4) {
                         if chat.isRunning {
                             if let startedAt = chat.startedAt {
@@ -861,6 +895,7 @@ private struct AgentChatRow: View {
                             Text("· Open now")
                         }
                     }
+                    .lineLimit(1)
                     .font(.locus(size: 8))
                     .foregroundStyle(chat.isRunning ? LocusTheme.success : LocusTheme.textSecondary)
                 }
@@ -879,8 +914,12 @@ private struct AgentChatRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.locus())
-        .help(chat.isCurrent ? "This chat is open" : "Open \(chat.session.displayTitle)")
-        .accessibilityLabel(chat.session.displayTitle)
+        .help(chat.isEventTarget
+            ? "Every event this agent receives arrives here"
+            : (chat.isCurrent ? "This chat is open" : "Open \(chat.session.displayTitle)"))
+        .accessibilityLabel(chat.isEventTarget
+            ? "\(chat.session.displayTitle), receives events"
+            : chat.session.displayTitle)
         .accessibilityValue(chat.isRunning ? "Running" : (chat.isCurrent ? "Open" : "Idle"))
         .accessibilityIdentifier("agentOverview.chat.\(chat.session.id)")
     }

@@ -173,13 +173,32 @@ final class AgentOverviewTests: XCTestCase {
         XCTAssertEqual(overview.instruction, "")
     }
 
-    func testStatusPrecedenceIsErrorThenFiredThenPaused() {
+    func testStatusSeparatesAPersonPausingFromLocusStoppingTheAgent() {
         XCTAssertEqual(AgentOverview.status(for: nil), .missingTrigger)
+        // enabled, no error: listening.
+        XCTAssertEqual(AgentOverview.status(for: trigger()), .active)
+        // disabled, no error: someone pressed Pause.
         XCTAssertEqual(AgentOverview.status(for: trigger(enabled: false)), .paused)
+        // disabled with an error: a dispatch failure switched it off.
         XCTAssertEqual(
             AgentOverview.status(for: trigger(enabled: false, lastError: "poll failed")),
-            .needsAttention
+            .stopped
         )
+        // enabled with an error: one event failed, the agent still listens.
+        XCTAssertEqual(
+            AgentOverview.status(for: trigger(lastError: "poll failed")),
+            .failing
+        )
+
+        XCTAssertTrue(AgentOverview.Status.stopped.needsResume)
+        XCTAssertFalse(AgentOverview.Status.paused.needsResume)
+        XCTAssertFalse(AgentOverview.Status.failing.needsResume)
+        // A deliberate pause is not a problem to be flagged; the rest are.
+        XCTAssertFalse(AgentOverview.Status.paused.isWarning)
+        XCTAssertTrue(AgentOverview.Status.stopped.isWarning)
+        XCTAssertTrue(AgentOverview.Status.failing.isWarning)
+        XCTAssertFalse(AgentOverview.Status.fired.isWarning)
+
         var fired = PriceTriggerState()
         fired.fired = true
         XCTAssertEqual(
@@ -191,6 +210,68 @@ final class AgentOverviewTests: XCTestCase {
             .active,
             "only price alerts fire"
         )
+    }
+
+    func testBackendDispatchDetailsAreTranslatedBeforeTheyBecomeAStatusLine() {
+        XCTAssertEqual(
+            AgentOverview.humanizedError("target chat not found"),
+            "This agent's chat was deleted, so events have nowhere to go."
+        )
+        XCTAssertEqual(
+            AgentOverview.humanizedError("the target chat model is unavailable"),
+            "The model this agent runs on is no longer available."
+        )
+        // Anything Locus does not recognize is still shown, as a sentence.
+        XCTAssertEqual(AgentOverview.humanizedError("gmail token expired"), "Gmail token expired.")
+        XCTAssertEqual(AgentOverview.humanizedError("Already fine."), "Already fine.")
+        XCTAssertEqual(AgentOverview.humanizedError("   "), "")
+    }
+
+    func testOnlyTheTriggersTargetChatIsMarkedAsReceivingEvents() {
+        let overview = AgentOverview.resolve(
+            triggerID: "weather",
+            trigger: trigger(),
+            connections: [gmail],
+            sessions: [session("chat-new", age: 60), session("chat-old", age: 7_200)],
+            deliveries: [],
+            currentSessionID: "chat-old",
+            runningSessionIDs: [],
+            now: now
+        )
+
+        // `trigger()` targets "chat-new".
+        XCTAssertEqual(overview.eventChat?.id, "chat-new")
+        XCTAssertEqual(overview.chats.filter(\.isEventTarget).map(\.id), ["chat-new"])
+        XCTAssertFalse(overview.hasLostEventChat)
+
+        // Delete that chat and the agent has nowhere to put events.
+        let orphaned = AgentOverview.resolve(
+            triggerID: "weather",
+            trigger: trigger(),
+            connections: [gmail],
+            sessions: [session("chat-old", age: 7_200)],
+            deliveries: [],
+            currentSessionID: "",
+            runningSessionIDs: [],
+            now: now
+        )
+        XCTAssertNil(orphaned.eventChat)
+        XCTAssertTrue(orphaned.hasLostEventChat)
+        XCTAssertFalse(orphaned.chats.isEmpty, "the side conversations survive")
+
+        // Chats without a trigger cannot claim to receive anything.
+        let noTrigger = AgentOverview.resolve(
+            triggerID: "weather",
+            trigger: nil,
+            connections: [],
+            sessions: [session("chat-new", age: 60)],
+            deliveries: [],
+            currentSessionID: "",
+            runningSessionIDs: [],
+            now: now
+        )
+        XCTAssertNil(noTrigger.eventChat)
+        XCTAssertFalse(noTrigger.hasLostEventChat)
     }
 
     func testRecentEventsAreNewestFirstCappedAndCounted() {
@@ -357,8 +438,12 @@ final class AgentOverviewTests: XCTestCase {
             runningSessionIDs: [],
             now: now
         )
-        XCTAssertEqual(overview.status, .needsAttention)
-        XCTAssertEqual(overview.lastError, "Gmail token expired")
+        XCTAssertEqual(overview.status, .failing, "the trigger is still enabled")
+        XCTAssertEqual(
+            overview.lastError,
+            "Gmail token expired.",
+            "the raw backend detail is sentence-cased before it is shown"
+        )
         XCTAssertEqual(overview.facts[0].value, "Missing connection")
         XCTAssertTrue(overview.facts[0].isWarning)
         XCTAssertEqual(overview.facts.map(\.label), ["Source", "Runs as", "May act through", "Created"])
@@ -397,7 +482,7 @@ final class AgentOverviewTests: XCTestCase {
         XCTAssertEqual(entries[1].chatCount, 2)
         XCTAssertEqual(entries[1].runningChatCount, 1)
         XCTAssertEqual(entries[1].latestChat?.id, "r1")
-        XCTAssertEqual(entries[0].status, .needsAttention)
+        XCTAssertEqual(entries[0].status, .failing)
         XCTAssertNil(entries[3].lastEventAt)
         XCTAssertNil(entries[4].lastEventAt)
         XCTAssertEqual(entries[2].summary, "Gmail · Incoming Event · Work")
@@ -592,14 +677,39 @@ final class AgentOverviewTests: XCTestCase {
     }
 
     @MainActor
-    func testNewChatInAgentsModeWithoutAnyAgentOpensConfigureAgent() {
+    func testThePrimaryActionCreatesTheThingEachDestinationIsAbout() {
         let model = AppModel(startImmediately: false)
-        model.sessions = [session("plain", triggerID: nil, name: nil, age: 5)]
-        model.sidebarDestination = .agents
-        XCTAssertFalse(model.configureAgentPresented)
+        model.sessions = [session("chat-new", age: 60)]
+        model.currentSessionID = "chat-new"
 
+        // Agents mode: ⌘N opens an empty agent, not another chat.
+        model.sidebarDestination = .agents
         model.newChatForSidebarDestination()
-        XCTAssertTrue(model.configureAgentPresented, "with no agent to chat with, New chat leads to making one")
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(
+            model.configureAgentPendingTriggerEdit,
+            PendingEventTriggerEdit(
+                trigger: nil,
+                targetSessionID: "chat-new",
+                isDedicatedAgent: false,
+                triggerKind: .event
+            )
+        )
+
+        // Mounting the sheet turns that request into a fresh editor draft.
+        model.mountPendingConfigureAgentEditor()
+        XCTAssertNil(model.configureAgentPendingTriggerEdit)
+        let draft = model.eventAutomations.editorDraft
+        XCTAssertNil(draft?.id, "a new agent, not an edit")
+        XCTAssertEqual(draft?.triggerKind, .event)
+        XCTAssertEqual(draft?.targetSessionID, EventTriggerEditorDraft.dedicatedAgentChat)
+
+        // A price agent can be requested directly.
+        model.dismissConfigureAgent()
+        model.presentNewAgent(kind: .price)
+        model.mountPendingConfigureAgentEditor()
+        XCTAssertEqual(model.eventAutomations.editorDraft?.triggerKind, .price)
     }
 }
 

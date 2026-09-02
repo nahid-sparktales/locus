@@ -953,7 +953,10 @@ final class AppModel: ObservableObject {
                 self?.sidebarDestination = .agents
                 self?.resume(session)
             },
-            showMessage: { [weak self] message in self?.showToast(message) }
+            showMessage: { [weak self] message in self?.showToast(message) },
+            notifyPaused: { [weak self] body in
+                self?.notifyNeedsAttentionIfInactive(body: body)
+            }
         )
         providerAccountsModel.configure(
             backend: backend,

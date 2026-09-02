@@ -1,24 +1,41 @@
 import Foundation
 
 /// An event-trigger editor the Configure Agent sheet opens once it exists.
+/// A nil `trigger` asks for a new agent of `triggerKind` rather than an edit.
 struct PendingEventTriggerEdit: Equatable {
-    let trigger: EventTrigger
+    let trigger: EventTrigger?
     let targetSessionID: String
-    let isDedicatedAgent: Bool
+    var isDedicatedAgent = false
+    var triggerKind: EventTriggerKind = .event
 }
 
 /// Chats that belong to a persistent agent. An agent's chats are ordinary
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
-    /// The sidebar's New chat button and ⌘N share this: Ask mode starts a
-    /// workspace chat, Agents mode starts the selected agent's next chat.
+    /// The sidebar's primary button and ⌘N share this. Each destination creates
+    /// the thing it is about: Ask makes a chat in the workspace, Agents makes an
+    /// agent. Chatting with an existing agent is a per-agent action, reached
+    /// from that agent's row or from the Agent panel, because it needs to name
+    /// which agent it belongs to.
     func newChatForSidebarDestination() {
         if sidebarDestination == .agents {
-            newAgentChat()
+            presentNewAgent()
         } else {
             newSession()
         }
+    }
+
+    /// Opens Configure Agent straight into an empty trigger editor. The first
+    /// field there is the kind, so a person who wanted a price alert is one
+    /// control away rather than back at the sheet's creation cards.
+    func presentNewAgent(kind: EventTriggerKind = .event) {
+        configureAgentPendingTriggerEdit = PendingEventTriggerEdit(
+            trigger: nil,
+            targetSessionID: currentSessionID,
+            triggerKind: kind
+        )
+        presentConfigureAgent(draftText: draftText)
     }
 
     /// Starts another chat for an agent. Without a trigger id it uses the

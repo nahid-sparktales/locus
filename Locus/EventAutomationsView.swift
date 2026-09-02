@@ -99,7 +99,7 @@ struct ConfigureAgentView: View {
                 .background(LocusTheme.signal.opacity(0.16))
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text("Configure Agent")
+                Text("Manage Agents")
                     .font(.locus(size: 17, weight: .bold))
                 Text("Choose what starts the work, where it runs, and what it may do.")
                     .font(.locus(size: 9))
@@ -1121,6 +1121,7 @@ private struct PriceSecretDraft: Identifiable, Hashable {
 private struct EventTriggerEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: EventTriggerEditorDraft
+    @State private var connectionSheet: ConnectorKind?
     @ObservedObject var automation: EventAutomationModel
     let sessions: [SessionSummary]
 
@@ -1145,9 +1146,21 @@ private struct EventTriggerEditorView: View {
                     Task { if await automation.saveTrigger(draft) { dismiss() } }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(automation.isSaving)
+                .disabled(automation.isSaving || missingRequirement != nil)
+                .help(missingRequirement ?? (draft.id == nil
+                    ? "Start listening for these events"
+                    : "Save this agent"))
+                .accessibilityIdentifier("eventTrigger.save")
             }
-            .padding(18)
+            if let missingRequirement {
+                Text(missingRequirement)
+                    .font(.locus(size: 8, weight: .medium))
+                    .foregroundStyle(LocusTheme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
+                    .accessibilityIdentifier("eventTrigger.requirement")
+            }
             Divider()
             Form {
                 Section("What starts it") {
@@ -1165,7 +1178,8 @@ private struct EventTriggerEditorView: View {
                     }
                     TextField("Name", text: $draft.name)
                     Picker("Connection", selection: $draft.connectionID) {
-                        Text("Choose a connection").tag("")
+                        Text(eligibleConnections.isEmpty
+                            ? "No sources connected yet" : "Choose a connection").tag("")
                         ForEach(eligibleConnections) { connection in
                             Text(connection.displayName).tag(connection.id)
                         }
@@ -1180,11 +1194,29 @@ private struct EventTriggerEditorView: View {
                             draft.actionConnectionIDs = [value]
                         }
                     }
+                    Menu {
+                        ForEach(addableConnectorKinds) { kind in
+                            Button {
+                                connectionSheet = kind
+                            } label: {
+                                Label(kind.title, systemImage: kind.symbol)
+                            }
+                            .accessibilityIdentifier("eventTrigger.addSource.\(kind.rawValue)")
+                        }
+                    } label: {
+                        Label(
+                            eligibleConnections.isEmpty ? "Connect a source…" : "Add a source…",
+                            systemImage: "plus"
+                        )
+                        .font(.locus(size: 9, weight: .semibold))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityIdentifier("eventTrigger.addSource")
                     sourceFilters
                 }
                 Section("What it does") {
                     Picker("Destination", selection: $draft.targetSessionID) {
-                        Text("Dedicated agent task")
+                        Text("Its own agent chat")
                             .tag(EventTriggerEditorDraft.dedicatedAgentChat)
                         Text("Choose an existing chat").tag("")
                         ForEach(sessions.filter { !$0.isArchived }) { session in
@@ -1192,16 +1224,33 @@ private struct EventTriggerEditorView: View {
                         }
                     }
                     if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
-                        Text("Creates a persistent task conversation in Agents. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
+                        Text("Creates one lasting conversation in Agents that every matching event arrives in. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
                             .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Picker("Mode", selection: $draft.mode) {
                         ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
                     }
-                    TextEditor(text: $draft.instruction)
-                        .font(.locus(size: 10))
-                        .frame(minHeight: 110)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Instruction")
+                            .font(.locus(size: 9, weight: .semibold))
+                            .foregroundStyle(LocusTheme.textSecondary)
+                        TextEditor(text: $draft.instruction)
+                            .font(.locus(size: 10))
+                            .frame(minHeight: 110)
+                            .overlay(alignment: .topLeading) {
+                                if draft.instruction.isEmpty {
+                                    Text("What should this agent do with each event?")
+                                        .font(.locus(size: 10))
+                                        .foregroundStyle(LocusTheme.muted)
+                                        .padding(.leading, 5)
+                                        .padding(.top, 8)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .accessibilityLabel("Instruction")
+                            .accessibilityIdentifier("eventTrigger.instruction")
+                    }
                     Text("This saved instruction is trusted configuration. Incoming bodies and JSON values are untrusted data and cannot alter permissions or this trigger.")
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
@@ -1227,6 +1276,18 @@ private struct EventTriggerEditorView: View {
             .padding(.horizontal, 12)
         }
         .frame(width: 680, height: 700)
+        .sheet(item: $connectionSheet) { kind in
+            ConnectorSetupView(kind: kind, automation: automation)
+        }
+        .onChange(of: automation.connections.map(\.id)) { oldValue, newValue in
+            // A source connected from inside the editor is almost certainly the
+            // one this agent wants, so select it rather than making the person
+            // find it in the picker they just left.
+            guard draft.connectionID.isEmpty,
+                  let added = Set(newValue).subtracting(oldValue).first,
+                  eligibleConnections.contains(where: { $0.id == added }) else { return }
+            draft.connectionID = added
+        }
         .accessibilityIdentifier("eventAutomations.editor")
     }
 
@@ -1318,6 +1379,38 @@ private struct EventTriggerEditorView: View {
             Text("Choose a connection to configure deterministic filters.")
                 .foregroundStyle(LocusTheme.muted)
         }
+    }
+
+    /// Which sources can start this kind of agent. Price alerts read a feed or
+    /// a signed relay; everything else ingests from a messaging source.
+    private var addableConnectorKinds: [ConnectorKind] {
+        draft.triggerKind == .price ? [.priceFeed, .webhook] : [.gmail, .telegram, .webhook]
+    }
+
+    /// The first unmet requirement, phrased as the next thing to do. Saving
+    /// used to be offered unconditionally and then fail in a toast.
+    private var missingRequirement: String? {
+        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Name this agent so you can find it later."
+        }
+        if draft.connectionID.isEmpty {
+            return eligibleConnections.isEmpty
+                ? "Connect a source first — this agent has nothing to listen to."
+                : "Choose the source this agent listens to."
+        }
+        if draft.targetSessionID.isEmpty {
+            return "Choose where this agent's events arrive."
+        }
+        if draft.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Write what this agent should do with each event."
+        }
+        if draft.triggerKind == .price {
+            guard let threshold = draft.filters.priceCondition?.thresholdDecimal,
+                  threshold > 0 else {
+                return "Add a positive price threshold."
+            }
+        }
+        return nil
     }
 
     private var eligibleConnections: [ConnectorConnection] {

@@ -103,7 +103,11 @@ struct LocusApp: App {
             }
 
             CommandGroup(replacing: .newItem) {
-                Button("New Session") { model.newChatForSidebarDestination() }
+                // The label follows the destination: ⌘N makes a chat in Ask and
+                // an agent in Agents, so a fixed title would misdescribe one.
+                Button(model.sidebarDestination == .agents ? "New Agent" : "New Session") {
+                    model.newChatForSidebarDestination()
+                }
                     .keyboardShortcut("n", modifiers: .command)
                 Button("New Chat Folder…") {
                     model.globalNewFolderName = ""
