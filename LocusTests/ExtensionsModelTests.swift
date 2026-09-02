@@ -43,13 +43,16 @@ final class ExtensionsModelTests: XCTestCase {
         let model = makeModel()
         model.ingest("extensions_changed", [:])
         model.ingest("mcp_status", [:])
+        // Wait for the end of the refresh, not its start. The stub records a
+        // request when it begins loading, so waiting on the path alone can
+        // observe the request before its response has been handled — which is
+        // what made this test fail on a loaded runner and pass locally.
         try await waitUntil(
-            BackendStub.requestPaths.contains("/api/extensions"),
+            model.extensionErrorMessage != nil,
             timeoutMessage: "refresh never fired"
         )
         // Two rapid events coalesce into one debounced refresh.
         XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/extensions" }.count, 1)
-        XCTAssertNotNil(model.extensionErrorMessage, "an unstubbed refresh surfaces its error")
     }
 
     func testMCPAuthRequiredSurfacesErrorAndToast() {
