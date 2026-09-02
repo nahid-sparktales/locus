@@ -147,7 +147,7 @@ struct SessionSidebarView: View {
     @State private var folderEditor: ChatFolderEditorRequest?
     @State private var folderEditorName = ""
     @State private var collapsedAgentIDs: Set<String> = []
-    @State private var agentToDelete: EventTrigger?
+    @State private var agentToDelete: AgentDefinition?
     @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
 
@@ -377,13 +377,15 @@ struct SessionSidebarView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Agent", role: .destructive) {
-                if let agentToDelete { model.eventAutomations.deleteTrigger(agentToDelete) }
+                if let agentToDelete { model.deleteAgent(agentToDelete) }
                 agentToDelete = nil
             }
             .accessibilityIdentifier("agent.delete.confirm")
             Button("Cancel", role: .cancel) { agentToDelete = nil }
         } message: {
-            Text("It stops listening for events. Its chats stay where they are.")
+            Text(agentToDelete?.isSchedule == true
+                ? "It stops running on its schedule. Its chats stay where they are."
+                : "It stops listening for events. Its chats stay where they are.")
         }
         .confirmationDialog(
             "Delete \(folderToDelete?.name ?? "this folder")?",
@@ -827,11 +829,16 @@ struct SessionSidebarView: View {
                     .accessibilityIdentifier("session.\(session.id).restoreWorktree")
             }
             Divider()
+            if let owner = model.agentOwningEventChat(session) {
+                Text("Receives \(owner.name)'s \(owner.vocabulary.arrivals)"
+                    + " — delete the agent to remove it")
+            }
             Button("Delete Chat", role: .destructive) {
                 model.deleteChat(session)
             }
             .disabled(
                 model.isBusy || model.hasPendingPermission || model.chatHasActiveRun(session)
+                    || model.agentOwningEventChat(session) != nil
             )
             .accessibilityIdentifier("session.\(session.id).delete")
         }
@@ -876,88 +883,21 @@ struct SessionSidebarView: View {
     }
 
     private func agentGroupRow(_ agent: AgentSidebarGroupModel) -> some View {
-        let expanded = !collapsedAgentIDs.contains(agent.id)
-        let trigger = model.eventAutomations.triggers.first { $0.id == agent.id }
-        let status = AgentOverview.status(for: trigger)
-        return Button {
-            withAnimation(LocusMotion.spatial) {
-                if expanded {
-                    collapsedAgentIDs.insert(agent.id)
-                } else {
-                    collapsedAgentIDs.remove(agent.id)
+        AgentGroupRow(
+            agent: agent,
+            automation: model.eventAutomations,
+            expanded: !collapsedAgentIDs.contains(agent.id),
+            toggle: {
+                withAnimation(LocusMotion.spatial) {
+                    if collapsedAgentIDs.contains(agent.id) {
+                        collapsedAgentIDs.remove(agent.id)
+                    } else {
+                        collapsedAgentIDs.insert(agent.id)
+                    }
                 }
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.locus(size: 7, weight: .bold))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 9)
-                Image(locusSymbol: LocusSymbol.robot)
-                    .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
-                    .frame(width: 21, height: 21)
-                    .accessibilityHidden(true)
-                Text(agent.name)
-                    .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
-                    .lineLimit(1)
-                if status != .active {
-                    Image(systemName: agentStatusSymbol(status))
-                        .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
-                        .help(status.detail)
-                        .accessibilityHidden(true)
-                }
-                Spacer(minLength: 4)
-                Text("\(agent.tasks.count)")
-                    .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 32)
-            .background(LocusTheme.white.opacity(0.36))
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.locus())
-        .contextMenu {
-            Button("New Chat with \(agent.name)") {
-                model.newAgentChat(triggerID: agent.id)
-            }
-            .accessibilityIdentifier("agent.\(agent.id).newChat")
-            if let trigger {
-                Button("Edit Agent…") {
-                    model.editAgentTrigger(trigger, isDedicatedAgent: true)
-                }
-                .accessibilityIdentifier("agent.\(agent.id).edit")
-                Button(trigger.enabled ? "Pause Agent" : "Resume Agent") {
-                    model.eventAutomations.setTrigger(trigger, enabled: !trigger.enabled)
-                }
-                .accessibilityIdentifier("agent.\(agent.id).toggle")
-                Divider()
-                Button("Delete Agent…", role: .destructive) {
-                    agentToDelete = trigger
-                }
-                .accessibilityIdentifier("agent.\(agent.id).delete")
-            }
-        }
-        .help(status.detail)
-        .accessibilityLabel("\(agent.name) agent")
-        .accessibilityValue(
-            "\(status.title), \(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
-                + (expanded ? "expanded" : "collapsed")
+            },
+            confirmDelete: { agentToDelete = $0 }
         )
-        .accessibilityIdentifier("agent.\(agent.id)")
-    }
-
-    private func agentStatusSymbol(_ status: AgentOverview.Status) -> String {
-        switch status {
-        case .active: "circle"
-        case .paused: "pause.circle.fill"
-        case .stopped, .missingTrigger: "exclamationmark.triangle.fill"
-        case .failing: "exclamationmark.circle.fill"
-        case .fired: "checkmark.circle.fill"
-        }
     }
 
     private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
@@ -1990,6 +1930,124 @@ private struct SessionRow: View {
             "Needs Attention"
         default:
             state.title
+        }
+    }
+}
+
+/// One agent's group header in the sidebar.
+///
+/// It observes the trigger and schedule stores directly rather than reading
+/// them back through AppModel: pausing or deleting an agent from this row
+/// publishes only on those stores, so a row that watched AppModel alone kept
+/// drawing the state the agent had before the click.
+private struct AgentGroupRow: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedule: ScheduleModel
+    @ObservedObject var automation: EventAutomationModel
+    let agent: AgentSidebarGroupModel
+    let expanded: Bool
+    let toggle: () -> Void
+    let confirmDelete: (AgentDefinition) -> Void
+
+    init(
+        agent: AgentSidebarGroupModel,
+        automation: EventAutomationModel,
+        expanded: Bool,
+        toggle: @escaping () -> Void,
+        confirmDelete: @escaping (AgentDefinition) -> Void
+    ) {
+        self.agent = agent
+        self.automation = automation
+        self.expanded = expanded
+        self.toggle = toggle
+        self.confirmDelete = confirmDelete
+    }
+
+    private var definition: AgentDefinition? {
+        AgentDefinition.resolve(
+            agentID: agent.id,
+            triggers: automation.triggers,
+            schedules: schedule.scheduledTasks
+        )
+    }
+
+    var body: some View {
+        let record = definition
+        let status = AgentOverview.status(for: record)
+        let words = record?.vocabulary ?? .events
+        return Button(action: toggle) {
+            HStack(spacing: 7) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.locus(size: 7, weight: .bold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 9)
+                Image(locusSymbol: LocusSymbol.robot)
+                    .font(.locus(size: 12, weight: .semibold))
+                    .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
+                    .frame(width: 21, height: 21)
+                    .accessibilityHidden(true)
+                Text(agent.name)
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.ink)
+                    .lineLimit(1)
+                if status != .active {
+                    Image(systemName: AgentGroupRow.statusSymbol(status))
+                        .font(.locus(size: 8, weight: .semibold))
+                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
+                        .help(status.detail(for: words))
+                        .accessibilityHidden(true)
+                }
+                Spacer(minLength: 4)
+                Text("\(agent.tasks.count)")
+                    .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(LocusTheme.white.opacity(0.36))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.locus())
+        .contextMenu {
+            Button("New Chat with \(agent.name)") {
+                model.newAgentChat(triggerID: agent.id)
+            }
+            .accessibilityIdentifier("agent.\(agent.id).newChat")
+            if let record {
+                if record.isSchedule {
+                    Button("Run Now") { model.runAgentNow(record) }
+                        .accessibilityIdentifier("agent.\(agent.id).runNow")
+                }
+                Button("Edit Agent…") { model.editAgent(record) }
+                    .accessibilityIdentifier("agent.\(agent.id).edit")
+                Button(record.enabled ? "Pause Agent" : "Resume Agent") {
+                    model.setAgentEnabled(record, enabled: !record.enabled)
+                }
+                .accessibilityIdentifier("agent.\(agent.id).toggle")
+                Divider()
+                Button("Delete Agent…", role: .destructive) {
+                    confirmDelete(record)
+                }
+                .accessibilityIdentifier("agent.\(agent.id).delete")
+            }
+        }
+        .help(status.detail(for: words))
+        .accessibilityLabel("\(agent.name) agent")
+        .accessibilityValue(
+            "\(status.title(for: words)), "
+                + "\(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
+                + (expanded ? "expanded" : "collapsed")
+        )
+        .accessibilityIdentifier("agent.\(agent.id)")
+    }
+
+    private static func statusSymbol(_ status: AgentOverview.Status) -> String {
+        switch status {
+        case .active: "circle"
+        case .paused: "pause.circle.fill"
+        case .stopped, .missingTrigger: "exclamationmark.triangle.fill"
+        case .failing: "exclamationmark.circle.fill"
+        case .fired: "checkmark.circle.fill"
         }
     }
 }

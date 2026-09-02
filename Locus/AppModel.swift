@@ -1202,6 +1202,14 @@ final class AppModel: ObservableObject {
         account?.id.uuidString == settings.activeAccountID && model == selectedModel
     }
 
+    /// The model an agent created or repointed right now would run on: what
+    /// `agentProviderRoute` actually sends, without the picker's decoration.
+    /// A team is not an agent route, so its members never appear here.
+    var agentRouteModel: String {
+        guard let account = activeAccount else { return selectedModel }
+        return routedModel(for: account)
+    }
+
     /// The closed picker's label. With an account it leads with the account's
     /// short name, because the model name alone no longer says where it runs.
     var modelPickerLabel: String {

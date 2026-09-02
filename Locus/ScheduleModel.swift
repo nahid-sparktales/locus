@@ -13,6 +13,9 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var isSavingSchedule = false
     @Published private(set) var isRefreshingSchedules = false
     @Published private(set) var occurrencesBySchedule: [String: [ScheduleOccurrence]] = [:]
+    /// Whether the schedule list has ever loaded. Until it has, a schedule
+    /// that is not in `scheduledTasks` may simply not have arrived yet.
+    @Published private(set) var hasLoaded = false
 
     private var scheduleCoordinatorTask: Task<Void, Never>?
     private var isDispatchingSchedules = false
@@ -64,6 +67,16 @@ final class ScheduleModel: ObservableObject {
         self.toastHandler = toastHandler
     }
 
+    /// UI-test fixtures need scheduled agents without a backend.
+    func seedForUITesting(
+        tasks: [ScheduledTask],
+        occurrences: [String: [ScheduleOccurrence]] = [:]
+    ) {
+        scheduledTasks = tasks
+        occurrencesBySchedule = occurrences
+        hasLoaded = true
+    }
+
     func cancelAll() {
         scheduleCoordinatorTask?.cancel()
         scheduleCoordinatorTask = nil
@@ -78,7 +91,15 @@ final class ScheduleModel: ObservableObject {
             let response: SchedulesResponse = try await backend.get(
                 "/api/schedules", as: SchedulesResponse.self
             )
+            let known = Set(scheduledTasks.map(\.id))
             scheduledTasks = response.schedules
+            hasLoaded = true
+            // Listing gives a schedule that predates agents its dedicated
+            // chat, and a schedule made elsewhere arrives with one; either
+            // way the sidebar needs the session list to show it.
+            if response.schedules.contains(where: { !known.contains($0.id) }) {
+                await refreshMetadata()
+            }
         } catch {
             if announceFailure {
                 toastHandler("Could not load schedules: \(error.localizedDescription)")
@@ -135,7 +156,11 @@ final class ScheduleModel: ObservableObject {
                 ($0.nextRunAt ?? .greatestFiniteMagnitude) < ($1.nextRunAt ?? .greatestFiniteMagnitude)
             }
             scheduleEditorDraft = nil
-            toastHandler(draft.id == nil ? "Schedule created" : "Schedule updated")
+            // The backend creates the agent's dedicated chat with the schedule
+            // and renames it with the schedule, so the sidebar needs a fresh
+            // session list to show it.
+            await refreshMetadata()
+            toastHandler(draft.id == nil ? "Agent created" : "Agent updated")
             return true
         } catch {
             toastHandler("Could not save schedule: \(error.localizedDescription)")
@@ -153,9 +178,9 @@ final class ScheduleModel: ObservableObject {
                     as: ScheduledTask.self
                 )
                 replaceScheduledTask(updated)
-                toastHandler(enabled ? "Schedule resumed" : "Schedule paused")
+                toastHandler(enabled ? "Agent resumed" : "Agent paused")
             } catch {
-                toastHandler("Could not update schedule: \(error.localizedDescription)")
+                toastHandler("Could not update this agent: \(error.localizedDescription)")
             }
         }
     }
@@ -169,9 +194,9 @@ final class ScheduleModel: ObservableObject {
                     "/api/schedules/\(task.id)", as: DeleteScheduleResponse.self
                 )
                 scheduledTasks.removeAll { $0.id == task.id }
-                toastHandler("Schedule deleted; its chats were kept")
+                toastHandler("Agent deleted; its chats were kept")
             } catch {
-                toastHandler("Could not delete schedule: \(error.localizedDescription)")
+                toastHandler("Could not delete this agent: \(error.localizedDescription)")
             }
         }
     }
@@ -186,7 +211,7 @@ final class ScheduleModel: ObservableObject {
         }
     }
 
-    func refreshOccurrences(for task: ScheduledTask) async {
+    func refreshOccurrences(for task: ScheduledTask, announceFailure: Bool = true) async {
         guard let backend else { return }
         do {
             let response: ScheduleOccurrencesResponse = try await backend.get(
@@ -196,7 +221,9 @@ final class ScheduleModel: ObservableObject {
             )
             occurrencesBySchedule[task.id] = response.occurrences
         } catch {
-            toastHandler("Could not load time-trigger history: \(error.localizedDescription)")
+            if announceFailure {
+                toastHandler("Could not load run history: \(error.localizedDescription)")
+            }
         }
     }
 

@@ -29,6 +29,13 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let sortOrder: Int?
     let agentTriggerID: String?
     let agentName: String?
+    /// The one chat an agent's events (or scheduled runs) land in. Side
+    /// conversations under the same agent carry the id but not this flag.
+    let agentPrimary: Bool?
+    /// The route recorded for the chat, so an agent's editor can show what it
+    /// runs on without asking the backend.
+    let model: String?
+    let provider: String?
 
     init(
         id: String,
@@ -48,7 +55,10 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         folderID: String? = nil,
         sortOrder: Int? = nil,
         agentTriggerID: String? = nil,
-        agentName: String? = nil
+        agentName: String? = nil,
+        agentPrimary: Bool? = nil,
+        model: String? = nil,
+        provider: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -68,6 +78,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.sortOrder = sortOrder
         self.agentTriggerID = agentTriggerID
         self.agentName = agentName
+        self.agentPrimary = agentPrimary
+        self.model = model
+        self.provider = provider
     }
 
     enum CodingKeys: String, CodingKey {
@@ -78,6 +91,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         case sortOrder = "sort_order"
         case agentTriggerID = "agent_trigger_id"
         case agentName = "agent_name"
+        case agentPrimary = "agent_primary"
+        case model, provider
     }
 
     var displayTitle: String {
@@ -111,6 +126,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     var isPinned: Bool { pinned ?? false }
     var isArchived: Bool { archived ?? false }
     var isAgentChat: Bool { agentTriggerID?.isEmpty == false }
+    /// Whether this is the chat an agent's events arrive in.
+    var isAgentEventChat: Bool { isAgentChat && agentPrimary == true }
 
     var workspacePath: String? {
         guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else {
@@ -138,7 +155,10 @@ struct SessionSummary: Codable, Hashable, Identifiable {
             folderID: folderID,
             sortOrder: sortOrder,
             agentTriggerID: agentTriggerID,
-            agentName: agentName
+            agentName: agentName,
+            agentPrimary: agentPrimary,
+            model: model,
+            provider: provider
         )
     }
 

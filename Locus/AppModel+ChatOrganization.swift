@@ -234,6 +234,17 @@ extension AppModel {
             showToast("Wait for this chat to stop before deleting it")
             return
         }
+        // Deleting the chat an agent's events land in strands the agent: every
+        // later dispatch fails and pauses it, and even resuming fails because
+        // the backend validates the target first. The backend refuses too;
+        // this keeps the explanation in the app's own words.
+        if let owner = agentOwningEventChat(session) {
+            showToast(
+                "This chat receives \(owner.name)'s \(owner.vocabulary.arrivals)."
+                    + " Delete the agent first."
+            )
+            return
+        }
         guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
             showToast("Finish the active run before deleting a chat")
             return

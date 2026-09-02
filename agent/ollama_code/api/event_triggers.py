@@ -178,7 +178,20 @@ def trigger_target_create(
     if not name:
         raise HTTPException(422, "agent name is required")
 
-    for summary in SessionStore.summaries(limit=500, include_archived=True):
+    candidates = SessionStore.summaries(limit=500, include_archived=True)
+    # Side chats share the agent id; only the primary chat may be recovered as
+    # the event destination. The trigger's own target wins, because an agent
+    # made before the flag existed marks none of its chats, and its history
+    # must not move to whichever side chat was touched most recently.
+    trigger = service.run_store.event_trigger(trigger_id)
+    current_target = str((trigger or {}).get("target_session_id") or "")
+    candidates.sort(
+        key=lambda item: (
+            str(item.get("id")) != current_target,
+            not bool(item.get("agent_primary")),
+        )
+    )
+    for summary in candidates:
         metadata = SessionMeta.get(str(summary["id"]))
         if metadata.get("agent_trigger_id") == trigger_id:
             workspace = str(summary.get("cwd") or "")
@@ -197,6 +210,7 @@ def trigger_target_create(
                         provider_account_id=account_id or None,
                         provider_account_label=account_label or None,
                         agent_name=name,
+                        agent_primary=True,
                     )
                 _detach_agent_session(str(summary["id"]), workspace)
                 summary = next(
@@ -238,6 +252,7 @@ def trigger_target_create(
         provider_account_label=account_label or None,
         agent_trigger_id=trigger_id,
         agent_name=name,
+        agent_primary=True,
     )
 
     _detach_agent_session(session_id, cwd)

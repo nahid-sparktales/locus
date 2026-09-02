@@ -435,6 +435,72 @@ def test_dedicated_agent_can_create_top_level_conversational_tasks(tmp_path) -> 
     assert task["id"] not in snapshot["placements"]
 
 
+def test_the_event_chat_is_primary_and_survives_side_chats_and_deletion(tmp_path) -> None:
+    from fastapi import HTTPException
+
+    from ollama_code.api.sessions import _agent_owning_chat, session_delete
+
+    template = SessionStore(
+        str(tmp_path), model="k3", provider="remote", account="A", account_id="acct"
+    )
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    request = {
+        "trigger_id": "weather-agent",
+        "template_session_id": template.session_id,
+        "name": "Weather agent",
+    }
+    target = trigger_target_create(service, request)["session"]
+    assert target["agent_primary"] is True
+    _connection(service.run_store)
+    _trigger(service.run_store, trigger_id="weather-agent", session_id=target["id"])
+
+    # A side chat shares the identity but is not where events land.
+    side = trigger_task_create("weather-agent", service, {})["session"]
+    assert side["agent_primary"] is False
+    assert _agent_owning_chat(service, side["id"]) is None
+
+    # Editing the agent recovers the event chat, not the newer side chat.
+    again = trigger_target_create(service, request)
+    assert again["created"] is False
+    assert again["session"]["id"] == target["id"]
+
+    # The event chat cannot be pulled out from under a live agent.
+    with pytest.raises(HTTPException) as refused:
+        session_delete(target["id"], service)
+    assert refused.value.status_code == 409
+    # The guard names the trigger, whose stored name the helper sets.
+    assert "Important mail" in refused.value.detail
+    service.run_store.delete_event_trigger("weather-agent")
+    assert _agent_owning_chat(service, target["id"]) is None
+
+
+def test_editing_an_older_agent_keeps_its_own_event_chat(tmp_path) -> None:
+    """An agent made before chats carried the flag must not move its events."""
+    from ollama_code.sessions import SessionMeta
+
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    target = SessionStore(str(tmp_path), model="k3", provider="ollama")
+    SessionMeta.update(target.session_id, agent_trigger_id="weather-agent", title="Weather")
+    side = SessionStore(str(tmp_path), model="k3", provider="ollama")
+    SessionMeta.update(side.session_id, agent_trigger_id="weather-agent", title="Chat 2")
+    _connection(service.run_store)
+    _trigger(service.run_store, trigger_id="weather-agent", session_id=target.session_id)
+
+    recovered = trigger_target_create(
+        service,
+        {
+            "trigger_id": "weather-agent",
+            "template_session_id": target.session_id,
+            "name": "Weather agent",
+        },
+    )
+
+    # The newer side chat is not promoted over the chat the trigger points at.
+    assert recovered["created"] is False
+    assert recovered["session"]["id"] == target.session_id
+    assert SessionMeta.get(target.session_id)["agent_primary"] is True
+
+
 def test_delivery_manifest_prefers_repaired_agent_route_metadata(tmp_path) -> None:
     target = SessionStore(
         str(tmp_path),

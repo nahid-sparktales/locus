@@ -362,6 +362,9 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
     var filters = EventTriggerFilters()
     var actionConnectionIDs: [String] = []
     var enabled = true
+    /// Set when the person asks an existing agent to move to the model the app
+    /// is on now. Off by default: an ordinary edit keeps the agent's route.
+    var adoptCurrentRoute = false
 
     init() {}
 

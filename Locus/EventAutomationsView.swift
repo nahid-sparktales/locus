@@ -47,7 +47,8 @@ struct ConfigureAgentView: View {
             EventTriggerEditorView(
                 draft: draft,
                 automation: automation,
-                sessions: sessionCatalog.snapshot.sessions
+                sessions: sessionCatalog.snapshot.sessions,
+                currentModel: app.agentRouteModel
             )
         }
         .sheet(item: $automation.webhookSetup) { setup in
@@ -1124,15 +1125,18 @@ private struct EventTriggerEditorView: View {
     @State private var connectionSheet: ConnectorKind?
     @ObservedObject var automation: EventAutomationModel
     let sessions: [SessionSummary]
+    let currentModel: String
 
     init(
         draft: EventTriggerEditorDraft,
         automation: EventAutomationModel,
-        sessions: [SessionSummary]
+        sessions: [SessionSummary],
+        currentModel: String
     ) {
         _draft = State(initialValue: draft)
         self.automation = automation
         self.sessions = sessions
+        self.currentModel = currentModel
     }
 
     var body: some View {
@@ -1224,9 +1228,33 @@ private struct EventTriggerEditorView: View {
                         }
                     }
                     if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
-                        Text("Creates one lasting conversation in Agents that every matching event arrives in. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                        if draft.id != nil, let model = existingAgentModel {
+                            // An edit keeps the agent's own model, because it
+                            // used to follow whatever the app was set to. The
+                            // change is available, but it has to be asked for:
+                            // it is also the way a broken route is repaired.
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(draft.adoptCurrentRoute
+                                    ? "Moves to \(currentModel) when you save."
+                                    : "Runs on \(model). Saving keeps that model.")
+                                    .font(.locus(size: 8, weight: .medium))
+                                    .foregroundStyle(LocusTheme.textSecondary)
+                                if !draft.adoptCurrentRoute, currentModel != model {
+                                    Button("Switch to \(currentModel)") {
+                                        draft.adoptCurrentRoute = true
+                                    }
+                                    .buttonStyle(.locus())
+                                    .font(.locus(size: 8, weight: .semibold))
+                                    .accessibilityIdentifier("eventTrigger.route.adopt")
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("eventTrigger.route")
+                        } else {
+                            Text("Creates one lasting conversation in Agents that every matching event arrives in. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
                     }
                     Picker("Mode", selection: $draft.mode) {
                         ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
@@ -1379,6 +1407,11 @@ private struct EventTriggerEditorView: View {
             Text("Choose a connection to configure deterministic filters.")
                 .foregroundStyle(LocusTheme.muted)
         }
+    }
+
+    /// The model recorded on the agent's own chat, when editing one.
+    private var existingAgentModel: String? {
+        sessions.first { $0.id == draft.templateSessionID }?.model?.nilIfEmpty
     }
 
     /// Which sources can start this kind of agent. Price alerts read a feed or

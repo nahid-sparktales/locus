@@ -77,6 +77,7 @@ DELETE /api/schedules/{schedule_id}
 GET /api/schedules/{schedule_id}/occurrences
 POST /api/schedules/{schedule_id}/pause
 POST /api/schedules/{schedule_id}/dispatch
+POST /api/schedules/{schedule_id}/tasks
 GET /api/connectors
 POST /api/connectors
 PATCH /api/connectors/{connection_id}

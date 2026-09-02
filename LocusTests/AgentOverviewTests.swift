@@ -71,6 +71,66 @@ final class AgentOverviewTests: XCTestCase {
         )
     }
 
+    private func scheduledTask(
+        id: String = "morning",
+        name: String = "Morning review",
+        enabled: Bool = true,
+        lastError: String? = nil,
+        rule: ScheduleRule = ScheduleRule(kind: .weekdays, hour: 9, minute: 30),
+        nextRunAt: Double? = nil,
+        lastRunAt: Double? = nil,
+        environment: ChatExecutionEnvironment = .local
+    ) -> ScheduledTask {
+        ScheduledTask(
+            id: id,
+            name: name,
+            prompt: "Review the workspace and summarize what changed.",
+            workspaceRoot: "/tmp/review-workspace",
+            mode: .work,
+            executionEnvironment: environment,
+            runner: .solo,
+            teamID: nil,
+            teamName: nil,
+            provider: "ollama",
+            providerAccountID: nil,
+            model: "qwen3:8b",
+            timezone: TimeZone.current.identifier,
+            rule: rule,
+            enabled: enabled,
+            nextRunAt: nextRunAt,
+            createdAt: now.timeIntervalSince1970 - 86_400 * 7,
+            updatedAt: now.timeIntervalSince1970 - 60,
+            lastRunAt: lastRunAt,
+            lastRunID: nil,
+            lastError: lastError
+        )
+    }
+
+    private func occurrence(
+        _ id: String,
+        scheduleID: String = "morning",
+        state: String,
+        age: TimeInterval,
+        trigger: String = "due",
+        sessionID: String? = "morning-chat",
+        error: String? = nil
+    ) -> ScheduleOccurrence {
+        let when = now.timeIntervalSince1970 - age
+        return ScheduleOccurrence(
+            id: id,
+            scheduleID: scheduleID,
+            scheduleName: "Morning review",
+            scheduledFor: when,
+            trigger: trigger,
+            state: state,
+            sessionID: sessionID,
+            runID: state == "queued" ? "run-\(id)" : nil,
+            error: error,
+            createdAt: when,
+            updatedAt: when + 5
+        )
+    }
+
     private func delivery(
         _ id: String,
         state: String,
@@ -174,7 +234,8 @@ final class AgentOverviewTests: XCTestCase {
     }
 
     func testStatusSeparatesAPersonPausingFromLocusStoppingTheAgent() {
-        XCTAssertEqual(AgentOverview.status(for: nil), .missingTrigger)
+        XCTAssertEqual(AgentOverview.status(for: nil as EventTrigger?), .missingTrigger)
+        XCTAssertEqual(AgentOverview.status(for: nil as AgentDefinition?), .missingTrigger)
         // enabled, no error: listening.
         XCTAssertEqual(AgentOverview.status(for: trigger()), .active)
         // disabled, no error: someone pressed Pause.
@@ -331,6 +392,242 @@ final class AgentOverviewTests: XCTestCase {
         XCTAssertEqual(AgentOverview.Event(delivery: noSubject).title, "Body text here")
         XCTAssertEqual(AgentOverview.Event(delivery: delivery("d2", state: "queued", age: 1)).title, "Storm warning")
         XCTAssertTrue(AgentOverview.Event(delivery: delivery("d3", state: "queued", age: 1)).isInFlight)
+    }
+
+    // MARK: Schedules
+
+    func testAScheduledAgentResolvesFromItsScheduleAndOccurrences() {
+        let primary = SessionSummary(
+            id: "morning-chat", name: "morning-chat.jsonl", preview: "", mtime: now.timeIntervalSince1970 - 60,
+            size: 10, title: "Morning review", cwd: "/tmp/review-workspace",
+            agentTriggerID: "morning", agentName: "Morning review", agentPrimary: true,
+            model: "qwen3:8b", provider: "ollama"
+        )
+        let side = SessionSummary(
+            id: "morning-side", name: "morning-side.jsonl", preview: "", mtime: now.timeIntervalSince1970 - 30,
+            size: 10, title: "Chat 2", cwd: "/tmp/review-workspace",
+            agentTriggerID: "morning", agentName: "Morning review"
+        )
+        let task = scheduledTask(
+            nextRunAt: now.timeIntervalSince1970 + 3_600,
+            lastRunAt: now.timeIntervalSince1970 - 600
+        )
+        let overview = AgentOverview.resolve(
+            agentID: "morning",
+            definition: .schedule(task),
+            connections: [],
+            sessions: [primary, side],
+            deliveries: [],
+            occurrences: [
+                occurrence("o-old", state: "failed", age: 90_000, error: "The model is not installed."),
+                occurrence("o-new", state: "queued", age: 600),
+                occurrence("foreign", scheduleID: "other", state: "queued", age: 1),
+            ],
+            currentSessionID: "morning-side",
+            runningSessionIDs: [],
+            now: now
+        )
+
+        XCTAssertEqual(overview.name, "Morning review")
+        XCTAssertEqual(overview.status, .active)
+        XCTAssertEqual(overview.summary, "Schedule · Weekdays at 09:30 · Work")
+        XCTAssertEqual(overview.instruction, "Review the workspace and summarize what changed.")
+        XCTAssertEqual(overview.filters, ["Next in 1h"], "the cadence heads the card; chips add the rest")
+        XCTAssertTrue(overview.canRunNow)
+        XCTAssertFalse(overview.canRearm)
+        XCTAssertNil(overview.priceState)
+
+        // The primary flag marks the chat every run continues; the side chat
+        // shares the identity and nothing else.
+        XCTAssertEqual(overview.eventChat?.id, "morning-chat")
+        XCTAssertEqual(overview.chats.map(\.id), ["morning-side", "morning-chat"])
+        XCTAssertEqual(overview.chats.filter(\.isEventTarget).map(\.id), ["morning-chat"])
+
+        // Occurrences stand in for deliveries: newest first, own schedule only.
+        XCTAssertEqual(overview.events.map(\.id), ["o-new", "o-old"])
+        XCTAssertEqual(overview.eventCount, 2)
+        XCTAssertEqual(overview.failedEventCount, 1)
+        XCTAssertTrue(overview.events[1].isFailed)
+        XCTAssertFalse(overview.events[1].canRetry, "schedules run again on their own; there is no retry")
+        XCTAssertTrue(overview.events[0].isInFlight)
+        XCTAssertTrue(overview.events[0].title.hasPrefix("Scheduled run · "))
+        XCTAssertEqual(overview.events[0].sourceSymbol, "calendar.badge.clock")
+        XCTAssertEqual(overview.lastEventAt, now.addingTimeInterval(-600), "the schedule's own last run wins")
+
+        XCTAssertEqual(
+            overview.facts.map(\.label),
+            ["Runs as", "Runner", "Environment", "Model", "Next run", "Workspace", "Created"]
+        )
+        XCTAssertEqual(overview.facts[1].value, "Solo")
+        XCTAssertEqual(overview.facts[2].value, "Local")
+        XCTAssertEqual(overview.facts[3].value, "qwen3:8b")
+        XCTAssertEqual(overview.facts[5].value, "review-workspace")
+    }
+
+    func testScheduleStatusUsesTheSameFourStatesAsTriggers() {
+        XCTAssertEqual(AgentOverview.status(for: .schedule(scheduledTask())), .active)
+        XCTAssertEqual(AgentOverview.status(for: .schedule(scheduledTask(enabled: false))), .paused)
+        XCTAssertEqual(
+            AgentOverview.status(for: .schedule(scheduledTask(enabled: false, lastError: "Model removed"))),
+            .stopped
+        )
+        XCTAssertEqual(
+            AgentOverview.status(for: .schedule(scheduledTask(lastError: "The workspace is gone"))),
+            .failing
+        )
+        let paused = AgentOverview.resolve(
+            agentID: "morning", definition: .schedule(scheduledTask(enabled: false)),
+            connections: [], sessions: [], deliveries: [], currentSessionID: "",
+            runningSessionIDs: [], now: now
+        )
+        XCTAssertEqual(paused.filters, ["Paused"])
+        XCTAssertEqual(paused.facts.first { $0.label == "Next run" }?.value, "Paused")
+    }
+
+    func testASkippedRunIsNotAFailureOfTheAgent() {
+        // Two runs of one schedule overlapping is a normal outcome: the slot
+        // passes, the agent keeps working, and nothing needs a person.
+        let overview = AgentOverview.resolve(
+            agentID: "morning",
+            definition: .schedule(scheduledTask(lastRunAt: now.timeIntervalSince1970 - 600)),
+            connections: [],
+            sessions: [],
+            deliveries: [],
+            occurrences: [
+                occurrence(
+                    "o-skip", state: "skipped", age: 600,
+                    error: "Skipped: the previous run in this agent's chat was still in progress."
+                ),
+            ],
+            currentSessionID: "",
+            runningSessionIDs: [],
+            now: now
+        )
+
+        XCTAssertEqual(overview.status, .active)
+        XCTAssertEqual(overview.failedEventCount, 0)
+        XCTAssertFalse(overview.events[0].isFailed)
+        XCTAssertFalse(overview.events[0].isInFlight)
+        XCTAssertTrue(overview.events[0].isSkipped)
+        XCTAssertEqual(overview.events[0].stateTitle, "Skipped")
+    }
+
+    func testAgentCopySaysRunsForSchedulesAndEventsForTriggers() {
+        let schedule = AgentDefinition.schedule(scheduledTask())
+        let trigger = AgentDefinition.trigger(trigger(id: "mail"))
+
+        XCTAssertEqual(schedule.vocabulary, .runs)
+        XCTAssertEqual(trigger.vocabulary, .events)
+        XCTAssertEqual(
+            AgentOverview.Status.failing.title(for: schedule.vocabulary), "Last run failed"
+        )
+        XCTAssertEqual(
+            AgentOverview.Status.failing.title(for: trigger.vocabulary), "Last event failed"
+        )
+        XCTAssertEqual(
+            AgentOverview.Status.failing.title(for: .events), "Last event failed",
+            "an event agent never reports a run"
+        )
+        for status in [AgentOverview.Status.active, .paused, .stopped, .failing] {
+            XCTAssertFalse(
+                status.detail(for: schedule.vocabulary).localizedCaseInsensitiveContains("event"),
+                "a schedule has runs, not events: \(status)"
+            )
+        }
+    }
+
+    func testAScheduleThatWillNotRunAgainStillSaysSo() {
+        // A one-shot schedule that has fired has no cadence chip, no worktree
+        // and no foreign timezone; an empty chip row would read as a blank gap.
+        let task = scheduledTask(
+            rule: ScheduleRule(kind: .once, hour: 9, minute: 30),
+            nextRunAt: nil
+        )
+        XCTAssertEqual(AgentOverview.scheduleChips(for: task, now: now), ["No further runs"])
+    }
+
+    func testScheduleRulesReadAsSentences() {
+        XCTAssertEqual(AgentOverviewFormatting.rule(ScheduleRule(kind: .daily, hour: 7, minute: 5)), "Daily at 07:05")
+        XCTAssertEqual(AgentOverviewFormatting.rule(ScheduleRule(kind: .weekdays, hour: 18, minute: 0)), "Weekdays at 18:00")
+        XCTAssertEqual(
+            AgentOverviewFormatting.rule(ScheduleRule(kind: .weekly, hour: 9, minute: 0, weekday: 4)),
+            "Weekly on Friday at 09:00",
+            "weekdays are Monday-based, matching the backend"
+        )
+        XCTAssertEqual(
+            AgentOverviewFormatting.rule(ScheduleRule(kind: .interval, every: 15, unit: .minutes)),
+            "Every 15 minutes"
+        )
+        XCTAssertEqual(
+            AgentOverviewFormatting.rule(ScheduleRule(kind: .interval, every: 1, unit: .hours)),
+            "Every hour"
+        )
+        let at = now.timeIntervalSince1970
+        XCTAssertEqual(
+            AgentOverviewFormatting.rule(ScheduleRule(kind: .once, at: at)),
+            "Once on " + now.formatted(date: .abbreviated, time: .shortened)
+        )
+        XCTAssertEqual(AgentOverviewFormatting.upcoming(now.addingTimeInterval(90), now: now), "in 1m")
+        XCTAssertEqual(AgentOverviewFormatting.upcoming(now.addingTimeInterval(-5), now: now), "overdue")
+    }
+
+    func testFleetListsSchedulesBesideTriggersUnderOneOrdering() {
+        var stoppedSchedule = scheduledTask(id: "nightly", name: "Nightly", enabled: false, lastError: "boom")
+        stoppedSchedule.name = "Nightly"
+        let entries = AgentFleet.entries(
+            triggers: [trigger(id: "weather", lastEventAt: now.timeIntervalSince1970 - 60)],
+            connections: [gmail],
+            schedules: [
+                scheduledTask(id: "morning", lastRunAt: now.timeIntervalSince1970 - 30),
+                stoppedSchedule,
+            ],
+            sessions: [
+                SessionSummary(
+                    id: "m1", name: "m1.jsonl", preview: "", mtime: now.timeIntervalSince1970,
+                    size: 1, cwd: "/tmp", agentTriggerID: "morning", agentName: "Morning review",
+                    agentPrimary: true
+                ),
+            ],
+            runningSessionIDs: ["m1"]
+        )
+        XCTAssertEqual(entries.map(\.id), ["nightly", "morning", "weather"])
+        XCTAssertEqual(entries[0].status, .stopped)
+        XCTAssertEqual(entries[1].summary, "Schedule · Weekdays at 09:30 · Work")
+        XCTAssertEqual(entries[1].chatCount, 1)
+        XCTAssertEqual(entries[1].runningChatCount, 1)
+        XCTAssertNil(entries[1].connection)
+        XCTAssertEqual(entries[2].name, "Weather watch")
+    }
+
+    @MainActor
+    func testAgentDefinitionsAndEventChatOwnershipCoverBothKinds() {
+        let model = AppModel(startImmediately: false)
+        model.eventAutomations.seedForUITesting(connections: [gmail], triggers: [trigger()], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [scheduledTask()])
+        model.sessions = [
+            session("chat-new", age: 60),
+            SessionSummary(
+                id: "morning-chat", name: "morning-chat.jsonl", preview: "", mtime: 1, size: 1,
+                cwd: "/tmp", agentTriggerID: "morning", agentName: "Morning review", agentPrimary: true
+            ),
+            SessionSummary(
+                id: "morning-side", name: "morning-side.jsonl", preview: "", mtime: 1, size: 1,
+                cwd: "/tmp", agentTriggerID: "morning", agentName: "Morning review"
+            ),
+            session("plain", triggerID: nil, name: nil, age: 5),
+        ]
+
+        XCTAssertEqual(model.agentDefinition(for: "weather")?.trigger?.id, "weather")
+        XCTAssertEqual(model.agentDefinition(for: "morning")?.schedule?.id, "morning")
+        XCTAssertNil(model.agentDefinition(for: "gone"))
+        XCTAssertNil(model.agentDefinition(for: nil))
+
+        let byID = Dictionary(uniqueKeysWithValues: model.sessions.map { ($0.id, $0) })
+        // The trigger's target chat is its event chat even without the flag.
+        XCTAssertEqual(model.agentOwningEventChat(byID["chat-new"]!)?.name, "Weather watch")
+        XCTAssertEqual(model.agentOwningEventChat(byID["morning-chat"]!)?.name, "Morning review")
+        XCTAssertNil(model.agentOwningEventChat(byID["morning-side"]!), "side chats are not protected")
+        XCTAssertNil(model.agentOwningEventChat(byID["plain"]!))
     }
 
     // MARK: Filters
@@ -656,9 +953,26 @@ final class AgentOverviewTests: XCTestCase {
         model.eventAutomations.seedForUITesting(
             connections: [], triggers: [trigger(id: "someone-else")], deliveries: []
         )
+        model.schedule.seedForUITesting(tasks: [])
         model.newAgentChat()
         XCTAssertFalse(model.configureAgentPresented)
-        XCTAssertEqual(model.toastCenter.toast?.message.contains("trigger was deleted"), true)
+        XCTAssertEqual(model.toastCenter.toast?.message.contains("was deleted"), true)
+    }
+
+    @MainActor
+    func testAMissingAgentIsNotCalledDeletedBeforeBothStoresHaveAnswered() {
+        let model = AppModel(startImmediately: false)
+        model.sessions = [session("chat-new", age: 60)]
+        model.currentSessionID = "chat-new"
+        // Triggers are in; schedules have not answered yet, so an agent that is
+        // in neither list may still be a schedule that is on its way.
+        model.eventAutomations.seedForUITesting(
+            connections: [], triggers: [trigger(id: "someone-else")], deliveries: []
+        )
+
+        model.newAgentChat()
+
+        XCTAssertNil(model.toastCenter.toast?.message)
     }
 
     @MainActor
