@@ -1760,7 +1760,23 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
-    func testSidebarPlacesAskAgentsAndCreationControlsBelowTheBrand() {
+    func testConversationWelcomeUsesLocusPromptStarters() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_DOCUMENTATION_SURFACE"] = "workspace"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+
+        let title = anyElement("conversation.welcome.title")
+        XCTAssertTrue(title.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertTrue(
+            (title.label + " " + (title.value as? String ?? "")).contains("How can Locus help?")
+        )
+        XCTAssertTrue(anyElement("conversation.recommendation.build-feature").exists)
+        XCTAssertTrue(anyElement("conversation.recommendation.fix-bug").exists)
+        XCTAssertTrue(anyElement("conversation.recommendation.explore-codebase").exists)
+    }
+
+    func testSidebarPlacesAgentWorkAndCreationControlsBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
         let destination = anyElement("sidebar.destination")
         let ask = app.buttons["sidebar.mode.ask"]
@@ -1775,6 +1791,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(destination.exists)
         XCTAssertTrue(ask.exists)
         XCTAssertTrue(agents.exists)
+        XCTAssertEqual(ask.label, "Agent")
+        XCTAssertEqual(agents.label, "Work")
         XCTAssertTrue(ask.isSelected)
         XCTAssertTrue(newChat.exists)
         XCTAssertTrue(configureAgent.exists)
@@ -1791,7 +1809,7 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        // The creation button keeps its identity in Agents mode: New chat
+        // The creation button keeps its identity in Work: New chat
         // there starts the selected agent's next chat.
         XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
         XCTAssertEqual(newChat.label, "New chat")
@@ -1807,7 +1825,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
     }
 
-    func testAgentsModeKeepsNewChatAndShowsTheAgentOverview() {
+    func testWorkDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
 
         let identity = anyElement("agentOverview.identity")
@@ -1817,7 +1835,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
 
-        // Agents mode keeps the Ask-mode controls: New chat with its plus
+        // Work keeps the Agent controls: New chat with its plus
         // glyph, Manage Agents with the Configure Agent glyph.
         let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(newChat.exists)
@@ -1851,7 +1869,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
 
-        // Leaving Agents mode takes the tab and its rail button away again;
+        // Leaving Work takes the tab and its rail button away again;
         // coming back restores them onto the same chat.
         anyElement("sidebar.mode.ask").click()
         XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
@@ -1866,7 +1884,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
     }
 
-    func testAskAgentsDestinationKeepsConversationWorkControlsAvailable() {
+    func testAgentWorkDestinationKeepsConversationWorkControlsAvailable() {
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
         XCTAssertTrue(ask.waitForExistence(timeout: 3))
