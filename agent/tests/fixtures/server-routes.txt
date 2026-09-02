@@ -87,8 +87,10 @@ POST /api/event-triggers
 PATCH /api/event-triggers/{trigger_id}
 POST /api/event-triggers/{trigger_id}/pause
 POST /api/event-triggers/{trigger_id}/rearm
+POST /api/event-triggers/{trigger_id}/tasks
 DELETE /api/event-triggers/{trigger_id}
 POST /api/event-triggers/ingest
+POST /api/event-triggers/target-session
 GET /api/event-deliveries
 GET /api/event-deliveries/pending
 POST /api/event-deliveries/{delivery_id}/dispatch

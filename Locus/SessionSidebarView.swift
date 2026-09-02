@@ -868,7 +868,7 @@ struct SessionSidebarView: View {
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 9)
                 Text("🤖")
-                    .font(.system(size: 13))
+                    .font(.locus(size: 13))
                     .frame(width: 21, height: 21)
                     .accessibilityHidden(true)
                 Text(agent.name)
