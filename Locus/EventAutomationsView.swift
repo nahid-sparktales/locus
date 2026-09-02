@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ConfigureAgentView: View {
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var automation: EventAutomationModel
     @ObservedObject var schedule: ScheduleModel
@@ -46,7 +47,7 @@ struct ConfigureAgentView: View {
             EventTriggerEditorView(
                 draft: draft,
                 automation: automation,
-                sessions: app.sessions
+                sessions: sessionCatalog.snapshot.sessions
             )
         }
         .sheet(item: $automation.webhookSetup) { setup in
@@ -243,15 +244,18 @@ struct ConfigureAgentView: View {
                                     connection: automation.connections.first {
                                         $0.id == trigger.connectionID
                                     },
-                                    targetChat: app.sessions.first {
-                                        $0.id == trigger.targetSessionID
-                                    }?.displayTitle ?? "Missing chat",
+                                    targetChat: sessionCatalog.snapshot
+                                        .sessionsByID[trigger.targetSessionID]?
+                                        .displayTitle ?? "Missing chat",
                                     selected: selection?.id == configurationID(for: trigger),
                                     onSelect: { selectTrigger(trigger) },
                                     onEdit: {
                                         automation.presentEditor(
                                             trigger: trigger,
-                                            targetSessionID: trigger.targetSessionID
+                                            targetSessionID: trigger.targetSessionID,
+                                            isDedicatedAgent: sessionCatalog.snapshot
+                                                .sessionsByID[trigger.targetSessionID]?
+                                                .isAgentChat == true
                                         )
                                     },
                                     onToggle: {
@@ -635,7 +639,7 @@ struct ConfigureAgentView: View {
 
     private func openChat(_ sessionID: String?) {
         guard let sessionID,
-              let session = app.sessions.first(where: { $0.id == sessionID }) else { return }
+              let session = sessionCatalog.snapshot.sessionsByID[sessionID] else { return }
         app.dismissConfigureAgent()
         app.resume(session)
     }
@@ -1160,11 +1164,18 @@ private struct EventTriggerEditorView: View {
                     sourceFilters
                 }
                 Section("What it does") {
-                    Picker("Target chat", selection: $draft.targetSessionID) {
-                        Text("Choose a chat").tag("")
+                    Picker("Destination", selection: $draft.targetSessionID) {
+                        Text("Dedicated agent task")
+                            .tag(EventTriggerEditorDraft.dedicatedAgentChat)
+                        Text("Choose an existing chat").tag("")
                         ForEach(sessions.filter { !$0.isArchived }) { session in
                             Text(session.displayTitle).tag(session.id)
                         }
+                    }
+                    if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+                        Text("Creates a persistent task conversation in Agents. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
                     }
                     Picker("Mode", selection: $draft.mode) {
                         ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
@@ -1255,6 +1266,9 @@ private struct EventTriggerEditorView: View {
                 Text("Has attachments").tag("yes")
                 Text("No attachments").tag("no")
             }
+            Text("Use any filter by itself, combine filters, or leave all blank to run for every incoming email.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
         } else if kind == .telegram {
             CSVField("Chat IDs", values: $draft.filters.chatIDs)
             CSVField("Sender IDs", values: $draft.filters.senderIDs)

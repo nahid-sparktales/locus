@@ -30,6 +30,9 @@ final class EventAutomationModel: ObservableObject {
     private var onQueuedRun: ((OrchestrationRun) async -> Void)?
     private var canDispatchToSession: ((String) -> Bool)?
     private var onCapabilityChanged: (() -> Void)?
+    private var refreshSessions: (() async -> Void)?
+    private var agentProviderRoute: (() -> [String: String])?
+    private var openAgentSession: ((SessionSummary) -> Void)?
     private var showMessage: ((String) -> Void)?
 
     init(credentials: ConnectorCredentialStore = .shared) {
@@ -48,12 +51,18 @@ final class EventAutomationModel: ObservableObject {
         onQueuedRun: @escaping (OrchestrationRun) async -> Void,
         canDispatchToSession: @escaping (String) -> Bool,
         onCapabilityChanged: @escaping () -> Void,
+        refreshSessions: @escaping () async -> Void,
+        agentProviderRoute: @escaping () -> [String: String],
+        openAgentSession: @escaping (SessionSummary) -> Void,
         showMessage: @escaping (String) -> Void
     ) {
         self.backend = backend
         self.onQueuedRun = onQueuedRun
         self.canDispatchToSession = canDispatchToSession
         self.onCapabilityChanged = onCapabilityChanged
+        self.refreshSessions = refreshSessions
+        self.agentProviderRoute = agentProviderRoute
+        self.openAgentSession = openAgentSession
         self.showMessage = showMessage
     }
 
@@ -111,15 +120,25 @@ final class EventAutomationModel: ObservableObject {
     func presentEditor(
         trigger: EventTrigger? = nil,
         targetSessionID: String,
+        isDedicatedAgent: Bool = false,
         naturalLanguageRequest: String = "",
         triggerKind requestedKind: EventTriggerKind? = nil
     ) {
         if let trigger {
-            editorDraft = EventTriggerEditorDraft(trigger: trigger)
+            var draft = EventTriggerEditorDraft(trigger: trigger)
+            if isDedicatedAgent {
+                // Editing an existing agent must pass through the stable target
+                // endpoint again so its model route and top-level placement are
+                // repaired along with the trigger configuration.
+                draft.targetSessionID = EventTriggerEditorDraft.dedicatedAgentChat
+                draft.templateSessionID = targetSessionID
+            }
+            editorDraft = draft
             return
         }
         var draft = EventTriggerEditorDraft()
-        draft.targetSessionID = targetSessionID
+        draft.targetSessionID = EventTriggerEditorDraft.dedicatedAgentChat
+        draft.templateSessionID = targetSessionID
         draft.instruction = naturalLanguageRequest.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.name = Self.suggestedName(from: naturalLanguageRequest)
         let priceSuggestion = Self.suggestedPriceCondition(from: naturalLanguageRequest)
@@ -154,10 +173,16 @@ final class EventAutomationModel: ObservableObject {
         let instruction = draft.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !instruction.isEmpty, !draft.connectionID.isEmpty,
               !draft.targetSessionID.isEmpty else {
-            showMessage?("Add a name, connection, target chat, and instruction.")
+            showMessage?("Add a name, connection, destination, and instruction.")
             return false
         }
-        guard let filters = Self.encodedObject(draft.filters) else {
+        guard let sourceKind = connections.first(where: {
+            $0.id == draft.connectionID
+        })?.kind else {
+            showMessage?("Choose a connected source.")
+            return false
+        }
+        guard let filters = Self.encodedFilters(draft.filters, for: sourceKind) else {
             showMessage?("The trigger filters could not be saved.")
             return false
         }
@@ -178,10 +203,43 @@ final class EventAutomationModel: ObservableObject {
             }
             : (draft.actionConnectionIDs.isEmpty
                 ? [draft.connectionID] : draft.actionConnectionIDs)
-        let body: [String: Any] = [
+        isSaving = true
+        defer { isSaving = false }
+        let targetSessionID: String
+        var agentSession: SessionSummary?
+        do {
+            if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+                guard !draft.templateSessionID.isEmpty else {
+                    showMessage?("Choose an existing workspace chat to base this agent on.")
+                    return false
+                }
+                var targetBody: [String: Any] = [
+                    "trigger_id": draft.creationID,
+                    "template_session_id": draft.templateSessionID,
+                    "name": name,
+                ]
+                for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
+                    targetBody[key] = value
+                }
+                let response: AgentTargetSessionResponse = try await backend.post(
+                    "/api/event-triggers/target-session",
+                    body: targetBody,
+                    as: AgentTargetSessionResponse.self
+                )
+                targetSessionID = response.session.id
+                agentSession = response.session
+                await refreshSessions?()
+            } else {
+                targetSessionID = draft.targetSessionID
+            }
+        } catch {
+            showMessage?("Could not create the dedicated agent chat: \(error.localizedDescription)")
+            return false
+        }
+        var body: [String: Any] = [
             "name": name,
             "connection_id": draft.connectionID,
-            "target_session_id": draft.targetSessionID,
+            "target_session_id": targetSessionID,
             "instruction": instruction,
             "mode": draft.mode.rawValue,
             "trigger_kind": draft.triggerKind.rawValue,
@@ -189,8 +247,7 @@ final class EventAutomationModel: ObservableObject {
             "action_connection_ids": actions,
             "enabled": draft.enabled,
         ]
-        isSaving = true
-        defer { isSaving = false }
+        if draft.id == nil { body["id"] = draft.creationID }
         do {
             let saved: EventTrigger
             if let id = draft.id {
@@ -207,9 +264,40 @@ final class EventAutomationModel: ObservableObject {
             restartNativeRuntimeIfNeeded()
             editorDraft = nil
             showMessage?(draft.id == nil ? "Agent configuration activated" : "Agent configuration updated")
+            if let agentSession { openAgentSession?(agentSession) }
             return true
         } catch {
             showMessage?("Could not save event trigger: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func createTask(for agent: SessionSummary, name: String) async -> Bool {
+        guard let backend,
+              let triggerID = agent.agentTriggerID?.nilIfBlank else {
+            showMessage?("Choose an agent before creating a task.")
+            return false
+        }
+        var body: [String: Any] = [
+            "name": name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+                ?? "New task",
+        ]
+        for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
+            body[key] = value
+        }
+        do {
+            let response: AgentTargetSessionResponse = try await backend.post(
+                "/api/event-triggers/\(triggerID)/tasks",
+                body: body,
+                as: AgentTargetSessionResponse.self
+            )
+            await refreshSessions?()
+            openAgentSession?(response.session)
+            showMessage?("New task opened in \(agent.agentName ?? agent.displayTitle)")
+            return true
+        } catch {
+            showMessage?("Could not create the agent task: \(error.localizedDescription)")
             return false
         }
     }
@@ -280,7 +368,13 @@ final class EventAutomationModel: ObservableObject {
         guard let backend else { return }
         do {
             let clientID = Bundle.main.object(forInfoDictionaryKey: "LocusGoogleOAuthClientID") as? String ?? ""
-            let secret = try await gmailOAuth.authenticate(clientID: clientID)
+            let callbackScheme = Bundle.main.object(
+                forInfoDictionaryKey: "LocusGoogleOAuthCallbackScheme"
+            ) as? String ?? ""
+            let secret = try await gmailOAuth.authenticate(
+                clientID: clientID,
+                callbackScheme: callbackScheme
+            )
             let identifier = "gmail-\(UUID().uuidString.lowercased())"
             try credentials.save(secret, for: identifier)
             do {
@@ -700,6 +794,28 @@ final class EventAutomationModel: ObservableObject {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return object
+    }
+
+    static func encodedFilters(
+        _ filters: EventTriggerFilters,
+        for sourceKind: ConnectorKind
+    ) -> [String: Any]? {
+        guard let object = encodedObject(filters) else { return nil }
+        let allowedKeys: Set<String> = switch sourceKind {
+        case .gmail:
+            ["senders", "recipients", "labels", "subject_contains", "has_attachments"]
+        case .telegram:
+            ["chat_ids", "sender_ids", "command_prefixes", "message_types"]
+        case .webhook:
+            ["event_names", "predicates", "price_condition"]
+        case .priceFeed:
+            ["price_condition"]
+        }
+        return object.filter { key, value in
+            guard allowedKeys.contains(key) else { return false }
+            if let values = value as? [Any] { return !values.isEmpty }
+            return true
+        }
     }
 
     private static func encodedDictionary(_ value: [String: Any]) -> [String: Any]? {

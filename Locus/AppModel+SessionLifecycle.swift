@@ -197,6 +197,7 @@ extension AppModel {
 
     func resume(_ session: SessionSummary) {
         activity.activityCenterPresented = false
+        sidebarDestination = session.isAgentChat ? .agents : .ask
         if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
         if let path = session.workspacePath {

@@ -114,17 +114,20 @@ def normalize_trigger(value: Any) -> dict[str, Any]:
 
 def normalize_filters(value: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for key in (
+    list_keys = (
         "senders", "recipients", "labels", "subject_contains", "chat_ids",
         "sender_ids", "command_prefixes", "message_types", "event_names",
-    ):
+    )
+    for key in list_keys:
         if key not in value:
             continue
         raw = value[key]
         if not isinstance(raw, list):
             raise EventTriggerValidationError(f"filter {key} must be a list")
         items = [str(item).strip()[:500] for item in raw[:MAX_FILTER_VALUES]]
-        result[key] = [item for item in items if item]
+        clean_items = [item for item in items if item]
+        if clean_items:
+            result[key] = clean_items
     if "has_attachments" in value:
         if not isinstance(value["has_attachments"], bool):
             raise EventTriggerValidationError("filter has_attachments must be a boolean")
@@ -147,10 +150,12 @@ def normalize_filters(value: dict[str, Any]) -> dict[str, Any]:
             if operation != "exists":
                 item["value"] = _clean_json(raw.get("value"), depth=0)
             clean.append(item)
-        result["predicates"] = clean
+        if clean:
+            result["predicates"] = clean
     if "price_condition" in value:
         result["price_condition"] = normalize_price_condition(value["price_condition"])
-    unknown = set(value) - set(result)
+    known_keys = set(list_keys) | {"has_attachments", "predicates", "price_condition"}
+    unknown = set(value) - known_keys
     if unknown:
         raise EventTriggerValidationError(f"unknown filter field: {sorted(unknown)[0]}")
     return result

@@ -30,6 +30,16 @@
 				<string>locus</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.sparktales.locus.google-oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -45,6 +55,8 @@
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LocusGoogleOAuthClientID</key>
 	<string>$(LOCUS_GOOGLE_OAUTH_CLIENT_ID)</string>
+	<key>LocusGoogleOAuthCallbackScheme</key>
+	<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
 	<key>LocusWalletAlchemyEthereumMainnetRPCURL</key>
 	<string>$(LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL)</string>
 	<key>LocusWalletQuickNodeEthereumMainnetRPCURL</key>

@@ -1087,6 +1087,7 @@ class AgentCore:
         # The label describes a remote account; it would be a lie about the
         # local runtime, and the transcript reads it.
         self.config["remote_account_label"] = ""
+        self.config["remote_account_id"] = ""
         self.model = str(self.config.get("model") or "")
         # Left unknown rather than resolved here: resolving costs Ollama I/O and
         # the app awaits this endpoint on a short timeout. `resolve_context_limit_soon`
@@ -1107,6 +1108,7 @@ class AgentCore:
         model: str = "",
         auth_style: str | None = None,
         account_label: str | None = None,
+        account_id: str | None = None,
         lists_models: bool | None = None,
         context_window_tokens: Any = None,
         published_context_window: Any = None,
@@ -1163,6 +1165,8 @@ class AgentCore:
             )
         if account_label is not None:
             self.config["remote_account_label"] = account_label.strip()
+        if account_id is not None:
+            self.config["remote_account_id"] = account_id.strip()
         if lists_models is not None:
             self.config["remote_lists_models"] = bool(lists_models)
         if reasoning_effort is not None:
@@ -1294,6 +1298,7 @@ class AgentCore:
             self.model,
             provider=self.provider,
             account=self.account_label,
+            account_id=self.account_id,
         )
 
     @property
@@ -1304,6 +1309,15 @@ class AgentCore:
         if self.provider != "remote":
             return ""
         return str(self.config.get("remote_account_label") or "")
+
+    @property
+    def account_id(self) -> str:
+        """The stable native account identifier for persisted background work."""
+        if self.provider == "chatgpt":
+            return str(self.config.get("chatgpt_account_id") or "")
+        if self.provider != "remote":
+            return ""
+        return str(self.config.get("remote_account_id") or "")
 
     def resolve_model_name(self, name: str) -> str | None:
         """The installed model `name` refers to, or None when it is unknown.

@@ -38,6 +38,59 @@ private final class MCPURLProtocol: URLProtocol {
 final class FeatureLogicTests: XCTestCase {
     // MARK: - Application lifecycle
 
+    func testGmailOAuthConfigurationUsesTheIssuedReversedClientID() throws {
+        let clientID = "123456-example.apps.googleusercontent.com"
+        let callbackScheme = "com.googleusercontent.apps.123456-example"
+
+        let configuration = try GmailOAuthConfiguration(
+            clientID: clientID,
+            callbackScheme: callbackScheme
+        )
+
+        XCTAssertEqual(configuration.clientID, clientID)
+        XCTAssertEqual(configuration.callbackScheme, callbackScheme)
+        XCTAssertEqual(
+            configuration.redirectURI,
+            "com.googleusercontent.apps.123456-example:/oauth2callback"
+        )
+    }
+
+    func testGmailOAuthConfigurationRejectsAMismatchedCallbackScheme() {
+        XCTAssertThrowsError(try GmailOAuthConfiguration(
+            clientID: "123456-example.apps.googleusercontent.com",
+            callbackScheme: "locus"
+        )) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The Google OAuth callback scheme does not match the configured client ID."
+            )
+        }
+    }
+
+    func testGmailOAuthCallbackRequiresTheExpectedStateAndPath() throws {
+        let configuration = try GmailOAuthConfiguration(
+            clientID: "123456-example.apps.googleusercontent.com",
+            callbackScheme: "com.googleusercontent.apps.123456-example"
+        )
+        let callback = try XCTUnwrap(URL(
+            string: "com.googleusercontent.apps.123456-example:/oauth2callback?state=secure-state&code=auth-code"
+        ))
+
+        XCTAssertEqual(
+            try configuration.authorizationCode(from: callback, expectedState: "secure-state"),
+            "auth-code"
+        )
+        XCTAssertThrowsError(
+            try configuration.authorizationCode(from: callback, expectedState: "different-state")
+        )
+        let wrongPath = try XCTUnwrap(URL(
+            string: "com.googleusercontent.apps.123456-example:/wrong?state=secure-state&code=auth-code"
+        ))
+        XCTAssertThrowsError(
+            try configuration.authorizationCode(from: wrongPath, expectedState: "secure-state")
+        )
+    }
+
     func testMainWindowUsesTheCompactDefaultSize() {
         XCTAssertEqual(LocusWindowSizing.defaultSize.width, 1_250)
         XCTAssertEqual(LocusWindowSizing.defaultSize.height, 760)

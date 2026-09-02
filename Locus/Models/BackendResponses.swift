@@ -197,6 +197,12 @@ struct NewSessionResponse: Codable {
     }
 }
 
+struct AgentTargetSessionResponse: Codable {
+    let ok: Bool
+    let session: SessionSummary
+    let created: Bool
+}
+
 struct ClearSessionsResponse: Codable {
     let ok: Bool
     let count: Int

@@ -32,6 +32,7 @@ struct SessionCatalogSnapshot: Equatable {
     let workspaceAvailabilityByProfileID: [String: Bool]
     let availableExecutionSessionIDs: Set<String>
     let filteredSessions: [SessionSummary]
+    let agentSessions: [SessionSummary]
     let sidebarGroups: [SessionSidebarGroupSnapshot]
     let activeWorkspaceID: String
     let showArchivedSessions: Bool
@@ -54,6 +55,7 @@ struct SessionCatalogSnapshot: Equatable {
         workspaceAvailabilityByProfileID: [:],
         availableExecutionSessionIDs: [],
         filteredSessions: [],
+        agentSessions: [],
         sidebarGroups: [],
         activeWorkspaceID: "",
         showArchivedSessions: false,
@@ -277,8 +279,12 @@ final class SessionCatalogModel: ObservableObject {
             },
             uniquingKeysWith: { existing, _ in existing }
         )
+        let agentSessions = filteredSessions
+            .filter(\.isAgentChat)
+            .sorted(by: sessionSort)
+        let conversationSessions = filteredSessions.filter { !$0.isAgentChat }
         var chatsByPath = Dictionary(
-            grouping: filteredSessions.compactMap { session -> (String, SessionSummary)? in
+            grouping: conversationSessions.compactMap { session -> (String, SessionSummary)? in
                 guard let path = workspaceIDBySessionID[session.id] else { return nil }
                 return (path, session)
             },
@@ -365,7 +371,7 @@ final class SessionCatalogModel: ObservableObject {
             return lhs.group.lastOpened > rhs.group.lastOpened
         }
 
-        let otherChats = filteredSessions
+        let otherChats = conversationSessions
             .filter { workspaceIDBySessionID[$0.id] == nil }
             .sorted(by: sessionSort)
         if !otherChats.isEmpty {
@@ -411,6 +417,7 @@ final class SessionCatalogModel: ObservableObject {
             workspaceAvailabilityByProfileID: workspaceAvailabilityByProfileID,
             availableExecutionSessionIDs: availableExecutionSessionIDs,
             filteredSessions: filteredSessions,
+            agentSessions: agentSessions,
             sidebarGroups: sidebarGroups,
             activeWorkspaceID: state.activeWorkspaceID,
             showArchivedSessions: state.showArchivedSessions,
@@ -438,6 +445,10 @@ final class SessionCatalogModel: ObservableObject {
                     query: query
                 )
                 let folderChats = sortedChats(chats.filter { $0.folderID == folder.id })
+                if folder.name.caseInsensitiveCompare("Agents") == .orderedSame,
+                   children.isEmpty, folderChats.isEmpty {
+                    return nil
+                }
                 guard query.isEmpty
                         || folder.name.lowercased().contains(query)
                         || !children.isEmpty

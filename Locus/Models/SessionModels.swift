@@ -1,6 +1,13 @@
 import Combine
 import Foundation
 
+enum SidebarDestination: String, CaseIterable, Identifiable {
+    case ask
+    case agents
+
+    var id: String { rawValue }
+}
+
 struct SessionSummary: Codable, Hashable, Identifiable {
     let id: String
     let name: String
@@ -20,6 +27,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let environment: [String: String]?
     let folderID: String?
     let sortOrder: Int?
+    let agentTriggerID: String?
+    let agentName: String?
 
     init(
         id: String,
@@ -37,7 +46,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         executionPath: String? = nil,
         environment: [String: String]? = nil,
         folderID: String? = nil,
-        sortOrder: Int? = nil
+        sortOrder: Int? = nil,
+        agentTriggerID: String? = nil,
+        agentName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -55,6 +66,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.environment = environment
         self.folderID = folderID
         self.sortOrder = sortOrder
+        self.agentTriggerID = agentTriggerID
+        self.agentName = agentName
     }
 
     enum CodingKeys: String, CodingKey {
@@ -63,6 +76,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         case executionPath = "execution_path"
         case folderID = "folder_id"
         case sortOrder = "sort_order"
+        case agentTriggerID = "agent_trigger_id"
+        case agentName = "agent_name"
     }
 
     var displayTitle: String {
@@ -95,6 +110,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     var date: Date { Date(timeIntervalSince1970: mtime) }
     var isPinned: Bool { pinned ?? false }
     var isArchived: Bool { archived ?? false }
+    var isAgentChat: Bool { agentTriggerID?.isEmpty == false }
 
     var workspacePath: String? {
         guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else {
@@ -120,7 +136,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
             executionPath: executionPath,
             environment: environment,
             folderID: folderID,
-            sortOrder: sortOrder
+            sortOrder: sortOrder,
+            agentTriggerID: agentTriggerID,
+            agentName: agentName
         )
     }
 

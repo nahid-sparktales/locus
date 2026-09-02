@@ -11,6 +11,12 @@ private struct ChatFolderEditorRequest: Identifiable {
     var title: String { folder == nil ? "New Chat Folder" : "Rename Chat Folder" }
 }
 
+private struct AgentSidebarGroupModel: Identifiable {
+    let id: String
+    let name: String
+    let tasks: [SessionSummary]
+}
+
 /// Cross-session transcript results observe their child model at the smallest
 /// owning boundary, so result updates do not invalidate the whole sidebar or AppModel.
 private struct TranscriptHitsSection: View {
@@ -139,6 +145,7 @@ struct SessionSidebarView: View {
     @State private var folderToDelete: ChatFolderRecord?
     @State private var folderEditor: ChatFolderEditorRequest?
     @State private var folderEditorName = ""
+    @State private var collapsedAgentIDs: Set<String> = []
     @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
 
@@ -150,104 +157,122 @@ struct SessionSidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    workspacesHeader(snapshot: snapshot)
+                    sectionHeader(snapshot: snapshot)
                     if searchExpanded {
                         searchField(snapshot: snapshot)
                             .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                     }
-                    if snapshot.sidebarGroups.isEmpty {
-                        emptyState(snapshot: snapshot)
-                    } else {
-                        ForEach(snapshot.sidebarGroups) { sidebarGroup in
-                            let group = sidebarGroup.group
-                            WorkspaceGroupRow(
-                                group: group,
-                                expanded: snapshot.expandedWorkspaceIDs.contains(group.id),
-                                active: group.id == snapshot.activeWorkspaceID,
-                                actionsDisabled: model.chatNavigationDisabled,
-                                onToggle: {
-                                    model.setWorkspaceExpanded(
-                                        group.id,
-                                        expanded: !snapshot.expandedWorkspaceIDs.contains(group.id)
-                                    )
-                                },
-                                onOpen: { model.openWorkspace(group) },
-                                onNewChat: {
-                                    if let path = group.path { model.newSession(in: path) }
-                                }
-                            )
-                            .contextMenu {
-                                if let path = group.path {
-                                    Button("New Folder…") {
-                                        requestFolderEditor(workspace: path, parentID: nil)
-                                    }
-                                    .accessibilityIdentifier("workspace.group.\(group.id).newFolder")
-                                    Divider()
-                                    Button("Remove from Sidebar") {
-                                        requestWorkspaceRemoval(group)
-                                    }
-                                    .disabled(
-                                        group.id == snapshot.activeWorkspaceID
-                                            || model.workspaceHasActiveRun(group)
-                                    )
-                                    .accessibilityIdentifier("workspace.group.\(group.id).remove")
-                                }
-                            }
-                            .modifier(ChatSidebarDropTarget(
-                                targetFolderID: nil,
-                                index: nil,
-                                targetWorkspace: group.path
-                            ))
-                            if snapshot.expandedWorkspaceIDs.contains(group.id) {
-                                if group.chats.isEmpty && sidebarGroup.rootFolders.isEmpty {
-                                    Text("No chats yet")
-                                        .font(.locus(size: 9))
-                                        .foregroundStyle(LocusTheme.muted)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.leading, 42)
-                                        .padding(.vertical, 7)
-                                } else {
-                                    ForEach(sidebarGroup.rootFolders) { folderNode in
-                                        ChatFolderBranchView(
-                                            node: folderNode,
-                                            depth: 0,
-                                            onCreateFolder: { workspace, parentID in
-                                                requestFolderEditor(
-                                                    workspace: workspace,
-                                                    parentID: parentID
-                                                )
-                                            },
-                                            onRenameFolder: { folder in
-                                                requestFolderEditor(
-                                                    workspace: folder.workspace,
-                                                    parentID: folder.parentID,
-                                                    folder: folder
-                                                )
-                                            },
-                                            onDeleteFolder: { folderToDelete = $0 },
-                                            sessionContent: { session in
-                                                AnyView(sessionRow(session, snapshot: snapshot))
-                                            }
-                                        )
-                                        .environmentObject(model)
-                                    }
-                                    ForEach(sidebarGroup.unfiledChats) { session in
+                    if model.sidebarDestination == .agents {
+                        if snapshot.agentSessions.isEmpty {
+                            agentEmptyState(snapshot: snapshot)
+                        } else {
+                            ForEach(agentGroups(snapshot: snapshot)) { agent in
+                                agentGroupRow(agent)
+                                if !collapsedAgentIDs.contains(agent.id) {
+                                    ForEach(agent.tasks) { session in
                                         sessionRow(session, snapshot: snapshot)
-                                            .padding(.leading, 18)
+                                            .padding(.leading, 22)
                                     }
                                 }
                             }
                         }
+                    } else {
+                        if snapshot.sidebarGroups.isEmpty {
+                            emptyState(snapshot: snapshot)
+                        } else {
+                            ForEach(snapshot.sidebarGroups) { sidebarGroup in
+                                let group = sidebarGroup.group
+                                WorkspaceGroupRow(
+                                    group: group,
+                                    expanded: snapshot.expandedWorkspaceIDs.contains(group.id),
+                                    active: group.id == snapshot.activeWorkspaceID,
+                                    actionsDisabled: model.chatNavigationDisabled,
+                                    onToggle: {
+                                        model.setWorkspaceExpanded(
+                                            group.id,
+                                            expanded: !snapshot.expandedWorkspaceIDs.contains(group.id)
+                                        )
+                                    },
+                                    onOpen: { model.openWorkspace(group) },
+                                    onNewChat: {
+                                        if let path = group.path { model.newSession(in: path) }
+                                    }
+                                )
+                                .contextMenu {
+                                    if let path = group.path {
+                                        Button("New Folder…") {
+                                            requestFolderEditor(workspace: path, parentID: nil)
+                                        }
+                                        .accessibilityIdentifier("workspace.group.\(group.id).newFolder")
+                                        Divider()
+                                        Button("Remove from Sidebar") {
+                                            requestWorkspaceRemoval(group)
+                                        }
+                                        .disabled(
+                                            group.id == snapshot.activeWorkspaceID
+                                                || model.workspaceHasActiveRun(group)
+                                        )
+                                        .accessibilityIdentifier("workspace.group.\(group.id).remove")
+                                    }
+                                }
+                                .modifier(ChatSidebarDropTarget(
+                                    targetFolderID: nil,
+                                    index: nil,
+                                    targetWorkspace: group.path
+                                ))
+                                if snapshot.expandedWorkspaceIDs.contains(group.id) {
+                                    if group.chats.isEmpty && sidebarGroup.rootFolders.isEmpty {
+                                        Text("No chats yet")
+                                            .font(.locus(size: 9))
+                                            .foregroundStyle(LocusTheme.muted)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.leading, 42)
+                                            .padding(.vertical, 7)
+                                    } else {
+                                        ForEach(sidebarGroup.rootFolders) { folderNode in
+                                            ChatFolderBranchView(
+                                                node: folderNode,
+                                                depth: 0,
+                                                onCreateFolder: { workspace, parentID in
+                                                    requestFolderEditor(
+                                                        workspace: workspace,
+                                                        parentID: parentID
+                                                    )
+                                                },
+                                                onRenameFolder: { folder in
+                                                    requestFolderEditor(
+                                                        workspace: folder.workspace,
+                                                        parentID: folder.parentID,
+                                                        folder: folder
+                                                    )
+                                                },
+                                                onDeleteFolder: { folderToDelete = $0 },
+                                                sessionContent: { session in
+                                                    AnyView(sessionRow(session, snapshot: snapshot))
+                                                }
+                                            )
+                                            .environmentObject(model)
+                                        }
+                                        ForEach(sidebarGroup.unfiledChats) { session in
+                                            sessionRow(session, snapshot: snapshot)
+                                                .padding(.leading, 18)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TranscriptHitsSection(
+                            snapshot: snapshot,
+                            transcriptSearch: model.transcriptSearch,
+                            navigationDisabled: model.chatNavigationDisabled,
+                            onOpen: model.openSearchHit
+                        )
                     }
-                    TranscriptHitsSection(
-                        snapshot: snapshot,
-                        transcriptSearch: model.transcriptSearch,
-                        navigationDisabled: model.chatNavigationDisabled,
-                        onOpen: model.openSearchHit
-                    )
                 }
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel("Workspaces and chats")
+                .accessibilityLabel(
+                    model.sidebarDestination == .agents ? "Agents and tasks" : "Workspaces and chats"
+                )
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
@@ -422,9 +447,9 @@ struct SessionSidebarView: View {
 
     private var controls: some View {
         VStack(spacing: 8) {
-            JustChatControl(isChatSelected: model.justChatEnabled) { enabled in
+            SidebarDestinationControl(destination: model.sidebarDestination) { destination in
                 withAnimation(LocusMotion.spatial) {
-                    model.setJustChatEnabled(enabled)
+                    model.sidebarDestination = destination
                 }
             }
 
@@ -438,16 +463,17 @@ struct SessionSidebarView: View {
                 model.presentSettings(.accounts)
             }
 
-            newChatButton
+            primaryCreationButton
 
             // The configuration host is mounted before any optional editor is
             // presented, so global shortcuts always have a live sheet anchor.
             HStack(spacing: 7) {
                 secondaryButton(
-                    symbol: "gearshape.2",
-                    title: "Configure Agent",
-                    help: "Start work on a schedule, event, or price condition",
-                    accessibilityLabel: "Configure Agent",
+                    symbol: model.sidebarDestination == .agents ? "robot" : "gearshape.2",
+                    title: model.sidebarDestination == .agents ? "Manage Agents" : "Configure Agent",
+                    help: "Configure schedules, incoming events, and price conditions",
+                    accessibilityLabel: model.sidebarDestination == .agents
+                        ? "Manage Agents" : "Configure Agent",
                     identifier: "sidebar.configureAgent"
                 ) {
                     model.presentConfigureAgent(draftText: model.draftText)
@@ -460,14 +486,18 @@ struct SessionSidebarView: View {
         .padding(.bottom, 12)
     }
 
-    private var newChatButton: some View {
+    private var primaryCreationButton: some View {
         Button {
-            model.newSession()
+            if model.sidebarDestination == .agents {
+                createAgentTask(snapshot: sessionCatalog.snapshot)
+            } else {
+                model.newSession()
+            }
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
-                Image(systemName: "plus")
+                Image(systemName: model.sidebarDestination == .agents ? "robot" : "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text("New chat")
+                Text(model.sidebarDestination == .agents ? "New task" : "New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -482,7 +512,10 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .accessibilityIdentifier("sidebar.newSession")
+        .accessibilityLabel(model.sidebarDestination == .agents ? "New task" : "New chat")
+        .accessibilityIdentifier(
+            model.sidebarDestination == .agents ? "sidebar.newTask" : "sidebar.newSession"
+        )
     }
 
     private var activityButton: some View {
@@ -598,10 +631,12 @@ struct SessionSidebarView: View {
 
     /// Search is a section control now: the glyph beside WORKSPACES reveals
     /// the field, so an unused search box no longer occupies the sidebar.
-    private func workspacesHeader(snapshot: SessionCatalogSnapshot) -> some View {
+    private func sectionHeader(snapshot: SessionCatalogSnapshot) -> some View {
         HStack(spacing: 0) {
             SectionLabel(
-                snapshot.showArchivedSessions ? "All Workspaces" : "Workspaces"
+                model.sidebarDestination == .agents
+                    ? "Agents"
+                    : (snapshot.showArchivedSessions ? "All Workspaces" : "Workspaces")
             )
             Button {
                 withAnimation(LocusMotion.spatial) {
@@ -624,22 +659,24 @@ struct SessionSidebarView: View {
             .accessibilityLabel("Search sessions")
             .accessibilityValue(searchExpanded ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.search.toggle")
-            Button {
-                requestFolderEditor(
-                    workspace: snapshot.activeWorkspaceID,
-                    parentID: nil
-                )
-            } label: {
-                Image(systemName: "folder.badge.plus")
-                    .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 22, height: 22)
-                    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            if model.sidebarDestination == .ask {
+                Button {
+                    requestFolderEditor(
+                        workspace: snapshot.activeWorkspaceID,
+                        parentID: nil
+                    )
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 22, height: 22)
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.locus(.icon))
+                .help("New chat folder (⇧⌘N)")
+                .accessibilityLabel("New chat folder")
+                .accessibilityIdentifier("sidebar.newChatFolder")
             }
-            .buttonStyle(.locus(.icon))
-            .help("New chat folder (⇧⌘N)")
-            .accessibilityLabel("New chat folder")
-            .accessibilityIdentifier("sidebar.newChatFolder")
         }
         .padding(.trailing, 6)
     }
@@ -698,7 +735,8 @@ struct SessionSidebarView: View {
             isActive: session.id == model.currentSessionID,
             teamState: model.teamRunState(for: session),
             isRunning: model.chatIsRunning(session),
-            startedAt: model.chatStartedAt(session)
+            startedAt: model.chatStartedAt(session),
+            showsAgentIcon: model.sidebarDestination != .agents
         ) {
             model.resume(session)
         }
@@ -732,20 +770,22 @@ struct SessionSidebarView: View {
                 )
                 .accessibilityIdentifier("session.\(session.id).duplicateWorktree")
             }
-            Menu("Move to Folder") {
-                Button("Workspace Root") { model.moveChat(session, to: nil) }
-                    .disabled(session.folderID == nil)
-                let workspace = snapshot.workspaceIDBySessionID[session.id]
-                let folderTargets = workspace.flatMap { snapshot.foldersByWorkspaceID[$0] } ?? []
-                ForEach(folderTargets) { folder in
-                    Button(folder.name) { model.moveChat(session, to: folder.id) }
-                        .disabled(session.folderID == folder.id)
+            if !session.isAgentChat {
+                Menu("Move to Folder") {
+                    Button("Workspace Root") { model.moveChat(session, to: nil) }
+                        .disabled(session.folderID == nil)
+                    let workspace = snapshot.workspaceIDBySessionID[session.id]
+                    let folderTargets = workspace.flatMap { snapshot.foldersByWorkspaceID[$0] } ?? []
+                    ForEach(folderTargets) { folder in
+                        Button(folder.name) { model.moveChat(session, to: folder.id) }
+                            .disabled(session.folderID == folder.id)
+                    }
                 }
+                Button("Move Earlier") { model.reorderChat(session, offset: -1) }
+                    .accessibilityIdentifier("session.\(session.id).moveEarlier")
+                Button("Move Later") { model.reorderChat(session, offset: 1) }
+                    .accessibilityIdentifier("session.\(session.id).moveLater")
             }
-            Button("Move Earlier") { model.reorderChat(session, offset: -1) }
-                .accessibilityIdentifier("session.\(session.id).moveEarlier")
-            Button("Move Later") { model.reorderChat(session, offset: 1) }
-                .accessibilityIdentifier("session.\(session.id).moveLater")
             Divider()
             Menu("Export") {
                 ForEach(ChatExportFormat.allCases) { format in
@@ -792,6 +832,83 @@ struct SessionSidebarView: View {
         }
     }
 
+    private func agentGroups(snapshot: SessionCatalogSnapshot) -> [AgentSidebarGroupModel] {
+        Dictionary(grouping: snapshot.agentSessions) { session in
+            session.agentTriggerID ?? session.id
+        }
+        .map { triggerID, tasks in
+            AgentSidebarGroupModel(
+                id: triggerID,
+                name: tasks.compactMap(\.agentName).first?.nilIfBlank
+                    ?? tasks[0].displayTitle,
+                tasks: tasks.sorted {
+                    if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
+                    return $0.id < $1.id
+                }
+            )
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func agentGroupRow(_ agent: AgentSidebarGroupModel) -> some View {
+        let expanded = !collapsedAgentIDs.contains(agent.id)
+        return Button {
+            withAnimation(LocusMotion.spatial) {
+                if expanded {
+                    collapsedAgentIDs.insert(agent.id)
+                } else {
+                    collapsedAgentIDs.remove(agent.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.locus(size: 7, weight: .bold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 9)
+                Text("🤖")
+                    .font(.system(size: 13))
+                    .frame(width: 21, height: 21)
+                    .accessibilityHidden(true)
+                Text(agent.name)
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(agent.tasks.count)")
+                    .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(LocusTheme.white.opacity(0.36))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.locus())
+        .accessibilityLabel("\(agent.name) agent")
+        .accessibilityValue("\(agent.tasks.count) tasks, \(expanded ? "expanded" : "collapsed")")
+        .accessibilityIdentifier("agent.\(agent.id)")
+    }
+
+    private func createAgentTask(snapshot: SessionCatalogSnapshot) {
+        let selected = snapshot.sessionsByID[model.currentSessionID]
+        let agent = selected?.isAgentChat == true ? selected : snapshot.agentSessions.first
+        guard let agent else {
+            model.presentConfigureAgent(draftText: model.draftText)
+            return
+        }
+        let triggerID = agent.agentTriggerID
+        let taskNumber = snapshot.agentSessions.filter {
+            $0.agentTriggerID == triggerID
+        }.count + 1
+        Task {
+            await model.eventAutomations.createTask(
+                for: agent,
+                name: "Task \(taskNumber)"
+            )
+        }
+    }
+
     private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
@@ -812,6 +929,25 @@ struct SessionSidebarView: View {
         .padding(.horizontal, 18)
     }
 
+    private func agentEmptyState(snapshot: SessionCatalogSnapshot) -> some View {
+        VStack(spacing: 9) {
+            Image(systemName: "robot")
+                .font(.locus(size: 18))
+                .foregroundStyle(LocusTheme.muted)
+            Text(snapshot.searchQuery.isEmpty ? "No agents yet" : "No matching agents")
+                .font(.locus(size: 10, weight: .semibold))
+            if snapshot.searchQuery.isEmpty {
+                Text("Create a task to give an agent its own ongoing conversation.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+        .padding(.horizontal, 18)
+    }
+
     // MARK: - Footer
 
     /// The service indicators live with the composer, where they remain fixed
@@ -819,7 +955,28 @@ struct SessionSidebarView: View {
     /// controls now.
     private func footer(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 8) {
-            workspaceMenu(snapshot: snapshot)
+            if model.sidebarDestination == .ask {
+                workspaceMenu(snapshot: snapshot)
+            } else {
+                HStack(spacing: SidebarMetrics.iconGap) {
+                    Image(systemName: "robot")
+                        .frame(width: SidebarMetrics.iconColumn)
+                    Text("Agents")
+                        .font(.locus(size: 10, weight: .semibold))
+                    Spacer()
+                    Text("\(snapshot.agentSessions.count)")
+                        .font(.locus(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .foregroundStyle(LocusTheme.inkSoft)
+                .padding(.horizontal, SidebarMetrics.rowInset)
+                .frame(height: 34)
+                .background(LocusTheme.white.opacity(0.56))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Agents")
+                .accessibilityValue("\(snapshot.agentSessions.count) tasks")
+            }
 
             HStack {
                 agentStatus
@@ -1688,6 +1845,7 @@ private struct SessionRow: View {
     let teamState: TeamRunState?
     let isRunning: Bool
     let startedAt: Date?
+    let showsAgentIcon: Bool
     let action: () -> Void
 
     private var showsActivity: Bool { isRunning || teamState != nil }
@@ -1695,6 +1853,12 @@ private struct SessionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
+                if session.isAgentChat && showsAgentIcon {
+                    Image(systemName: "robot")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.signalDeep)
+                        .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
                         .font(.locus(size: 10, weight: isActive ? .medium : .regular))

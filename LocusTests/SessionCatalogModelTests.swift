@@ -30,7 +30,9 @@ final class SessionCatalogModelTests: XCTestCase {
         archived: Bool = false,
         workspace: String? = nil,
         folderID: String? = nil,
-        sortOrder: Int? = nil
+        sortOrder: Int? = nil,
+        agentTriggerID: String? = nil,
+        agentName: String? = nil
     ) -> SessionSummary {
         SessionSummary(
             id: id,
@@ -43,7 +45,9 @@ final class SessionCatalogModelTests: XCTestCase {
             archived: archived,
             cwd: workspace,
             folderID: folderID,
-            sortOrder: sortOrder
+            sortOrder: sortOrder,
+            agentTriggerID: agentTriggerID,
+            agentName: agentName
         )
     }
 
@@ -114,6 +118,33 @@ final class SessionCatalogModelTests: XCTestCase {
             catalog.snapshot.sidebarGroups
                 .first { $0.id == workspace }?
                 .unfiledChats.contains { $0.id == "archived" } == true
+        )
+    }
+
+    func testAgentsAreTopLevelAndExcludedFromWorkspaceChats() {
+        let workspace = "/tmp/locus-catalog-agents"
+        let catalog = SessionCatalogModel(fileExists: { _ in true })
+        catalog.replaceSessions([
+            session("chat", mtime: 10, workspace: workspace),
+            session(
+                "agent", title: "Weather task", mtime: 20, workspace: workspace,
+                folderID: "legacy-agents-folder", agentTriggerID: "weather",
+                agentName: "Weather task"
+            ),
+        ])
+
+        XCTAssertEqual(catalog.snapshot.agentSessions.map(\.id), ["agent"])
+        XCTAssertEqual(
+            catalog.snapshot.sidebarGroups.first?.group.chats.map(\.id),
+            ["chat"]
+        )
+        XCTAssertFalse(
+            catalog.snapshot.sidebarGroups.contains { group in
+                group.unfiledChats.contains { $0.id == "agent" }
+                    || group.rootFolders.contains { folder in
+                        folder.chats.contains { $0.id == "agent" }
+                    }
+            }
         )
     }
 

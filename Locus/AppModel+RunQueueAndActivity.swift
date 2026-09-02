@@ -348,7 +348,16 @@ extension AppModel {
             state: .queued,
             updatedAt: Date()
         )
-        guard await waitForChatExecutionSlot(worker) else { return }
+        guard await waitForChatExecutionSlot(worker) else {
+            guard !isShuttingDown, !Task.isCancelled else { return }
+            restoredQueuedRunIDs.remove(run.id)
+            await markEventRunNeedsAttention(
+                run,
+                message: "The agent worker stopped before this task could start."
+            )
+            showToast("An agent task stopped before it could start")
+            return
+        }
         do {
             let _: OrchestrationRun = try await backend.patch(
                 "/api/runs/\(run.id)/queue", body: ["action": "admit"],
@@ -412,6 +421,17 @@ extension AppModel {
         _ run: OrchestrationRun,
         message: String
     ) async {
+        // A retry keeps the original event delivery id in its frozen manifest.
+        // Failing that delivery only terminalizes the delivery's first run, so
+        // explicitly close this queued retry as well. Otherwise it survives
+        // every app restart as a queue entry that can never be admitted.
+        if run.state == "queued" {
+            _ = try? await backend.patch(
+                "/api/runs/\(run.id)/queue",
+                body: ["action": "cancel"],
+                as: OrchestrationRun.self
+            )
+        }
         guard let deliveryID = run.manifest?["event_delivery_id"]?.string else { return }
         do {
             let _: EventDelivery = try await backend.post(

@@ -26,27 +26,101 @@ struct ConnectorPollResult {
     let cursor: [String: JSONValue]
 }
 
-@MainActor
-final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private var session: ASWebAuthenticationSession?
+struct GmailOAuthConfiguration: Equatable {
+    static let callbackPath = "/oauth2callback"
 
-    func authenticate(clientID: String) async throws -> [String: String] {
+    let clientID: String
+    let callbackScheme: String
+
+    var redirectURI: String { "\(callbackScheme):\(Self.callbackPath)" }
+
+    init(clientID: String, callbackScheme: String) throws {
         let cleanClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanClientID.isEmpty else {
             throw EventConnectorClientError.unavailable(
                 "This build has no Google OAuth client ID. Set LOCUS_GOOGLE_OAUTH_CLIENT_ID before building."
             )
         }
+        guard cleanClientID.hasSuffix(".apps.googleusercontent.com") else {
+            throw EventConnectorClientError.unavailable(
+                "This build has an invalid Google OAuth client ID."
+            )
+        }
+
+        let cleanCallbackScheme = callbackScheme.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanCallbackScheme.isEmpty else {
+            throw EventConnectorClientError.unavailable(
+                "This build has no Google OAuth callback scheme."
+            )
+        }
+        let expectedScheme = cleanClientID
+            .split(separator: ".")
+            .reversed()
+            .joined(separator: ".")
+        guard cleanCallbackScheme == expectedScheme else {
+            throw EventConnectorClientError.unavailable(
+                "The Google OAuth callback scheme does not match the configured client ID."
+            )
+        }
+
+        self.clientID = cleanClientID
+        self.callbackScheme = cleanCallbackScheme
+    }
+
+    func authorizationCode(from callbackURL: URL, expectedState: String) throws -> String {
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.scheme == callbackScheme,
+              components.host == nil,
+              components.path == Self.callbackPath
+        else {
+            throw EventConnectorClientError.invalidResponse(
+                "Google sign-in returned an invalid callback URL."
+            )
+        }
+        let queryItems = components.queryItems ?? []
+        let returnedStates = queryItems.filter { $0.name == "state" }.compactMap(\.value)
+        guard returnedStates == [expectedState] else {
+            throw EventConnectorClientError.invalidResponse(
+                "Google sign-in returned an invalid security state."
+            )
+        }
+        if let oauthError = queryItems.first(where: { $0.name == "error" })?.value,
+           !oauthError.isEmpty {
+            throw EventConnectorClientError.invalidResponse(
+                "Google sign-in was not completed (\(oauthError))."
+            )
+        }
+        let codes = queryItems.filter { $0.name == "code" }.compactMap(\.value)
+        guard codes.count == 1, let code = codes.first, !code.isEmpty else {
+            throw EventConnectorClientError.invalidResponse(
+                "Google sign-in returned no authorization code."
+            )
+        }
+        return code
+    }
+}
+
+@MainActor
+final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+
+    func authenticate(clientID: String, callbackScheme: String) async throws -> [String: String] {
+        let configuration = try GmailOAuthConfiguration(
+            clientID: clientID,
+            callbackScheme: callbackScheme
+        )
         let verifier = Self.base64URL(Data((0..<48).map { _ in UInt8.random(in: 0...255) }))
         let challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+        let state = Self.base64URL(Data((0..<32).map { _ in UInt8.random(in: 0...255) }))
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
-            URLQueryItem(name: "client_id", value: cleanClientID),
-            URLQueryItem(name: "redirect_uri", value: "locus://oauth/google"),
+            URLQueryItem(name: "client_id", value: configuration.clientID),
+            URLQueryItem(name: "redirect_uri", value: configuration.redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/gmail.modify"),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
         ]
@@ -57,7 +131,7 @@ final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
             (continuation: CheckedContinuation<URL, Error>) in
             let session = ASWebAuthenticationSession(
                 url: authorizationURL,
-                callbackURLScheme: "locus"
+                callbackURLScheme: configuration.callbackScheme
             ) { url, error in
                 if let error { continuation.resume(throwing: error) }
                 else if let url { continuation.resume(returning: url) }
@@ -78,19 +152,16 @@ final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
             }
         }
         self.session = nil
-        guard let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "code" })?.value else {
-            throw EventConnectorClientError.invalidResponse("Google sign-in returned no authorization code.")
-        }
+        let code = try configuration.authorizationCode(from: callbackURL, expectedState: state)
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = [
-            "client_id": cleanClientID,
+            "client_id": configuration.clientID,
             "code": code,
             "code_verifier": verifier,
             "grant_type": "authorization_code",
-            "redirect_uri": "locus://oauth/google",
+            "redirect_uri": configuration.redirectURI,
         ].formEncoded
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
@@ -104,7 +175,7 @@ final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
             "access_token": access,
             "refresh_token": object["refresh_token"] as? String ?? "",
             "expires_at": String(expires.timeIntervalSince1970),
-            "client_id": cleanClientID,
+            "client_id": configuration.clientID,
         ]
     }
 

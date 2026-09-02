@@ -175,6 +175,7 @@ final class AppModel: ObservableObject {
             scheduleWorkspacePersistence()
         }
     }
+    @Published var sidebarDestination: SidebarDestination = .ask
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
     @Published var inspectorTab: InspectorTab = .plan  // internal(for: AppModel+UITestFixtures)
@@ -964,6 +965,28 @@ final class AppModel: ObservableObject {
                 for runtime in self.taskWorkers.values {
                     self.sendConnectorCapability(to: runtime.service)
                 }
+            },
+            refreshSessions: { [weak self] in
+                await self?.refreshMetadata()
+            },
+            agentProviderRoute: { [weak self] in
+                guard let self else { return [:] }
+                if let account = self.activeAccount {
+                    return [
+                        "provider": account.kind == .chatGPT ? "chatgpt" : "remote",
+                        "provider_account_id": account.id.uuidString,
+                        "account_label": account.displayName,
+                        "model": self.routedModel(for: account),
+                    ]
+                }
+                return [
+                    "provider": "ollama",
+                    "model": self.selectedModel,
+                ]
+            },
+            openAgentSession: { [weak self] session in
+                self?.sidebarDestination = .agents
+                self?.resume(session)
             },
             showMessage: { [weak self] message in self?.showToast(message) }
         )

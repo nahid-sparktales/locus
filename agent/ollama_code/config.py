@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     # display label only: two accounts can share a host, and without it the
     # app cannot tell which one this process is actually holding a key for.
     "remote_account_label": "",
+    "remote_account_id": "",
     # "" means send no effort at all, which is what a model without an effort
     # control requires — the endpoint rejects the turn rather than ignoring an
     # unknown field. The app only sends a value for models it knows accept one.
@@ -227,7 +228,8 @@ def load_config() -> dict[str, Any]:
     if cfg.get("provider") not in PROVIDERS:
         cfg["provider"] = "ollama"
     for key in (
-        "remote_auth_style", "remote_account_label", "remote_reasoning_effort",
+        "remote_auth_style", "remote_account_label", "remote_account_id",
+        "remote_reasoning_effort",
         "chatgpt_account_id", "chatgpt_account_label", "chatgpt_model",
         "chatgpt_reasoning_effort",
     ):

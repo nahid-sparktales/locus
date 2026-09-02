@@ -328,6 +328,7 @@ extension AppModel {
         }
         return [
             "provider": "remote",
+            "account_id": account.id.uuidString,
             "base_url": account.resolvedBaseURL,
             "model": account.preferredModel,
             "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",

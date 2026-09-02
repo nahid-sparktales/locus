@@ -1330,6 +1330,15 @@ class RunStore:
         trigger_id = str(value.get("id") or uuid.uuid4().hex)
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", trigger_id):
             raise RunStoreError("trigger id is invalid")
+        existing = self.event_trigger(trigger_id)
+        if existing is not None:
+            definition_fields = (
+                "name", "connection_id", "target_session_id", "instruction", "mode",
+                "trigger_kind", "filters", "action_connection_ids", "enabled",
+            )
+            if all(existing.get(key) == normalized.get(key) for key in definition_fields):
+                return existing
+            raise RunStoreError("an event trigger with that id already exists")
         created = float(now if now is not None else time.time())
         with self._lock, self._connect() as connection:
             try:

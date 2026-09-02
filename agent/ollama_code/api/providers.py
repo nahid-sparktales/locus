@@ -328,6 +328,7 @@ def _apply_provider(service: ChatService, body: dict[str, Any]) -> dict[str, Any
             model=str(body.get("model") or ""),
             auth_style=None if raw_style is None else str(raw_style),
             account_label=None if raw_label is None else str(raw_label),
+            account_id=str(body.get("account_id") or "") or None,
             lists_models=None if raw_lists is None else bool(raw_lists),
             context_window_tokens=body.get("context_window"),
             published_context_window=body.get("published_context_window"),

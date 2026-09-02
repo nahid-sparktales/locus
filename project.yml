@@ -18,8 +18,8 @@ settings:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    CURRENT_PROJECT_VERSION: 21
-    MARKETING_VERSION: 2.1.0
+    CURRENT_PROJECT_VERSION: 23
+    MARKETING_VERSION: 2.3.0
   configs:
     # A stable signing identity rather than ad-hoc. Keychain items are guarded by
     # an ACL bound to the code signature, and an ad-hoc signature changes on every
@@ -103,9 +103,10 @@ targetTemplates:
         # targets inherit it, so local and distribution builds can connect to
         # the bundled GitHub MCP preset without a developer-only environment.
         LOCUS_GITHUB_OAUTH_CLIENT_ID: Iv23liCL3tit1VOgBjWF
-        # Public OAuth client id for Gmail's native PKCE flow. Release builds
-        # set this in signing configuration after Google verification.
-        LOCUS_GOOGLE_OAUTH_CLIENT_ID: ""
+        # Public OAuth identifiers for Gmail's native PKCE flow. Google issues
+        # the callback scheme alongside the client id for this bundle id.
+        LOCUS_GOOGLE_OAUTH_CLIENT_ID: 976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov.apps.googleusercontent.com
+        LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID: com.googleusercontent.apps.976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov
 targets:
   WalletRecoveryService:
     type: xpc-service

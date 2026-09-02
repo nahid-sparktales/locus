@@ -300,9 +300,12 @@ extension AppModel {
                 "context_window": settings.localContextWindow ?? 0,
             ]
         }
-        guard let id = accountID.flatMap(UUID.init(uuidString:)),
-              let account = providerAccounts.first(where: { $0.id == id })
-        else { return nil }
+        let account = Self.scheduledProviderAccount(
+            provider: provider,
+            reference: accountID,
+            accounts: providerAccounts
+        )
+        guard let account else { return nil }
         if provider == "chatgpt", account.kind == .chatGPT {
             return [
                 "provider": "chatgpt",
@@ -320,6 +323,7 @@ extension AppModel {
         guard provider == "remote", account.kind != .chatGPT else { return nil }
         return [
             "provider": "remote",
+            "account_id": account.id.uuidString,
             "base_url": account.resolvedBaseURL,
             "model": model,
             "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
@@ -330,6 +334,30 @@ extension AppModel {
             "published_context_window": account.kind.publishedContextWindow(for: model) ?? 0,
             "verify": false,
         ]
+    }
+
+    /// Current transcripts persist a stable account UUID. Older ones stored
+    /// the display label, so accept that label as a compatibility lookup. If
+    /// the label has since changed, a single compatible account is unambiguous
+    /// and can safely recover that legacy task.
+    static func scheduledProviderAccount(
+        provider: String,
+        reference: String?,
+        accounts: [ProviderAccount]
+    ) -> ProviderAccount? {
+        let compatible = accounts.filter {
+            provider == "chatgpt" ? $0.kind == .chatGPT : $0.kind != .chatGPT
+        }
+        if let exact = reference.flatMap({ value in
+            if let id = UUID(uuidString: value),
+               let exact = compatible.first(where: { $0.id == id }) {
+                return exact
+            }
+            return compatible.first(where: { $0.displayName == value })
+        }) {
+            return exact
+        }
+        return compatible.count == 1 ? compatible[0] : nil
     }
 
     /// Mirror the live worker set into the browser so tab eviction never

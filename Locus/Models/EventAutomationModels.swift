@@ -216,6 +216,34 @@ struct EventTriggerFilters: Codable, Hashable {
         case eventNames = "event_names"
         case priceCondition = "price_condition"
     }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        senders = try container.decodeIfPresent([String].self, forKey: .senders) ?? []
+        recipients = try container.decodeIfPresent([String].self, forKey: .recipients) ?? []
+        labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
+        subjectContains = try container.decodeIfPresent(
+            [String].self, forKey: .subjectContains
+        ) ?? []
+        hasAttachments = try container.decodeIfPresent(Bool.self, forKey: .hasAttachments)
+        chatIDs = try container.decodeIfPresent([String].self, forKey: .chatIDs) ?? []
+        senderIDs = try container.decodeIfPresent([String].self, forKey: .senderIDs) ?? []
+        commandPrefixes = try container.decodeIfPresent(
+            [String].self, forKey: .commandPrefixes
+        ) ?? []
+        messageTypes = try container.decodeIfPresent(
+            [String].self, forKey: .messageTypes
+        ) ?? []
+        eventNames = try container.decodeIfPresent([String].self, forKey: .eventNames) ?? []
+        predicates = try container.decodeIfPresent(
+            [EventFilterPredicate].self, forKey: .predicates
+        ) ?? []
+        priceCondition = try container.decodeIfPresent(
+            PriceCondition.self, forKey: .priceCondition
+        )
+    }
 }
 
 struct EventTrigger: Identifiable, Codable, Hashable {
@@ -320,10 +348,14 @@ struct EventDelivery: Identifiable, Codable, Hashable {
 }
 
 struct EventTriggerEditorDraft: Identifiable, Hashable {
+    static let dedicatedAgentChat = "__dedicated_agent_chat__"
+
     var id: String?
+    var creationID = UUID().uuidString.lowercased()
     var name = ""
     var connectionID = ""
     var targetSessionID = ""
+    var templateSessionID = ""
     var instruction = ""
     var mode: WorkMode = .work
     var triggerKind: EventTriggerKind = .event
@@ -335,9 +367,11 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
 
     init(trigger: EventTrigger) {
         id = trigger.id
+        creationID = trigger.id
         name = trigger.name
         connectionID = trigger.connectionID
         targetSessionID = trigger.targetSessionID
+        templateSessionID = trigger.targetSessionID
         instruction = trigger.instruction
         mode = trigger.mode
         triggerKind = trigger.triggerKind

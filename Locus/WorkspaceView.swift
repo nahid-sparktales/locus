@@ -2151,29 +2151,28 @@ private struct WorkStatusStrip: View {
     }
 }
 
-/// Codex-style Chat/Work segmented control. This intentionally uses custom
-/// capsule styling instead of the native macOS segmented picker so it matches
-/// the compact dark control used in Codex.
-struct JustChatControl: View {
-    let isChatSelected: Bool
-    let setChatSelected: (Bool) -> Void
+/// Top-level navigation between ordinary conversations and persistent agents.
+/// Work mode remains a property of each conversation's composer.
+struct SidebarDestinationControl: View {
+    let destination: SidebarDestination
+    let select: (SidebarDestination) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             segment(
-                title: "Chat",
-                selected: isChatSelected,
-                identifier: "workspace.mode.chat"
+                title: "Ask",
+                selected: destination == .ask,
+                identifier: "sidebar.mode.ask"
             ) {
-                setChatSelected(true)
+                select(.ask)
             }
 
             segment(
-                title: "Work",
-                selected: !isChatSelected,
-                identifier: "workspace.mode.work"
+                title: "Agents",
+                selected: destination == .agents,
+                identifier: "sidebar.mode.agents"
             ) {
-                setChatSelected(false)
+                select(.agents)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2186,16 +2185,12 @@ struct JustChatControl: View {
         }
         .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
-        .animation(LocusMotion.spatial, value: isChatSelected)
-        .help(
-            isChatSelected
-                ? "Just Chat is on — no workspace files, commands, skills, or MCP tools"
-                : "Work mode can plan, inspect, and change the workspace"
-        )
+        .animation(LocusMotion.spatial, value: destination)
+        .help(destination == .agents ? "Show persistent agents" : "Show conversations")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Chat or Work mode")
-        .accessibilityValue(isChatSelected ? "Chat" : "Work")
-        .accessibilityIdentifier("workspace.justChat")
+        .accessibilityLabel("Ask or Agents")
+        .accessibilityValue(destination == .agents ? "Agents" : "Ask")
+        .accessibilityIdentifier("sidebar.destination")
     }
 
     private func segment(

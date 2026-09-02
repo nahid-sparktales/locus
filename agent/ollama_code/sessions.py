@@ -556,6 +556,7 @@ class SessionStore:
         model: str = "",
         provider: str = "",
         account: str = "",
+        account_id: str = "",
     ) -> None:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
@@ -581,6 +582,7 @@ class SessionStore:
             "model": model,
             "provider": provider,
             "account": account,
+            "account_id": account_id,
             "started": datetime.now().isoformat(timespec="seconds"),
         })
 
@@ -1134,8 +1136,10 @@ class SessionStore:
     ) -> list[dict[str, Any]]:
         """Session listing with organizer metadata merged in.
 
-        Sessions with no messages are omitted: every launch and workspace
-        switch opens a transcript, and empty ones are noise in the sidebar.
+        Sessions with no messages are normally omitted: every launch and
+        workspace switch opens a transcript, and empty ones are noise in the
+        sidebar. Dedicated agent sessions are the exception because their
+        stable destination must be visible before the first event arrives.
         """
         meta = SessionMeta.all()
         organization = ChatOrganizationStore.snapshot()["placements"]
@@ -1146,6 +1150,12 @@ class SessionStore:
             if entry.get("archived") and not include_archived:
                 continue
             summary = SessionStore._summary_record(f)
+            if summary is None and entry.get("agent_trigger_id"):
+                header = SessionStore.header(f)
+                summary = {
+                    "preview": "",
+                    "cwd": str(header.get("cwd") or "") or None,
+                }
             if summary is None:
                 continue
             try:
@@ -1185,6 +1195,8 @@ class SessionStore:
                 "workspace_root": entry.get("workspace_root"),
                 "execution_path": entry.get("execution_path"),
                 "environment": entry.get("environment"),
+                "agent_trigger_id": entry.get("agent_trigger_id"),
+                "agent_name": entry.get("agent_name"),
                 "folder_id": (
                     placement.get("folder_id") if isinstance(placement, dict) else None
                 ),
