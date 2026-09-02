@@ -163,7 +163,12 @@ final class AppModel: ObservableObject {
             scheduleWorkspacePersistence()
         }
     }
-    @Published var sidebarDestination: SidebarDestination = .ask
+    @Published var sidebarDestination: SidebarDestination = .ask {
+        didSet {
+            guard sidebarDestination != oldValue else { return }
+            syncInspectorWithSidebarDestination()
+        }
+    }
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
     @Published var inspectorTab: InspectorTab = .plan  // internal(for: AppModel+UITestFixtures)
@@ -273,6 +278,14 @@ final class AppModel: ObservableObject {
     @Published var usageDashboardPresented = false
     @Published var configureAgentPresented = false
     @Published var configureAgentTab: ConfigureAgentTab = .configurations
+    /// A configuration the sheet should select once its lists have loaded,
+    /// keyed the way the sheet keys them ("event:<id>", "price:<id>",
+    /// "schedule:<id>"). The sheet clears it after applying it.
+    @Published var configureAgentFocusConfigurationID: String?
+    /// A trigger editor to open once the sheet is mounted — the same
+    /// handshake the schedule editor uses, because the editor is a sheet of
+    /// the sheet and cannot be presented before its host exists.
+    @Published var configureAgentPendingTriggerEdit: PendingEventTriggerEdit?
     /// A snapshot of the composer taken when Configure Agent opens. The live
     /// composer remains untouched while the user decides whether to reuse it.
     @Published var configureAgentDraftSuggestion = ""

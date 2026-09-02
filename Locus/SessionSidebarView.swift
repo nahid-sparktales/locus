@@ -272,7 +272,7 @@ struct SessionSidebarView: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(
-                    model.sidebarDestination == .agents ? "Agents and tasks" : "Workspaces and chats"
+                    model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
                 )
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
@@ -470,7 +470,7 @@ struct SessionSidebarView: View {
             // presented, so global shortcuts always have a live sheet anchor.
             HStack(spacing: 7) {
                 secondaryButton(
-                    symbol: model.sidebarDestination == .agents ? "robot" : "gearshape.2",
+                    symbol: "gearshape.2",
                     title: model.sidebarDestination == .agents ? "Manage Agents" : "Configure Agent",
                     help: "Configure schedules, incoming events, and price conditions",
                     accessibilityLabel: model.sidebarDestination == .agents
@@ -487,18 +487,16 @@ struct SessionSidebarView: View {
         .padding(.bottom, 12)
     }
 
+    /// One button, one label, in both destinations. In Agents mode a new chat
+    /// belongs to the selected agent, so it starts that agent's next chat.
     private var primaryCreationButton: some View {
         Button {
-            if model.sidebarDestination == .agents {
-                createAgentTask(snapshot: sessionCatalog.snapshot)
-            } else {
-                model.newSession()
-            }
+            model.newChatForSidebarDestination()
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
-                Image(systemName: model.sidebarDestination == .agents ? "robot" : "plus")
+                Image(systemName: "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text(model.sidebarDestination == .agents ? "New task" : "New chat")
+                Text("New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -513,10 +511,12 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .accessibilityLabel(model.sidebarDestination == .agents ? "New task" : "New chat")
-        .accessibilityIdentifier(
-            model.sidebarDestination == .agents ? "sidebar.newTask" : "sidebar.newSession"
-        )
+        .help(model.sidebarDestination == .agents
+            ? "Start a new chat with the selected agent (⌘N)"
+            : "Start a new chat (⌘N)")
+        .accessibilityLabel("New chat")
+        .accessibilityValue(model.sidebarDestination == .agents ? "Agent chat" : "Chat")
+        .accessibilityIdentifier("sidebar.newSession")
     }
 
     private var activityButton: some View {
@@ -867,8 +867,9 @@ struct SessionSidebarView: View {
                     .font(.locus(size: 7, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
                     .frame(width: 9)
-                Text("🤖")
-                    .font(.locus(size: 13))
+                Image(locusSymbol: LocusSymbol.robot)
+                    .font(.locus(size: 12, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
                     .frame(width: 21, height: 21)
                     .accessibilityHidden(true)
                 Text(agent.name)
@@ -889,25 +890,6 @@ struct SessionSidebarView: View {
         .accessibilityLabel("\(agent.name) agent")
         .accessibilityValue("\(agent.tasks.count) tasks, \(expanded ? "expanded" : "collapsed")")
         .accessibilityIdentifier("agent.\(agent.id)")
-    }
-
-    private func createAgentTask(snapshot: SessionCatalogSnapshot) {
-        let selected = snapshot.sessionsByID[model.currentSessionID]
-        let agent = selected?.isAgentChat == true ? selected : snapshot.agentSessions.first
-        guard let agent else {
-            model.presentConfigureAgent(draftText: model.draftText)
-            return
-        }
-        let triggerID = agent.agentTriggerID
-        let taskNumber = snapshot.agentSessions.filter {
-            $0.agentTriggerID == triggerID
-        }.count + 1
-        Task {
-            await model.eventAutomations.createTask(
-                for: agent,
-                name: "Task \(taskNumber)"
-            )
-        }
     }
 
     private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
@@ -932,13 +914,13 @@ struct SessionSidebarView: View {
 
     private func agentEmptyState(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 9) {
-            Image(systemName: "robot")
+            Image(locusSymbol: LocusSymbol.robot)
                 .font(.locus(size: 18))
                 .foregroundStyle(LocusTheme.muted)
             Text(snapshot.searchQuery.isEmpty ? "No agents yet" : "No matching agents")
                 .font(.locus(size: 10, weight: .semibold))
             if snapshot.searchQuery.isEmpty {
-                Text("Create a task to give an agent its own ongoing conversation.")
+                Text("Configure an agent to give it its own ongoing chats.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .multilineTextAlignment(.center)
@@ -960,7 +942,9 @@ struct SessionSidebarView: View {
                 workspaceMenu(snapshot: snapshot)
             } else {
                 HStack(spacing: SidebarMetrics.iconGap) {
-                    Image(systemName: "robot")
+                    Image(locusSymbol: LocusSymbol.robot)
+                        .font(.locus(size: 11, weight: .semibold))
+                        .foregroundStyle(LocusTheme.signalDeep)
                         .frame(width: SidebarMetrics.iconColumn)
                     Text("Agents")
                         .font(.locus(size: 10, weight: .semibold))
@@ -976,7 +960,7 @@ struct SessionSidebarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Agents")
-                .accessibilityValue("\(snapshot.agentSessions.count) tasks")
+                .accessibilityValue("\(snapshot.agentSessions.count) chats")
             }
 
             HStack {
@@ -1859,7 +1843,7 @@ private struct SessionRow: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 if session.isAgentChat && showsAgentIcon {
-                    Image(systemName: "robot")
+                    Image(locusSymbol: LocusSymbol.robot)
                         .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityHidden(true)

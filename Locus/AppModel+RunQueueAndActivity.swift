@@ -115,9 +115,19 @@ extension AppModel {
         configureAgentPresented = false
         configureAgentDraftSuggestion = ""
         configureAgentPendingScheduleDraft = nil
+        configureAgentPendingTriggerEdit = nil
+        configureAgentFocusConfigurationID = nil
     }
 
     func mountPendingConfigureAgentEditor() {
+        if let edit = configureAgentPendingTriggerEdit {
+            configureAgentPendingTriggerEdit = nil
+            eventAutomations.presentEditor(
+                trigger: edit.trigger,
+                targetSessionID: edit.targetSessionID,
+                isDedicatedAgent: edit.isDedicatedAgent
+            )
+        }
         guard let draft = configureAgentPendingScheduleDraft else { return }
         configureAgentPendingScheduleDraft = nil
         schedule.scheduleEditorDraft = draft

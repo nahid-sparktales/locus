@@ -3,6 +3,9 @@ import Foundation
 
 enum InspectorTab: String, CaseIterable, Identifiable {
     case plan
+    /// The persistent-agent overview. Session-scoped like Overview, so it is
+    /// a rail destination in Agents mode rather than a workspace panel.
+    case agent
     case changes
     case files
     case terminal
@@ -33,6 +36,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .plan: "Overview"
+        case .agent: "Agent"
         case .changes: "Changes"
         case .files: "Files"
         case .terminal: "Terminal"
@@ -50,6 +54,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .plan: "rectangle.grid.2x2"
+        case .agent: LocusSymbol.robot
         case .changes: "plusminus.circle"
         case .files: "folder"
         case .terminal: "terminal"
@@ -80,7 +85,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .simulator, .router, .proxies: nil
+        case .agent, .simulator, .router, .proxies: nil
         }
     }
 }

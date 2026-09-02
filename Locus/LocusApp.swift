@@ -103,7 +103,7 @@ struct LocusApp: App {
             }
 
             CommandGroup(replacing: .newItem) {
-                Button("New Session") { model.newSession() }
+                Button("New Session") { model.newChatForSidebarDestination() }
                     .keyboardShortcut("n", modifiers: .command)
                 Button("New Chat Folder…") {
                     model.globalNewFolderName = ""
