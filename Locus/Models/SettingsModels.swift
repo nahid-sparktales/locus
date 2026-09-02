@@ -506,7 +506,9 @@ struct AppSettings: Codable, Hashable {
 
     var resolvedInspectorTab: InspectorTab {
         let tab = InspectorTab(rawValue: inspectorLastTab) ?? .plan
-        return tab == .checkpoints ? .plan : tab
+        // Checkpoints is a sheet, and the Agent tab belongs to Agents mode,
+        // which a fresh launch never starts in. Both land on Overview.
+        return tab == .checkpoints || tab == .agent ? .plan : tab
     }
 
     var resolvedAppearance: AppAppearance {
@@ -592,6 +594,7 @@ struct AppSettings: Codable, Hashable {
         return inspectorOpenTabs.compactMap { rawValue in
             guard let tab = InspectorTab(rawValue: rawValue),
                   tab != .checkpoints,
+                  tab != .agent,
                   seen.insert(tab).inserted else {
                 return nil
             }

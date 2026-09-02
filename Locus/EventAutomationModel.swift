@@ -66,6 +66,18 @@ final class EventAutomationModel: ObservableObject {
         self.showMessage = showMessage
     }
 
+    /// UI-test fixtures need agents without a backend. The stored arrays are
+    /// otherwise write-protected so only refreshes and mutations change them.
+    func seedForUITesting(
+        connections: [ConnectorConnection],
+        triggers: [EventTrigger],
+        deliveries: [EventDelivery]
+    ) {
+        self.connections = connections
+        self.triggers = triggers
+        self.deliveries = deliveries
+    }
+
     func start() {
         guard dispatchTask == nil else { return }
         dispatchTask = Task { [weak self] in
@@ -112,6 +124,9 @@ final class EventAutomationModel: ObservableObject {
             restartNativeRuntimeIfNeeded()
             onCapabilityChanged?()
         } catch {
+            // A refresh cancelled with its caller (a panel's poll ending as
+            // the chat changes) is not a failure of the automations.
+            guard !Task.isCancelled else { return }
             lastError = error.localizedDescription
             if announceFailure { showMessage?("Could not load event automations: \(error.localizedDescription)") }
         }
@@ -276,12 +291,12 @@ final class EventAutomationModel: ObservableObject {
     func createTask(for agent: SessionSummary, name: String) async -> Bool {
         guard let backend,
               let triggerID = agent.agentTriggerID?.nilIfBlank else {
-            showMessage?("Choose an agent before creating a task.")
+            showMessage?("Choose an agent before starting a chat.")
             return false
         }
         var body: [String: Any] = [
             "name": name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-                ?? "New task",
+                ?? "New chat",
         ]
         for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
             body[key] = value
@@ -294,10 +309,10 @@ final class EventAutomationModel: ObservableObject {
             )
             await refreshSessions?()
             openAgentSession?(response.session)
-            showMessage?("New task opened in \(agent.agentName ?? agent.displayTitle)")
+            showMessage?("New chat opened in \(agent.agentName ?? agent.displayTitle)")
             return true
         } catch {
-            showMessage?("Could not create the agent task: \(error.localizedDescription)")
+            showMessage?("Could not start a chat for this agent: \(error.localizedDescription)")
             return false
         }
     }

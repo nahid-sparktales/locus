@@ -49,9 +49,41 @@ extension AppModel {
             }
         }
         if tab == .agents { agentInstructions.refreshAgentInstructions() }
+        if tab == .agent, !isUITesting {
+            Task { @MainActor [weak self] in
+                await self?.eventAutomations.refresh(announceFailure: false)
+            }
+        }
         settings.inspectorLastTab = tab.rawValue
         if tab.isWorkspaceTab {
             settings.inspectorLastWorkspaceTab = tab.rawValue
+        }
+    }
+
+    /// The Agent tab belongs to Agents mode. Entering that mode with the
+    /// panel open on Overview swaps to the agent, and leaving it takes the
+    /// tab away again so Ask mode's inspector looks the way it did before.
+    /// A collapsed panel is a preference and stays collapsed either way.
+    func syncInspectorWithSidebarDestination() {
+        switch sidebarDestination {
+        case .agents:
+            guard !inspectorCollapsed, inspectorTab == .plan, !justChatEnabled else { return }
+            selectInspectorTab(.agent)
+        case .ask:
+            guard openInspectorTabs.contains(.agent) || inspectorTab == .agent else { return }
+            let remaining = openInspectorTabs.filter { $0 != .agent }
+            openInspectorTabs = remaining
+            if lastClosedInspectorTab == .agent { lastClosedInspectorTab = nil }
+            guard inspectorTab == .agent else { return }
+            let fallback = remaining.contains(.plan) ? .plan : (remaining.first ?? .plan)
+            if inspectorCollapsed || justChatEnabled {
+                // Move the selection without opening anything: a collapsed
+                // panel stays collapsed, and Just Chat has no panel to show.
+                inspectorTab = fallback
+                settings.inspectorLastTab = fallback.rawValue
+            } else {
+                selectInspectorTab(fallback)
+            }
         }
     }
 

@@ -25,6 +25,8 @@ struct InspectorView: View {
                 switch model.inspectorTab {
                 case .plan:
                     InspectorPlanTab()
+                case .agent:
+                    InspectorAgentTab()
                 case .changes:
                     InspectorChangesTab(gitWorkspace: gitWorkspace)
                 case .files:

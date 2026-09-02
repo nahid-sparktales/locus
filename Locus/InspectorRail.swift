@@ -22,6 +22,11 @@ struct InspectorRail: View {
         VStack(spacing: 4) {
             moreMenu
             panelToggleButton
+            if model.sidebarDestination == .agents {
+                // Agents mode leads with the agent itself; Overview stays one
+                // step below for the chat's plan and context.
+                railTab(.agent)
+            }
             railTab(.plan)
             railTab(.terminal)
             railTab(.preview)
@@ -102,7 +107,7 @@ struct InspectorRail: View {
                 model.toggleInspectorTab(tab)
             }
         } label: {
-            Image(systemName: tab.symbol)
+            Image(locusSymbol: tab.symbol)
                 .font(.locus(size: 13, weight: .medium))
                 .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
                 .overlay(alignment: .topTrailing) {

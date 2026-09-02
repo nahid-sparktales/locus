@@ -1791,8 +1791,11 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        XCTAssertFalse(anyElement("sidebar.newSession").exists)
-        XCTAssertTrue(anyElement("sidebar.newTask").waitForExistence(timeout: 3))
+        // The creation button keeps its identity in Agents mode: New chat
+        // there starts the selected agent's next chat.
+        XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
+        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertEqual(configureAgent.label, "Manage Agents")
 
         configureAgent.click()
@@ -1802,6 +1805,65 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.schedule").exists)
         XCTAssertTrue(anyElement("configureAgent.create.event").exists)
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
+    }
+
+    func testAgentsModeKeepsNewChatAndShowsTheAgentOverview() {
+        relaunchWithAgentFixture()
+
+        let identity = anyElement("agentOverview.identity")
+        XCTAssertTrue(identity.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertEqual(anyElement("sidebar.mode.agents").value as? String, "Selected")
+        XCTAssertTrue(anyElement("inspector.rail.agent").exists)
+        XCTAssertTrue(anyElement("inspector.tab.agent").exists)
+        XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
+
+        // Agents mode keeps the Ask-mode controls: New chat with its plus
+        // glyph, Manage Agents with the Configure Agent glyph.
+        let newChat = anyElement("sidebar.newSession")
+        XCTAssertTrue(newChat.exists)
+        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertFalse(anyElement("sidebar.newTask").exists)
+        let manage = anyElement("sidebar.configureAgent")
+        XCTAssertTrue(manage.exists)
+        XCTAssertEqual(manage.label, "Manage Agents")
+
+        // Static text exposes its string as label or value depending on the
+        // macOS release; read both, as the Runs tests do.
+        let name = anyElement("agentOverview.name")
+        XCTAssertTrue(
+            (name.label + " " + (name.value as? String ?? "")).contains("Inbox Triage"),
+            "agent name should be shown"
+        )
+        let status = anyElement("agentOverview.status")
+        XCTAssertTrue(
+            (status.label + " " + (status.value as? String ?? "")).contains("Active"),
+            "agent status should read Active"
+        )
+        XCTAssertTrue(anyElement("agentOverview.newChat").exists)
+        XCTAssertTrue(anyElement("agentOverview.edit").exists)
+        XCTAssertTrue(anyElement("agentOverview.toggle").exists)
+        XCTAssertFalse(anyElement("agentOverview.rearm").exists, "only fired price alerts re-arm")
+        XCTAssertTrue(anyElement("agentOverview.stats.chats").exists)
+        XCTAssertTrue(anyElement("agentOverview.source").exists)
+        XCTAssertTrue(anyElement("agentOverview.instruction").exists)
+        XCTAssertTrue(anyElement("agentOverview.chat.seed-agent-chat").exists)
+        XCTAssertTrue(anyElement("agentOverview.chat.seed-agent-chat-older").exists)
+        XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
+        XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
+
+        // Leaving Agents mode takes the tab and its rail button away again;
+        // coming back restores them onto the same chat.
+        anyElement("sidebar.mode.ask").click()
+        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForDisappearance(anyElement("inspector.rail.agent")))
+        XCTAssertTrue(waitForDisappearance(anyElement("inspector.tab.agent")))
+        XCTAssertEqual(anyElement("sidebar.configureAgent").label, "Configure Agent")
+        XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
+
+        anyElement("sidebar.mode.agents").click()
+        XCTAssertTrue(anyElement("agentOverview.identity").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.tab.agent").exists)
+        XCTAssertTrue(anyElement("inspector.rail.agent").exists)
     }
 
     func testAskAgentsDestinationKeepsConversationWorkControlsAvailable() {
@@ -1826,15 +1888,16 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        XCTAssertTrue(anyElement("sidebar.newTask").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        let newChat = anyElement("sidebar.newSession")
+        XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
+        XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("composer.context").exists)
         XCTAssertTrue(planMode.exists)
 
         ask.click()
         XCTAssertTrue(waitUntil { ask.isSelected })
-        XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { newChat.value as? String == "Chat" })
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
     }
 
@@ -2986,6 +3049,24 @@ final class LocusUITests: XCTestCase {
     private func relaunchWithSelectionFixture() {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_SELECTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    /// The inverse of `waitForExistence`: an element leaving through a spatial
+    /// transition still exists for a few frames after the state that removed
+    /// it has changed.
+    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 3) -> Bool {
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: element
+        )
+        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
+    }
+
+    private func relaunchWithAgentFixture() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = "1"
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }

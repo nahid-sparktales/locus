@@ -448,6 +448,18 @@ extension AppModel {
                 draft: ""
             ),
         ]
+        if let width = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_INSPECTOR_WIDTH"],
+           let value = Double(width) {
+            inspectorWidth = CGFloat(AppSettings.clampInspectorWidth(value))
+        }
+        if let appearance = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_APPEARANCE"],
+           AppAppearance(rawValue: appearance) != nil {
+            settings.appearanceRaw = appearance
+        }
+        if let variant = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_FIXTURE"],
+           !variant.isEmpty {
+            seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
+        }
         seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
             activeTaskRecord = TaskRecord(
@@ -561,6 +573,196 @@ extension AppModel {
             openInspectorTabs = [tab]
             inspectorTab = tab
         }
+    }
+
+    /// One Gmail agent with two chats and two deliveries plus a fired price
+    /// alert with no chats yet, opened in Agents mode. `selectsAgentChat`
+    /// lands on the Gmail agent's newest chat; otherwise the current chat
+    /// stays the ordinary one so the tab shows the fleet.
+    private func seedAgentFixture(workspace: String, selectsAgentChat: Bool) {
+        let now = Date().timeIntervalSince1970
+        let triggerID = "seed-agent"
+        let newestChat = SessionSummary(
+            id: "seed-agent-chat",
+            name: "seed-agent-chat.jsonl",
+            preview: "Triage the inbox",
+            mtime: now - 120,
+            size: 320,
+            title: "Chat 2",
+            cwd: workspace,
+            agentTriggerID: triggerID,
+            agentName: "Inbox Triage"
+        )
+        let olderChat = SessionSummary(
+            id: "seed-agent-chat-older",
+            name: "seed-agent-chat-older.jsonl",
+            preview: "Summarize the invoice",
+            mtime: now - 7_200,
+            size: 640,
+            title: "Chat 1",
+            cwd: workspace,
+            agentTriggerID: triggerID,
+            agentName: "Inbox Triage"
+        )
+        sessions.append(contentsOf: [newestChat, olderChat])
+        if selectsAgentChat {
+            currentSessionID = newestChat.id
+        }
+        if selectsAgentChat { sessionInfo = SessionInfo(
+            model: "qwen3:8b",
+            host: "http://localhost:11434",
+            cwd: workspace,
+            session: "\(workspace)/seed-agent-chat.jsonl",
+            sessionID: newestChat.id,
+            messages: 2,
+            approxTokens: 30,
+            promptTokens: 14,
+            completionTokens: 16,
+            contextLimit: 32_768,
+            maxIterations: 40,
+            hasProjectContext: false,
+            provider: "ollama",
+            permissions: SessionPermissions(skipAll: false, allowed: [])
+        ) }
+
+        let connection = ConnectorConnection(
+            id: "seed-gmail",
+            kind: .gmail,
+            displayName: "Work Gmail",
+            publicConfig: [:],
+            cursor: [:],
+            enabled: true,
+            health: "connected",
+            lastError: nil,
+            lastPolledAt: now - 45,
+            createdAt: now - 86_400,
+            updatedAt: now - 45
+        )
+        var filters = EventTriggerFilters()
+        filters.senders = ["boss@example.com"]
+        filters.subjectContains = ["invoice"]
+        let trigger = EventTrigger(
+            id: triggerID,
+            name: "Inbox Triage",
+            connectionID: connection.id,
+            targetSessionID: newestChat.id,
+            instruction: "Summarize each matching email, extract the amount due, and draft a reply for review before anything is sent.",
+            mode: .work,
+            triggerKind: .event,
+            filters: filters,
+            runtimeState: PriceTriggerState(),
+            actionConnectionIDs: [connection.id],
+            enabled: true,
+            createdAt: now - 86_400,
+            updatedAt: now - 120,
+            lastEventAt: now - 120,
+            lastRunID: nil,
+            lastError: nil
+        )
+        func event(_ id: String, subject: String, at: Double) -> InboundEvent {
+            InboundEvent(
+                source: .gmail,
+                sourceEventID: id,
+                eventType: "email.received",
+                occurredAt: at,
+                actor: ["email": .string("boss@example.com")],
+                subject: subject,
+                text: "Please review the attached invoice.",
+                recipients: ["me@example.com"],
+                labels: ["INBOX"],
+                attachments: [],
+                data: [:]
+            )
+        }
+        let deliveries = [
+            EventDelivery(
+                id: "seed-delivery-done",
+                triggerID: triggerID,
+                sourceEventID: "msg-2",
+                source: .gmail,
+                receivedAt: now - 120,
+                occurredAt: now - 130,
+                event: event("msg-2", subject: "Invoice #1042 ready", at: now - 130),
+                state: "completed",
+                runState: "completed",
+                attempt: 1,
+                sessionID: newestChat.id,
+                runID: nil,
+                error: nil,
+                createdAt: now - 120,
+                updatedAt: now - 60
+            ),
+            EventDelivery(
+                id: "seed-delivery-failed",
+                triggerID: triggerID,
+                sourceEventID: "msg-1",
+                source: .gmail,
+                receivedAt: now - 7_200,
+                occurredAt: now - 7_260,
+                event: event("msg-1", subject: "Invoice #1041 overdue", at: now - 7_260),
+                state: "failed",
+                runState: nil,
+                attempt: 2,
+                sessionID: olderChat.id,
+                runID: nil,
+                error: "The model route was unavailable.",
+                createdAt: now - 7_200,
+                updatedAt: now - 7_100
+            ),
+        ]
+        var priceFilters = EventTriggerFilters()
+        var condition = PriceCondition()
+        condition.providerSymbol = "BTCUSDT"
+        condition.displaySymbol = "BTC/USD"
+        condition.comparison = .crossesAbove
+        condition.threshold = "65000"
+        condition.lifecycle = .once
+        priceFilters.priceCondition = condition
+        var priceState = PriceTriggerState()
+        priceState.lastPrice = "65240.10"
+        priceState.lastSide = "above"
+        priceState.lastQuoteAt = now - 300
+        priceState.fired = true
+        priceState.lastFiredAt = now - 3_600
+        let priceFeed = ConnectorConnection(
+            id: "seed-price-feed",
+            kind: .priceFeed,
+            displayName: "Coinbase spot",
+            publicConfig: [:],
+            cursor: [:],
+            enabled: true,
+            health: "connected",
+            lastError: nil,
+            lastPolledAt: now - 300,
+            createdAt: now - 172_800,
+            updatedAt: now - 300
+        )
+        let priceAlert = EventTrigger(
+            id: "seed-price-alert",
+            name: "BTC breakout",
+            connectionID: priceFeed.id,
+            targetSessionID: "seed-current",
+            instruction: "When Bitcoin crosses the threshold, summarize the market context and suggest whether to rebalance.",
+            mode: .plan,
+            triggerKind: .price,
+            filters: priceFilters,
+            runtimeState: priceState,
+            actionConnectionIDs: [],
+            enabled: true,
+            createdAt: now - 172_800,
+            updatedAt: now - 3_600,
+            lastEventAt: now - 3_600,
+            lastRunID: nil,
+            lastError: nil
+        )
+        eventAutomations.seedForUITesting(
+            connections: [connection, priceFeed],
+            triggers: [trigger, priceAlert],
+            deliveries: deliveries
+        )
+        // Set last: the destination change is what swaps the open Overview
+        // for the Agent tab, exactly as choosing Agents in the sidebar does.
+        sidebarDestination = .agents
     }
 
     private func seedSessionOverviewUITest(workspace: String) {

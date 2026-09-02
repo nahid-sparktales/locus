@@ -73,8 +73,13 @@ struct ConfigureAgentView: View {
         .task {
             await refresh()
             normalizeSelection()
+            applyRequestedFocus()
         }
         .onAppear { app.mountPendingConfigureAgentEditor() }
+        .onChange(of: app.configureAgentFocusConfigurationID) { applyRequestedFocus() }
+        .onChange(of: app.configureAgentPendingTriggerEdit) {
+            app.mountPendingConfigureAgentEditor()
+        }
         .onChange(of: configurationReferences.map(\.id)) { oldValue, newValue in
             if let newID = Set(newValue).subtracting(oldValue).first,
                let reference = configurationReferences.first(where: { $0.id == newID }) {
@@ -626,6 +631,20 @@ struct ConfigureAgentView: View {
             naturalLanguageRequest: request,
             triggerKind: kind
         )
+    }
+
+    /// Honors a deep link from elsewhere in the app (the Agent tab's Run
+    /// History, for one) once the configuration it names is in the list.
+    private func applyRequestedFocus() {
+        guard let id = app.configureAgentFocusConfigurationID,
+              let reference = configurationReferences.first(where: { $0.id == id })
+        else { return }
+        selection = reference
+        app.configureAgentFocusConfigurationID = nil
+        if reference.kind == .schedule,
+           let task = schedule.scheduledTasks.first(where: { $0.id == reference.configurationID }) {
+            Task { await schedule.refreshOccurrences(for: task) }
+        }
     }
 
     private func normalizeSelection() {
