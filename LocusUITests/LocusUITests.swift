@@ -1760,28 +1760,40 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
-    func testSidebarPlacesChatWorkAndConfigureAgentBelowTheBrand() {
+    func testSidebarPlacesAskAgentsAndCreationControlsBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
-        let chat = app.buttons["workspace.mode.chat"]
-        let work = app.buttons["workspace.mode.work"]
+        let destination = anyElement("sidebar.destination")
+        let ask = app.buttons["sidebar.mode.ask"]
+        let agents = app.buttons["sidebar.mode.agents"]
+        let newChat = anyElement("sidebar.newSession")
         let configureAgent = anyElement("sidebar.configureAgent")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("inspector.rail.sideChat").exists)
         XCTAssertFalse(anyElement("sidebar.splitView").exists)
         XCTAssertFalse(anyElement("workspace.splitView").exists)
-        XCTAssertTrue(chat.exists)
-        XCTAssertTrue(work.exists)
+        XCTAssertTrue(destination.exists)
+        XCTAssertTrue(ask.exists)
+        XCTAssertTrue(agents.exists)
+        XCTAssertTrue(ask.isSelected)
+        XCTAssertTrue(newChat.exists)
         XCTAssertTrue(configureAgent.exists)
-        XCTAssertLessThan(brand.frame.maxY, chat.frame.minY)
-        XCTAssertLessThan(chat.frame.maxY, configureAgent.frame.minY)
+        XCTAssertLessThan(brand.frame.maxY, destination.frame.minY)
 
-        // Manage Accounts sits above New chat as a quiet row; Plugins & MCP
-        // lives in the Overview shortcut bar now.
+        // Manage Accounts sits between the destination switch and the primary
+        // creation action; Plugins & MCP lives in the Overview shortcut bar.
         let accounts = anyElement("sidebar.accounts")
         XCTAssertTrue(accounts.exists)
-        XCTAssertLessThan(accounts.frame.maxY, configureAgent.frame.minY)
+        XCTAssertLessThan(destination.frame.maxY, accounts.frame.minY)
+        XCTAssertLessThan(accounts.frame.maxY, newChat.frame.minY)
+        XCTAssertLessThan(newChat.frame.maxY, configureAgent.frame.minY)
         XCTAssertFalse(anyElement("sidebar.extensions").exists)
+
+        agents.click()
+        XCTAssertTrue(waitUntil { agents.isSelected })
+        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        XCTAssertTrue(anyElement("sidebar.newTask").waitForExistence(timeout: 3))
+        XCTAssertEqual(configureAgent.label, "Manage Agents")
 
         configureAgent.click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
@@ -1792,37 +1804,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
     }
 
-    func testRunAwarenessControlsAreVisibleAndJustChatHidesAgenticWorkspaceUI() {
-        let chat = app.buttons["workspace.mode.chat"]
-        let work = app.buttons["workspace.mode.work"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 3))
-        XCTAssertTrue(work.exists)
-        XCTAssertTrue(work.isSelected)
+    func testAskAgentsDestinationKeepsConversationWorkControlsAvailable() {
+        let ask = app.buttons["sidebar.mode.ask"]
+        let agents = app.buttons["sidebar.mode.agents"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 3))
+        XCTAssertTrue(agents.exists)
+        XCTAssertTrue(ask.isSelected)
+        XCTAssertFalse(anyElement("composer.justChatBoundary").exists)
+        XCTAssertTrue(anyElement("composer.context").exists)
 
-        chat.click()
-        XCTAssertTrue(chat.isSelected)
-        XCTAssertTrue(anyElement("composer.justChatBoundary").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("composer.chatAttachments").exists)
-        XCTAssertTrue(anyElement("composer.addChatAttachment").exists)
-        XCTAssertFalse(anyElement("composer.context").exists)
-        XCTAssertFalse(anyElement("composer.mode.plan").exists)
-        XCTAssertFalse(anyElement("composer.mode.grill").exists)
-        XCTAssertFalse(anyElement("plan.context").exists)
-        // Just Chat is not a workspace surface, so the rail goes with the
-        // panel — the whole right side disappears.
-        XCTAssertFalse(anyElement("inspector.rail.more").exists)
-        XCTAssertFalse(anyElement("inspector.rail.terminal").exists)
-
-        XCTAssertTrue(
-            anyElement("turnCompletion.00000000-0000-0000-0000-000000000103")
-                .waitForExistence(timeout: 3)
-        )
-
-        app.typeKey("1", modifierFlags: .command)
-        XCTAssertFalse(anyElement("plan.context").exists)
-
-        work.click()
-        XCTAssertTrue(work.isSelected)
         let planMode = anyElement("composer.mode.plan")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("composer.mode.grill").exists)
@@ -1832,7 +1822,20 @@ final class LocusUITests: XCTestCase {
             "mode and routing controls belong in the composer footer"
         )
         XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("inspector.rail.plan").exists, "the rail returns with agentic modes")
+        XCTAssertTrue(anyElement("inspector.rail.plan").exists)
+
+        agents.click()
+        XCTAssertTrue(waitUntil { agents.isSelected })
+        XCTAssertTrue(anyElement("sidebar.newTask").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        XCTAssertTrue(app.textViews["composer.input"].exists)
+        XCTAssertTrue(anyElement("composer.context").exists)
+        XCTAssertTrue(planMode.exists)
+
+        ask.click()
+        XCTAssertTrue(waitUntil { ask.isSelected })
+        XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("sidebar.newTask").exists)
     }
 
     func testWorkspaceActionsSitBesideModelPickerAndRailMoreMenuRestoresTabs() {
