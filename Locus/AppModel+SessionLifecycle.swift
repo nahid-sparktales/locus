@@ -298,6 +298,9 @@ extension AppModel {
         // answer sent there would start a turn in the wrong conversation.
         if let captured = capturedQuestionThisTurn { runtime.capturedQuestion = captured }
         if let pending = pendingUserQuestion { runtime.pendingQuestion = pending }
+        if let pending = pendingBlockingQuestion {
+            runtime.pendingBlockingQuestion = pending
+        }
         clearPendingQuestion()
         computerControl.cancelPendingActions()
         // No browser cancellation here, at any scope: the worker keeps running
@@ -385,6 +388,10 @@ extension AppModel {
                 if let question = runtime.pendingQuestion {
                     runtime.pendingQuestion = nil
                     pendingUserQuestion = question
+                }
+                if let question = runtime.pendingBlockingQuestion {
+                    runtime.pendingBlockingQuestion = nil
+                    pendingBlockingQuestion = question
                 }
                 if let pending = runtime.pendingForegroundEvent {
                     runtime.pendingForegroundEvent = nil

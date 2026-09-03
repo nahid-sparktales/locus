@@ -324,7 +324,10 @@ struct LocusApp: App {
                 .background(LocusTheme.surfaceCanvas)
         case "question-prompt":
             Group {
-                if let question = model.pendingUserQuestion {
+                if let question = model.pendingBlockingQuestion {
+                    BlockingQuestionPromptView(request: question)
+                        .frame(maxWidth: 740)
+                } else if let question = model.pendingUserQuestion {
                     QuestionPromptView(question: question)
                         .frame(maxWidth: 740)
                 }

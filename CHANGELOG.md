@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Agents can pause for a structured decision.** A live task may present one
+  or more bounded choices in the composer and continue in the same turn after
+  the answer; disconnecting or stopping cancels the wait cleanly.
 - **Agents are now a first-class destination.** Scheduled and event-driven work
   is presented as a durable agent with a clear identity, status, source,
   controls, history, and one dedicated primary chat. Each agent can also open

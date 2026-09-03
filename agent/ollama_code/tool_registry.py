@@ -11,7 +11,7 @@ from typing import Any
 from .capabilities import enabled as capability_enabled
 from .extensions import ExtensionError, ExtensionManager
 from .solo_swarm import DELEGATE_READ_ONLY_SCHEMA
-from .tools import SAFE_TOOLS, TOOL_SCHEMAS, ToolContext, execute_tool
+from .tools import ASK_QUESTION_SCHEMA, SAFE_TOOLS, TOOL_SCHEMAS, ToolContext, execute_tool
 
 _SAFE_EXTENSION_TOOLS = {
     "search_extension_tools",
@@ -921,6 +921,9 @@ class ToolRegistry:
         self._agent_role = ""
         self._user_capability_policy: dict[str, bool] = {}
         self._solo_swarm_enabled = False
+        #: Off until a `ChatService` announces a live chat, exactly like
+        #: `computer_enabled`. Nothing else has a user on the other end.
+        self._ask_question_enabled = False
         self.computer_enabled = False
         self.simulator_enabled = False
         #: Off until the app announces a live native broker, exactly like
@@ -1048,6 +1051,14 @@ class ToolRegistry:
         """Expose the internal delegation tool only for the active root turn."""
         self._solo_swarm_enabled = bool(enabled)
 
+    def set_ask_question_enabled(self, enabled: bool) -> None:
+        """Advertise the question tool only where a user can actually answer."""
+        self._ask_question_enabled = bool(enabled)
+
+    def _offers_ask_question(self) -> bool:
+        # A read-only specialist or reviewer does not own the conversation.
+        return self._ask_question_enabled and self._agent_access_ceiling != "read_only"
+
     def _user_allows(self, name: str) -> bool:
         policy = self._user_capability_policy
         if name in _WORKSPACE_READ_TOOLS and not policy.get("workspace_read", True):
@@ -1131,6 +1142,8 @@ class ToolRegistry:
             and self._user_allows("delegate_read_only")
         ):
             schemas.append(DELEGATE_READ_ONLY_SCHEMA)
+        if self._offers_ask_question():
+            schemas.append(ASK_QUESTION_SCHEMA)
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool or not self._allows_mcp_item(tool, "tools", qualified=name):
@@ -1177,6 +1190,10 @@ class ToolRegistry:
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted
         )
+        # Outside the `plan_mode` gate below, unlike `submit_plan`: a
+        # clarifying question belongs in every non-Ask mode.
+        if self._offers_ask_question():
+            schemas.append(ASK_QUESTION_SCHEMA)
         schemas.extend(
             schema for schema in self.simulator_schemas()
             if self._user_allows(schema["function"]["name"])

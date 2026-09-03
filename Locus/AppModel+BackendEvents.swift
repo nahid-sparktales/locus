@@ -621,6 +621,33 @@ extension AppModel {
                 capturedQuestionThisTurn = question
             }
 
+        case "question_required":
+            let request = decode(AgentQuestionRequest.self, from: event)
+            if let request, !request.id.isEmpty, !request.questions.isEmpty {
+                pendingBlockingQuestion = request
+            } else if let requestID = event["request_id"] as? String,
+                      !requestID.isEmpty {
+                // A worker is blocked on every question_required event. If
+                // this client cannot render it, explicitly cancel instead of
+                // leaving the chat wedged until Stop.
+                _ = conversationBackend.send([
+                    "type": "question_response",
+                    "request_id": requestID,
+                    "action": "cancel",
+                    "answers": [],
+                ])
+                blocks.append(ChatBlock(
+                    kind: .error,
+                    text: "The agent asked a question this version of Locus cannot display."
+                ))
+            }
+
+        case "question_resolved":
+            if let requestID = event["request_id"] as? String,
+               pendingBlockingQuestion?.id == requestID {
+                pendingBlockingQuestion = nil
+            }
+
         case "background_services_changed":
             backgroundServicesModel.refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
 

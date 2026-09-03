@@ -504,6 +504,27 @@ extension AppModel {
         {
             runtime.capturedQuestion = question
         }
+        if type == "question_required" {
+            if let request = decode(AgentQuestionRequest.self, from: event),
+               !request.id.isEmpty, !request.questions.isEmpty {
+                runtime.pendingBlockingQuestion = request
+                runtime.pendingForegroundEvent = event
+                state = .waitingPermission
+            } else if let requestID = event["request_id"] as? String,
+                      !requestID.isEmpty {
+                _ = runtime.service.send([
+                    "type": "question_response",
+                    "request_id": requestID,
+                    "action": "cancel",
+                    "answers": [],
+                ])
+            }
+        }
+        if type == "question_resolved",
+           let requestID = event["request_id"] as? String,
+           runtime.pendingBlockingQuestion?.id == requestID {
+            runtime.pendingBlockingQuestion = nil
+        }
         if type == "turn_done" {
             let reason = event["reason"] as? String ?? "complete"
             recordAutomaticModelRoutingOutcome(
@@ -552,6 +573,7 @@ extension AppModel {
             state.runStatus = updated.state
             state.isBusy = runtime.occupiesExecutionSlot
             state.hasPendingPermission = type == "permission_request"
+                || type == "question_required"
         }
         if let runID = updated.runID {
             lifecycleJournal?.record(

@@ -1981,6 +1981,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             str(msg.get("request_id", "")),
             str(msg.get("decision", "deny")),
         )
+    elif mtype == "question_response":
+        request_id = str(msg.get("request_id") or "")
+        action = str(msg.get("action") or "cancel")
+        if action not in {"answer", "cancel"}:
+            _command_error(svc, "question_response", "Unknown question action.")
+            return
+        raw = msg.get("answers")
+        answers = (
+            [item for item in raw if isinstance(item, dict)][:4]
+            if isinstance(raw, list) else []
+        )
+        if not svc.answer_question(request_id, {"action": action, "answers": answers}):
+            _command_error(svc, "question_response", "That question is no longer waiting.")
     elif mtype == "dispatch_decision":
         run_id = str(msg.get("run_id") or "")
         action = str(msg.get("action") or "cancel")
@@ -2145,6 +2158,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if svc.active_evaluation_core is not None:
             svc.active_evaluation_core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
+        svc.cancel_all_questions()  # and a question wait, for the same reason
         svc.cancel_all_computer_actions()
         svc.cancel_all_simulator_actions()
         svc.cancel_all_browser_actions()

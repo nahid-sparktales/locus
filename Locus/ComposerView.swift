@@ -74,6 +74,10 @@ struct ComposerView: View {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
+            } else if let question = model.pendingBlockingQuestion {
+                BlockingQuestionPromptView(request: question)
+                    .frame(maxWidth: 740)
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             } else if model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
@@ -187,6 +191,7 @@ struct ComposerView: View {
             )
         )
         .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
+        .animation(LocusMotion.spatial, value: model.pendingBlockingQuestion?.id)
         .animation(LocusMotion.spatial, value: model.planApprovalPending)
         .sheet(isPresented: $quickTeamPresented) {
             QuickTeamBuilderView(suggestedName: agentTeams.suggestedQuickTeamName())
@@ -214,6 +219,9 @@ struct ComposerView: View {
             // Focus returns to the editor after any decision — option 3 is
             // "tell Locus what to do differently", so typing must just work.
             if model.activePermissionRequest == nil { restoreFocus() }
+        }
+        .onChange(of: model.pendingBlockingQuestion?.id) {
+            if model.pendingBlockingQuestion == nil { restoreFocus() }
         }
         .onChange(of: model.planApprovalPending) {
             // Same for "keep planning": the natural next act is typing the

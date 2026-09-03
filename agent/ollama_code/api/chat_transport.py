@@ -252,6 +252,7 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.core.interrupt()
             svc.interrupt_parallel_writers()
             svc.deny_all_pending()
+            svc.cancel_all_questions()
             svc.cancel_all_computer_actions()
             svc.cancel_all_simulator_actions()
             svc.cancel_all_browser_actions()

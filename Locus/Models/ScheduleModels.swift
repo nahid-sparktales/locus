@@ -52,9 +52,9 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .work:
             "Solve the request using the workspace and tools when useful. Choose whether to answer, inspect, plan, or implement from the request itself. Follow the current permission policy for every action."
         case .plan:
-            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed by calling ask_user_question with your options and recommended answer. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
+            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed by calling ask_question with your options and recommended answer. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
         case .grill:
-            "Stress-test the request with the activated $grilling skill: map the design tree of decisions, ask exactly one highest-leverage frontier question at a time with your recommended answer, and discover facts from the workspace yourself instead of asking for them. Deliver each question by calling ask_user_question with its title, question, options, and your recommended answer, then end your turn. Do not modify anything, and do not implement until the user explicitly confirms the shared understanding."
+            "Stress-test the request with the activated $grilling skill: map the design tree of decisions, ask exactly one highest-leverage frontier question at a time with your recommended answer, and discover facts from the workspace yourself instead of asking for them. Deliver each question by calling ask_question and wait for its result before continuing. Do not modify anything, and do not implement until the user explicitly confirms the shared understanding."
         }
     }
 }

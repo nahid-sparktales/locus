@@ -861,6 +861,21 @@ event's order.
 is the model's suggested answer — an option label when it matches one, freeform
 otherwise.
 
+### `question_required` / `question_response` / `question_resolved`
+
+The permission-free `ask_question` tool may instead pause the current worker
+and return the answer as that tool call's result. The server emits
+`question_required` with a request id and one to four structured questions.
+The client replies with `question_response {request_id, action, answers}`;
+`action` is `answer` or `cancel`, and each answer contains the question id,
+selected labels, and optional free text. The server then emits
+`question_resolved`. Stop and socket teardown cancel outstanding questions so
+a worker cannot remain stranded after interruption.
+
+This blocking form is available only to a visible root chat with a live client.
+`question_ready` remains supported for agents that end the turn and accept the
+answer as the next ordinary user message.
+
 ### `steer_ack` / `steer_applied`
 
 `steer_ack {text, state}` accepts a steering message. `state` is

@@ -44,6 +44,7 @@ exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
 | `list_dir` | automatic | Directory tree to a chosen depth |
 | `todo_write` | automatic | Maintain the visible task plan |
 | `submit_plan` | automatic | Submit a final structured plan for approval |
+| `ask_question` | automatic | Ask the user 1-4 structured questions and wait |
 | `write_file` | asks | Create or overwrite a file |
 | `edit_file` | asks | Replace one exact unique string |
 | `multi_edit` | asks | Several edits to one file, all-or-nothing |
@@ -232,14 +233,15 @@ Client → server: `user_message` (optionally with a bounded team manifest),
 `retry_last`, `interrupt`, `steer`,
 `permission_decision`, `set_model`, `set_cwd`, `set_permission_mode`,
 `set_computer_control`, `computer_action_result`, `new_session`, `clear`,
-`compact`, `resume`, `mcp_input_response`, `ping`.
+`compact`, `resume`, `mcp_input_response`, `question_response`, `ping`.
 
 Server → client: `session_info`, `session_started`, `orchestration_started`,
 `orchestration_state`, `dispatch_plan`, `agent_job_started`,
 `agent_job_stream`, `agent_job_completed`, scheduler-lease events, task events,
 `message_start`, `token`,
 `thinking`, `message_end`, `chatgpt_account_updated`,
-`chatgpt_usage_updated`, `plan_ready`, `steer_ack`, `steer_applied`,
+`chatgpt_usage_updated`, `plan_ready`, `question_required`,
+`question_resolved`, `steer_ack`, `steer_applied`,
 `computer_control_status`, `computer_action_request`, `tool_call_proposed`,
 `permission_request`, `tool_result`, `todo_update`, `turn_done`, `slash_result`,
 ordered orchestration/checkpoint/recovery/routing events, evaluation progress,
@@ -252,7 +254,10 @@ Their REST and ordering/redaction contracts are documented in
 
 A turn runs in a worker thread; permission requests block that thread on a
 future until the client answers, so the UI stays responsive and no tool runs
-before the user allows it.
+before the user allows it. `ask_question` uses the same mechanism to put a
+decision to the user mid-turn, so the answer arrives as that tool call's own
+result rather than as a new turn. Stop and socket teardown cancel every pending
+permission *and* question, or an interrupted turn could never finish.
 
 ## Tests
 

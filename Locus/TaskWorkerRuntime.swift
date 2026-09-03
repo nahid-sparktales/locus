@@ -73,6 +73,8 @@ final class ChatWorkerRuntime {
     /// A completed background turn's unanswered question, promoted to the
     /// popup when the chat is brought to the foreground.
     var pendingQuestion: UserQuestion?
+    /// A live structured question whose worker remains parked for an answer.
+    var pendingBlockingQuestion: AgentQuestionRequest?
 
     var occupiesExecutionSlot: Bool {
         switch executionState {

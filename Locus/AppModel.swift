@@ -213,6 +213,10 @@ final class AppModel: ObservableObject {
     /// The question a completed turn asked the user. While set, the composer
     /// input is replaced by QuestionPromptView, the way plan approval is.
     @Published var pendingUserQuestion: UserQuestion?  // internal(for: AppModel+UITestFixtures)
+    /// A live question whose worker is blocked until this chat sends a
+    /// `question_response`. Kept separate from the completed-turn question
+    /// above so both current and older agent protocols remain compatible.
+    @Published var pendingBlockingQuestion: AgentQuestionRequest?
     /// Captured from `question_ready` mid-turn; armed only when the turn
     /// completes, so an interrupted or errored turn never offers a stale
     /// question.
@@ -1493,6 +1497,10 @@ final class AppModel: ObservableObject {
         blocks.first(where: {
             $0.tool?.status == .awaitingPermission && $0.tool?.requestID != nil
         })?.tool
+    }
+
+    var awaitingUserDecision: Bool {
+        hasPendingPermission || pendingBlockingQuestion != nil
     }
 
     /// The window the meter measures against. The backend's `context_limit`
