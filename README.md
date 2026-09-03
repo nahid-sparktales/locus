@@ -5,7 +5,7 @@
 <h1 align="center">Locus for macOS</h1>
 
 <p align="center">
-  A native, private AI workspace for planning, building, and reviewing software.
+  A native, private AI workspace for durable agents, automation, and software work.
 </p>
 
 <p align="center">
@@ -25,10 +25,10 @@
 
 ![Locus workspace with the project sidebar, adaptive composer, and files inspector](Docs/locus-workspace-dark.png)
 
-Locus brings conversations, plans, file context, change review, a retained
-terminal, agent teams, scheduled work, and an agent-drivable browser into one
-SwiftUI app. The interface stays close to the project while every run remains
-inspectable and under your control.
+Locus brings conversations, durable agents, automations, plans, file context,
+change review, a retained terminal, voice controls, and an agent-drivable
+browser into one SwiftUI app. The interface stays close to the project while
+every request remains inspectable and under your control.
 
 Local Ollama is the default. ChatGPT plans and API-backed providers are used
 only after you add and select an account; Locus never silently switches to a
@@ -42,15 +42,30 @@ paid route.
 
 - **Works in your project.** Add files and folders to context, search the workspace, review diffs, use a retained terminal, and preview sites without leaving the conversation.
 - **Browses like a browser.** The agent shares your tabs: it reads pages as addressable elements, clicks and types with real input rather than synthetic events, aims at coordinates for canvases and maps, captures regions of the viewport, watches the console and network, and presents itself as a phone when you ask for a mobile viewport. Find in page, page zoom and per-tab device settings are there for you too.
-- **Plans before it changes things.** Use Chat, Plan, or Build mode and choose how often file, command, browser, Computer Control, and MCP actions require approval.
+- **Adapts to the request.** Use Ask, Work, Plan, or Grill mode and choose how often file, command, browser, Computer Control, and MCP actions require approval.
 - **Runs solo or as a team.** Adaptive Work can route tasks to specialists, or you can define explicit agent teams with model, tool, memory, and runtime limits.
-- **Keeps runs inspectable.** Timelines, evidence, costs, checkpoints, pause/resume state, and recovery actions stay available in the Runs inspector.
+- **Makes agents persistent.** Schedules and event automations are first-class agents with a dedicated chat, optional side chats, run history, and clear source and status information.
+- **Keeps work inspectable.** The Overview follows the current request across plan steps, files, commands, sources, outputs, subagents, and completion state. Run timelines retain evidence, costs, checkpoints, pause/resume state, and recovery actions.
+- **Listens and speaks.** Optional voice controls can dictate a request, answer approval prompts, and read responses aloud with system or configured speech services.
 - **Works from your phone.** The optional [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile) companion for iOS and Android pairs directly over your LAN or Tailscale, with no Locus cloud relay.
 - **Supports local and hosted models.** Use Ollama, a ChatGPT plan, OpenAI, Anthropic Claude, Moonshot Kimi, or an OpenAI-compatible endpoint.
 - **Stores work locally by default.** Sessions, run records, and encrypted memory live on your Mac. Hosted providers receive prompts only when you select them.
-- **Experiments with guarded wallet actions.** Direct-download builds can enable a separate, limited-fund Locus Vault in Settings, receive Sepolia ETH, review clear transaction summaries, and give the agent session-scoped spending rules backed by signer isolation and exact confirmation.
+- **Experiments with guarded wallet actions.** Direct-download builds can enable a separate, limited-fund multichain Locus Vault in Settings. Recovery runs in a network-disabled helper, signing stays isolated, and mainnet capabilities remain default-denied behind signed release gates.
 
 ![Scheduled tasks in the Locus Activity Center](Docs/locus-schedules-dark.png)
+
+## Agents and automations
+
+The Agents destination puts recurring and event-driven work in one place. A
+scheduled task, Gmail trigger, Telegram trigger, signed webhook, or price
+condition can run an agent with bounded permissions and retain its own primary
+conversation. Delivery state, retries, deduplication, and recent events remain
+visible; native credentials stay outside the agent prompt.
+
+Use side chats when you need to investigate or refine an agent without mixing
+that discussion into its automation history. See the
+[Agent Teams guide](Docs/AGENT_TEAMS_FEATURE_GUIDE.md) for team roles,
+worktrees, budgets, evaluations, and recovery controls.
 
 ## Inspector
 
@@ -58,8 +73,8 @@ The right-hand inspector keeps project tools beside the conversation:
 
 - Changes and files
 - Terminal and checkpoints
-- Runs and `AGENTS.md`
-- Plans and browser tabs
+- Overview, plans, and browser tabs
+- Agents, runs, and `AGENTS.md`
 - Model Router scorecards and proxy management
 
 Panels open when they are useful and can be collapsed when you want more room.
@@ -134,154 +149,31 @@ The helpers behind ChatGPT-plan accounts are a separate download. They are large
 
 1. Download `Locus-macOS.zip` from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest).
 2. Move Locus to Applications and open it.
-3. Choose a workspace and model, then start in Chat, Plan, or Build mode.
+3. Choose a workspace and model, then start in Ask, Work, Plan, or Grill mode.
 
 Direct-download builds from 1.14.0 onward check the stable release channel and can install signed updates when Locus quits. Mac App Store installations use the App Store update service.
 
 ### Locus Vault
 
-The notarized direct-download build is developing a public multichain,
-self-custodial [Locus Vault](Docs/WalletActivation.md). A network-disabled
-recovery window owns the 24-word phrase ceremony and sends entropy directly to
-the isolated signer over a single-use authenticated channel; the main app sees
-only public accounts and ceremony status. One phrase deterministically derives
-one Ethereum, Solana, and Sui account.
+The notarized direct-download build includes the experimental, self-custodial
+[Locus Vault](Docs/WalletActivation.md). One 24-word phrase derives one Ethereum,
+Solana, and Sui account. Creation, backup confirmation, rotation, and restore run
+inside a separate sandboxed application with no network entitlement. Recovery
+words never enter the main Locus process; the isolated signer receives them over
+a one-time authenticated channel and returns only public account metadata.
 
-Mainnet is default-denied. A short-lived signed manifest can enable only code
-already reviewed in the build, only in counsel-approved regions, and only when
-its hashed audit/operational evidence satisfies the invited-canary or GA gate.
-The checked-in manifest enables nothing. Reviewed native-SOL, classic SPL,
-narrowly safe Token-2022 `TransferChecked`, and standalone plugin-free Metaplex
-Core `TransferV1` builders plus quarantined token and collectible discovery are
-implemented, while mainnet signing remains gated.
-Wallet Hub Send now exposes those reviewed paths through the same semantic
-prepare, simulate, confirm, signer-recheck, and single-provider broadcast flow:
-native assets on all three chains, reviewed fungible tokens, reviewed EVM NFTs,
-standalone Core assets, and curated Sui objects. It always shows the raw
-destination, network, asset identity, amount, and maximum native fee. Curated
-Sui Coin/object and Core identities must match signed review metadata; a
-user-trusted Token-2022 mint still has its live extension set independently
-checked against the narrow supported subset before it can be prepared.
-Ethereum ERC-20 holdings can be enumerated through Alchemy's bounded,
-chain-verified [Token API](https://www.alchemy.com/docs/data/token-api/token-api-endpoints/alchemy-get-token-balances)
-pages. Locus accepts only canonical contract addresses
-and integer base-unit balances, rejects duplicate contracts and unstable page
-keys, and imports no provider token names, decimals, logos, or media. Unknown
-contracts enter quarantine; signed-manifest assets retain their reviewed local
-metadata and can use the same snapshot balance.
-ERC-721 and ERC-1155 holdings use Alchemy's
-[metadata-free owner endpoint](https://www.alchemy.com/docs/reference/nft-api-endpoints/nft-api-endpoints/nft-ownership-endpoints/get-nf-ts-for-owner-v-3).
-Every page must keep the same block number, block hash, and total; each item is
-reduced to its canonical standard, contract, token ID, and positive integer
-quantity. ERC-721 quantities must be exactly one. Provider names, descriptions,
-URIs, images, collection data, and spam classifications are discarded before
-the wallet model sees the collectible.
-Digital Asset Standard responses for Metaplex Token Metadata, Core, and
-compressed Bubblegum holdings are ownership-validated; active SVG/HTML/script
-media is never promoted as a wallet image. A signed-manifest Core collectible
-can reach a separate exact-transfer path only after Locus reparses its current
-on-chain `AssetV1` account. The asset must be uncompressed, standalone,
-plugin-free, owned by the vault, and keep the same update authority through
-simulation and the pre-sign recheck. The app and Rust signer independently
-rebuild the one `TransferV1` instruction; collection-backed, plugin-bearing,
-compressed, Token Metadata, programmable, and Bubblegum transfers remain
-read-only. This Core adapter remains testnet-only until an approved release pins
-and verifies the deployed upgradeable program evidence. Finalized Solana
-activity is read from bounded
-[`getSignaturesForAddress`](https://solana.com/docs/rpc/http/getsignaturesforaddress)
-pages and exact
-[`getTransaction`](https://solana.com/docs/rpc/http/gettransaction) evidence
-after genesis verification. Legacy and v0 envelopes bind resolved lookup-table
-account order, privileges, and recorded loaded addresses; v1 envelopes require
-the complete canonical resource configuration and prohibit lookup tables. Each
-accepted signature remains visible as a
-transaction-level record; exact owner SOL and reviewed SPL/Token-2022 balance
-deltas and the narrow Core `TransferV1` shape are additive effects. Unknown
-programs are not guessed, while malformed, duplicate, reordered, wrong-slot,
-or owner-substituted evidence rejects the batch. The newest 500 normalized
-records are stored in public SQLite, and unknown token/Core identities enter
-quarantine.
-Reviewed legacy Solana transfers use a two-pass compute-budget flow. Locus first
-simulates the independently rebuilt message at the protocol maximum with a zero
-unit price, adds a ten-percent measured-unit margin capped at 1.4 million, and
-then samples recent fees for the exact writable accounts. The newest 20 samples'
-75th-percentile price is capped to the user's remaining maximum fee before the
-final message is built. The app and signer independently encode exactly one
-`SetComputeUnitLimit` and one `SetComputeUnitPrice`; the provider's final fee and
-simulation must match that exact message again before signing.
-Sui native balances now use the
-[current GraphQL API](https://sdk.mystenlabs.com/sui/clients/graphql), bind the
-full Base58 genesis checkpoint digest, reject
-stale checkpoints and partial GraphQL results, and reconcile coin-object and
-balance-accumulator totals before updating Wallet Hub. Sui Coin discovery uses
-bounded, checkpoint-stable pagination and canonical Move marker types; unknown
-Coins enter quarantine until the user or a signed review manifest trusts them.
-For curated Coin sends, Locus enumerates the exact owned
-`Coin<T>` objects at one checkpoint, validates each object's BCS UID and raw
-balance, reconciles the object subtotal, and selects one deterministic
-sufficient object. Fragmented and accumulator-only balances remain unsendable
-until a separately reviewed merge shape exists. The isolated signer rebuilds
-only `SplitCoins` from that one object followed by `TransferObjects`, with one
-distinct reviewed SUI gas object; it exports no generic Move-call authority.
-Owned non-Coin Move objects are discovered at a pinned checkpoint with exact
-owner, object ID, version, digest, type, and public-transfer evidence. They enter
-Collectibles quarantine without BCS contents, display metadata, or remote media.
-Finalized Sui transaction activity is likewise read through the checkpoint-bound
-GraphQL path. It records only validated transaction effects and owner-specific
-SUI or Coin balance changes; unknown Coin types remain quarantined, failed
-effects cannot claim balance changes, and opaque BCS or Move-call data is not
-accepted. Non-Coin history includes exact address-owned creations, deletions,
-and cross-address ownership changes. Lifecycle flags must agree with canonical
-input/output state; contradictory, malformed, shared, object-owned, Coin/gas,
-and same-owner effects cannot masquerade as collectible transfers. Newly
-observed object identities enter quarantine without remote metadata. The signer
-core now has a deterministic, typed builder for the single
-object-backed native SUI transfer shape. Provider coin selection
-is checkpoint-pinned and validates the exact `Coin<SUI>` BCS, object reference,
-owner, raw balance, and aggregate coin-object balance before choosing one
-deterministic sufficient gas coin; fragmented or accumulator-only funds are not
-silently widened into a different transaction shape. The provider can now
-dry-run signer-built native-transfer bytes without broadcasting: Locus requires
-the exact transaction/effects digests, selected gas object, recipient credit,
-sender debit, and computed gas fee to match the reviewed transfer. The staged
-XPC flow repeats object and simulation evidence immediately before signing,
-consumes the intent, executes through one GraphQL provider, requires finality,
-and records transport ambiguity without automatic fallback. Testnet can use
-this exact subset; mainnet is still disabled until signed launch and adapter
-review manifests authorize it for an approved region.
-Curated `Coin<T>` sends use the same staged path. Simulation must return exactly
-the Coin sender debit, recipient credit, and separate native-SUI gas debit; the
-signer then rechecks both object references, balances, checkpoints, type, fee,
-and effects before consuming an exactly approved intent. Only Coin metadata in
-the signed review manifest can reach this mainnet adapter.
-Signed-manifest Sui collectibles have a similarly narrow transfer path for one
-exact, non-generic Move object that the provider proves is publicly transferable
-and owned by the sender. The signer rebuilds only `TransferObjects` for that
-object with a distinct reviewed SUI gas coin. A fresh checkpoint recheck must
-preserve object ID, version, digest, type, owner, and public-transfer status;
-simulation must show the exact object changing to the reviewed recipient while
-the gas object remains sender-owned and the only balance change is the bounded
-SUI fee. Arbitrary object BCS and Move calls never enter exported authority, and
-mainnet remains launch- and adapter-gated.
-Solana token sends use the signer-derived recipient associated token account,
-creating it idempotently through an exact reviewed instruction when it is still
-unallocated. The Universal Router now has version-separated reviewed decoders:
-the legacy adapter remains V2-pool-only, while a new adapter accepts one current
-V2 or V3 exact-input command with canonical ABI layout, route, payer, recipient,
-deadline, global minimum output, and per-hop price array. V4 actions, quote
-acquisition and the human Swap flow stay closed. A semantic V2/V3 preparation
-path now binds signed curated route assets, quoted output, slippage, minimum
-output, and deadline; the isolated signer constructs and re-decodes the router
-call, and autonomous use additionally requires signer-owned swap limits. This
-path is still launch-gated and lacks independent Anvil execution coverage.
-Token-2022
-transfer-altering extensions, Core collection/plugin variants, Token Metadata
-and compressed-collectible transfers, versioned-message signing, Sui gRPC
-execution migration, Solana/Sui swaps, external wallets, and WalletConnect
-remain closed until their implementation and evidence gates pass. Finalized
-Sui activity records strict
-non-Coin lifecycle and ownership changes for the tracked account, while
-validating and ignoring same-owner writes and gas/Coin object mutations.
+The recovery application numbers every word, asks you to confirm six random
+positions, identifies any mismatch for correction, and can reveal or hide typed
+confirmation and restore words. It clears secret fields on every exit path. See
+the [recovery guide](Docs/WalletRecoveryGuide.md) before funding a vault.
+
+Reviewed testnet paths cover native assets across all three chains and narrowly
+defined token and collectible transfers. Transactions use semantic preparation,
+simulation, exact human confirmation, a fresh signer recheck, and one-provider
+broadcast. Unknown assets remain quarantined instead of inheriting provider
+metadata. Mainnet is default-denied: the checked-in launch manifest enables
+nothing, and release, region, adapter, audit, and operational evidence gates
+must all authorize a path before the signer will use it.
 
 The Mac App Store target embeds neither recovery nor signer service. See the
 [security gate](Docs/WalletSecurityGate.md),

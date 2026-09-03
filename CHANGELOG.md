@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Agents are now a first-class destination.** Scheduled and event-driven work
+  is presented as a durable agent with a clear identity, status, source,
+  controls, history, and one dedicated primary chat. Each agent can also open
+  side chats for investigation without mixing that discussion into its
+  automation record.
+- **Event-driven agents can react to real inputs.** Locus can connect Gmail,
+  Telegram, signed webhooks, and price sources to bounded agent tasks. Delivery
+  state is durable and visible, with replay protection, retries, idempotency,
+  re-arming for price alerts, and native credential storage outside prompts.
+- **Overview follows the current request.** A pinned request summary tracks plan
+  steps, files, commands, sources, outputs, subagents, timing, and completion
+  state instead of blending activity from the full conversation.
+- **Optional voice controls.** Dictate requests, answer attention prompts, and
+  listen to responses with explicit microphone, speech-recognition, network,
+  and provider controls.
+- **Multichain Locus Vault testnet paths.** The direct-download build adds
+  reviewed Ethereum, Solana, and Sui asset discovery, activity, and narrowly
+  defined native, token, and collectible transfer paths. Unknown assets remain
+  quarantined and all mainnet capabilities remain default-denied behind signed
+  release and evidence gates.
+
+### Changed
+
+- **Schedules now behave like agents.** A schedule keeps one stable conversation
+  across runs, opens directly from the Agents destination, and separates manual
+  side chats from its canonical automation transcript.
+- **Agent surfaces explain the system in plain language.** Agent setup,
+  automation configuration, Overview, navigation, status, and empty states now
+  share one vocabulary and visual hierarchy.
+- **Session and transcript state has narrower ownership.** Catalog, selection,
+  and publication boundaries were extracted from the app composition root so
+  unrelated views no longer refresh for every change.
+- **Local compatible endpoints stay local.** Keyless LAN endpoints are accepted
+  when configured, and Locus no longer guesses HTTPS for explicitly local
+  addresses.
+
+### Fixed
+
+- **Wallet creation and restore now open reliably.** The unsupported recovery
+  window formerly hosted inside an XPC service has moved to a signed, sandboxed
+  accessory application with explicit presentation acknowledgement, Bring to
+  Front, launch timeout, crash handling, and bounded cancellation.
+- **Six-word backup confirmation can be corrected.** A mismatch identifies the
+  numbered positions that need attention and preserves the entered values for
+  retry. Confirmation and restore fields now include a Show/Hide typed words
+  control while remaining secure by default.
+- **Recovery exits cleanly.** Cancelling or closing the recovery application no
+  longer causes it to reopen, and completion, timeout, signer invalidation, and
+  helper termination all converge on one teardown path.
+- **Transcript navigation is steadier.** Streaming follow behavior, jump-to-
+  latest completion, coordinate clicks, file cards, workspace links, shell
+  blocks, and file viewing no longer compete for focus or scrolling.
+
+### Security
+
+- **Recovery secrets stay outside Locus.** The recovery application embeds its
+  own authenticated signer service and communicates with the main app through a
+  bounded status-only protocol. Recovery phrases, entropy, and private keys are
+  excluded from main-process payloads, logs, screenshots, and diagnostics.
+- **Signer trust boundaries are caller-specific.** Host and recovery bootstrap
+  endpoints enforce separate code-signing requirements, and lock or invalidation
+  clears pending recovery material and listeners.
+- **Packaging verifies the complete nested chain.** Release audits check both
+  signer copies, the recovery helper, sandbox and network entitlements, exact
+  executable identity, nested signing order, and direct-versus-App-Store
+  distribution boundaries.
+
 ## 2.1.0 — 2026-08-30
 
 ### Changed
