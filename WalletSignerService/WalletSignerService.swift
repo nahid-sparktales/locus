@@ -594,7 +594,7 @@ private final class WalletVaultStore {
     }
 }
 
-final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
+final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecoverySignerXPCProtocol {
     private static let protocolVersion = 2
     private static let maximumPreparedIntents = 32
     private static let maximumActivePolicies = 32
@@ -627,7 +627,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     func invalidateConnection() {
         queue.async {
             self.lockInMemory()
-            self.clearPending()
+            self.clearRecoveryCeremony()
         }
     }
 
@@ -647,13 +647,18 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                 guard self.recoveryCeremony == nil, self.pendingEntropy == nil else {
                     return reply(self.error("Another recovery ceremony is already active."), nil)
                 }
+                #if DEBUG
+                let presentationOnly = ceremony.allowPresentationOverExistingVaultForUITesting
+                #else
+                let presentationOnly = false
+                #endif
                 switch ceremony.mode {
                 case .create, .restore:
-                    guard !self.store.exists, !self.store.legacyExists else {
+                    guard presentationOnly || (!self.store.exists && !self.store.legacyExists) else {
                         return reply(self.error("A Locus Vault already exists."), nil)
                     }
                 case .rotateForMainnet:
-                    guard self.store.legacyExists, !self.store.exists else {
+                    guard presentationOnly || (self.store.legacyExists && !self.store.exists) else {
                         return reply(self.error("No preview vault requires mainnet rotation."), nil)
                     }
                 }
@@ -681,10 +686,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
             guard self.recoveryCeremony?.id == ceremonyID else {
                 return reply(self.error("The recovery ceremony is no longer active."))
             }
-            self.clearPending()
             self.lockInMemory()
-            self.recoveryCeremony?.listener.invalidate()
-            self.recoveryCeremony = nil
+            self.clearRecoveryCeremony()
             reply(self.encoded(self.currentStatus()))
         }
     }
@@ -1392,6 +1395,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
     func lock(reply: @escaping (Data) -> Void) {
         queue.async {
             self.lockInMemory()
+            self.clearRecoveryCeremony()
             reply(self.encoded(self.currentStatus()))
         }
     }
@@ -1455,14 +1459,28 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
                     WalletBackupConfirmation.self, from: confirmationData
                 )
                 guard let entropy = self.pendingEntropy,
+                      self.pendingWords.count == 24,
+                      self.pendingIndices.count == 6,
+                      self.pendingIndices.allSatisfy({ (0..<24).contains($0) }),
                       confirmation.wordsByIndex.count == 6,
-                      Set(confirmation.wordsByIndex.keys) == Set(self.pendingIndices),
-                      confirmation.wordsByIndex.allSatisfy({ index, word in
-                          self.pendingWords[index].caseInsensitiveCompare(
-                              word.trimmingCharacters(in: .whitespacesAndNewlines)
-                          ) == .orderedSame
-                      }) else {
-                    return reply(self.error("The six recovery words did not match."))
+                      Set(confirmation.wordsByIndex.keys) == Set(self.pendingIndices) else {
+                    return reply(self.error("The recovery confirmation request was invalid."))
+                }
+                let mismatchedPositions = self.pendingIndices.filter { index in
+                    self.pendingWords[index].precomposedStringWithCanonicalMapping
+                        .caseInsensitiveCompare(
+                            confirmation.wordsByIndex[index, default: ""]
+                                .precomposedStringWithCanonicalMapping
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        ) != .orderedSame
+                }
+                guard mismatchedPositions.isEmpty else {
+                    let positions = mismatchedPositions
+                        .map { String($0 + 1) }
+                        .joined(separator: ", ")
+                    return reply(self.error(
+                        "The words at positions \(positions) did not match. Check them and try again."
+                    ))
                 }
                 let accounts = try self.deriveAccounts(entropy: entropy)
                 try self.store.create(entropy: entropy, accounts: accounts)
@@ -4358,6 +4376,12 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol {
         pendingPurpose = .create
     }
 
+    private func clearRecoveryCeremony() {
+        clearPending()
+        recoveryCeremony?.listener.invalidate()
+        recoveryCeremony = nil
+    }
+
     private func encoded<T: Encodable>(_ value: T) -> Data {
         (try? JSONEncoder().encode(value)) ?? error("The signer could not encode its response.")
     }
@@ -4434,7 +4458,7 @@ private final class WalletRecoveryBrokerListenerDelegate: NSObject, NSXPCListene
         guard !acceptedConnection, let owner else {
             return false
         }
-        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryService)
+        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryApplication)
         acceptedConnection = true
         let broker = WalletRecoveryBroker(owner: owner, ceremonyID: ceremonyID)
         connection.exportedInterface = NSXPCInterface(with: WalletRecoveryBrokerXPCProtocol.self)

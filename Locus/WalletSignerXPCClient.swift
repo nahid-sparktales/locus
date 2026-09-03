@@ -38,6 +38,9 @@ final class XPCWalletSignerClient: WalletSignerClient {
     var invalidationHandler: (() -> Void)?
 
     private var connection: NSXPCConnection?
+    private var bootstrapConnection: NSXPCConnection?
+    private var connectionSetupInProgress = false
+    private var connectionWaiters: [CheckedContinuation<NSXPCConnection, Error>] = []
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let rpcClients: [String: WalletEVMProviderCoordinator]
@@ -98,39 +101,6 @@ final class XPCWalletSignerClient: WalletSignerClient {
         let status: WalletSignerStatus = try await call { proxy, reply in proxy.status(reply: reply) }
         sessionID = status.sessionID
         return status
-    }
-
-    func beginRecoveryCeremony(
-        mode: WalletRecoveryCeremonyMode
-    ) async throws -> WalletRecoveryCeremonyLaunch {
-        let request = try encoder.encode(WalletRecoveryCeremonyRequest(mode: mode))
-        let response: (Data, NSXPCListenerEndpoint?) = try await withCheckedThrowingContinuation {
-            continuation in
-            let gate = WalletXPCReplyGate()
-            do {
-                let proxy = try remoteProxy(errorHandler: { error in
-                    if gate.take() { continuation.resume(throwing: error) }
-                })
-                proxy.beginRecoveryCeremony(request) { data, endpoint in
-                    if gate.take() { continuation.resume(returning: (data, endpoint)) }
-                }
-            } catch {
-                if gate.take() { continuation.resume(throwing: error) }
-            }
-        }
-        if let failure = try? decoder.decode(WalletSignerErrorPayload.self, from: response.0) {
-            throw NSError(
-                domain: "WalletSigner", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: failure.error]
-            )
-        }
-        let handle = try decoder.decode(WalletRecoveryCeremonyHandle.self, from: response.0)
-        guard let endpoint = response.1 else { throw WalletGateway.Error.signerUnavailable }
-        return WalletRecoveryCeremonyLaunch(handle: handle, signerEndpoint: endpoint)
-    }
-
-    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus {
-        try await call { proxy, reply in proxy.cancelRecoveryCeremony(id, reply: reply) }
     }
 
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
@@ -1136,11 +1106,14 @@ final class XPCWalletSignerClient: WalletSignerClient {
         solanaPreparationPackets.removeAll()
         suiPreparationPackets.removeAll()
         guard isAvailable else { return }
-        do {
-            let proxy = try remoteProxy()
-            proxy.lock { _ in }
-        } catch {
-            invalidate()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let proxy = try await self.remoteProxy()
+                proxy.lock { _ in }
+            } catch {
+                self.invalidate()
+            }
         }
     }
 
@@ -1387,25 +1360,30 @@ final class XPCWalletSignerClient: WalletSignerClient {
         _ body: @escaping (WalletSignerXPCProtocol, @escaping (Data) -> Void) -> Void
     ) async throws -> Data {
         guard isAvailable else { throw WalletGateway.Error.signerUnavailable }
+        let proxy = try await remoteProxy(errorHandler: { [weak self] _ in
+            Task { @MainActor in self?.invalidate() }
+        })
         return try await withCheckedThrowingContinuation { continuation in
             let gate = WalletXPCReplyGate()
-            do {
-                let proxy = try remoteProxy(errorHandler: { error in
-                    if gate.take() { continuation.resume(throwing: error) }
-                })
-                body(proxy) { data in
-                    if gate.take() { continuation.resume(returning: data) }
-                }
-            } catch {
+            let replyError: (Error) -> Void = { error in
                 if gate.take() { continuation.resume(throwing: error) }
+            }
+            guard let guardedProxy = self.connection?.remoteObjectProxyWithErrorHandler(
+                replyError
+            ) as? WalletSignerXPCProtocol else {
+                return continuation.resume(throwing: WalletGateway.Error.signerUnavailable)
+            }
+            _ = proxy
+            body(guardedProxy) { data in
+                if gate.take() { continuation.resume(returning: data) }
             }
         }
     }
 
     private func remoteProxy(
         errorHandler: @escaping (Error) -> Void = { _ in }
-    ) throws -> WalletSignerXPCProtocol {
-        let connection = connection ?? makeConnection()
+    ) async throws -> WalletSignerXPCProtocol {
+        let connection = try await ensureConnection()
         guard let proxy = connection.remoteObjectProxyWithErrorHandler(errorHandler)
             as? WalletSignerXPCProtocol else {
             throw WalletGateway.Error.signerUnavailable
@@ -1413,10 +1391,67 @@ final class XPCWalletSignerClient: WalletSignerClient {
         return proxy
     }
 
-    private func makeConnection() -> NSXPCConnection {
+    private func ensureConnection() async throws -> NSXPCConnection {
+        if let connection { return connection }
+        if connectionSetupInProgress {
+            return try await withCheckedThrowingContinuation { continuation in
+                connectionWaiters.append(continuation)
+            }
+        }
+        connectionSetupInProgress = true
+        do {
+            let endpoint = try await requestHostEndpoint()
+            let connection = NSXPCConnection(listenerEndpoint: endpoint)
+            connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.signerService)
+            connection.remoteObjectInterface = NSXPCInterface(with: WalletSignerXPCProtocol.self)
+            connection.interruptionHandler = { [weak self] in
+                Task { @MainActor in self?.invalidate() }
+            }
+            connection.invalidationHandler = { [weak self] in
+                Task { @MainActor in self?.invalidate() }
+            }
+            connection.resume()
+            self.connection = connection
+            connectionSetupInProgress = false
+            let waiters = connectionWaiters
+            connectionWaiters.removeAll()
+            waiters.forEach { $0.resume(returning: connection) }
+            return connection
+        } catch {
+            connectionSetupInProgress = false
+            let waiters = connectionWaiters
+            connectionWaiters.removeAll()
+            waiters.forEach { $0.resume(throwing: error) }
+            throw error
+        }
+    }
+
+    private func requestHostEndpoint() async throws -> NSXPCListenerEndpoint {
+        let bootstrap = bootstrapConnection ?? makeBootstrapConnection()
+        return try await withCheckedThrowingContinuation { continuation in
+            let gate = WalletXPCReplyGate()
+            guard let proxy = bootstrap.remoteObjectProxyWithErrorHandler({ error in
+                if gate.take() { continuation.resume(throwing: error) }
+            }) as? WalletSignerBootstrapXPCProtocol else {
+                return continuation.resume(throwing: WalletGateway.Error.signerUnavailable)
+            }
+            proxy.connectHost { endpoint in
+                guard gate.take() else { return }
+                if let endpoint {
+                    continuation.resume(returning: endpoint)
+                } else {
+                    continuation.resume(throwing: WalletGateway.Error.signerUnavailable)
+                }
+            }
+        }
+    }
+
+    private func makeBootstrapConnection() -> NSXPCConnection {
         let connection = NSXPCConnection(serviceName: "io.sparktales.locus.WalletSigner")
         connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.signerService)
-        connection.remoteObjectInterface = NSXPCInterface(with: WalletSignerXPCProtocol.self)
+        connection.remoteObjectInterface = NSXPCInterface(
+            with: WalletSignerBootstrapXPCProtocol.self
+        )
         connection.interruptionHandler = { [weak self] in
             Task { @MainActor in self?.invalidate() }
         }
@@ -1424,7 +1459,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
             Task { @MainActor in self?.invalidate() }
         }
         connection.resume()
-        self.connection = connection
+        bootstrapConnection = connection
         return connection
     }
 
@@ -1433,6 +1468,10 @@ final class XPCWalletSignerClient: WalletSignerClient {
         connection?.interruptionHandler = nil
         connection?.invalidate()
         connection = nil
+        bootstrapConnection?.invalidationHandler = nil
+        bootstrapConnection?.interruptionHandler = nil
+        bootstrapConnection?.invalidate()
+        bootstrapConnection = nil
         sessionID = nil
         preparationPackets.removeAll()
         solanaPreparationPackets.removeAll()

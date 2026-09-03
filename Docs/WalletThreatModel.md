@@ -1,7 +1,7 @@
 # Locus Vault threat model
 
 Status: mainnet implementation in progress; launch authority defaults to none
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-02
 
 ## Security objective
 
@@ -15,7 +15,7 @@ checked at the signer boundary.
 
 | Asset or authority | Owner | Required behavior |
 | --- | --- | --- |
-| Phrase generation/display/restore input | `WalletRecovery.xpc` and one-time signer broker | Never enters Locus; no network entitlement; cancel and lock on interruption |
+| Phrase generation/display/restore input | sandboxed `WalletRecovery.app`, its private signer, and one-time signer broker | Never enters Locus; no network entitlement; cancel and lock on interruption |
 | Entropy and private keys | `WalletSigner.xpc` | AES-GCM at rest; device-only Keychain wrapping key; user presence; zeroize on lock |
 | Active policies and cumulative budgets | Signer connection | Re-evaluate and reserve at signature release; clear on lock/invalidation |
 | Network evidence | Native app plus signer recheck | Canonical chain identity; primary/fallback comparison; never concurrent duplicate broadcast |
@@ -23,9 +23,13 @@ checked at the signer boundary.
 | Public wallet metadata | Versioned SQLite store | No phrase, entropy, key, policy authority, signed bytes, or unrestricted diagnostics |
 | Launch authority | Signed schema-v2 manifest | Short expiry; evidence hash; reviewed code intersection; stage and region bound |
 
-Both XPC listeners validate bundle and team identity. Signer authorization is
-connection-local. The anonymous recovery broker accepts one signed recovery
-service connection and cannot be reached by the Locus host itself.
+The signer service initially exposes only a bootstrap interface. Its anonymous
+host endpoint accepts signed Locus and excludes recovery methods; its anonymous
+recovery endpoint accepts only the signed recovery helper. Signer authorization
+is connection-local. The one-time recovery broker accepts one signed recovery
+application connection and cannot be reached by the Locus host itself. Locus
+launches the helper's exact executable and exchanges only bounded start,
+cancel, presented, and terminal-result frames.
 
 ## Request-source policy
 
@@ -45,7 +49,7 @@ service connection and cannot be reached by the Locus host itself.
 
 | Threat | Control and fail-closed result |
 | --- | --- |
-| Main app or page reads recovery words | Phrase UI/input lives in recovery XPC; signer broker authenticates it; result to Locus contains only status/public accounts |
+| Main app or page reads recovery words | Phrase UI/input lives in the sandboxed recovery application; its private signer and one-time broker authenticate each boundary; the framed result to Locus contains only status/public accounts |
 | Preview vault silently reaches mainnet | Production v2 vault is separate; preview vault becomes recovery-only; rotation requires a new verified phrase |
 | Malicious provider changes chain | Verify EVM chain ID, Solana genesis hash, or Sui chain identifier on every provider switch |
 | Provider substitutes preparation | Compare critical evidence across primary/fallback where configured; signer rechecks authoritative fields |
@@ -54,7 +58,7 @@ service connection and cannot be reached by the Locus host itself.
 | Browser reuses approval after network switch | Grants are keyed by normalized origin and canonical network; switch emits empty accounts until separately approved |
 | Remote manifest widens authority | Intersection-only restriction; cannot raise release stage or add a compiled capability |
 | Poisoned NFT/token metadata | Unknown assets quarantined; active HTML/SVG/script never rendered as trusted wallet UI |
-| Helper or signer interruption | Clear pending recovery, entropy, sessions, policies, intents, and grants; lock immediately |
+| Helper or signer interruption | Process EOF and XPC invalidation clear pending recovery, entropy, listeners, sessions, policies, intents, and grants; lock immediately |
 | Diagnostics leak wallet behavior | Opt-in categorical data excludes addresses, amounts, assets, balances, origins, peers, policies, bytes, and recovery material |
 
 ## Verification gates

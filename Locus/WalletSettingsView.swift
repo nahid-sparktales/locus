@@ -121,7 +121,8 @@ struct WalletSettingsView: View {
                     alphaDisabledView
                 case .error:
                     errorView
-                case .setupRequired, .backupIncomplete, .rotationRequired, .locked, .ready:
+                case .recoveryUnavailable, .setupRequired, .backupIncomplete,
+                     .rotationRequired, .locked, .ready:
                     enabledHeader
                     hubNavigation
                     hubContent
@@ -400,6 +401,8 @@ struct WalletSettingsView: View {
     private var accountCard: some View {
         WalletSectionCard(title: "Account", symbol: "person.crop.circle") {
             switch gateway.hubState {
+            case .recoveryUnavailable:
+                recoveryUnavailableContent
             case .setupRequired:
                 setupRequiredContent
             case .backupIncomplete:
@@ -435,17 +438,59 @@ struct WalletSettingsView: View {
             Text("Create a new 24-word phrase or restore the one production Locus Vault phrase you already backed up.")
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
-            Button("Create Locus Vault") {
-                Task { _ = await gateway.beginVaultCreation() }
+            if gateway.recoveryCeremonyActive {
+                recoveryProgressContent
+            } else {
+                Button("Create Locus Vault") {
+                    Task { _ = await gateway.beginVaultCreation() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(!gateway.canCreateVault)
+                .accessibilityIdentifier("settings.wallet.create")
+                Button("Restore from 24 Words") {
+                    Task { _ = await gateway.beginVaultRestoration() }
+                }
+                    .buttonStyle(.bordered)
+                    .disabled(!gateway.canCreateVault)
+                    .accessibilityIdentifier("settings.wallet.restore")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.ink)
-            .accessibilityIdentifier("settings.wallet.create")
-            Button("Restore from 24 Words") {
-                Task { _ = await gateway.beginVaultRestoration() }
+        }
+    }
+
+    private var recoveryUnavailableContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Recovery helper unavailable", systemImage: "exclamationmark.shield.fill")
+                .font(.title3.weight(.semibold))
+            Text("This copy of Locus cannot open the signed recovery window. Reinstall the direct-download app before creating, rotating, or restoring a vault.")
+                .foregroundStyle(LocusTheme.textSecondary)
+            Text("Signing and existing public account information remain isolated from this error.")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.textTertiary)
+        }
+        .accessibilityIdentifier("settings.wallet.recovery-unavailable")
+    }
+
+    private var recoveryProgressContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ProgressView(
+                gateway.recoveryPresentationState == .presented
+                    ? "Recovery window is open."
+                    : "Opening the secure recovery window…"
+            )
+            .controlSize(.small)
+            .accessibilityIdentifier(
+                gateway.recoveryPresentationState == .presented
+                    ? "settings.wallet.recovery.presented"
+                    : "settings.wallet.recovery.launching"
+            )
+            HStack {
+                Button("Bring to Front") { gateway.bringRecoveryToFront() }
+                    .disabled(gateway.recoveryPresentationState == .idle)
+                    .accessibilityIdentifier("settings.wallet.recovery.bring-to-front")
+                Button("Cancel", role: .cancel) { gateway.cancelRecoveryCeremony() }
+                    .accessibilityIdentifier("settings.wallet.recovery.cancel")
             }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("settings.wallet.restore")
         }
     }
 
@@ -455,8 +500,17 @@ struct WalletSettingsView: View {
                 .font(.title3.weight(.semibold))
             Text("The vault cannot be used until the requested recovery words are confirmed.")
                 .foregroundStyle(LocusTheme.textSecondary)
-            ProgressView("The isolated recovery window owns phrase display and verification.")
-                .controlSize(.small)
+            if gateway.recoveryCeremonyActive {
+                recoveryProgressContent
+            } else {
+                Text("The earlier recovery window closed before confirmation. Clear its pending material, then create or restore again.")
+                    .font(.callout)
+                    .foregroundStyle(LocusTheme.textSecondary)
+                Button("Clear Pending Recovery") {
+                    Task { await gateway.clearIncompleteRecovery() }
+                }
+                .accessibilityIdentifier("settings.wallet.recovery.clear-pending")
+            }
         }
     }
 
@@ -466,11 +520,16 @@ struct WalletSettingsView: View {
                 .font(.title3.weight(.semibold))
             Text("Your earlier preview vault remains encrypted and recovery-only. Mainnet signing stays disabled until you create and verify a new production recovery phrase.")
                 .foregroundStyle(LocusTheme.textSecondary)
-            Button("Create Production Recovery Phrase") {
-                Task { _ = await gateway.beginMainnetRotation() }
+            if gateway.recoveryCeremonyActive {
+                recoveryProgressContent
+            } else {
+                Button("Create Production Recovery Phrase") {
+                    Task { _ = await gateway.beginMainnetRotation() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.ink)
+                .disabled(!gateway.canRotateForMainnet)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.ink)
         }
     }
 

@@ -13,7 +13,8 @@ code_mode_host="${app}/Contents/Helpers/codex-code-mode-host"
 simulator_touch="${app}/Contents/Helpers/LocusSimulatorTouch"
 simulator_tree="${app}/Contents/Helpers/LocusSimulatorTree"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
-wallet_recovery="${app}/Contents/XPCServices/WalletRecovery.xpc"
+wallet_recovery="${app}/Contents/Helpers/WalletRecovery.app"
+wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc"
 licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 info_plist="${app}/Contents/Info.plist"
 
@@ -308,7 +309,13 @@ if [[ "${sandboxed}" == "1" ]]; then
         exit 1
     }
     [[ ! -e "${wallet_recovery}" ]] || {
-        echo "error: the Mac App Store build contains WalletRecovery.xpc" >&2
+        echo "error: the Mac App Store build contains WalletRecovery.app" >&2
+        exit 1
+    }
+    unexpected_wallet_helper="$(/usr/bin/find "${app}/Contents" \
+        \( -name WalletSigner.xpc -o -name WalletRecovery.app \) -print -quit)"
+    [[ -z "${unexpected_wallet_helper}" ]] || {
+        echo "error: the Mac App Store build contains wallet helper ${unexpected_wallet_helper}" >&2
         exit 1
     }
     [[ ! -e "${simulator_touch}" && ! -e "${simulator_tree}" ]] || {
@@ -344,11 +351,17 @@ else
         exit 1
     }
     [[ -x "${wallet_recovery}/Contents/MacOS/WalletRecovery" ]] || {
-        echo "error: the direct-download build is missing WalletRecovery.xpc" >&2
+        echo "error: the direct-download build is missing WalletRecovery.app" >&2
+        exit 1
+    }
+    [[ -x "${wallet_recovery_signer}/Contents/MacOS/WalletSigner" ]] || {
+        echo "error: WalletRecovery.app is missing its private WalletSigner.xpc" >&2
         exit 1
     }
     "${repo_root}/Tools/AuditWalletSignerBinary.sh" \
         "${wallet_signer}/Contents/MacOS/WalletSigner"
+    "${repo_root}/Tools/AuditWalletSignerBinary.sh" \
+        "${wallet_recovery_signer}/Contents/MacOS/WalletSigner"
     wallet_sbom="${resources}/WalletSignerSBOM.cdx.json"
     [[ -f "${wallet_sbom}" ]] || {
         echo "error: direct-download build is missing the WalletSigner SBOM" >&2
@@ -367,6 +380,16 @@ else
     }
     /usr/bin/codesign --verify --strict "${wallet_signer}" || {
         echo "error: WalletSigner.xpc signature is invalid" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
+        "${wallet_recovery_signer}/Contents/Info.plist" 2>/dev/null || true)" \
+        == "io.sparktales.locus.WalletSigner" ]] || {
+        echo "error: recovery WalletSigner.xpc has an unexpected bundle identifier" >&2
+        exit 1
+    }
+    /usr/bin/codesign --verify --strict "${wallet_recovery_signer}" || {
+        echo "error: recovery WalletSigner.xpc signature is invalid" >&2
         exit 1
     }
     wallet_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-entitlements.XXXXXX")"
@@ -395,10 +418,37 @@ else
         }
     done
     /bin/rm -f "${wallet_entitlements}"
+    recovery_signer_entitlements="$(/usr/bin/mktemp \
+        "${TMPDIR:-/tmp}/locus-recovery-signer-entitlements.XXXXXX")"
+    /usr/bin/codesign -d --entitlements "${recovery_signer_entitlements}" --xml \
+        "${wallet_recovery_signer}" >/dev/null 2>&1 || {
+        echo "error: recovery WalletSigner.xpc entitlements cannot be read" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
+        "${recovery_signer_entitlements}" 2>/dev/null || true)" == "true" ]] || {
+        echo "error: recovery WalletSigner.xpc is not sandboxed" >&2
+        exit 1
+    }
+    for forbidden in \
+        com.apple.security.network.client \
+        com.apple.security.network.server \
+        com.apple.security.get-task-allow \
+        com.apple.security.cs.allow-dyld-environment-variables \
+        com.apple.security.cs.disable-library-validation
+    do
+        value="$(/usr/bin/plutil -extract "${forbidden//./\.}" raw -o - \
+            "${recovery_signer_entitlements}" 2>/dev/null || true)"
+        [[ "${value}" != "true" ]] || {
+            echo "error: recovery WalletSigner.xpc has forbidden entitlement ${forbidden}" >&2
+            exit 1
+        }
+    done
+    /bin/rm -f "${recovery_signer_entitlements}"
     app_team="$(/usr/bin/codesign -dv --verbose=4 "${app}" 2>&1 \
-        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { value=$2 } END { print value }')"
     wallet_team="$(/usr/bin/codesign -dv --verbose=4 "${wallet_signer}" 2>&1 \
-        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { value=$2 } END { print value }')"
     [[ -n "${app_team}" && "${wallet_team}" == "${app_team}" ]] || {
         echo "error: WalletSigner.xpc Team ID does not match the containing app" >&2
         exit 1
@@ -406,22 +456,29 @@ else
     [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
         "${wallet_recovery}/Contents/Info.plist" 2>/dev/null || true)" \
         == "io.sparktales.locus.WalletRecovery" ]] || {
-        echo "error: WalletRecovery.xpc has an unexpected bundle identifier" >&2
+        echo "error: WalletRecovery.app has an unexpected bundle identifier" >&2
         exit 1
     }
     /usr/bin/codesign --verify --strict "${wallet_recovery}" || {
-        echo "error: WalletRecovery.xpc signature is invalid" >&2
+        echo "error: WalletRecovery.app signature is invalid" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract CFBundlePackageType raw -o - \
+        "${wallet_recovery}/Contents/Info.plist" 2>/dev/null || true)" == "APPL" \
+        && "$(/usr/bin/plutil -extract LSUIElement raw -o - \
+        "${wallet_recovery}/Contents/Info.plist" 2>/dev/null || true)" == "true" ]] || {
+        echo "error: WalletRecovery.app is not an accessory application" >&2
         exit 1
     }
     recovery_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-recovery-entitlements.XXXXXX")"
     /usr/bin/codesign -d --entitlements "${recovery_entitlements}" --xml \
         "${wallet_recovery}" >/dev/null 2>&1 || {
-        echo "error: WalletRecovery.xpc entitlements cannot be read" >&2
+        echo "error: WalletRecovery.app entitlements cannot be read" >&2
         exit 1
     }
     [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
         "${recovery_entitlements}" 2>/dev/null || true)" == "true" ]] || {
-        echo "error: WalletRecovery.xpc is not sandboxed" >&2
+        echo "error: WalletRecovery.app is not sandboxed" >&2
         exit 1
     }
     for forbidden in \
@@ -434,15 +491,30 @@ else
         value="$(/usr/bin/plutil -extract "${forbidden//./\.}" raw -o - \
             "${recovery_entitlements}" 2>/dev/null || true)"
         [[ "${value}" != "true" ]] || {
-            echo "error: WalletRecovery.xpc has forbidden entitlement ${forbidden}" >&2
+            echo "error: WalletRecovery.app has forbidden entitlement ${forbidden}" >&2
             exit 1
         }
     done
     /bin/rm -f "${recovery_entitlements}"
     recovery_team="$(/usr/bin/codesign -dv --verbose=4 "${wallet_recovery}" 2>&1 \
-        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { print $2; exit }')"
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { value=$2 } END { print value }')"
     [[ -n "${app_team}" && "${recovery_team}" == "${app_team}" ]] || {
-        echo "error: WalletRecovery.xpc Team ID does not match the containing app" >&2
+        echo "error: WalletRecovery.app Team ID does not match the containing app" >&2
+        exit 1
+    }
+    recovery_signer_team="$(/usr/bin/codesign -dv --verbose=4 \
+        "${wallet_recovery_signer}" 2>&1 \
+        | /usr/bin/awk -F= '$1 == "TeamIdentifier" { value=$2 } END { print value }')"
+    [[ "${recovery_signer_team}" == "${app_team}" ]] || {
+        echo "error: recovery WalletSigner.xpc Team ID does not match the containing app" >&2
+        exit 1
+    }
+    outer_signer_cdhash="$(/usr/bin/codesign -dv --verbose=4 "${wallet_signer}" 2>&1 \
+        | /usr/bin/awk -F= '$1 == "CDHash" { value=$2 } END { print value }')"
+    inner_signer_cdhash="$(/usr/bin/codesign -dv --verbose=4 "${wallet_recovery_signer}" 2>&1 \
+        | /usr/bin/awk -F= '$1 == "CDHash" { value=$2 } END { print value }')"
+    [[ -n "${outer_signer_cdhash}" && "${inner_signer_cdhash}" == "${outer_signer_cdhash}" ]] || {
+        echo "error: the host and recovery WalletSigner executables differ" >&2
         exit 1
     }
     simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"

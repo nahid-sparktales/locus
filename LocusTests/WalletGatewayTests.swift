@@ -76,16 +76,6 @@ private final class FakeWalletSigner: WalletSignerClient {
                            vaultState: reportedVaultState ?? (sessionID == nil ? .locked : .unlocked),
                            sessionID: sessionID, accounts: try await listAccounts())
     }
-    func beginRecoveryCeremony(
-        mode: WalletRecoveryCeremonyMode
-    ) async throws -> WalletRecoveryCeremonyLaunch {
-        WalletRecoveryCeremonyLaunch(
-            handle: .init(id: "ceremony-1", mode: mode), signerEndpoint: nil
-        )
-    }
-    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus {
-        try await signerStatus()
-    }
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus { try await signerStatus() }
     func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus {
         try await signerStatus()
@@ -190,14 +180,22 @@ private final class FakeWalletSigner: WalletSignerClient {
 
 @MainActor
 private final class FakeWalletRecoveryView: WalletRecoveryViewClient {
-    let isAvailable = true
+    var isAvailable = true
+    var presentationState = WalletRecoveryPresentationState.idle
+    var presentationStateHandler: ((WalletRecoveryPresentationState) -> Void)?
     var invalidationHandler: (() -> Void)?
     var outcome: WalletRecoveryCeremonyOutcome = .completed
     var presentedModes: [WalletRecoveryCeremonyMode] = []
+    var error: Error?
+    var cancelCount = 0
+    var bringToFrontCount = 0
 
-    func present(launch: WalletRecoveryCeremonyLaunch) async throws
+    func present(mode: WalletRecoveryCeremonyMode) async throws
         -> WalletRecoveryCeremonyResult {
-        presentedModes.append(launch.handle.mode)
+        if let error { throw error }
+        presentedModes.append(mode)
+        presentationState = .presented
+        presentationStateHandler?(.presented)
         let status = outcome == .completed ? WalletSignerStatus(
             protocolVersion: 2, vaultState: .locked, sessionID: nil,
             accounts: [WalletAccount(
@@ -206,12 +204,13 @@ private final class FakeWalletRecoveryView: WalletRecoveryViewClient {
             )]
         ) : nil
         return WalletRecoveryCeremonyResult(
-            ceremonyID: launch.handle.id, outcome: outcome,
+            ceremonyID: "ceremony-1", outcome: outcome,
             signerStatus: status, error: outcome == .failed ? "failed" : nil
         )
     }
 
-    func cancel() {}
+    func bringToFront() { bringToFrontCount += 1 }
+    func cancel() { cancelCount += 1 }
 }
 
 @MainActor
@@ -6426,38 +6425,116 @@ final class WalletGatewayTests: XCTestCase {
         client.lock()
     }
 
-    func testEmbeddedRecoveryProcessAcceptsTheCodeSignedHostConnection() async throws {
-        let client = XPCWalletRecoveryViewClient(bundle: Bundle.main)
-        guard client.isAvailable else {
-            return XCTFail("The direct build must embed WalletRecovery.xpc.")
-        }
-
-        let endpointSource = NSXPCListener.anonymous()
-        let connection = NSXPCConnection(serviceName: "io.sparktales.locus.WalletRecovery")
-        connection.setCodeSigningRequirement(WalletXPCCodeSigningRequirement.recoveryService)
-        connection.remoteObjectInterface = NSXPCInterface(
-            with: WalletRecoveryServiceXPCProtocol.self
+    func testEmbeddedRecoveryApplicationAndBothSignerCopiesArePresent() throws {
+        let client = ProcessWalletRecoveryViewClient(bundle: Bundle.main)
+        XCTAssertTrue(client.isAvailable, "The direct build must embed signed WalletRecovery.app.")
+        let contents = Bundle.main.bundleURL.appendingPathComponent("Contents")
+        let outerSigner = contents.appendingPathComponent(
+            "XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
         )
-        connection.resume()
-        defer { connection.invalidate() }
-
-        let response: Data = try await withCheckedThrowingContinuation { continuation in
-            let gate = WalletXPCReplyGate()
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                if gate.take() { continuation.resume(throwing: error) }
-            }) as? WalletRecoveryServiceXPCProtocol else {
-                return continuation.resume(throwing: WalletGateway.Error.signerUnavailable)
-            }
-            proxy.presentCeremony(
-                Data([0]), signerEndpoint: endpointSource.endpoint
-            ) { data in
-                if gate.take() { continuation.resume(returning: data) }
-            }
-        }
-        let failure = try JSONDecoder().decode(WalletSignerErrorPayload.self, from: response)
-        XCTAssertEqual(failure.error, "The recovery request is invalid.")
+        let innerSigner = contents.appendingPathComponent(
+            "Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+        )
+        XCTAssertEqual(try Data(contentsOf: outerSigner), try Data(contentsOf: innerSigner))
     }
     #endif
+
+    func testRecoveryProcessFramesAreBoundedChunkableAndSecretFree() throws {
+        let invocationID = UUID().uuidString.lowercased()
+        let start = WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .start,
+            mode: .create
+        )
+        let presented = WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .presented
+        )
+        let startFrame = try WalletRecoveryProcessFrameDecoder.encode(start)
+        let presentedFrame = try WalletRecoveryProcessFrameDecoder.encode(presented)
+        let wire = String(decoding: startFrame + presentedFrame, as: UTF8.self).lowercased()
+        for forbidden in ["words", "phrase", "entropy", "private_key", "privatekey"] {
+            XCTAssertFalse(wire.contains(forbidden))
+        }
+
+        var decoder = WalletRecoveryProcessFrameDecoder()
+        XCTAssertTrue(try decoder.append(startFrame.prefix(3)).isEmpty)
+        let messages = try decoder.append(startFrame.dropFirst(3) + presentedFrame)
+        XCTAssertEqual(messages, [start, presented])
+
+        var oversized = WalletRecoveryProcessFrameDecoder()
+        XCTAssertThrowsError(try oversized.append(Data([0, 1, 0, 1]))) { error in
+            XCTAssertEqual(error as? WalletRecoveryProcessFrameError, .oversized)
+        }
+        var malformed = WalletRecoveryProcessFrameDecoder()
+        XCTAssertThrowsError(try malformed.append(Data([0, 0, 0, 1, 0xff]))) { error in
+            XCTAssertEqual(error as? WalletRecoveryProcessFrameError, .malformed)
+        }
+    }
+
+    func testRecoveryProcessLifecycleRejectsMismatchedAndDuplicateMessages() throws {
+        let invocationID = UUID().uuidString.lowercased()
+        var lifecycle = WalletRecoveryProcessLifecycle(invocationID: invocationID)
+        XCTAssertThrowsError(try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: UUID().uuidString.lowercased(),
+            kind: .presented
+        )))
+
+        _ = try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .presented
+        ))
+        XCTAssertEqual(lifecycle.presentationState, .presented)
+        XCTAssertThrowsError(try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .presented
+        )))
+
+        let terminal = WalletRecoveryCeremonyResult(
+            ceremonyID: "ceremony-1", outcome: .canceled,
+            signerStatus: nil, error: nil
+        )
+        _ = try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .terminal,
+            result: terminal
+        ))
+        XCTAssertThrowsError(try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .terminal,
+            result: terminal
+        )))
+    }
+
+    func testRecoveryPresentationTimeoutWinsLateTerminalAndCancelIsIdempotent() throws {
+        let invocationID = UUID().uuidString.lowercased()
+        var lifecycle = WalletRecoveryProcessLifecycle(invocationID: invocationID)
+        XCTAssertTrue(lifecycle.presentationTimedOut())
+        XCTAssertFalse(lifecycle.requestCancellation())
+
+        let canceled = WalletRecoveryCeremonyResult(
+            ceremonyID: "ceremony-1", outcome: .canceled,
+            signerStatus: nil, error: nil
+        )
+        _ = try lifecycle.receive(WalletRecoveryProcessMessage(
+            invocationID: invocationID,
+            kind: .terminal,
+            result: canceled
+        ))
+        XCTAssertThrowsError(try lifecycle.terminalResolution(canceled).get()) { error in
+            XCTAssertEqual(error as? WalletRecoveryViewError, .presentationTimedOut)
+        }
+
+        var canceledBeforePresentation = WalletRecoveryProcessLifecycle(
+            invocationID: invocationID
+        )
+        XCTAssertTrue(canceledBeforePresentation.requestCancellation())
+        XCTAssertFalse(canceledBeforePresentation.requestCancellation())
+        XCTAssertFalse(canceledBeforePresentation.presentationTimedOut())
+        let result = try canceledBeforePresentation.terminationResolution().get()
+        XCTAssertEqual(result.outcome, .canceled)
+        XCTAssertEqual(result.ceremonyID, invocationID)
+    }
 
     func testUnknownEffectsAndUnlimitedApprovalCanNeverBeAutonomous() {
         for flag in [WalletRiskFlag.unknownEffect, .undecodableCall, .unlimitedApproval] {
@@ -6907,6 +6984,48 @@ final class WalletGatewayTests: XCTestCase {
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         XCTAssertEqual(gateway.hubState, .ready)
+    }
+
+    func testRecoveryUnavailableStateExplainsMissingHelper() async {
+        let signer = FakeWalletSigner()
+        signer.reportedVaultState = .missing
+        let recovery = FakeWalletRecoveryView()
+        recovery.isAvailable = false
+        let gateway = WalletGateway(
+            signer: signer,
+            recoveryView: recovery,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
+        await gateway.refreshStatus()
+        XCTAssertEqual(gateway.hubState, .recoveryUnavailable)
+        let didBegin = await gateway.beginVaultCreation()
+        XCTAssertFalse(didBegin)
+        XCTAssertTrue(gateway.lastError?.contains("signed recovery helper") == true)
+        XCTAssertFalse(gateway.diagnosticSnapshot().recoveryHelperAvailable)
+    }
+
+    func testRecoveryFailureSurvivesAuthoritativeStatusRefreshAndCanRetry() async {
+        let signer = FakeWalletSigner()
+        signer.reportedVaultState = .missing
+        let recovery = FakeWalletRecoveryView()
+        recovery.outcome = .failed
+        let gateway = WalletGateway(
+            signer: signer,
+            recoveryView: recovery,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"]
+        )
+        await gateway.refreshStatus()
+        let failed = await gateway.beginVaultCreation()
+        XCTAssertFalse(failed)
+        XCTAssertEqual(gateway.lastError, "failed")
+        XCTAssertFalse(gateway.recoveryCeremonyActive)
+        XCTAssertEqual(gateway.recoveryPresentationState, .idle)
+
+        recovery.outcome = .completed
+        let retried = await gateway.beginVaultCreation()
+        XCTAssertTrue(retried)
+        XCTAssertNil(gateway.lastError)
+        XCTAssertEqual(recovery.presentedModes, [.create, .create])
     }
 
     func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async {
