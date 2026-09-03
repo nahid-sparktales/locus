@@ -80,10 +80,11 @@ extension AppModel {
     }
 
     func openSchedules() {
-        activity.activityCenterSection = .schedules
+        activity.activityCenterSection = .configureAgent
         activity.activityCenterPresented = true
         Task { @MainActor [weak self] in
             await self?.schedule.refreshScheduledTasks()
+            await self?.eventAutomations.refresh()
         }
     }
 

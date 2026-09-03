@@ -2048,6 +2048,56 @@ def test_event_trigger_routes_queue_into_the_existing_chat_and_retain_history(cl
     assert history[0]["id"] == delivery["id"]
 
 
+def test_price_trigger_routes_cross_dispatch_and_rearm_in_the_existing_chat(client):
+    session_id = client.get("/api/sessions").json()["current"]
+    assert client.post("/api/connectors", json={
+        "id": "market-data", "kind": "price_feed", "display_name": "Market Data",
+        "public_config": {"max_quote_age_seconds": 300},
+    }).status_code == 200
+    created = client.post("/api/event-triggers", json={
+        "id": "btc-threshold", "trigger_kind": "price", "name": "Bitcoin threshold",
+        "connection_id": "market-data", "target_session_id": session_id,
+        "instruction": "Implement the configured response.", "mode": "work",
+        "filters": {"price_condition": {
+            "provider_symbol": "BTCUSDT", "display_symbol": "Bitcoin",
+            "asset_class": "crypto", "quote_currency": "USD",
+            "comparison": "crosses_above", "threshold": "100000",
+            "lifecycle": "once", "repeat_interval_seconds": 900,
+        }},
+    })
+    assert created.status_code == 200
+    assert created.json()["action_connection_ids"] == []
+
+    def quote(identifier: str, price: str, occurred_at: float):
+        return client.post("/api/event-triggers/ingest", json={
+            "connection_id": "market-data",
+            "event": {
+                "source_event_id": identifier, "occurred_at": occurred_at,
+                "event_type": "price.quote",
+                "data": {
+                    "provider_symbol": "BTCUSDT", "display_symbol": "Bitcoin",
+                    "asset_class": "crypto", "quote_currency": "USD",
+                    "price": price, "provider_timestamp": occurred_at,
+                },
+            },
+        })
+
+    now = time.time()
+    assert quote("baseline", "99000", now).json()["deliveries"] == []
+    delivery = quote("crossing", "100000", now + 1).json()["deliveries"][0]
+    dispatched = client.post(f"/api/event-deliveries/{delivery['id']}/dispatch")
+    assert dispatched.status_code == 200
+    manifest = dispatched.json()["run"]["manifest"]
+    assert manifest["event_trigger_kind"] == "price"
+    assert manifest["price_condition"]["threshold"] == "100000"
+    trigger = client.get("/api/event-triggers").json()["triggers"][0]
+    assert trigger["runtime_state"]["fired"] is True
+
+    rearmed = client.post("/api/event-triggers/btc-threshold/rearm")
+    assert rearmed.status_code == 200
+    assert rearmed.json()["runtime_state"] == {}
+
+
 def test_evaluation_crud_routes_preserve_suite_contract(client, tmp_path):
     payload = {
         "name": "Read-only smoke",

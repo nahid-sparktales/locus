@@ -4,6 +4,7 @@ enum ConnectorKind: String, CaseIterable, Codable, Identifiable {
     case gmail
     case telegram
     case webhook
+    case priceFeed = "price_feed"
 
     var id: String { rawValue }
 
@@ -12,6 +13,7 @@ enum ConnectorKind: String, CaseIterable, Codable, Identifiable {
         case .gmail: "Gmail"
         case .telegram: "Telegram"
         case .webhook: "Signed Webhook"
+        case .priceFeed: "Price Source"
         }
     }
 
@@ -20,7 +22,129 @@ enum ConnectorKind: String, CaseIterable, Codable, Identifiable {
         case .gmail: "envelope"
         case .telegram: "paperplane"
         case .webhook: "point.3.connected.trianglepath.dotted"
+        case .priceFeed: "chart.line.uptrend.xyaxis"
         }
+    }
+}
+
+enum EventTriggerKind: String, CaseIterable, Codable, Identifiable {
+    case event
+    case price
+    var id: String { rawValue }
+    var title: String { self == .price ? "Price Alert" : "Incoming Event" }
+}
+
+enum PriceComparison: String, CaseIterable, Codable, Identifiable {
+    case crossesAbove = "crosses_above"
+    case crossesBelow = "crosses_below"
+    var id: String { rawValue }
+    var title: String { self == .crossesAbove ? "Crosses above" : "Crosses below" }
+}
+
+enum PriceLifecycle: String, CaseIterable, Codable, Identifiable {
+    case once
+    case rearm
+    case `repeat`
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .once: "Fire once"
+        case .rearm: "Fire on every recross"
+        case .repeat: "Repeat while true"
+        }
+    }
+}
+
+struct PriceCondition: Codable, Hashable {
+    var providerSymbol = ""
+    var displaySymbol = ""
+    var assetClass = "crypto"
+    var quoteCurrency = "USD"
+    var comparison: PriceComparison = .crossesAbove
+    var threshold = ""
+    var lifecycle: PriceLifecycle = .once
+    var repeatIntervalSeconds = 900
+
+    enum CodingKeys: String, CodingKey {
+        case comparison, threshold, lifecycle
+        case providerSymbol = "provider_symbol"
+        case displaySymbol = "display_symbol"
+        case assetClass = "asset_class"
+        case quoteCurrency = "quote_currency"
+        case repeatIntervalSeconds = "repeat_interval_seconds"
+    }
+
+    var thresholdDecimal: Decimal? {
+        Decimal(string: threshold, locale: Locale(identifier: "en_US_POSIX"))
+    }
+}
+
+struct PriceTriggerState: Codable, Hashable {
+    var lastPrice: String?
+    var lastQuoteAt: Double?
+    var lastSide: String?
+    var lastFiredAt: Double?
+    var fired: Bool?
+    var oneShotDeliveryID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case fired
+        case lastPrice = "last_price"
+        case lastQuoteAt = "last_quote_at"
+        case lastSide = "last_side"
+        case lastFiredAt = "last_fired_at"
+        case oneShotDeliveryID = "one_shot_delivery_id"
+    }
+}
+
+struct PriceFeedSecretField: Codable, Hashable, Identifiable {
+    enum Placement: String, CaseIterable, Codable, Identifiable {
+        case header
+        case query
+        var id: String { rawValue }
+    }
+
+    var id: String { key }
+    var key = ""
+    var placement: Placement = .header
+}
+
+struct PriceFeedConfiguration: Codable, Hashable {
+    var endpointTemplate = ""
+    var priceJSONPath = ""
+    var timestampJSONPath = ""
+    var pollIntervalSeconds = 60
+    var maxQuoteAgeSeconds = 300
+    var allowLocalNetwork = false
+    var secretFields: [PriceFeedSecretField] = []
+
+    enum CodingKeys: String, CodingKey {
+        case endpointTemplate = "endpoint_template"
+        case priceJSONPath = "price_json_path"
+        case timestampJSONPath = "timestamp_json_path"
+        case pollIntervalSeconds = "poll_interval_seconds"
+        case maxQuoteAgeSeconds = "max_quote_age_seconds"
+        case allowLocalNetwork = "allow_local_network"
+        case secretFields = "secret_fields"
+    }
+}
+
+struct MarketQuote: Codable, Hashable {
+    var providerSymbol: String
+    var displaySymbol: String
+    var assetClass: String
+    var price: String
+    var quoteCurrency: String
+    var venue: String
+    var providerTimestamp: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case price, venue
+        case providerSymbol = "provider_symbol"
+        case displaySymbol = "display_symbol"
+        case assetClass = "asset_class"
+        case quoteCurrency = "quote_currency"
+        case providerTimestamp = "provider_timestamp"
     }
 }
 
@@ -79,6 +203,7 @@ struct EventTriggerFilters: Codable, Hashable {
     var messageTypes: [String] = []
     var eventNames: [String] = []
     var predicates: [EventFilterPredicate] = []
+    var priceCondition: PriceCondition?
 
     enum CodingKeys: String, CodingKey {
         case senders, recipients, labels, predicates
@@ -89,6 +214,7 @@ struct EventTriggerFilters: Codable, Hashable {
         case commandPrefixes = "command_prefixes"
         case messageTypes = "message_types"
         case eventNames = "event_names"
+        case priceCondition = "price_condition"
     }
 }
 
@@ -99,7 +225,9 @@ struct EventTrigger: Identifiable, Codable, Hashable {
     var targetSessionID: String
     var instruction: String
     var mode: WorkMode
+    var triggerKind: EventTriggerKind
     var filters: EventTriggerFilters
+    var runtimeState: PriceTriggerState
     var actionConnectionIDs: [String]
     var enabled: Bool
     var createdAt: Double
@@ -110,6 +238,8 @@ struct EventTrigger: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, instruction, mode, filters, enabled
+        case triggerKind = "trigger_kind"
+        case runtimeState = "runtime_state"
         case connectionID = "connection_id"
         case targetSessionID = "target_session_id"
         case actionConnectionIDs = "action_connection_ids"
@@ -196,6 +326,7 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
     var targetSessionID = ""
     var instruction = ""
     var mode: WorkMode = .work
+    var triggerKind: EventTriggerKind = .event
     var filters = EventTriggerFilters()
     var actionConnectionIDs: [String] = []
     var enabled = true
@@ -209,6 +340,7 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
         targetSessionID = trigger.targetSessionID
         instruction = trigger.instruction
         mode = trigger.mode
+        triggerKind = trigger.triggerKind
         filters = trigger.filters
         actionConnectionIDs = trigger.actionConnectionIDs
         enabled = trigger.enabled

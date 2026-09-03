@@ -86,6 +86,7 @@ GET /api/event-triggers
 POST /api/event-triggers
 PATCH /api/event-triggers/{trigger_id}
 POST /api/event-triggers/{trigger_id}/pause
+POST /api/event-triggers/{trigger_id}/rearm
 DELETE /api/event-triggers/{trigger_id}
 POST /api/event-triggers/ingest
 GET /api/event-deliveries

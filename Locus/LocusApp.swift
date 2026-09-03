@@ -439,10 +439,11 @@ private struct LocusMenuBarView: View {
     var body: some View {
         Button("Open Locus") { revealMainWindow() }
             .keyboardShortcut("o")
-        Button("Automations…") {
+        Button("Configure Agent…") {
             revealMainWindow()
-            model.activity.activityCenterSection = .eventTriggers
+            model.activity.activityCenterSection = .configureAgent
             model.activity.activityCenterPresented = true
+            Task { await model.schedule.refreshScheduledTasks() }
             Task { await model.eventAutomations.refresh() }
         }
         Divider()

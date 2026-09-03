@@ -1708,11 +1708,11 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
-    func testSidebarPlacesChatWorkAndScheduleBelowTheBrand() {
+    func testSidebarPlacesChatWorkAndConfigureAgentBelowTheBrand() {
         let brand = anyElement("sidebar.brand")
         let chat = app.buttons["workspace.mode.chat"]
         let work = app.buttons["workspace.mode.work"]
-        let schedule = anyElement("sidebar.schedule")
+        let configureAgent = anyElement("sidebar.configureAgent")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("inspector.rail.sideChat").exists)
@@ -1720,19 +1720,19 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("workspace.splitView").exists)
         XCTAssertTrue(chat.exists)
         XCTAssertTrue(work.exists)
-        XCTAssertTrue(schedule.exists)
+        XCTAssertTrue(configureAgent.exists)
         XCTAssertLessThan(brand.frame.maxY, chat.frame.minY)
-        XCTAssertLessThan(chat.frame.maxY, schedule.frame.minY)
+        XCTAssertLessThan(chat.frame.maxY, configureAgent.frame.minY)
 
         // Manage Accounts sits above New chat as a quiet row; Plugins & MCP
         // lives in the Overview shortcut bar now.
         let accounts = anyElement("sidebar.accounts")
         XCTAssertTrue(accounts.exists)
-        XCTAssertLessThan(accounts.frame.maxY, schedule.frame.minY)
+        XCTAssertLessThan(accounts.frame.maxY, configureAgent.frame.minY)
         XCTAssertFalse(anyElement("sidebar.extensions").exists)
 
-        schedule.click()
-        XCTAssertTrue(anyElement("scheduleEditor").waitForExistence(timeout: 3))
+        configureAgent.click()
+        XCTAssertTrue(anyElement("configureAgent.center").waitForExistence(timeout: 3))
     }
 
     func testRunAwarenessControlsAreVisibleAndJustChatHidesAgenticWorkspaceUI() {
@@ -2997,14 +2997,14 @@ final class LocusUITests: XCTestCase {
 
         let destination = anyElement("sidebar.activity")
         let newChat = anyElement("sidebar.newSession")
-        let schedule = anyElement("sidebar.schedule")
+        let configureAgent = anyElement("sidebar.configureAgent")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
         XCTAssertTrue(newChat.exists)
-        XCTAssertTrue(schedule.exists)
-        // The bell shares the Schedule Task line, under the full-width
+        XCTAssertTrue(configureAgent.exists)
+        // The bell shares the Configure Agent line, under the full-width
         // New chat button.
-        XCTAssertLessThanOrEqual(abs(destination.frame.midY - schedule.frame.midY), 2)
-        XCTAssertGreaterThan(destination.frame.minX, schedule.frame.maxX)
+        XCTAssertLessThanOrEqual(abs(destination.frame.midY - configureAgent.frame.midY), 2)
+        XCTAssertGreaterThan(destination.frame.minX, configureAgent.frame.maxX)
         XCTAssertGreaterThan(destination.frame.minY, newChat.frame.maxY)
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
         destination.click()
@@ -3028,19 +3028,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
     }
 
-    func testEventAutomationsExposeConnectorSetupAndTriggerHistory() {
+    func testConfigureAgentExposesSourcesConfigurationsAndSharedHistory() {
         let destination = anyElement("sidebar.activity")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
         destination.click()
         XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))
 
-        let eventTriggers = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@ OR title == %@", "Event Triggers", "Event Triggers")
+        let configureAgent = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR title == %@", "Configure Agent", "Configure Agent")
         ).firstMatch
-        XCTAssertTrue(eventTriggers.waitForExistence(timeout: 3))
-        eventTriggers.click()
-        XCTAssertTrue(anyElement("eventAutomations.center").waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Delivery History"].exists)
+        XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))
+        configureAgent.click()
+        XCTAssertTrue(anyElement("configureAgent.center").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Run History"].exists)
+        XCTAssertTrue(anyElement("configureAgent.newConfiguration").exists)
 
         let addConnection = anyElement("eventAutomations.addConnection")
         XCTAssertTrue(addConnection.waitForExistence(timeout: 3))

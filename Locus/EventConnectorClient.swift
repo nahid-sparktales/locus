@@ -1,5 +1,6 @@
 import AuthenticationServices
 import CryptoKit
+import Darwin
 import Foundation
 import AppKit
 
@@ -8,12 +9,14 @@ enum EventConnectorClientError: LocalizedError {
     case invalidResponse(String)
     case provider(Int, String)
     case payloadTooLarge
+    case retryAfter(TimeInterval)
 
     var errorDescription: String? {
         switch self {
         case .unavailable(let message), .invalidResponse(let message): message
         case .provider(let status, let message): "Connector request failed (\(status)): \(message)"
         case .payloadTooLarge: "The connector payload is larger than Locus allows."
+        case .retryAfter(let seconds): "The price source asked Locus to retry in \(Int(seconds)) seconds."
         }
     }
 }
@@ -123,17 +126,32 @@ actor EventConnectorClient {
 
     init(
         credentials: ConnectorCredentialStore = .shared,
-        session: URLSession = .shared
+        session: URLSession? = nil
     ) {
         self.credentials = credentials
-        self.session = session
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 10
+            configuration.timeoutIntervalForResource = 10
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: NoRedirectSessionDelegate(),
+                delegateQueue: nil
+            )
+        }
     }
 
-    func poll(_ connection: ConnectorConnection) async throws -> ConnectorPollResult {
+    func poll(
+        _ connection: ConnectorConnection,
+        priceConditions: [PriceCondition] = []
+    ) async throws -> ConnectorPollResult {
         switch connection.kind {
         case .gmail: try await pollGmail(connection)
         case .telegram: try await pollTelegram(connection)
         case .webhook: ConnectorPollResult(events: [], cursor: connection.cursor)
+        case .priceFeed: try await pollPriceFeed(connection, conditions: priceConditions)
         }
     }
 
@@ -159,6 +177,322 @@ actor EventConnectorClient {
             )
         }
         throw EventConnectorClientError.invalidResponse("Unknown connector action.")
+    }
+
+    // MARK: Generic REST price ingestion
+
+    func testPriceFeed(
+        configuration: PriceFeedConfiguration,
+        secrets: [String: String],
+        condition: PriceCondition,
+        displayName: String
+    ) async throws -> MarketQuote {
+        let encoded = try JSONEncoder().encode(configuration)
+        let publicConfig = try JSONDecoder().decode([String: JSONValue].self, from: encoded)
+        let validatedConfiguration = try Self.priceFeedConfiguration(publicConfig)
+        return try await priceQuote(
+            configuration: validatedConfiguration, secrets: secrets,
+            condition: condition, displayName: displayName
+        ).quote
+    }
+
+    private func pollPriceFeed(
+        _ connection: ConnectorConnection,
+        conditions: [PriceCondition]
+    ) async throws -> ConnectorPollResult {
+        let configuration = try Self.priceFeedConfiguration(connection.publicConfig)
+        let secrets = try credentials.load(for: connection.id) ?? [:]
+        var unique: [String: PriceCondition] = [:]
+        for condition in conditions.prefix(50) {
+            unique[condition.providerSymbol.lowercased()] = condition
+        }
+        var events: [InboundEvent] = []
+        let values = Array(unique.values)
+        for start in stride(from: 0, to: values.count, by: 4) {
+            let batch = Array(values[start..<min(start + 4, values.count)])
+            let fetched = try await withThrowingTaskGroup(
+                of: (MarketQuote, InboundEvent).self
+            ) { group in
+                for condition in batch {
+                    group.addTask {
+                        try await self.priceQuote(
+                            configuration: configuration, secrets: secrets,
+                            condition: condition, displayName: connection.displayName
+                        )
+                    }
+                }
+                var result: [(MarketQuote, InboundEvent)] = []
+                for try await item in group { result.append(item) }
+                return result
+            }
+            events.append(contentsOf: fetched.map(\.1))
+        }
+        return ConnectorPollResult(events: events, cursor: connection.cursor)
+    }
+
+    private func priceQuote(
+        configuration: PriceFeedConfiguration,
+        secrets: [String: String],
+        condition: PriceCondition,
+        displayName: String
+    ) async throws -> (quote: MarketQuote, event: InboundEvent) {
+        let symbol = condition.providerSymbol.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !symbol.isEmpty else {
+            throw EventConnectorClientError.invalidResponse("Add a provider symbol first.")
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: allowed) ?? symbol
+        let endpoint = configuration.endpointTemplate.replacingOccurrences(
+            of: "{symbol}", with: encodedSymbol
+        )
+        if let issue = Self.priceFeedSecurityError(
+            endpoint: endpoint, allowLocalNetwork: configuration.allowLocalNetwork
+        ) {
+            throw EventConnectorClientError.invalidResponse(issue)
+        }
+        if !configuration.allowLocalNetwork,
+           let host = URLComponents(string: endpoint)?.host,
+           Self.hostResolvesToPrivateNetwork(host) {
+            throw EventConnectorClientError.invalidResponse(
+                "Enable local-network access to use a host that resolves to a private address."
+            )
+        }
+        guard var components = URLComponents(string: endpoint), let baseURL = components.url else {
+            throw EventConnectorClientError.invalidResponse("The price endpoint is invalid.")
+        }
+        var request = URLRequest(url: baseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        for field in configuration.secretFields.prefix(4) {
+            guard !field.key.isEmpty, let value = secrets[field.key], !value.isEmpty else {
+                throw EventConnectorClientError.unavailable(
+                    "A saved price-source credential is missing. Edit the source and test it again."
+                )
+            }
+            if field.placement == .header {
+                request.setValue(value, forHTTPHeaderField: field.key)
+            } else {
+                var items = components.queryItems ?? []
+                items.removeAll { $0.name.caseInsensitiveCompare(field.key) == .orderedSame }
+                items.append(URLQueryItem(name: field.key, value: value))
+                components.queryItems = items
+                guard let url = components.url else {
+                    throw EventConnectorClientError.invalidResponse("The price endpoint query is invalid.")
+                }
+                request.url = url
+            }
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw EventConnectorClientError.unavailable("The price source could not be reached.")
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw EventConnectorClientError.invalidResponse("The price source returned no HTTP response.")
+        }
+        if http.statusCode == 429 || http.statusCode == 503,
+           let value = http.value(forHTTPHeaderField: "Retry-After"),
+           let seconds = TimeInterval(value) {
+            throw EventConnectorClientError.retryAfter(min(max(seconds, 1), 900))
+        }
+        guard 200..<300 ~= http.statusCode else {
+            throw EventConnectorClientError.provider(http.statusCode, "Price source error")
+        }
+        guard data.count <= 256 * 1024 else { throw EventConnectorClientError.payloadTooLarge }
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let rawPrice = Self.resolveJSONPath(object, path: configuration.priceJSONPath),
+              let price = Self.canonicalPrice(rawPrice) else {
+            throw EventConnectorClientError.invalidResponse(
+                "The configured price JSON path did not return a positive decimal."
+            )
+        }
+        let receivedAt = Date().timeIntervalSince1970
+        var providerTimestamp: Double?
+        if !configuration.timestampJSONPath.isEmpty,
+           let rawTimestamp = Self.resolveJSONPath(object, path: configuration.timestampJSONPath) {
+            providerTimestamp = Self.quoteTimestamp(rawTimestamp)
+            guard providerTimestamp != nil else {
+                throw EventConnectorClientError.invalidResponse(
+                    "The configured timestamp JSON path did not return a timestamp."
+                )
+            }
+        }
+        let occurredAt = providerTimestamp ?? receivedAt
+        let quote = MarketQuote(
+            providerSymbol: symbol,
+            displaySymbol: condition.displaySymbol.nilIfBlank ?? symbol,
+            assetClass: condition.assetClass,
+            price: price,
+            quoteCurrency: condition.quoteCurrency,
+            venue: displayName,
+            providerTimestamp: providerTimestamp
+        )
+        let encoded = try JSONEncoder().encode(quote)
+        let dataObject = try JSONDecoder().decode([String: JSONValue].self, from: encoded)
+        let fingerprint = SHA256.hash(data: Data(
+            "\(symbol)|\(occurredAt)|\(price)".utf8
+        )).map { String(format: "%02x", $0) }.joined()
+        let event = InboundEvent(
+            source: .priceFeed,
+            sourceEventID: "quote-\(fingerprint)",
+            eventType: "price.quote",
+            occurredAt: occurredAt,
+            actor: [:],
+            subject: "\(quote.displaySymbol) is \(price) \(quote.quoteCurrency)",
+            text: "",
+            recipients: [], labels: [], attachments: [], data: dataObject
+        )
+        return (quote, event)
+    }
+
+    static func priceFeedConfiguration(
+        _ publicConfig: [String: JSONValue]
+    ) throws -> PriceFeedConfiguration {
+        let data = try JSONEncoder().encode(publicConfig)
+        let value = try JSONDecoder().decode(PriceFeedConfiguration.self, from: data)
+        let keys = value.secretFields.map { $0.key.lowercased() }
+        let validSecretFields = value.secretFields.allSatisfy {
+            $0.key.range(
+                of: #"^[A-Za-z0-9._~-]{1,80}$"#,
+                options: .regularExpression
+            ) != nil
+        } && Set(keys).count == keys.count
+        guard (15...86_400).contains(value.pollIntervalSeconds),
+              (30...86_400).contains(value.maxQuoteAgeSeconds),
+              value.secretFields.count <= 4,
+              validSecretFields,
+              value.endpointTemplate.contains("{symbol}"),
+              !value.priceJSONPath.isEmpty else {
+            throw EventConnectorClientError.invalidResponse(
+                "The saved price-source configuration is invalid."
+            )
+        }
+        return value
+    }
+
+    static func priceFeedSecurityError(
+        endpoint: String, allowLocalNetwork: Bool
+    ) -> String? {
+        guard let components = URLComponents(string: endpoint),
+              components.scheme?.lowercased() == "https",
+              let host = components.host?.lowercased(), !host.isEmpty else {
+            return "Price sources require a valid HTTPS GET endpoint."
+        }
+        if components.user != nil || components.password != nil {
+            return "Put credentials in the protected header or query fields, not in the URL."
+        }
+        if components.fragment != nil { return "The price endpoint cannot contain a fragment." }
+        if allowLocalNetwork { return nil }
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local")
+            || host == "::1" || Self.isPrivateIPv4(host) {
+            return "Enable local-network access to use a private, loopback, or link-local host."
+        }
+        return nil
+    }
+
+    static func resolveJSONPath(_ value: Any, path: String) -> Any? {
+        var current: Any = value
+        let parts = path.split(separator: ".", omittingEmptySubsequences: false)
+        guard !parts.isEmpty, parts.count <= 32, !parts.contains(where: \.isEmpty) else {
+            return nil
+        }
+        for part in parts {
+            if let object = current as? [String: Any], let next = object[String(part)] {
+                current = next
+            } else if let array = current as? [Any], let index = Int(part),
+                      array.indices.contains(index) {
+                current = array[index]
+            } else {
+                return nil
+            }
+        }
+        return current
+    }
+
+    static func canonicalPrice(_ value: Any) -> String? {
+        if value is Bool { return nil }
+        let text: String
+        if let value = value as? String { text = value }
+        else if let value = value as? NSNumber { text = value.stringValue }
+        else { return nil }
+        guard let decimal = Decimal(
+            string: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            locale: Locale(identifier: "en_US_POSIX")
+        ), decimal > 0 else { return nil }
+        return NSDecimalNumber(decimal: decimal).stringValue
+    }
+
+    private static func quoteTimestamp(_ value: Any) -> Double? {
+        let normalized: Double?
+        if let number = value as? NSNumber {
+            let raw = number.doubleValue
+            normalized = raw > 10_000_000_000 ? raw / 1_000 : raw
+        } else if let text = value as? String, let raw = Double(text) {
+            normalized = raw > 10_000_000_000 ? raw / 1_000 : raw
+        } else if let text = value as? String {
+            normalized = ISO8601DateFormatter().date(from: text)?.timeIntervalSince1970
+        } else {
+            normalized = nil
+        }
+        guard let normalized, normalized.isFinite, normalized > 0 else { return nil }
+        return normalized
+    }
+
+    private static func isPrivateIPv4(_ host: String) -> Bool {
+        let values = host.split(separator: ".", omittingEmptySubsequences: false)
+        let converted = values.map { UInt8($0) }
+        guard values.count == 4, converted.allSatisfy({ $0 != nil }) else {
+            return host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:")
+        }
+        let parts = converted.compactMap { $0 }
+        return parts[0] == 0 || parts[0] == 10 || parts[0] == 127
+            || (parts[0] == 169 && parts[1] == 254)
+            || (parts[0] == 172 && (16...31).contains(parts[1]))
+            || (parts[0] == 192 && parts[1] == 168)
+    }
+
+    private static func hostResolvesToPrivateNetwork(_ host: String) -> Bool {
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0 else { return false }
+        defer { freeaddrinfo(result) }
+        var current = result
+        while let item = current?.pointee {
+            if item.ai_family == AF_INET, let address = item.ai_addr {
+                let value = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                    UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+                }
+                let first = UInt8((value >> 24) & 0xff)
+                let second = UInt8((value >> 16) & 0xff)
+                if first == 0 || first == 10 || first == 127
+                    || (first == 169 && second == 254)
+                    || (first == 172 && (16...31).contains(second))
+                    || (first == 192 && second == 168) { return true }
+            } else if item.ai_family == AF_INET6, let address = item.ai_addr {
+                let bytes = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                    withUnsafeBytes(of: $0.pointee.sin6_addr) { Array($0) }
+                }
+                let loopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+                let unspecified = bytes.allSatisfy { $0 == 0 }
+                let uniqueLocal = bytes.first.map { $0 & 0xfe == 0xfc } ?? false
+                let linkLocal = bytes.count > 1 && bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80
+                if loopback || unspecified || uniqueLocal || linkLocal { return true }
+            }
+            current = item.ai_next
+        }
+        return false
     }
 
     // MARK: Gmail ingestion

@@ -117,15 +117,13 @@ enum ScheduleIntervalUnit: String, CaseIterable, Codable, Identifiable {
 
 enum ActivityCenterSection: String, CaseIterable, Identifiable {
     case activity
-    case schedules
-    case eventTriggers = "event_triggers"
+    case configureAgent = "configure_agent"
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .activity: "Activity"
-        case .schedules: "Schedules"
-        case .eventTriggers: "Event Triggers"
+        case .configureAgent: "Configure Agent"
         }
     }
 }

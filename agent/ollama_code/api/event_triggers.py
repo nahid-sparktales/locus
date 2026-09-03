@@ -154,6 +154,15 @@ def trigger_pause(
         raise HTTPException(404, str(exc)) from exc
 
 
+def trigger_rearm(trigger_id: str, service: ServiceDependency) -> dict[str, Any]:
+    _require_capability()
+    try:
+        return service.run_store.rearm_price_trigger(trigger_id)
+    except RunStoreError as exc:
+        status = 404 if str(exc) == "event trigger not found" else 422
+        raise HTTPException(status, str(exc)) from exc
+
+
 def trigger_delete(trigger_id: str, service: ServiceDependency) -> dict[str, Any]:
     _require_capability()
     try:
@@ -234,6 +243,11 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
             "event_delivery_id": delivery["id"],
             "source": delivery["source"],
             "source_event_id": delivery["source_event_id"],
+            "event_trigger_kind": trigger["trigger_kind"],
+            "price_condition": (
+                trigger["filters"].get("price_condition")
+                if trigger["trigger_kind"] == "price" else None
+            ),
             "action_connection_ids": trigger["action_connection_ids"],
             "mode": trigger["mode"],
             "runner": "solo",
@@ -348,6 +362,9 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route(
         "/api/event-triggers/{trigger_id}/pause", trigger_pause, methods=["POST"]
+    )
+    router.add_api_route(
+        "/api/event-triggers/{trigger_id}/rearm", trigger_rearm, methods=["POST"]
     )
     router.add_api_route(
         "/api/event-triggers/{trigger_id}", trigger_delete, methods=["DELETE"]

@@ -1133,9 +1133,8 @@ struct ActivityCenterView: View {
                     Task {
                         if model.activity.activityCenterSection == .activity {
                             await model.activity.refreshActivityRuns()
-                        } else if model.activity.activityCenterSection == .schedules {
-                            await model.schedule.refreshScheduledTasks()
                         } else {
+                            await model.schedule.refreshScheduledTasks()
                             await model.eventAutomations.refresh()
                         }
                     }
@@ -1160,11 +1159,12 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if model.activity.activityCenterSection == .eventTriggers {
-                EventAutomationsView(automation: model.eventAutomations)
+            if model.activity.activityCenterSection == .configureAgent {
+                ConfigureAgentView(
+                    automation: model.eventAutomations,
+                    schedule: model.schedule
+                )
                     .environmentObject(model)
-            } else if model.activity.activityCenterSection == .schedules {
-                schedulesView
             } else if model.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
@@ -1207,9 +1207,8 @@ struct ActivityCenterView: View {
             while !Task.isCancelled {
                 if model.activity.activityCenterSection == .activity {
                     await model.activity.refreshActivityRuns()
-                } else if model.activity.activityCenterSection == .schedules {
-                    await model.schedule.refreshScheduledTasks(announceFailure: false)
                 } else {
+                    await model.schedule.refreshScheduledTasks(announceFailure: false)
                     await model.eventAutomations.refresh(announceFailure: false)
                 }
                 try? await Task.sleep(for: .seconds(2))
@@ -1222,50 +1221,8 @@ struct ActivityCenterView: View {
         switch model.activity.activityCenterSection {
         case .activity:
             "Work keeps running when you move between chats."
-        case .schedules:
-            "Create recurring work that starts in a fresh chat."
-        case .eventTriggers:
-            "React to Gmail, Telegram, or signed webhook events in an existing chat."
-        }
-    }
-
-    private var schedulesView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Schedules")
-                    .font(.locus(size: 11, weight: .bold))
-                Spacer()
-                Button {
-                    model.presentScheduleEditor()
-                } label: {
-                    Label("New Schedule", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("schedules.new")
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-
-            if model.schedule.scheduledTasks.isEmpty {
-                ContentUnavailableView(
-                    "No Scheduled Tasks",
-                    systemImage: "calendar.badge.clock",
-                    description: Text("Schedule a prompt once or repeat it on your own cadence.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("schedules.empty")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(model.schedule.scheduledTasks) { task in
-                            ScheduleRow(task: task)
-                                .environmentObject(model)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-                }
-            }
+        case .configureAgent:
+            "Start work on a schedule, incoming event, or market-price condition."
         }
     }
 

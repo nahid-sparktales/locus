@@ -113,6 +113,10 @@ struct ScheduleDispatchResponse: Codable {
     let run: OrchestrationRun
 }
 
+struct ScheduleOccurrencesResponse: Codable {
+    let occurrences: [ScheduleOccurrence]
+}
+
 struct CompanionChatDispatchResponse: Codable {
     let ok: Bool
     let claimed: Bool
