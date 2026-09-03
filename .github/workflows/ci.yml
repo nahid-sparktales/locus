@@ -173,9 +173,18 @@ jobs:
           direct="$build_root/Build/Products/Release/Locus.app"
           app_store="$build_root/Build/Products/ReleaseMAS/Locus.app"
           test -x "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          test -x "$direct/Contents/Helpers/WalletRecovery.app/Contents/MacOS/WalletRecovery"
+          test -x "$direct/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          cmp "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner" \
+            "$direct/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' \
+            "$direct/Contents/Helpers/WalletRecovery.app/Contents/Info.plist")" = 'true'
           Tools/AuditWalletSignerBinary.sh \
             "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          Tools/AuditWalletSignerBinary.sh \
+            "$direct/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
           test ! -e "$app_store/Contents/XPCServices/WalletSigner.xpc"
+          test ! -e "$app_store/Contents/Helpers/WalletRecovery.app"
           test -d "$direct/Contents/Frameworks/Sparkle.framework"
           test ! -e "$app_store/Contents/Frameworks/Sparkle.framework"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$direct/Contents/Info.plist")" = \

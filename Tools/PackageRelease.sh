@@ -21,12 +21,13 @@ resources="${app}/Contents/Resources"
 info_plist="${app}/Contents/Info.plist"
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
-wallet_recovery="${app}/Contents/XPCServices/WalletRecovery.xpc"
+wallet_recovery="${app}/Contents/Helpers/WalletRecovery.app"
+wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc"
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
     identity="$(/usr/bin/security find-identity -v -p codesigning \
-        | /usr/bin/awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+        | /usr/bin/awk -F'"' '/Developer ID Application/ && !value { value=$2 } END { print value }')"
 fi
 if [[ -z "${identity}" ]]; then
     echo "error: no Developer ID Application identity found; set LOCUS_SIGN_IDENTITY." >&2
@@ -132,7 +133,11 @@ fi
     exit 1
 }
 [[ -x "${wallet_recovery}/Contents/MacOS/WalletRecovery" ]] || {
-    echo "error: direct-download release is missing WalletRecovery.xpc" >&2
+    echo "error: direct-download release is missing WalletRecovery.app" >&2
+    exit 1
+}
+[[ -x "${wallet_recovery_signer}/Contents/MacOS/WalletSigner" ]] || {
+    echo "error: WalletRecovery.app is missing its private WalletSigner.xpc" >&2
     exit 1
 }
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
@@ -240,8 +245,11 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
         done
     fi
 fi
-# The independently sandboxed signer is sealed before the containing app so
-# the outer signature commits to its executable, identifier, and entitlements.
+# Sign the deepest privileged component first, then each containing boundary.
+# The outer signer is sealed independently before the containing Locus app.
+/usr/bin/codesign --force --timestamp --options runtime \
+    --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
+    --sign "${identity}" "${wallet_recovery_signer}"
 /usr/bin/codesign --force --timestamp --options runtime \
     --entitlements "${repo_root}/Config/WalletRecovery.entitlements" \
     --sign "${identity}" "${wallet_recovery}"

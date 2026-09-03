@@ -21,6 +21,15 @@
 The release derives one account per chain and has no account picker, BIP-39
 passphrase, hardware-wallet derivation, or cloud backup.
 
+The recovery window is a separate, network-disabled accessory application. If
+it opens behind another window, use **Bring to Front** in Locus. You can cancel
+from either window; Locus clears pending recovery state and permits a safe
+retry. Confirmation and restore entries are hidden by default; use **Show typed
+words** in the recovery window when you need to check them. If confirmation
+fails, the recovery window identifies the numbered positions that do not match
+and keeps your entries so you can correct them. Never send recovery words
+through diagnostics or support messages.
+
 ## Rotate an earlier preview vault
 
 Choose **Rotate for Mainnet**, record and verify the new production phrase, then

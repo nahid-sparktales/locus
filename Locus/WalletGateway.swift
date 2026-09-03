@@ -5,6 +5,7 @@ import Foundation
 enum WalletHubState: Equatable, Sendable {
     case unavailableBuild
     case alphaDisabled
+    case recoveryUnavailable
     case setupRequired
     case backupIncomplete
     case rotationRequired
@@ -39,6 +40,7 @@ struct WalletDiagnosticSnapshot: Codable, Equatable, Sendable {
     let macOSVersion: String
     let signerProtocolVersion: Int
     let signerReachability: String
+    let recoveryHelperAvailable: Bool
     let walletBuildAvailable: Bool
     let walletEnabled: Bool
     let browserProviderEnabled: Bool
@@ -54,6 +56,7 @@ struct WalletDiagnosticSnapshot: Codable, Equatable, Sendable {
             "Locus \(appVersion) (\(buildVersion))",
             "macOS: \(macOSVersion)",
             "Wallet signer: protocol \(signerProtocolVersion) · \(signerReachability)",
+            "Recovery helper: \(recoveryHelperAvailable ? "available" : "unavailable")",
             "Feature access: build=\(walletBuildAvailable) wallet=\(walletEnabled) browser=\(browserProviderEnabled)",
             "Vault: \(vaultState)",
             "RPC health: \(rpcHealthCategory)",
@@ -473,10 +476,6 @@ protocol WalletSignerClient: AnyObject {
     var sessionID: String? { get }
     var invalidationHandler: (() -> Void)? { get set }
     func signerStatus() async throws -> WalletSignerStatus
-    func beginRecoveryCeremony(
-        mode: WalletRecoveryCeremonyMode
-    ) async throws -> WalletRecoveryCeremonyLaunch
-    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus
     func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus
     func authorizeSession() async throws
@@ -505,14 +504,6 @@ final class UnavailableWalletSignerClient: WalletSignerClient {
     let sessionID: String? = nil
     var invalidationHandler: (() -> Void)?
     func signerStatus() async throws -> WalletSignerStatus { throw WalletGateway.Error.signerUnavailable }
-    func beginRecoveryCeremony(
-        mode: WalletRecoveryCeremonyMode
-    ) async throws -> WalletRecoveryCeremonyLaunch {
-        throw WalletGateway.Error.signerUnavailable
-    }
-    func cancelRecoveryCeremony(id: String) async throws -> WalletSignerStatus {
-        throw WalletGateway.Error.signerUnavailable
-    }
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
         throw WalletGateway.Error.signerUnavailable
     }
@@ -603,6 +594,7 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var pendingConfirmation: WalletPreparedTransaction?
     @Published private(set) var vaultState: WalletVaultState = .missing
     @Published private(set) var recoveryCeremonyActive = false
+    @Published private(set) var recoveryPresentationState = WalletRecoveryPresentationState.idle
     @Published private(set) var rpcHealthText = "Not checked"
     @Published private(set) var lastError: String?
     @Published private(set) var transactionHistory: [WalletActivityRecord] = []
@@ -641,7 +633,6 @@ final class WalletGateway: ObservableObject {
     private var uiFixtureHubState: WalletHubState?
     private var idleLockTimer: Timer?
     private var localActivityMonitor: Any?
-    private var activeRecoveryCeremonyID: String?
     var onBrowserAuthorizationNeeded: (() -> Void)?
     var onBrowserGrantsRevoked: ((String?) -> Void)?
 
@@ -721,6 +712,9 @@ final class WalletGateway: ObservableObject {
         signer.invalidationHandler = { [weak self] in self?.handleSignerInvalidation() }
         self.recoveryView.invalidationHandler = { [weak self] in
             self?.handleRecoveryInvalidation()
+        }
+        self.recoveryView.presentationStateHandler = { [weak self] state in
+            self?.recoveryPresentationState = state
         }
         if buildSupportsWalletAlpha, environment["XCTestConfigurationFilePath"] == nil {
             localActivityMonitor = NSEvent.addLocalMonitorForEvents(
@@ -912,15 +906,19 @@ final class WalletGateway: ObservableObject {
         guard walletEnabled else { return .alphaDisabled }
         guard signer.isAvailable else { return .error }
         return switch vaultState {
-        case .missing: .setupRequired
-        case .awaitingBackup: .backupIncomplete
-        case .rotationRequired: .rotationRequired
+        case .missing: recoveryView.isAvailable ? .setupRequired : .recoveryUnavailable
+        case .awaitingBackup: recoveryView.isAvailable ? .backupIncomplete : .recoveryUnavailable
+        case .rotationRequired: recoveryView.isAvailable ? .rotationRequired : .recoveryUnavailable
         case .locked: .locked
         case .unlocked: status == .unlocked ? .ready : .locked
         }
     }
 
     func refreshStatus() async {
+        await refreshStatus(clearErrorOnSuccess: true)
+    }
+
+    private func refreshStatus(clearErrorOnSuccess: Bool) async {
         guard uiFixtureHubState == nil else { return }
         guard buildSupportsWalletAlpha, walletEnabled else {
             status = signer.isAvailable ? .locked : .securityReviewRequired
@@ -938,7 +936,7 @@ final class WalletGateway: ObservableObject {
             accounts = signerStatus.accounts
             synchronizeAccountSnapshots(with: signerStatus.accounts)
             status = signerStatus.vaultState == .unlocked ? .unlocked : .locked
-            lastError = nil
+            if clearErrorOnSuccess { lastError = nil }
         } catch {
             lastError = error.localizedDescription
         }
@@ -946,35 +944,42 @@ final class WalletGateway: ObservableObject {
 
     @discardableResult
     func beginVaultCreation() async -> Bool {
-        guard canCreateVault else { return false }
+        guard canCreateVault else {
+            lastError = recoveryActionUnavailableMessage
+            return false
+        }
         return await runRecoveryCeremony(mode: .create)
     }
 
     @discardableResult
     func beginMainnetRotation() async -> Bool {
-        guard canRotateForMainnet else { return false }
+        guard canRotateForMainnet else {
+            lastError = recoveryActionUnavailableMessage
+            return false
+        }
         return await runRecoveryCeremony(mode: .rotateForMainnet)
     }
 
     @discardableResult
     func beginVaultRestoration() async -> Bool {
-        guard canCreateVault else { return false }
+        guard canCreateVault else {
+            lastError = recoveryActionUnavailableMessage
+            return false
+        }
         return await runRecoveryCeremony(mode: .restore)
     }
 
     private func runRecoveryCeremony(mode: WalletRecoveryCeremonyMode) async -> Bool {
         guard !recoveryCeremonyActive, recoveryView.isAvailable else {
-            lastError = "The isolated recovery window is unavailable in this build."
+            lastError = recoveryActionUnavailableMessage
             return false
         }
+        recoveryCeremonyActive = true
+        recoveryPresentationState = .launching
         do {
-            let launch = try await signer.beginRecoveryCeremony(mode: mode)
-            activeRecoveryCeremonyID = launch.handle.id
-            recoveryCeremonyActive = true
-            if mode != .restore { vaultState = .awaitingBackup }
-            let result = try await recoveryView.present(launch: launch)
-            activeRecoveryCeremonyID = nil
+            let result = try await recoveryView.present(mode: mode)
             recoveryCeremonyActive = false
+            recoveryPresentationState = .idle
             switch result.outcome {
             case .completed:
                 guard let signerStatus = result.signerStatus else {
@@ -984,22 +989,49 @@ final class WalletGateway: ObservableObject {
                 lastError = nil
                 return true
             case .canceled:
-                await refreshStatus()
+                await refreshStatus(clearErrorOnSuccess: false)
+                lastError = nil
                 return false
             case .failed:
-                lastError = result.error ?? "The recovery ceremony failed."
-                await refreshStatus()
+                let recoveryError = result.error ?? "The recovery ceremony failed."
+                await refreshStatus(clearErrorOnSuccess: false)
+                lastError = recoveryError
                 return false
             }
         } catch {
-            if let ceremonyID = activeRecoveryCeremonyID {
-                _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID)
-            }
-            activeRecoveryCeremonyID = nil
             recoveryCeremonyActive = false
-            lastError = error.localizedDescription
+            recoveryPresentationState = .idle
+            let recoveryError = error.localizedDescription
+            await refreshStatus(clearErrorOnSuccess: false)
+            lastError = recoveryError
             return false
         }
+    }
+
+    var recoveryActionUnavailableMessage: String {
+        if !recoveryView.isAvailable {
+            return "The signed recovery helper is unavailable. Reinstall this direct-download build of Locus."
+        }
+        if recoveryCeremonyActive { return "A recovery window is already active." }
+        return "Recovery is not available for the vault's current state."
+    }
+
+    func cancelRecoveryCeremony() {
+        guard recoveryCeremonyActive else { return }
+        recoveryView.cancel()
+    }
+
+    func bringRecoveryToFront() {
+        guard recoveryCeremonyActive else { return }
+        recoveryView.bringToFront()
+    }
+
+    func clearIncompleteRecovery() async {
+        recoveryView.cancel()
+        signer.lock()
+        recoveryCeremonyActive = false
+        recoveryPresentationState = .idle
+        await refreshStatus(clearErrorOnSuccess: false)
     }
 
     private func applyRecoveryStatus(_ signerStatus: WalletSignerStatus) {
@@ -2253,6 +2285,7 @@ final class WalletGateway: ObservableObject {
             macOSVersion: processInfo.operatingSystemVersionString,
             signerProtocolVersion: Self.protocolVersion,
             signerReachability: signer.isAvailable ? "reachable" : "unavailable",
+            recoveryHelperAvailable: recoveryView.isAvailable,
             walletBuildAvailable: buildSupportsWalletAlpha,
             walletEnabled: walletEnabled,
             browserProviderEnabled: browserProviderEnabled,
@@ -2479,8 +2512,8 @@ final class WalletGateway: ObservableObject {
 
     private func handleSignerInvalidation() {
         recoveryView.cancel()
-        activeRecoveryCeremonyID = nil
         recoveryCeremonyActive = false
+        recoveryPresentationState = .idle
         idleLockTimer?.invalidate()
         idleLockTimer = nil
         activePolicies.removeAll()
@@ -2495,21 +2528,22 @@ final class WalletGateway: ObservableObject {
     }
 
     private func handleRecoveryInvalidation() {
-        guard let ceremonyID = activeRecoveryCeremonyID else { return }
-        activeRecoveryCeremonyID = nil
+        guard recoveryCeremonyActive else { return }
         recoveryCeremonyActive = false
-        signer.lock()
-        Task { _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID) }
+        recoveryPresentationState = .idle
         status = signer.isAvailable ? .locked : .securityReviewRequired
         lastError = "The isolated recovery window was interrupted. The vault is locked."
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshStatus(clearErrorOnSuccess: false)
+        }
     }
 
     private func cancelActiveRecoveryCeremony() {
-        guard let ceremonyID = activeRecoveryCeremonyID else { return }
-        activeRecoveryCeremonyID = nil
+        guard recoveryCeremonyActive else { return }
         recoveryCeremonyActive = false
+        recoveryPresentationState = .idle
         recoveryView.cancel()
-        Task { _ = try? await signer.cancelRecoveryCeremony(id: ceremonyID) }
     }
 
     @discardableResult
