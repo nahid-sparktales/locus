@@ -316,9 +316,13 @@ extension AppModel {
         return WorkspaceIndex.relativePath(url, root: root).nilIfEmpty
     }
 
-    /// Opens the window in which file activity is attributed to this run.
+    /// The start of a request, for everything the Overview scopes to one:
+    /// which file activity is attributed to this run, and where its activity
+    /// list begins. Both send paths — a new message and a retry — come
+    /// through here.
     func beginSessionFileCapture() {
         synchronizeSessionIdentity()
+        sessionOverview.emit(.requestStarted(at: Self.sessionTimestamp))
         fileCaptureSessionID = sessionOverview.activeSessionID
         fileCaptureStartedAt = Self.sessionTimestamp
         fileCaptureUntil = .max

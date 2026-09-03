@@ -381,6 +381,60 @@ final class PinnedSummaryTests: XCTestCase {
         XCTAssertEqual(SummaryIcon.symbolName(forPath: "Makefile"), "doc.text")
     }
 
+    // MARK: - Activity
+
+    func testActivityCoversOnlyTheCurrentRequestAndSurvivesItsEnd() {
+        // The reported failure: the Overview was blank the moment a run
+        // finished. Activity is bounded by the request marker, not by the
+        // run's lifetime, so a finished request keeps describing itself.
+        var state = base()
+        state = SessionStateReducer.reduce(state, .requestStarted(at: 10))
+        state = SessionStateReducer.reduce(state, .command(cmd: "$ ls", exitCode: 0, at: 11))
+        state = SessionStateReducer.reduce(state, .runFinished(
+            summary: SessionRunSummary(
+                completedSteps: 0, totalSteps: 0, durationMs: 20_000,
+                endedAt: 12, summary: "done", outcome: .completed
+            ),
+            suggestions: nil,
+            at: 12
+        ))
+        XCTAssertEqual(PinnedSummary.activity(state: state).map(\.label), ["$ ls"])
+
+        state = SessionStateReducer.reduce(state, .requestStarted(at: 20))
+        XCTAssertEqual(state.requestStartedAt, 20)
+        XCTAssertTrue(PinnedSummary.activity(state: state).isEmpty)
+
+        state = SessionStateReducer.reduce(state, .command(cmd: "$ git status", exitCode: 0, at: 21))
+        XCTAssertEqual(PinnedSummary.activity(state: state).map(\.label), ["$ git status"])
+    }
+
+    func testActivityHasNothingToShowWithoutARequestMarker() {
+        // A session persisted before the marker existed must not suddenly
+        // present its whole history as "this request".
+        var state = base()
+        state = SessionStateReducer.reduce(state, .command(cmd: "$ ls", exitCode: 0, at: 1))
+        XCTAssertNil(state.requestStartedAt)
+        XCTAssertTrue(PinnedSummary.activity(state: state).isEmpty)
+    }
+
+    func testActivityCollapsesRepeatsAndKeepsFailuresAndTheStrongestFileEffect() {
+        var state = base()
+        state = SessionStateReducer.reduce(state, .requestStarted(at: 1))
+        state = SessionStateReducer.reduce(state, .command(cmd: "$ pytest", exitCode: 1, at: 2))
+        state = SessionStateReducer.reduce(state, .command(cmd: "$ pytest", exitCode: 0, at: 6))
+        state = SessionStateReducer.reduce(state, .fileRead(path: "src/app.swift", at: 3))
+        state = SessionStateReducer.reduce(state, .fileEdit(path: "src/app.swift", added: 2, removed: 0, at: 4))
+        state = SessionStateReducer.reduce(state, .fileRead(path: "src/app.swift", at: 5))
+
+        let rows = PinnedSummary.activity(state: state)
+        XCTAssertEqual(rows.map(\.label), ["$ pytest", "app.swift"])
+        XCTAssertEqual(rows[0].kind, .command(failed: true))
+        XCTAssertEqual(rows[0].meta, "Failed · ×2")
+        XCTAssertEqual(rows[1].kind, .file(.edit))
+        XCTAssertEqual(rows[1].meta, "Edited")
+        XCTAssertEqual(rows[1].target, "src/app.swift")
+    }
+
     // MARK: - AppModel wiring
 
     private func sessionInfo(id: String, cwd: String = "/tmp") -> [String: Any] {
