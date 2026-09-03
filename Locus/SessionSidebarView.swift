@@ -132,6 +132,7 @@ enum SidebarIconMetrics {
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sessionToRename: SessionSummary?
     @State private var renameText = ""
@@ -488,15 +489,15 @@ struct SessionSidebarView: View {
     private var activityButton: some View {
         Button {
             withAnimation(LocusMotion.spatial) {
-                model.activity.toggleActivityCenter()
+                activityCenter.toggleActivityCenter()
             }
         } label: {
-            Image(systemName: model.activity.activityCenterPresented ? "bell.fill" : "bell")
+            Image(systemName: activityCenter.activityCenterPresented ? "bell.fill" : "bell")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(model.activity.activityCenterPresented
+                .foregroundStyle(activityCenter.activityCenterPresented
                     ? LocusTheme.ink : LocusTheme.inkSoft)
                 .frame(width: 36, height: 36)
-                .background(model.activity.activityCenterPresented
+                .background(activityCenter.activityCenterPresented
                     ? LocusTheme.signal.opacity(0.9)
                     : LocusTheme.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -505,8 +506,8 @@ struct SessionSidebarView: View {
                         .stroke(LocusTheme.line, lineWidth: 1)
                 }
                 .overlay(alignment: .topTrailing) {
-                    if model.activity.activityNeedsAttentionCount > 0 {
-                        Text("\(model.activity.activityNeedsAttentionCount)")
+                    if activityCenter.activityNeedsAttentionCount > 0 {
+                        Text("\(activityCenter.activityNeedsAttentionCount)")
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
                             .foregroundStyle(Color.white)
                             .frame(minWidth: 14, minHeight: 14)
@@ -522,8 +523,8 @@ struct SessionSidebarView: View {
         .accessibilityLabel("Activities")
         .accessibilityIdentifier("sidebar.activity")
         .accessibilityValue(
-            model.activity.activityNeedsAttentionCount > 0
-                ? "\(model.activity.activityNeedsAttentionCount) needs attention"
+            activityCenter.activityNeedsAttentionCount > 0
+                ? "\(activityCenter.activityNeedsAttentionCount) needs attention"
                 : "No new activity"
         )
     }
@@ -1050,6 +1051,10 @@ private struct SidebarResizeHandle: View {
 
 struct TeamProgressPopover: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
     let dismiss: () -> Void
 
     @ViewBuilder
@@ -1104,7 +1109,7 @@ struct TeamProgressPopover: View {
             Image(systemName: "person.2.fill")
                 .foregroundStyle(LocusTheme.signalDeep)
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.selectedAgentTeam?.name ?? "Team")
+                Text(agentTeams.selectedAgentTeam?.name ?? "Team")
                     .font(.locus(size: 12, weight: .bold))
                 Text(progressStateTitle)
                     .font(.locus(size: 8, design: .monospaced))
@@ -1122,7 +1127,7 @@ struct TeamProgressPopover: View {
 
     @ViewBuilder
     private func dispatcherSection(now: Date) -> some View {
-        let activity = model.teamRunLive.dispatcherActivity
+        let activity = teamRunLive.dispatcherActivity
         let dispatcher = selectedDispatcher
         let startedAt = activity?.startedAt ?? model.activeWorkStartedAt
         let elapsed = startedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
@@ -1154,7 +1159,7 @@ struct TeamProgressPopover: View {
             }
             if model.orchestrationState == .dispatching,
                elapsed >= 30,
-               model.teamRunLive.agentActivities.isEmpty
+               teamRunLive.agentActivities.isEmpty
             {
                 Label(
                     "Still waiting for the dispatcher. No plan or delegated jobs have started.",
@@ -1181,11 +1186,11 @@ struct TeamProgressPopover: View {
             HStack {
                 sectionLabel("DELEGATED JOBS")
                 Spacer()
-                Text("\(completedJobs)/\(model.teamRunLive.agentActivities.count)")
+                Text("\(completedJobs)/\(teamRunLive.agentActivities.count)")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
-            if model.teamRunLive.agentActivities.isEmpty {
+            if teamRunLive.agentActivities.isEmpty {
                 Text(model.orchestrationState == nil
                     ? "No run yet. Send a task with this team selected."
                     : "Jobs appear here after the dispatcher returns a plan.")
@@ -1193,7 +1198,7 @@ struct TeamProgressPopover: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(model.teamRunLive.agentActivities) { activity in
+                ForEach(teamRunLive.agentActivities) { activity in
                     HStack(spacing: 7) {
                         Image(systemName: dispatcherSymbol(activity.state))
                             .foregroundStyle(dispatcherColor(activity.state))
@@ -1238,8 +1243,8 @@ struct TeamProgressPopover: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("\(model.teamRunLive.teamModelCalls.formatted()) calls")
-            Text("\(model.teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
+            Text("\(teamRunLive.teamModelCalls.formatted()) calls")
+            Text("\(teamRunLive.teamMeteredTokens.formatted()) hosted tokens")
             Spacer()
             if presentation?.canStop == true, let runID = model.orchestrationRunID {
                 Button("Stop", role: .destructive) {
@@ -1268,17 +1273,17 @@ struct TeamProgressPopover: View {
     }
 
     private var selectedDispatcher: AgentProfile? {
-        guard let id = model.selectedAgentTeam?.dispatcherID else { return nil }
-        return model.agentProfiles.first(where: { $0.id == id })
+        guard let id = agentTeams.selectedAgentTeam?.dispatcherID else { return nil }
+        return agentTeams.agentProfiles.first(where: { $0.id == id })
     }
 
     private var teamProfiles: [AgentProfile] {
-        guard let team = model.selectedAgentTeam else { return [] }
-        return team.memberIDs.compactMap { id in model.agentProfiles.first(where: { $0.id == id }) }
+        guard let team = agentTeams.selectedAgentTeam else { return [] }
+        return team.memberIDs.compactMap { id in agentTeams.agentProfiles.first(where: { $0.id == id }) }
     }
 
     private var completedJobs: Int {
-        model.teamRunLive.agentActivities.filter { $0.state == .completed }.count
+        teamRunLive.agentActivities.filter { $0.state == .completed }.count
     }
 
     private func activityTitle(_ activity: AgentActivity) -> String {
@@ -1294,7 +1299,7 @@ struct TeamProgressPopover: View {
 
     private var presentation: TeamRunPresentation? {
         guard let runID = model.orchestrationRunID else { return nil }
-        let durable = model.runs.orchestrationRuns.first(where: { $0.id == runID })
+        let durable = runs.orchestrationRuns.first(where: { $0.id == runID })
         return model.teamRunPresentation(for: runID, durable: durable)
     }
 
@@ -1318,7 +1323,7 @@ struct TeamProgressPopover: View {
         case .localOllama:
             provider = "Local Ollama"
         case .providerAccount(let id):
-            provider = model.providerAccounts.first(where: { $0.id == id })?.displayName
+            provider = providerAccounts.providerAccounts.first(where: { $0.id == id })?.displayName
                 ?? "Unavailable provider"
         }
         return "\(provider) · \(profile.model)"

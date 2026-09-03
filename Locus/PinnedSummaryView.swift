@@ -31,6 +31,9 @@ enum SummaryDetail: Hashable {
 /// stay discoverable).
 struct PinnedSummaryCard: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var backgroundServices: BackgroundServicesModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var session: SessionStateEmitter
     @ObservedObject var browser: BrowserService
@@ -41,12 +44,12 @@ struct PinnedSummaryCard: View {
     private var outputs: [PinnedSummary.OutputRow] { PinnedSummary.outputs(state: state) }
     private var sources: [PinnedSummary.SourceRow] { PinnedSummary.sources(state: state) }
     private var processes: [BackgroundServiceRecord] {
-        PinnedSummary.backgroundProcesses(model.backgroundServicesModel.backgroundServices)
+        PinnedSummary.backgroundProcesses(backgroundServices.backgroundServices)
     }
     private var subagents: [PinnedSummary.SubagentRow] {
         PinnedSummary.subagents(
-            activities: model.teamRunLive.agentActivities,
-            runs: model.visibleActivityRuns,
+            activities: teamRunLive.agentActivities,
+            runs: activityCenter.visibleActivityRuns,
             sessionID: model.currentSessionID
         )
     }
@@ -219,7 +222,7 @@ struct PinnedSummaryCard: View {
                 label: "Stop all background processes",
                 identifier: "plan.processes.stopAll"
             ) {
-                model.backgroundServicesModel.stopAllBackgroundServices()
+                backgroundServices.stopAllBackgroundServices()
             }
         } content: {
             VStack(spacing: 2) {
@@ -241,7 +244,7 @@ struct PinnedSummaryCard: View {
                         if let port = service.port, let url = URL(string: "http://localhost:\(port)") {
                             Button("Open in Browser Tab") { model.openURLInBrowserTab(url) }
                         }
-                        Button("Stop") { model.backgroundServicesModel.stopBackgroundService(service) }
+                        Button("Stop") { backgroundServices.stopBackgroundService(service) }
                     }
                 }
             }

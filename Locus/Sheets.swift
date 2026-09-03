@@ -164,6 +164,7 @@ private struct PluginInstallReview: Identifiable {
 }
 
 private struct ExtensionsSettingsView: View {
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     private enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed"
         case marketplace = "Marketplace"
@@ -239,12 +240,12 @@ private struct ExtensionsSettingsView: View {
             .labelsHidden()
             .padding(14)
 
-            if let error = model.extensionsModel.extensionErrorMessage, !error.isEmpty {
+            if let error = extensionsModel.extensionErrorMessage, !error.isEmpty {
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill")
                     Text(error).lineLimit(2)
                     Spacer()
-                    Button("Dismiss") { model.extensionsModel.extensionErrorMessage = nil }
+                    Button("Dismiss") { extensionsModel.extensionErrorMessage = nil }
                         .buttonStyle(.locus())
                 }
                 .font(.locus(size: 9))
@@ -264,13 +265,13 @@ private struct ExtensionsSettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
-            await model.extensionsModel.refreshExtensions()
-            await model.extensionsModel.refreshExtensionCatalog()
+            await extensionsModel.refreshExtensions()
+            await extensionsModel.refreshExtensionCatalog()
         }
         .sheet(item: $review) { item in
             PluginTrustReviewView(item: item) { scope in
                 review = nil
-                Task { await model.extensionsModel.installPlugin(item.entry, trust: item.trust, scope: scope) }
+                Task { await extensionsModel.installPlugin(item.entry, trust: item.trust, scope: scope) }
             }
         }
         .sheet(isPresented: $editorPresented) {
@@ -295,12 +296,12 @@ private struct ExtensionsSettingsView: View {
         .sheet(item: $enableAfterProbe) { server in
             MCPEnableReviewView(server: server) { scope in
                 enableAfterProbe = nil
-                Task { await model.extensionsModel.setMCPServer(server.id, enabled: true, scope: scope) }
+                Task { await extensionsModel.setMCPServer(server.id, enabled: true, scope: scope) }
             }
         }
         .sheet(item: Binding(
-            get: { model.extensionsModel.mcpDeviceAuthorization },
-            set: { model.extensionsModel.mcpDeviceAuthorization = $0 }
+            get: { extensionsModel.mcpDeviceAuthorization },
+            set: { extensionsModel.mcpDeviceAuthorization = $0 }
         )) { prompt in
             MCPDeviceAuthorizationView(prompt: prompt)
                 .environmentObject(model)
@@ -310,7 +311,7 @@ private struct ExtensionsSettingsView: View {
     private var installedPane: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                if model.extensionsModel.extensions.plugins.isEmpty {
+                if extensionsModel.extensions.plugins.isEmpty {
                     ContentUnavailableView(
                         "No plugins installed",
                         systemImage: "puzzlepiece.extension",
@@ -318,7 +319,7 @@ private struct ExtensionsSettingsView: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 330)
                 }
-                ForEach(model.extensionsModel.extensions.plugins) { plugin in
+                ForEach(extensionsModel.extensions.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -338,7 +339,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             Spacer()
                             Button(plugin.enabledGlobal ? "Disable everywhere" : "Enable everywhere") {
-                                Task { await model.extensionsModel.setPlugin(plugin.id, enabled: !plugin.enabledGlobal, scope: "global") }
+                                Task { await extensionsModel.setPlugin(plugin.id, enabled: !plugin.enabledGlobal, scope: "global") }
                             }
                             .disabled(model.isBusy)
                         }
@@ -362,17 +363,17 @@ private struct ExtensionsSettingsView: View {
                             let workspaceEnabled = !plugin.disabledWorkspaces.contains(model.workspacePath)
                                 && (plugin.enabledGlobal || plugin.enabledWorkspaces.contains(model.workspacePath))
                             Button(workspaceEnabled ? "Disable for this workspace" : "Enable for this workspace") {
-                                Task { await model.extensionsModel.setPlugin(plugin.id, enabled: !workspaceEnabled, scope: "workspace") }
+                                Task { await extensionsModel.setPlugin(plugin.id, enabled: !workspaceEnabled, scope: "workspace") }
                             }
                             .disabled(model.isBusy)
                             if !(plugin.previousVersions ?? []).isEmpty {
-                                Button("Roll back") { Task { await model.extensionsModel.rollbackPlugin(plugin.id) } }
+                                Button("Roll back") { Task { await extensionsModel.rollbackPlugin(plugin.id) } }
                                     .disabled(model.isBusy)
                             }
                             if plugin.updateAvailable == true {
                                 Button("Review update") {
                                     Task {
-                                        if let (entry, trust) = await model.extensionsModel.inspectUpdate(for: plugin) {
+                                        if let (entry, trust) = await extensionsModel.inspectUpdate(for: plugin) {
                                             review = PluginInstallReview(entry: entry, trust: trust)
                                         }
                                     }
@@ -381,7 +382,7 @@ private struct ExtensionsSettingsView: View {
                             }
                             Spacer()
                             Button("Uninstall", role: .destructive) {
-                                Task { await model.extensionsModel.uninstallPlugin(plugin.id) }
+                                Task { await extensionsModel.uninstallPlugin(plugin.id) }
                             }
                             .disabled(model.isBusy)
                         }
@@ -400,7 +401,7 @@ private struct ExtensionsSettingsView: View {
             HStack {
                 Picker("Source", selection: $marketplaceID) {
                     Text("All sources").tag("")
-                    ForEach(model.extensionsModel.extensions.marketplaces) { source in
+                    ForEach(extensionsModel.extensions.marketplaces) { source in
                         Text(source.name).tag(source.id)
                     }
                 }
@@ -408,10 +409,10 @@ private struct ExtensionsSettingsView: View {
                 TextField("Search plugins", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit {
-                        Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+                        Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
                     }
                 Button("Search") {
-                    Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+                    Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
                 }
             }
             HStack {
@@ -423,7 +424,7 @@ private struct ExtensionsSettingsView: View {
                 Button("Add source") {
                     let source = marketplaceSource
                     marketplaceSource = ""
-                    Task { await model.extensionsModel.addMarketplace(source: source, name: marketplaceName) }
+                    Task { await extensionsModel.addMarketplace(source: source, name: marketplaceName) }
                 }
                 .disabled(marketplaceSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -459,7 +460,7 @@ private struct ExtensionsSettingsView: View {
                                 Button("Find") {
                                     search = recommendation.name
                                     Task {
-                                        await model.extensionsModel.refreshExtensionCatalog(
+                                        await extensionsModel.refreshExtensionCatalog(
                                             query: recommendation.name,
                                             marketplaceID: marketplaceID
                                         )
@@ -472,7 +473,7 @@ private struct ExtensionsSettingsView: View {
                     }
                     .padding(.bottom, 6)
 
-                    ForEach(model.extensionsModel.extensionCatalog) { entry in
+                    ForEach(extensionsModel.extensionCatalog) { entry in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "shippingbox")
                                 .frame(width: 22, height: 22)
@@ -491,7 +492,7 @@ private struct ExtensionsSettingsView: View {
                             Spacer()
                             Button(entry.installed ? "Review update" : "Review & install") {
                                 Task {
-                                    if let trust = await model.extensionsModel.inspectPlugin(entry) {
+                                    if let trust = await extensionsModel.inspectPlugin(entry) {
                                         review = PluginInstallReview(entry: entry, trust: trust)
                                     }
                                 }
@@ -501,7 +502,7 @@ private struct ExtensionsSettingsView: View {
                         .padding(11)
                         .locusCard(radius: 9)
                     }
-                    if model.extensionsModel.extensionCatalog.isEmpty {
+                    if extensionsModel.extensionCatalog.isEmpty {
                         ContentUnavailableView(
                             "No plugins found",
                             systemImage: "magnifyingglass",
@@ -515,7 +516,7 @@ private struct ExtensionsSettingsView: View {
         }
         .padding(.horizontal, 14)
         .onChange(of: marketplaceID) {
-            Task { await model.extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
+            Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
         }
     }
 
@@ -525,7 +526,7 @@ private struct ExtensionsSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("External tools from MCP servers")
                         .font(.locus(size: 11, weight: .semibold))
-                    if !model.extensionsModel.extensions.capabilities.stdio {
+                    if !extensionsModel.extensions.capabilities.stdio {
                         Text("This App Store build supports remote MCP servers and skills. Local command-based servers are unavailable.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
@@ -540,7 +541,7 @@ private struct ExtensionsSettingsView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 9) {
-                    if !model.extensionsModel.extensions.mcpPresets.isEmpty {
+                    if !extensionsModel.extensions.mcpPresets.isEmpty {
                         HStack {
                             Text("Recommended")
                                 .font(.locus(size: 11, weight: .semibold))
@@ -549,7 +550,7 @@ private struct ExtensionsSettingsView: View {
                                 .font(.locus(size: 8))
                                 .foregroundStyle(LocusTheme.muted)
                         }
-                        ForEach(model.extensionsModel.extensions.mcpPresets) { preset in
+                        ForEach(extensionsModel.extensions.mcpPresets) { preset in
                             HStack(alignment: .top, spacing: 10) {
                                 MCPLogo(
                                     name: preset.displayName,
@@ -590,7 +591,7 @@ private struct ExtensionsSettingsView: View {
                             Spacer()
                         }
                     }
-                    ForEach(model.extensionsModel.extensions.mcpServers) { server in
+                    ForEach(extensionsModel.extensions.mcpServers) { server in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 10) {
                                 MCPLogo(
@@ -616,9 +617,9 @@ private struct ExtensionsSettingsView: View {
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                                 Spacer()
-                                Button("Test") { Task { await model.extensionsModel.testMCPServer(server.id) } }
+                                Button("Test") { Task { await extensionsModel.testMCPServer(server.id) } }
                                     .disabled(model.isBusy)
-                                Button("Reconnect") { Task { await model.extensionsModel.reconnectMCPServer(server.id) } }
+                                Button("Reconnect") { Task { await extensionsModel.reconnectMCPServer(server.id) } }
                                     .disabled(model.isBusy)
                                 if server.origin == "user" {
                                     Button("Edit") {
@@ -631,7 +632,7 @@ private struct ExtensionsSettingsView: View {
                                 Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
                             }
                             if server.presetID == "github",
-                               model.extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly {
+                               extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly {
                                 Label(
                                     "This build has no GitHub App client ID. Account sign-in is disabled; use a personal token instead.",
                                     systemImage: "exclamationmark.triangle.fill"
@@ -646,11 +647,11 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if server.auth == "oauth" || server.auth == "auto" {
                                     Button(server.hasCredentials == true ? "Reconnect account" : "Connect account") {
-                                        model.extensionsModel.authenticateMCPServer(server)
+                                        extensionsModel.authenticateMCPServer(server)
                                     }
                                     .disabled(
                                         server.presetID == "github"
-                                            && model.extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly
+                                            && extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly
                                     )
                                 } else if server.auth != "none" {
                                     Button(server.hasCredentials == true ? "Update credentials" : "Add credentials") {
@@ -664,7 +665,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if server.hasCredentials == true {
                                     Button("Forget credentials") {
-                                        Task { await model.extensionsModel.clearMCPCredentials(serverID: server.id) }
+                                        Task { await extensionsModel.clearMCPCredentials(serverID: server.id) }
                                     }
                                 }
                                 Spacer()
@@ -672,22 +673,22 @@ private struct ExtensionsSettingsView: View {
                                     && (server.enabledGlobal == true || server.enabledWorkspaces?.contains(model.workspacePath) == true)
                                 if let pluginID = server.pluginID {
                                     Button(workspaceEnabled ? "Disable plugin here" : "Enable plugin here") {
-                                        Task { await model.extensionsModel.setPlugin(pluginID, enabled: !workspaceEnabled, scope: "workspace") }
+                                        Task { await extensionsModel.setPlugin(pluginID, enabled: !workspaceEnabled, scope: "workspace") }
                                     }
                                 } else {
                                     Button(workspaceEnabled ? "Disable here" : "Enable here") {
-                                        Task { await model.extensionsModel.setMCPServer(server.id, enabled: !workspaceEnabled, scope: "workspace") }
+                                        Task { await extensionsModel.setMCPServer(server.id, enabled: !workspaceEnabled, scope: "workspace") }
                                     }
                                 }
                                 if server.origin == "user" {
                                     Button("Remove", role: .destructive) {
-                                        Task { await model.extensionsModel.removeMCPServer(server.id) }
+                                        Task { await extensionsModel.removeMCPServer(server.id) }
                                     }
                                 }
                             }
                             .font(.locus(size: 9))
 
-                            let tools = model.extensionsModel.extensionTools.filter { $0.serverID == server.id }
+                            let tools = extensionsModel.extensionTools.filter { $0.serverID == server.id }
                             if !tools.isEmpty {
                                 DisclosureGroup("Tool permissions") {
                                     ForEach(tools) { tool in
@@ -728,7 +729,7 @@ private struct ExtensionsSettingsView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.extensionsModel.extensions.skills) { skill in
+                    ForEach(extensionsModel.extensions.skills) { skill in
                         HStack(spacing: 10) {
                             Image(systemName: "sparkles").foregroundStyle(LocusTheme.muted)
                             VStack(alignment: .leading, spacing: 2) {
@@ -750,7 +751,7 @@ private struct ExtensionsSettingsView: View {
                                 let enabledEverywhere = skill.enabledGlobal ?? skill.enabled
                                 Button(enabledEverywhere ? "Disable globally" : "Enable globally") {
                                     Task {
-                                        await model.extensionsModel.setSkill(
+                                        await extensionsModel.setSkill(
                                             skill.id,
                                             enabled: !enabledEverywhere,
                                             scope: "global"
@@ -762,7 +763,7 @@ private struct ExtensionsSettingsView: View {
                                         || skill.enabledWorkspaces?.contains(model.workspacePath) == true)
                                 Button(enabledHere ? "Disable here" : "Enable here") {
                                     Task {
-                                        await model.extensionsModel.setSkill(
+                                        await extensionsModel.setSkill(
                                             skill.id,
                                             enabled: !enabledHere,
                                             scope: "workspace"
@@ -771,7 +772,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 if skill.source == "imported" {
                                     Button("Remove", role: .destructive) {
-                                        Task { await model.extensionsModel.removeSkill(skill.id) }
+                                        Task { await extensionsModel.removeSkill(skill.id) }
                                     }
                                 }
                             } else {
@@ -790,10 +791,10 @@ private struct ExtensionsSettingsView: View {
 
     @ViewBuilder
     private func policyButtons(serverID: String, tool: String?) -> some View {
-        Button("Use annotations") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "annotations") } }
-        Button("Ask") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "ask") } }
-        Button("Allow") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "allow") } }
-        Button("Disabled") { Task { await model.extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "disabled") } }
+        Button("Use annotations") { Task { await extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "annotations") } }
+        Button("Ask") { Task { await extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "ask") } }
+        Button("Allow") { Task { await extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "allow") } }
+        Button("Disabled") { Task { await extensionsModel.setMCPPolicy(serverID: serverID, tool: tool, mode: "disabled") } }
     }
 
     private func policyTitle(_ value: String?) -> String {
@@ -819,7 +820,7 @@ private struct ExtensionsSettingsView: View {
         useTokenFallback: Bool = false
     ) {
         Task {
-            guard let server = await model.extensionsModel.materializeMCPPreset(preset, projectRef: projectRef) else {
+            guard let server = await extensionsModel.materializeMCPPreset(preset, projectRef: projectRef) else {
                 return
             }
             if useTokenFallback {
@@ -827,12 +828,12 @@ private struct ExtensionsSettingsView: View {
                 return
             }
             let probe: @MainActor () async -> Void = {
-                if await model.extensionsModel.testMCPServer(server.id) {
+                if await extensionsModel.testMCPServer(server.id) {
                     enableAfterProbe = server
                 }
             }
             if server.auth == "auto" || server.auth == "oauth" {
-                model.extensionsModel.authenticateMCPServer(server) { success in
+                extensionsModel.authenticateMCPServer(server) { success in
                     if success { Task { await probe() } }
                 }
             } else {
@@ -849,13 +850,14 @@ private struct ExtensionsSettingsView: View {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            Task { await model.extensionsModel.importSkill(from: url.path) }
+            Task { await extensionsModel.importSkill(from: url.path) }
         }
     }
 }
 
 private struct MCPDeviceAuthorizationView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     let prompt: MCPDeviceAuthorizationPrompt
 
     var body: some View {
@@ -888,7 +890,7 @@ private struct MCPDeviceAuthorizationView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Cancel", role: .cancel) {
-                    model.extensionsModel.cancelMCPDeviceAuthorization()
+                    extensionsModel.cancelMCPDeviceAuthorization()
                 }
                 Spacer()
                 Button("Copy Code") {
@@ -986,6 +988,7 @@ private struct PluginTrustReviewView: View {
 private struct MCPPresetReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     let preset: ExtensionMCPPreset
     let connect: (String, Bool) -> Void
     @State private var projectRef = ""
@@ -1067,7 +1070,7 @@ private struct MCPPresetReviewView: View {
     }
 
     private var githubCapability: GitHubConnectionCapability {
-        model.extensionsModel.githubConnectionCapability()
+        extensionsModel.githubConnectionCapability()
     }
 }
 
@@ -1112,6 +1115,7 @@ private struct MCPEnableReviewView: View {
 
 private struct MCPServerEditorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     @Environment(\.dismiss) private var dismiss
     let server: ExtensionMCPServer?
     @State private var name = ""
@@ -1147,7 +1151,7 @@ private struct MCPServerEditorView: View {
                         .overlay(alignment: .topLeading) {
                             if arguments.isEmpty { Text("One argument per line").foregroundStyle(LocusTheme.muted).padding(5) }
                         }
-                    if !model.extensionsModel.extensions.capabilities.stdio {
+                    if !extensionsModel.extensions.capabilities.stdio {
                         Text("Local command servers are unavailable in this App Store build.")
                             .foregroundStyle(LocusTheme.coral)
                     }
@@ -1202,7 +1206,7 @@ private struct MCPServerEditorView: View {
                             "redirect_uri": "locus://mcp/oauth",
                         ]
                     }
-                    Task { await model.extensionsModel.saveMCPServer(body) }
+                    Task { await extensionsModel.saveMCPServer(body) }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -1233,6 +1237,7 @@ private struct MCPServerEditorView: View {
 
 private struct MCPCredentialView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
     @Environment(\.dismiss) private var dismiss
     let server: ExtensionMCPServer
     @State private var secret = ""
@@ -1259,7 +1264,7 @@ private struct MCPCredentialView: View {
                     } else {
                         values = ["headers": [fieldName: secret]]
                     }
-                    Task { await model.extensionsModel.setMCPCredentials(serverID: server.id, values: values) }
+                    Task { await extensionsModel.setMCPCredentials(serverID: server.id, values: values) }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent).tint(LocusTheme.ink)
@@ -1389,6 +1394,14 @@ enum SettingsPresentationContext {
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var voiceControl: VoiceControlModel
+    @EnvironmentObject private var applicationContext: ApplicationContextService
+    @EnvironmentObject private var computerControl: ComputerControlService
+    @EnvironmentObject private var simulatorControl: SimulatorControlService
+#if !LOCUS_APP_STORE
+    @EnvironmentObject private var codexComponent: CodexComponentInstaller
+#endif
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var draft = AppSettings()
@@ -2308,10 +2321,10 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.voice.sendBehavior")
 
                         Button(
-                            model.voiceControl.isCapabilityTesting
+                            voiceControl.isCapabilityTesting
                                 ? "Stop and Play Back" : "Test Voice"
                         ) {
-                            model.voiceControl.startCapabilityTest()
+                            voiceControl.startCapabilityTest()
                         }
                         .disabled(
                             draft.resolvedVoiceSpeechEngine == .openAICompatible
@@ -2319,8 +2332,8 @@ struct SettingsView: View {
                         )
                         .accessibilityIdentifier("settings.voice.test")
 
-                        if !model.voiceControl.capabilityTestMessage.isEmpty {
-                            Text(model.voiceControl.capabilityTestMessage)
+                        if !voiceControl.capabilityTestMessage.isEmpty {
+                            Text(voiceControl.capabilityTestMessage)
                                 .font(.locus(size: 9, weight: .semibold))
                                 .foregroundStyle(LocusTheme.muted)
                                 .accessibilityIdentifier("settings.voice.testResult")
@@ -2751,7 +2764,7 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.componentSize")
                 }
                 Button("Remove", role: .destructive) {
-                    Task { await model.codexComponent.remove() }
+                    Task { await codexComponent.remove() }
                 }
                 .accessibilityIdentifier("settings.removeComponent")
                 Text("Removing this frees the space now. Locus offers it again the next time you use a ChatGPT-plan account.")
@@ -2937,14 +2950,14 @@ struct SettingsView: View {
     private var accountsPage: some View {
         Form {
             Section("Provider accounts") {
-                if model.providerAccounts.isEmpty {
+                if providerAccounts.providerAccounts.isEmpty {
                     Text("No accounts yet — Locus runs on local Ollama until you add one.")
                         .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("settings.accounts.empty")
                 }
 
-                ForEach(model.providerAccounts) { account in
+                ForEach(providerAccounts.providerAccounts) { account in
                     HStack(spacing: 10) {
                         ProviderLogo(
                             kind: account.kind,
@@ -2955,7 +2968,7 @@ struct SettingsView: View {
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill(
-                                    model.providerAccountsModel.accountStatus[account.id]?.isHealthy ?? account.isCredentialReady
+                                    providerAccounts.accountStatus[account.id]?.isHealthy ?? account.isCredentialReady
                                         ? LocusTheme.success
                                         : LocusTheme.coral
                                 )
@@ -3006,14 +3019,14 @@ struct SettingsView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
 
-                if model.providerAccountsModel.installedLocalModels.isEmpty {
+                if providerAccounts.installedLocalModels.isEmpty {
                     Text(model.isModelOnline
                         ? "No local models are installed."
                         : "Connect to Ollama to see installed models.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 } else {
-                    ForEach(model.providerAccountsModel.installedLocalModels) { localModel in
+                    ForEach(providerAccounts.installedLocalModels) { localModel in
                         localModelRow(localModel)
                     }
                 }
@@ -3120,16 +3133,16 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     LabeledContent("Accessibility text") {
                         permissionStatus(
-                            granted: model.computerControl.accessibilityGranted,
-                            grant: model.computerControl.requestAccessibility,
-                            settings: model.computerControl.openAccessibilitySettings
+                            granted: computerControl.accessibilityGranted,
+                            grant: computerControl.requestAccessibility,
+                            settings: computerControl.openAccessibilitySettings
                         )
                     }
                     LabeledContent("Window screenshots") {
                         permissionStatus(
-                            granted: model.computerControl.screenRecordingGranted,
-                            grant: model.computerControl.requestScreenRecording,
-                            settings: model.computerControl.openScreenRecordingSettings
+                            granted: computerControl.screenRecordingGranted,
+                            grant: computerControl.requestScreenRecording,
+                            settings: computerControl.openScreenRecordingSettings
                         )
                     }
                     LabeledContent("Live task attachment") {
@@ -3160,16 +3173,16 @@ struct SettingsView: View {
 
                     LabeledContent("Accessibility") {
                         permissionStatus(
-                            granted: model.computerControl.accessibilityGranted,
-                            grant: model.computerControl.requestAccessibility,
-                            settings: model.computerControl.openAccessibilitySettings
+                            granted: computerControl.accessibilityGranted,
+                            grant: computerControl.requestAccessibility,
+                            settings: computerControl.openAccessibilitySettings
                         )
                     }
                     LabeledContent("Screen Recording") {
                         permissionStatus(
-                            granted: model.computerControl.screenRecordingGranted,
-                            grant: model.computerControl.requestScreenRecording,
-                            settings: model.computerControl.openScreenRecordingSettings
+                            granted: computerControl.screenRecordingGranted,
+                            grant: computerControl.requestScreenRecording,
+                            settings: computerControl.openScreenRecordingSettings
                         )
                     }
                     Text("Screenshots are target-window scoped and exclude Locus. Before a screenshot is sent to a hosted provider, Locus names that provider and asks once per session. Local Ollama screenshots remain local.")
@@ -3206,43 +3219,43 @@ struct SettingsView: View {
 
                     LabeledContent("Xcode") {
                         settingsStatus(
-                            ready: model.simulatorControl.helperHealth.xcodePath != nil,
+                            ready: simulatorControl.helperHealth.xcodePath != nil,
                             readyText: "Ready",
                             missingText: "Full Xcode required"
                         )
                     }
                     LabeledContent("Signed bridge") {
                         settingsStatus(
-                            ready: model.simulatorControl.helperHealth.touchHelperPresent
-                                && model.simulatorControl.helperHealth.treeHelperPresent,
+                            ready: simulatorControl.helperHealth.touchHelperPresent
+                                && simulatorControl.helperHealth.treeHelperPresent,
                             readyText: "Present",
                             missingText: "Missing"
                         )
                     }
                     LabeledContent("Bridge compatibility") {
                         settingsStatus(
-                            ready: model.simulatorControl.nativeAvailable,
+                            ready: simulatorControl.nativeAvailable,
                             readyText: "Ready",
-                            missingText: model.simulatorControl.helperHealth.message
+                            missingText: simulatorControl.helperHealth.message
                         )
                     }
                     LabeledContent("iOS runtime") {
                         settingsStatus(
-                            ready: !model.simulatorControl.devices.isEmpty,
-                            readyText: "\(model.simulatorControl.devices.count) devices",
+                            ready: !simulatorControl.devices.isEmpty,
+                            readyText: "\(simulatorControl.devices.count) devices",
                             missingText: "No installed runtime"
                         )
                     }
                     LabeledContent("Live streaming") {
                         settingsStatus(
-                            ready: model.computerControl.screenRecordingGranted,
+                            ready: computerControl.screenRecordingGranted,
                             readyText: "Screen Recording granted",
                             missingText: "Screen Recording required"
                         )
                     }
                     LabeledContent("Keyboard controls") {
                         settingsStatus(
-                            ready: model.computerControl.accessibilityGranted,
+                            ready: computerControl.accessibilityGranted,
                             readyText: "Accessibility granted",
                             missingText: "Accessibility required"
                         )
@@ -3267,8 +3280,8 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
-            model.computerControl.refreshPermissionStatus()
-            model.applicationContext.refreshRunningApplications()
+            computerControl.refreshPermissionStatus()
+            applicationContext.refreshRunningApplications()
             model.refreshSimulatorDevices()
         }
     }
@@ -3304,16 +3317,16 @@ struct SettingsView: View {
     }
 
     private func accountDetail(_ account: ProviderAccount) -> String {
-        let status = model.providerAccountsModel.accountStatus[account.id]
+        let status = providerAccounts.accountStatus[account.id]
             ?? (account.hasKey ? .keySaved : .noKey)
         if account.kind == .chatGPT,
-           let window = model.providerAccountsModel.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
+           let window = providerAccounts.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
         {
             let reset = window.resetsAt.map {
                 "resets " + Date(timeIntervalSince1970: Double($0))
                     .formatted(.relative(presentation: .named))
             }
-            let activity = model.providerAccountsModel.chatGPTUsageByAccount[account.id]?
+            let activity = providerAccounts.chatGPTUsageByAccount[account.id]?
                 .activity.summary?.lifetimeTokens.map {
                 $0.formatted(.number.notation(.compactName)) + " activity tokens"
             }

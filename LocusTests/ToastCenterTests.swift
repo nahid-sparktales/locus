@@ -39,13 +39,4 @@ final class ToastCenterTests: XCTestCase {
         XCTAssertNotNil(center.toast, "a cancelled dismissal must leave the toast visible")
     }
 
-    func testAppModelRepublishesToastChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.showToast("Bridged")
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

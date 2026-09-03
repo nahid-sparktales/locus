@@ -107,13 +107,4 @@ final class WorkspaceKnowledgeModelTests: XCTestCase {
         XCTAssertTrue(request.url?.query?.contains("workspace=") ?? false)
     }
 
-    func testAppModelRepublishesKnowledgeChanges() async throws {
-        let app = AppModel(startImmediately: false)
-        let republished = expectation(description: "AppModel.objectWillChange fired")
-        republished.assertForOverFulfill = false
-        let cancellable = app.objectWillChange.sink { _ in republished.fulfill() }
-        app.knowledge.objectWillChange.send()
-        await fulfillment(of: [republished], timeout: 1.0)
-        cancellable.cancel()
-    }
 }

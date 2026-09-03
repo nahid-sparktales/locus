@@ -1,10 +1,8 @@
 import Foundation
 
-// Facade API — the account/catalog state that the send pipeline, model
-// router, settings apply, and team ops read on nearly every turn. These
-// stay as forwarders; narrowing them is part of the router follow-up.
-// Everything else on ProviderAccountsModel is reached through
-// `model.providerAccountsModel` directly.
+// Compatibility facade for the send pipeline, model router, settings apply,
+// and team orchestration. Reactive views observe ProviderAccountsModel
+// directly; these forwarders do not establish an observation boundary.
 extension AppModel {
     var models: [ModelInfo] {
         get { providerAccountsModel.models }

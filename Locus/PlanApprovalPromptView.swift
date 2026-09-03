@@ -5,6 +5,7 @@ import SwiftUI
 /// tool approval still appears in the normal composer permission panel.
 struct SoloSwarmPanelView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     let runID: String
 
     var body: some View {
@@ -84,7 +85,7 @@ struct SoloSwarmPanelView: View {
     private var isActive: Bool { model.orchestrationRunID == runID && model.isBusy }
     private var liveActivities: [AgentActivity] {
         guard model.orchestrationRunID == runID else { return [] }
-        return model.teamRunLive.agentActivities.filter { $0.depth == 1 }
+        return teamRunLive.agentActivities.filter { $0.depth == 1 }
     }
     private var attempts: [AgentJobAttempt] { run?.attempts ?? [] }
     private var hasDelegation: Bool {
@@ -101,11 +102,11 @@ struct SoloSwarmPanelView: View {
         return attempts.filter { $0.state == "completed" }.count
     }
     private var modelCalls: Int {
-        if !liveActivities.isEmpty { return model.teamRunLive.teamModelCalls }
+        if !liveActivities.isEmpty { return teamRunLive.teamModelCalls }
         return attempts.reduce(0) { $0 + $1.modelCalls }
     }
     private var delegatedTokens: Int {
-        if !liveActivities.isEmpty { return model.teamRunLive.teamMeteredTokens }
+        if !liveActivities.isEmpty { return teamRunLive.teamMeteredTokens }
         return attempts.reduce(0) { $0 + $1.promptTokens + $1.completionTokens }
     }
     private var isSuccessful: Bool {
@@ -134,6 +135,9 @@ struct SoloSwarmPanelView: View {
 /// planning and execution never displace the message composer.
 struct TeamRunBoardView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var landingFlow: LandingFlowModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
     let runID: String
     let request: String
 
@@ -141,10 +145,10 @@ struct TeamRunBoardView: View {
 
     var body: some View {
         Group {
-            if isActive, model.teamRunLive.shouldShowTeamDispatchProgress {
+            if isActive, teamRunLive.shouldShowTeamDispatchProgress {
                 TeamDispatchProgressView()
-            } else if isActive, model.teamRunLive.shouldShowTeamDispatchApproval,
-                      let plan = model.teamRunLive.pendingDispatchPlan
+            } else if isActive, teamRunLive.shouldShowTeamDispatchApproval,
+                      let plan = teamRunLive.pendingDispatchPlan
             {
                 TeamDispatchApprovalPromptView(plan: plan)
             } else if shouldCollapseTerminal, !terminalExpanded {
@@ -256,8 +260,8 @@ struct TeamRunBoardView: View {
                 Text(teamName).font(.locus(size: 12, weight: .bold))
             }
             Spacer()
-            if isActive, model.teamRunLive.teamModelCalls > 0 || model.teamRunLive.teamMeteredTokens > 0 {
-                Text("\(model.teamRunLive.teamModelCalls) calls · \(model.teamRunLive.teamMeteredTokens.formatted()) tokens")
+            if isActive, teamRunLive.teamModelCalls > 0 || teamRunLive.teamMeteredTokens > 0 {
+                Text("\(teamRunLive.teamModelCalls) calls · \(teamRunLive.teamMeteredTokens.formatted()) tokens")
                     .font(.locus(size: 8, design: .monospaced))
                     .foregroundStyle(LocusTheme.muted)
             }
@@ -392,8 +396,8 @@ struct TeamRunBoardView: View {
                         .accessibilityIdentifier("teamBoard.stop")
                 }
             }
-            if state == .completed, model.landingFlow.taskHasChanges, isActive {
-                Button("Review & Land") { model.landingFlow.prepareReviewAndLand() }
+            if state == .completed, landingFlow.taskHasChanges, isActive {
+                Button("Review & Land") { landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
             }
@@ -406,8 +410,8 @@ struct TeamRunBoardView: View {
     }
 
     private var run: OrchestrationRun? {
-        if model.runs.selectedOrchestrationRun?.id == runID { return model.runs.selectedOrchestrationRun }
-        return model.runs.orchestrationRuns.first(where: { $0.id == runID })
+        if runs.selectedOrchestrationRun?.id == runID { return runs.selectedOrchestrationRun }
+        return runs.orchestrationRuns.first(where: { $0.id == runID })
     }
 
     private var presentation: TeamRunPresentation {
@@ -421,12 +425,12 @@ struct TeamRunBoardView: View {
         presentation.state
     }
     private var teamName: String {
-        if isActive, let name = model.teamRunLive.activeOrchestrationTeam?.name { return name }
+        if isActive, let name = teamRunLive.activeOrchestrationTeam?.name { return name }
         return run?.teamName ?? "Team run"
     }
     private var visibleActivities: [AgentActivity] {
         guard isActive else { return [] }
-        return model.teamRunLive.agentActivities
+        return teamRunLive.agentActivities
     }
     private var phases: [String] { ["Plan", "Approve", "Specialists", "Coding", "Review", "Done"] }
     private var currentPhase: Int {
@@ -434,14 +438,14 @@ struct TeamRunBoardView: View {
         case .queued, .dispatching: 0
         case .waitingDispatchApproval: 1
         case .running, .waitingPermission, .waitingComputer:
-            model.teamRunLive.agentActivities.contains(where: { $0.writerPosition != nil }) ? 3 : 2
+            teamRunLive.agentActivities.contains(where: { $0.writerPosition != nil }) ? 3 : 2
         case .reviewing: 4
         case .completed: 5
         case .paused, .failed, .interrupted, .cancelled, .discarded: interruptedPhase
         }
     }
     private var interruptedPhase: Int {
-        if model.teamRunLive.pendingDispatchPlan != nil { return 1 }
+        if teamRunLive.pendingDispatchPlan != nil { return 1 }
         if visibleActivities.contains(where: { $0.writerPosition != nil }) { return 3 }
         if let kind = run?.checkpoint?.kind.lowercased() {
             if kind.contains("synthesis") { return 5 }
@@ -494,8 +498,8 @@ struct TeamRunBoardView: View {
     }
     private var terminalSummary: String {
         let completed = run?.completedJobCount
-            ?? (isActive ? model.teamRunLive.agentActivities.filter { $0.state == .completed }.count : 0)
-        let total = run?.jobCount ?? (isActive ? model.teamRunLive.agentActivities.count : 0)
+            ?? (isActive ? teamRunLive.agentActivities.filter { $0.state == .completed }.count : 0)
+        let total = run?.jobCount ?? (isActive ? teamRunLive.agentActivities.count : 0)
         let jobs = total > 0 ? "\(completed)/\(total) jobs" : "Run finished"
         let duration: String
         if let run {
@@ -505,7 +509,7 @@ struct TeamRunBoardView: View {
         } else {
             duration = ""
         }
-        let changes = isActive && model.landingFlow.taskHasChanges ? "changes ready" : ""
+        let changes = isActive && landingFlow.taskHasChanges ? "changes ready" : ""
         let failure = state == .completed ? "" : (run?.recoveryReason ?? "")
         return [jobs, duration, changes, failure]
             .filter { !$0.isEmpty }
@@ -519,6 +523,10 @@ struct TeamRunBoardView: View {
 struct TeamDispatchProgressView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
@@ -527,7 +535,7 @@ struct TeamDispatchProgressView: View {
     }
 
     private func content(now: Date) -> some View {
-        let startedAt = model.teamRunLive.dispatcherActivity?.startedAt ?? model.activeWorkStartedAt
+        let startedAt = teamRunLive.dispatcherActivity?.startedAt ?? model.activeWorkStartedAt
         let elapsed = startedAt.map { max(now.timeIntervalSince($0), 0) } ?? 0
 
         return VStack(alignment: .leading, spacing: 0) {
@@ -541,7 +549,7 @@ struct TeamDispatchProgressView: View {
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityIdentifier("teamDispatch.progress")
-                    Text(model.teamRunLive.activeOrchestrationTeam?.name ?? "Team run")
+                    Text(teamRunLive.activeOrchestrationTeam?.name ?? "Team run")
                         .font(.locus(size: 12, weight: .bold))
                 }
                 Spacer()
@@ -575,7 +583,7 @@ struct TeamDispatchProgressView: View {
                     }
                 }
 
-                if let reason = model.teamRunLive.dispatcherValidationReason, !reason.isEmpty {
+                if let reason = teamRunLive.dispatcherValidationReason, !reason.isEmpty {
                     Label(reason, systemImage: "arrow.triangle.2.circlepath")
                         .font(.locus(size: 9, weight: .medium))
                         .foregroundStyle(LocusTheme.warning)
@@ -590,13 +598,13 @@ struct TeamDispatchProgressView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     stageRow(
                         "Dispatcher connected",
-                        complete: model.teamRunLive.dispatcherActivity != nil
+                        complete: teamRunLive.dispatcherActivity != nil
                     )
                     stageRow(
-                        model.teamRunLive.dispatcherValidationReason == nil
+                        teamRunLive.dispatcherValidationReason == nil
                             ? "Create and validate one complete team plan"
                             : "Correct and revalidate the team plan",
-                        complete: model.teamRunLive.dispatcherActivity?.state == .completed
+                        complete: teamRunLive.dispatcherActivity?.state == .completed
                     )
                     stageRow("Show the plan for your approval", complete: false)
                 }
@@ -660,11 +668,11 @@ struct TeamDispatchProgressView: View {
     }
 
     private var dispatcherName: String {
-        model.teamRunLive.dispatcherActivity?.agentName ?? dispatcherProfile?.name ?? "Starting dispatcher…"
+        teamRunLive.dispatcherActivity?.agentName ?? dispatcherProfile?.name ?? "Starting dispatcher…"
     }
 
     private var dispatcherRoute: String {
-        if let activity = model.teamRunLive.dispatcherActivity, !activity.model.isEmpty {
+        if let activity = teamRunLive.dispatcherActivity, !activity.model.isEmpty {
             return [activity.provider, activity.model].filter { !$0.isEmpty }.joined(separator: " · ")
         }
         guard let profile = dispatcherProfile else { return "Preparing model route" }
@@ -673,27 +681,27 @@ struct TeamDispatchProgressView: View {
         case .localOllama:
             provider = "Local Ollama"
         case .providerAccount(let id):
-            provider = model.providerAccounts.first(where: { $0.id == id })?.displayName
+            provider = providerAccounts.providerAccounts.first(where: { $0.id == id })?.displayName
                 ?? "Configured provider"
         }
         return "\(provider) · \(profile.model)"
     }
 
     private var stageDetail: String {
-        if let output = model.teamRunLive.dispatcherActivity?.output, !output.isEmpty { return output }
-        if model.teamRunLive.dispatcherActivity == nil {
+        if let output = teamRunLive.dispatcherActivity?.output, !output.isEmpty { return output }
+        if teamRunLive.dispatcherActivity == nil {
             return "Opening the dispatcher route and preparing the team roster."
         }
         return "Creating assignments, dependencies, and the ordered coding sequence."
     }
 
     private var dispatcherProfile: AgentProfile? {
-        guard let id = model.teamRunLive.activeOrchestrationTeam?.dispatcherID else { return nil }
-        return model.agentProfiles.first(where: { $0.id == id })
+        guard let id = teamRunLive.activeOrchestrationTeam?.dispatcherID else { return nil }
+        return agentTeams.agentProfiles.first(where: { $0.id == id })
     }
 
     private var requestSummary: String {
-        if let request = model.runs.selectedOrchestrationRun?.request, !request.isEmpty {
+        if let request = runs.selectedOrchestrationRun?.request, !request.isEmpty {
             return request
         }
         return transcriptPresentation.snapshot.blocks.last(where: { $0.kind == .user })?.text ?? ""
@@ -710,6 +718,8 @@ struct TeamDispatchProgressView: View {
 /// ask for additional dispatch approval.
 struct TeamDispatchApprovalPromptView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     let plan: DispatchPlan
 
     @State private var selection = 0
@@ -833,7 +843,7 @@ struct TeamDispatchApprovalPromptView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("teamDispatch.jobs")
 
-            if let budget = plan.budget ?? model.teamRunLive.activeOrchestrationTeam?.budget {
+            if let budget = plan.budget ?? teamRunLive.activeOrchestrationTeam?.budget {
                 HStack(spacing: 8) {
                     budgetPill("\(budget.maxJobs) jobs max")
                     budgetPill(
@@ -848,7 +858,7 @@ struct TeamDispatchApprovalPromptView: View {
                 }
             }
 
-            let policy = plan.swarmPolicy ?? model.teamRunLive.activeOrchestrationTeam?.resolvedSwarmPolicy
+            let policy = plan.swarmPolicy ?? teamRunLive.activeOrchestrationTeam?.resolvedSwarmPolicy
             if let policy, policy.delegationMode == .readOnlyChildren {
                 HStack(spacing: 8) {
                     budgetPill("Adaptive read-only children")
@@ -986,7 +996,7 @@ struct TeamDispatchApprovalPromptView: View {
 
     private func agentName(for job: DispatchJob) -> String {
         guard let id = UUID(uuidString: job.agentID) else { return job.agentID }
-        return model.agentProfiles.first(where: { $0.id == id })?.name ?? job.agentID
+        return agentTeams.agentProfiles.first(where: { $0.id == id })?.name ?? job.agentID
     }
 
     private func jobLabel(_ job: DispatchJob) -> String {

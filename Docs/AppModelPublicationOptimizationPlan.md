@@ -81,6 +81,9 @@ Commit boundary: tests and measurement only.
 
 ### 2. Stop forwarding feature publications
 
+Status: implemented by the direct feature-observation extraction. Later
+extractions retain this boundary and must not reintroduce parent republishing.
+
 - Inject existing child models at the scene boundary only where a scene needs
   them, or pass them as `@ObservedObject` dependencies to the owning subview.
 - Migrate reactive reads of providers, teams, live team runs, landing, runs,

@@ -99,9 +99,7 @@ final class TranscriptRelayoutTests: XCTestCase {
 
     private func mount(_ model: AppModel, size: NSSize) -> NSView {
         let host = NSHostingView(rootView: RelayoutProbeRoot()
-            .environmentObject(model)
-            .environmentObject(model.sessionCatalog)
-            .environmentObject(model.transcriptPresentation)
+            .appFeatureEnvironment(from: model)
             .environmentObject(AppUpdateController(startImmediately: false)))
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(
