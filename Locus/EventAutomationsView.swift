@@ -747,6 +747,7 @@ struct ConfigureAgentView: View {
         async let refreshSchedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
         _ = await (refreshEvents, refreshSchedules)
     }
+
 }
 
 private struct AgentConfigurationReference: Identifiable, Hashable {
