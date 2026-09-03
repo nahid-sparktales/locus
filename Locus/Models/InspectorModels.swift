@@ -334,6 +334,43 @@ struct RecommendationContext: Equatable {
 }
 
 enum RecommendationEngine {
+    /// Stable conversation starters keep the empty workspace approachable.
+    /// They prefill the composer for review and never send on the user's behalf.
+    static var conversationStarters: [LocusRecommendation] {
+        [
+            LocusRecommendation(
+                id: "build-feature",
+                kind: .polishInterface,
+                title: "Build a feature",
+                rationale: "Describe what you want to add or change.",
+                priority: 300,
+                intent: .prefill(
+                    "Build a feature in this project. Start by understanding the relevant code, then implement and verify the change."
+                )
+            ),
+            LocusRecommendation(
+                id: "fix-bug",
+                kind: .recoverRun,
+                title: "Fix a bug",
+                rationale: "Share what’s broken or behaving unexpectedly.",
+                priority: 200,
+                intent: .prefill(
+                    "Find and fix a bug in this project. Diagnose the root cause, implement the fix, and verify the result."
+                )
+            ),
+            LocusRecommendation(
+                id: "explore-codebase",
+                kind: .exploreProject,
+                title: "Explore the codebase",
+                rationale: "Ask how the project works or where to begin.",
+                priority: 100,
+                intent: .prefill(
+                    "Explore this codebase and explain its architecture, main components, and the best place to begin."
+                )
+            ),
+        ]
+    }
+
     static func recommendations(for context: RecommendationContext) -> [LocusRecommendation] {
         var candidates: [LocusRecommendation] = []
 

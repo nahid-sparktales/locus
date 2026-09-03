@@ -2003,6 +2003,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(recommendations.allSatisfy { !$0.rationale.isEmpty })
     }
 
+    func testConversationStartersAreStableEditablePrompts() {
+        let starters = RecommendationEngine.conversationStarters
+
+        XCTAssertEqual(starters.map(\.id), ["build-feature", "fix-bug", "explore-codebase"])
+        XCTAssertEqual(starters.map(\.title), ["Build a feature", "Fix a bug", "Explore the codebase"])
+        XCTAssertTrue(starters.allSatisfy { !$0.rationale.isEmpty })
+        XCTAssertTrue(starters.allSatisfy { recommendation in
+            if case .prefill(let prompt) = recommendation.intent {
+                return !prompt.isEmpty
+            }
+            return false
+        })
+    }
+
     func testRecommendationsRankSafetyContinuityAndVerification() {
         let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
             changedFileCount: 3,
