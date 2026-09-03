@@ -67,6 +67,13 @@ struct ComposerView: View {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
+            } else if let question = model.pendingQuestion {
+                // Same contract as the permission panel, and for a stronger
+                // reason: a worker thread is parked on this answer, so the
+                // answer replaces the input until it is given.
+                QuestionPromptView(request: question)
+                    .frame(maxWidth: 740)
+                    .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             } else if model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
@@ -167,6 +174,7 @@ struct ComposerView: View {
             )
         )
         .animation(LocusMotion.spatial, value: model.activePermissionRequest?.requestID)
+        .animation(LocusMotion.spatial, value: model.pendingQuestion?.id)
         .animation(LocusMotion.spatial, value: model.planApprovalPending)
         .sheet(isPresented: $quickTeamPresented) {
             QuickTeamBuilderView(suggestedName: model.suggestedQuickTeamName())
@@ -177,6 +185,10 @@ struct ComposerView: View {
             // Focus returns to the editor after any decision — option 3 is
             // "tell Locus what to do differently", so typing must just work.
             if model.activePermissionRequest == nil { restoreFocus() }
+        }
+        .onChange(of: model.pendingQuestion?.id) {
+            // The natural next act after answering is to keep typing.
+            if model.pendingQuestion == nil { restoreFocus() }
         }
         .onChange(of: model.planApprovalPending) {
             // Same for "keep planning": the natural next act is typing the
@@ -552,7 +564,7 @@ struct ComposerView: View {
 
     private var modeControls: some View {
         HStack(spacing: 3) {
-            ForEach([WorkMode.plan, WorkMode.build]) { mode in
+            ForEach(WorkMode.composerModes) { mode in
                 Button {
                     model.selectedMode = model.selectedMode == mode ? .work : mode
                 } label: {
@@ -1084,7 +1096,7 @@ struct ComposerView: View {
         case .ask: "Ask anything"
         case .work: "Ask Locus to work on something…"
         case .plan: "Describe what you want to plan…"
-        case .build: "What should we build next?"
+        case .grill: "What should we pressure-test?"
         }
     }
 

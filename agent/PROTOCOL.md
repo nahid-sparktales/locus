@@ -834,6 +834,68 @@ plan-decision boundary, not a general progress event.
 The client presents Proceed, Revise, and Cancel only after the surrounding Plan
 turn completes successfully. Reconnection replay preserves this event's order.
 
+### `question_required` / `question_response` / `question_resolved`
+
+Emitted by the permission-free `ask_question` tool. Unlike `plan_ready`, this is
+a **blocking** round trip: the tool call parks the worker thread and the user's
+answer becomes that call's own tool result, so the model stays inside its turn.
+The contract is the permission decider's, not `submit_plan`'s.
+
+```json
+{ "type": "question_required", "request_id": "9f2c1a4b8e7d", "id": "call_17",
+  "tool": "ask_question",
+  "questions": [
+    { "id": "q1", "header": "Storage",
+      "question": "Where should the response cache live?",
+      "multi_select": false,
+      "options": [
+        { "label": "In-memory", "description": "Fastest, lost on restart." },
+        { "label": "SQLite",    "description": "Durable, adds a dependency." }
+      ] },
+    { "id": "q2", "header": "Naming",
+      "question": "What should the public API call this?",
+      "multi_select": false, "options": [] }
+  ] }
+```
+
+`options: []` is the free-text case and a first-class shape, not a degenerate
+one — the client must still present the question and take a typed answer. There
+are between one and four questions, each with zero or two-to-four options;
+exactly one option is never sent, because a single choice is not a choice.
+
+The client replies once per `request_id`:
+
+```json
+{ "type": "question_response", "request_id": "9f2c1a4b8e7d", "action": "answer",
+  "answers": [ { "id": "q1", "selected": ["SQLite"], "text": "" },
+               { "id": "q2", "selected": [], "text": "call it `resolve`" } ] }
+```
+
+`action` is `answer` or `cancel`. `selected` carries option **labels, not
+indices**, so the panel and the server can never disagree about ordering, and
+it may coexist with `text` ("these two, plus…"). A cancel still delivers
+whatever was collected; the remaining questions are reported to the model as
+unanswered. A cancel is **not** an error result — the model is told the user
+dismissed the box and should proceed on its own judgment.
+
+`question_resolved {request_id}` follows once the wait ends, however it ended,
+so a client can dismiss a panel it did not answer itself.
+
+Rules:
+
+- **No timeout.** MCP elicitation caps at 600 s because a third-party server is
+  waiting; here the counterparty is the user, and a deadline that discards a
+  half-typed answer is worse than waiting. Only Stop and socket teardown end it,
+  and both cancel every pending question so the turn can finish.
+- **Answered once.** A second `question_response` for the same `request_id` is
+  rejected with a `command_error`.
+- **Never replayed on reconnect**, unlike `dispatch_plan_ready`: disconnect
+  interrupts the turn, so no thread remains to unblock.
+- **Root chat only.** Sub-agents, Solo workers and parallel writer jobs are not
+  given the tool; it is also withheld from read-only agents and from the CLI,
+  which has no user session to answer it.
+- The tool refuses credential-shaped questions outright, without emitting.
+
 ### `steer_ack` / `steer_applied`
 
 `steer_ack {text, state}` accepts a steering message. `state` is

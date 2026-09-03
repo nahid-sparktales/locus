@@ -556,7 +556,7 @@ struct TeamDispatchProgressView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                    Image(systemName: "play.square.stack.fill")
                         .font(.locus(size: 13, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .frame(width: 16)
@@ -1157,7 +1157,7 @@ struct PlanApprovalPromptView: View {
             optionRow(
                 index: 0,
                 title: "Proceed",
-                detail: "Switch to GSD and implement with current permissions",
+                detail: "Implement this plan now with current permissions",
                 identifier: "planApproval.proceed"
             )
             optionRow(

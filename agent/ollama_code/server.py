@@ -1890,7 +1890,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
         mode = str(msg.get("mode") or "").strip().lower()
-        if mode not in {"", "ask", "work", "plan", "build"}:
+        # "build" is the retired GSD raw value. It stays accepted so an older
+        # desktop build, a legacy schedule row, or a replayed transcript is not
+        # rejected mid-flight; `configure_agent` maps it to work.
+        if mode not in {"", "ask", "work", "plan", "grill", "build"}:
             _command_error(svc, str(mtype), "Unknown conversation mode.")
             return
         just_chat = mode == "ask"
@@ -1945,6 +1948,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             str(msg.get("request_id", "")),
             str(msg.get("decision", "deny")),
         )
+    elif mtype == "question_response":
+        request_id = str(msg.get("request_id") or "")
+        action = str(msg.get("action") or "cancel")
+        if action not in {"answer", "cancel"}:
+            _command_error(svc, "question_response", "Unknown question action.")
+            return
+        raw = msg.get("answers")
+        answers = (
+            [item for item in raw if isinstance(item, dict)][:4]
+            if isinstance(raw, list) else []
+        )
+        if not svc.answer_question(request_id, {"action": action, "answers": answers}):
+            _command_error(svc, "question_response", "That question is no longer waiting.")
     elif mtype == "dispatch_decision":
         run_id = str(msg.get("run_id") or "")
         action = str(msg.get("action") or "cancel")
@@ -2093,6 +2109,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if svc.active_evaluation_core is not None:
             svc.active_evaluation_core.interrupt()
         svc.deny_all_pending()  # unblock a permission wait so the turn can end
+        svc.cancel_all_questions()  # and a question wait, for the same reason
         svc.cancel_all_computer_actions()
         svc.cancel_all_simulator_actions()
         svc.cancel_all_browser_actions()

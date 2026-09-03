@@ -873,19 +873,34 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    func testComposerOffersPlanAndGrillMeAndNoLongerGSD() {
+        // The button row itself, not just the mode's title: GSD was the second
+        // button, and Grill Me replaces it outright.
+        XCTAssertEqual(WorkMode.composerModes, [.plan, .grill])
+        XCTAssertEqual(WorkMode.composerModes.map(\.title), ["Plan", "Grill Me"])
+        XCTAssertFalse(WorkMode.allCases.map(\.title).contains("GSD"))
+        XCTAssertNil(WorkMode(rawValue: "build"))
+
+        // And the ways in from outside the composer.
+        XCTAssertEqual(SlashCommand.matches(for: "grill").first?.action, .setMode(.grill))
+        XCTAssertTrue(SlashCommand.matches(for: "gsd").isEmpty)
+    }
+
     func testWorkModeInstructionsAreDistinct() {
         XCTAssertEqual(Set(WorkMode.allCases.map(\.instruction)).count, WorkMode.allCases.count)
         XCTAssertTrue(WorkMode.ask.instruction.contains("explicitly attached"))
         XCTAssertTrue(WorkMode.ask.instruction.contains("Do not inspect attachment paths"))
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
-        XCTAssertTrue(WorkMode.build.instruction.contains("Implement"))
         XCTAssertTrue(WorkMode.work.instruction.contains("Choose whether"))
-        // The composer shows GSD, but the raw value stays `build` for stored
-        // profiles and the runtime's `[Locus mode:]` header; the `$` mention
-        // is what makes the runtime preload the gsd-workflow skill.
-        XCTAssertEqual(WorkMode.build.title, "GSD")
-        XCTAssertEqual(WorkMode.build.rawValue, "build")
-        XCTAssertTrue(WorkMode.build.instruction.contains("$gsd-workflow"))
+        XCTAssertEqual(WorkMode.grill.title, "Grill Me")
+        XCTAssertEqual(WorkMode.grill.rawValue, "grill")
+        // The bare `$` mention is what preloads the skill. It must stay bare:
+        // `$builtin:grilling` resolves to nothing once a user authors their own
+        // `grilling` skill, because that shadows and disables the builtin id.
+        XCTAssertTrue(WorkMode.grill.instruction.contains("$grilling"))
+        XCTAssertFalse(WorkMode.grill.instruction.contains("$builtin:grilling"))
+        XCTAssertFalse(WorkMode.grill.instruction.contains("$grill-me"))
+        XCTAssertTrue(WorkMode.grill.instruction.contains("ask_question"))
     }
 
     @MainActor
@@ -1167,25 +1182,43 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyBuildProfilesMigrateOnceWithoutChangingPlan() {
-        func profile(_ mode: WorkMode, path: String) -> WorkspaceProfile {
-            WorkspaceProfile(
-                path: path,
-                lastOpened: Date(),
-                model: "qwen",
-                accountID: nil,
-                mode: mode,
-                previewURL: "",
-                contextFiles: [],
-                draft: ""
-            )
-        }
-        let migrated = AppModel.migrateLegacyBuildProfiles([
-            profile(.build, path: "/tmp/build"),
-            profile(.plan, path: "/tmp/plan"),
-            profile(.work, path: "/tmp/work"),
-        ])
-        XCTAssertEqual(migrated.map(\.mode), [.work, .plan, .work])
+    func testRetiredBuildModeDecodesAsWorkEverywhereItIsStored() throws {
+        // `build` was GSD. Synthesized `Decodable` throws on an unknown raw
+        // value, and all three of these stores are read with `try?`, so one
+        // stale value would silently empty the whole file — every workspace
+        // profile, every checkpoint, or every schedule.
+        let decoder = JSONDecoder()
+
+        let profile = try decoder.decode(WorkspaceProfile.self, from: Data("""
+        {"path":"/tmp/x","lastOpened":0,"model":"qwen","mode":"build",
+         "previewURL":"","contextFiles":[],"draft":""}
+        """.utf8))
+        XCTAssertEqual(profile.mode, .work)
+
+        let completion = try decoder.decode(TurnCompletion.self, from: Data("""
+        {"outcome":"complete","mode":"build","durationMilliseconds":10}
+        """.utf8))
+        XCTAssertEqual(completion.mode, .work)
+
+        // An unrecognised value resolves the same way rather than throwing.
+        XCTAssertEqual(WorkMode.stored("build"), .work)
+        XCTAssertEqual(WorkMode.stored("nonsense"), .work)
+        XCTAssertEqual(WorkMode.stored("grill"), .grill)
+    }
+
+    @MainActor
+    func testLegacyTeamOverlaysSurviveTheGrillRename() throws {
+        // Synthesized `Decodable` ignores property defaults and would throw
+        // `keyNotFound` on the missing `grill` key. `AgentBehavior` swallows
+        // that with `try?`, so a team would lose its Ask/Work/Plan overlays too.
+        let overlays = try JSONDecoder().decode(AgentModeOverlays.self, from: Data("""
+        {"ask":"","work":"w","plan":"p","build":"b"}
+        """.utf8))
+        XCTAssertEqual(overlays.work, "w")
+        XCTAssertEqual(overlays.plan, "p")
+        // The retired GSD overlay is deliberately dropped: execution guidance
+        // is not interview guidance.
+        XCTAssertEqual(overlays.grill, "")
     }
 
     @MainActor
@@ -1205,7 +1238,7 @@ final class AppModelTests: XCTestCase {
             ),
         ]
 
-        for mode in [WorkMode.work, .plan, .build] {
+        for mode in [WorkMode.work, .plan, .grill] {
             let prompt = model.decoratedPrompt(
                 "Fix it", mode: mode, chatAttachments: attachments
             )
@@ -2406,7 +2439,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testWorkSlashCommandReturnsToAdaptiveMode() {
         let model = AppModel(startImmediately: false)
-        model.selectedMode = .build
+        model.selectedMode = .grill
 
         model.send("/work")
 
@@ -4046,21 +4079,31 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testJustChatKeepsInspectorClosedWhenItWasAlreadyClosed() {
         let model = AppModel(startImmediately: false)
-        model.selectedMode = .build
+        model.selectedMode = .grill
         model.inspectorCollapsed = true
 
         model.setJustChatEnabled(true)
         XCTAssertTrue(model.inspectorCollapsed)
 
         model.setJustChatEnabled(false)
-        XCTAssertEqual(model.selectedMode, .build)
+        XCTAssertEqual(model.selectedMode, .grill)
         XCTAssertTrue(model.inspectorCollapsed, "leaving Just Chat preserves a previously closed inspector")
     }
 
     @MainActor
-    func testCompletedBuildTurnAddsTimingMarkerAndFinishesTheActivePlanStep() {
+    func testCompletedWorkTurnAddsTimingMarkerAndFinishesTheActivePlanStep() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
+        // Reconciliation is gated on an approved plan, not just the mode, so
+        // arrive at one the way the app does rather than assigning it.
+        model.handleEventForTesting([
+            "type": "plan_ready",
+            "plan": [
+                "id": "p", "title": "t", "summary": "s",
+                "steps": ["Inspect the sidebar", "Add the completion cue", "Optional follow-up"],
+                "tests": [],
+            ],
+        ])
         model.todos = [
             TodoItem(content: "Inspect the sidebar", status: .completed),
             TodoItem(content: "Add the completion cue", status: .inProgress),
@@ -4075,15 +4118,15 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertEqual(model.todos.map(\.status), [.completed, .completed, .pending])
         let completion = model.blocks.last?.completion
-        XCTAssertEqual(completion?.title, "Task finished")
+        XCTAssertEqual(completion?.title, "Work finished")
         XCTAssertEqual(completion?.durationText, "1m 24s")
         XCTAssertEqual(completion?.outcome, .complete)
     }
 
     @MainActor
-    func testInterruptedBuildTurnDoesNotClaimTheActivePlanStepFinished() {
+    func testInterruptedWorkTurnDoesNotClaimTheActivePlanStepFinished() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
         model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
 
         model.handleEventForTesting([
@@ -4131,9 +4174,9 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPlanPanelPreservesStoppedBuildPlan() {
+    func testPlanPanelPreservesStoppedWorkPlan() {
         let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .build
+        model.turnDispatchedMode = .work
         model.isBusy = true
         model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
 
@@ -4176,10 +4219,10 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testBuildTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
+    func testWorkTurnDoesNotOfferApprovalEvenAfterAMidRunSwitchToPlan() {
         let model = AppModel(startImmediately: false)
-        // What send() latches when a turn is dispatched in Build mode.
-        model.selectedMode = .build
+        // What send() latches when a turn is dispatched in a non-Plan mode.
+        model.selectedMode = .work
         model.turnDispatchedInPlanMode = false
 
         model.handleEventForTesting([
@@ -4319,7 +4362,7 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testImplementingThePlanSwitchesToBuildMode() {
+    func testImplementingThePlanSwitchesToWorkMode() {
         let model = AppModel(startImmediately: false)
         model.agentRuntimePhase = .online
         armPlanApproval(model)
@@ -4327,7 +4370,10 @@ final class AppModelTests: XCTestCase {
         model.resolvePlanApproval(.proceed)
 
         XCTAssertFalse(model.planApprovalPending)
-        XCTAssertEqual(model.selectedMode, .build, "implementation happens in Build mode")
+        XCTAssertEqual(
+            model.selectedMode, .work,
+            "Proceed implements in Work; landing in an interview would be the opposite"
+        )
     }
 
     @MainActor
@@ -4408,6 +4454,109 @@ final class AppModelTests: XCTestCase {
         model.handleEventForTesting(["type": "error", "message": "agent crashed"])
 
         XCTAssertFalse(model.planApprovalPending)
+    }
+
+    // MARK: - Question box
+
+    @MainActor
+    private func questionEvent(
+        requestID: String = "req-q",
+        questions: [[String: Any]]
+    ) -> [String: Any] {
+        ["type": "question_required", "request_id": requestID,
+         "id": "call-1", "tool": "ask_question", "questions": questions]
+    }
+
+    @MainActor
+    func testQuestionRequiredReplacesTheComposerWithThePanel() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(questionEvent(questions: [
+            ["id": "q1", "header": "Storage", "question": "Where should the cache live?",
+             "multi_select": false,
+             "options": [["label": "In-memory", "description": "Fast"],
+                         ["label": "SQLite", "description": "Durable"]]],
+        ]))
+
+        XCTAssertTrue(model.hasPendingQuestion)
+        XCTAssertTrue(model.awaitingUserDecision)
+        XCTAssertEqual(model.pendingQuestion?.questions.first?.header, "Storage")
+        XCTAssertEqual(
+            model.pendingQuestion?.questions.first?.options.map(\.label),
+            ["In-memory", "SQLite"]
+        )
+        XCTAssertEqual(model.currentWorkPhase, "Waiting for your answer")
+    }
+
+    @MainActor
+    func testFreeTextQuestionWithNoOptionsStillArmsThePanel() {
+        // The whole point of the box: a question with nothing to pick from is
+        // still a question, and still gets a panel with a field.
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(questionEvent(questions: [
+            ["id": "q1", "header": "Naming", "question": "What should we call it?"],
+        ]))
+
+        XCTAssertTrue(model.hasPendingQuestion)
+        XCTAssertEqual(model.pendingQuestion?.questions.first?.options, [])
+    }
+
+    @MainActor
+    func testUnrenderableQuestionIsCancelledRatherThanDropped() {
+        // A question we cannot show still has a worker thread parked on it, so
+        // dropping it silently would wedge the agent until Stop.
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(questionEvent(questions: []))
+
+        XCTAssertFalse(model.hasPendingQuestion)
+        XCTAssertEqual(model.blocks.last?.kind, .error)
+    }
+
+    @MainActor
+    func testTurnDoneAndDisconnectClearAPendingQuestion() {
+        let model = AppModel(startImmediately: false)
+        let arm = { model.handleEventForTesting(self.questionEvent(questions: [
+            ["id": "q1", "question": "Which one?"],
+        ])) }
+
+        arm()
+        model.handleEventForTesting(["type": "turn_done", "reason": "complete"])
+        XCTAssertFalse(model.hasPendingQuestion)
+
+        arm()
+        model.handleEventForTesting([
+            "type": "question_resolved", "request_id": "req-q",
+        ])
+        XCTAssertFalse(model.hasPendingQuestion)
+    }
+
+    @MainActor
+    func testPendingQuestionHoldsQueuedMessages() {
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(questionEvent(questions: [
+            ["id": "q1", "question": "Which one?"],
+        ]))
+        model.queuedMessages = ["next thing"]
+
+        model.drainQueuedMessagesForTesting()
+
+        XCTAssertEqual(model.queuedMessages, ["next thing"], "the answer comes first")
+    }
+
+    @MainActor
+    func testAnswerThatCannotBeDeliveredKeepsThePanelOpen() {
+        // With no agent attached the frame cannot be sent. The panel has to
+        // stay: the worker is still parked on an answer it never received, and
+        // silently dismissing would drop what the user typed. Same contract as
+        // a permission decision that misses its socket.
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(questionEvent(questions: [
+            ["id": "q1", "question": "Which one?",
+             "options": [["label": "A"], ["label": "B"]]],
+        ]))
+
+        model.resolveQuestion([AgentQuestionAnswer(id: "q1", selected: ["B"], text: "")])
+
+        XCTAssertTrue(model.hasPendingQuestion, "an undelivered answer must not dismiss the box")
     }
 
     /// Drives the model through the real wire sequence that ends a Plan-mode

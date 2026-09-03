@@ -5,18 +5,36 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     case ask
     case work
     case plan
-    case build
+    case grill
 
     var id: String { rawValue }
 
-    /// User-facing name. `build` keeps its raw value for stored profiles and
-    /// the runtime's `[Locus mode:]` header; GSD is its display identity.
+    /// The modes the composer offers as buttons. Ask and Work are reached by
+    /// leaving these, not by a button of their own.
+    static let composerModes: [WorkMode] = [.plan, .grill]
+
+    /// Every stored `WorkMode` arrives through here rather than through the
+    /// synthesized decoder, which throws on an unknown raw value. `build` was
+    /// GSD mode, which Grill Me replaced: it resolves to adaptive Work, the
+    /// same answer the retired one-shot profile migration gave when Build
+    /// stopped being a landing mode. Without this a single stale value fails
+    /// the whole file, and `WorkspaceProfile.mode`, `ScheduledTask.mode` and
+    /// checkpointed `TurnCompletion.mode` are all decoded non-optionally — so
+    /// one saved GSD schedule would silently empty the user's schedule list.
+    static func stored(_ raw: String) -> WorkMode {
+        WorkMode(rawValue: raw) ?? .work
+    }
+
+    init(from decoder: any Decoder) throws {
+        self = .stored(try decoder.singleValueContainer().decode(String.self))
+    }
+
     var title: String {
         switch self {
         case .ask: "Ask"
         case .work: "Work"
         case .plan: "Plan"
-        case .build: "GSD"
+        case .grill: "Grill Me"
         }
     }
 
@@ -25,7 +43,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .ask: "Answers without workspace access"
         case .work: "Chooses the right approach for the request"
         case .plan: "Maps the work before editing"
-        case .build: "Gets it done end-to-end with the GSD workflow"
+        case .grill: "Interviews you one decision at a time before anything gets built"
         }
     }
 
@@ -36,9 +54,9 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .work:
             "Solve the request using the workspace and tools when useful. Choose whether to answer, inspect, plan, or implement from the request itself. Follow the current permission policy for every action."
         case .plan:
-            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
-        case .build:
-            "Implement the request completely using the Get Shit Done method: follow the activated $gsd-workflow skill — resolve open decisions, plan, execute in bounded steps, and verify against concrete evidence. Inspect, edit, and verify the relevant files, asking for permission when required."
+            "Inspect files if useful, but do not modify anything. Ask clarifying questions with the ask_question tool when needed. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
+        case .grill:
+            "Interrogate the request before any of it gets built: follow the activated $grilling skill. Map the decision tree, and put exactly one decision to the user per turn using the ask_question tool, always stating your recommended answer. Recompute the frontier after every answer. Finding facts is your job — inspect the workspace directly rather than asking. Change nothing until the user confirms the shared understanding and asks you to proceed."
         }
     }
 }

@@ -57,7 +57,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .simulator: "ipad.and.iphone"
         case .notes: "note.text"
         case .checkpoints: "clock.arrow.circlepath"
-        case .runs: "point.3.connected.trianglepath.dotted"
+        case .runs: "play.square.stack.fill"
         case .agents: "doc.text.fill"
         case .router: "arrow.triangle.branch"
         case .proxies: "network.badge.shield.half.filled"

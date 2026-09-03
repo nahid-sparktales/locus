@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Questions now arrive in a box instead of a paragraph.** When the agent needs
+  a decision only you can make, it calls the new `ask_question` tool and the
+  composer is replaced by a panel — the same way permission requests and
+  finished plans already work. Arrow keys move, number keys pick, `↵` confirms
+  and `esc` dismisses, and there is always a row to type your own answer, so a
+  question with no suggested options still gets the panel and a text field. The
+  agent blocks on your answer inside the same turn rather than ending it, so it
+  keeps everything it had already worked out. It will not ask for passwords,
+  tokens, API keys, or payment details.
+
 - **Notebook gathers every note you have into one page.** The sidebar gear
   menu, the Locus menu (⇧⌘9), and the command palette open a searchable list of
   every note Locus has kept — one per workspace, one per chat, and the shared
@@ -50,6 +60,20 @@
   Codex can. Turning it on sends search queries to OpenAI.
 
 ### Changed
+
+- **Team runs have a clearer icon.** The scattered triangle-path glyph is
+  replaced by a stacked play symbol across the Runs tab, the runs header, the
+  dispatch panel and the Dispatcher role.
+
+- **GSD mode is now Grill Me.** The composer's second mode button runs the
+  bundled `grilling` interview — it maps the decision tree behind your request
+  and puts one decision to you at a time, through the new question box, with its
+  recommendation attached. `/gsd` is now `/grill` and the shortcut moved from
+  ⌥B to ⌥G. The `gsd-*` skills all remain bundled and reachable by typing `$`,
+  so the workflow survives as a skill even though the mode does not. Saved
+  schedules, workspaces and checkpoints that named GSD now open in adaptive
+  Work; per-team GSD guidance is not carried over to Grill Me, since execution
+  instructions are not interview instructions.
 
 - **Reasoning and tool activity now stay in transcript order.** Collapsed mode
   uses quiet inline summary disclosures at each real activity boundary, while

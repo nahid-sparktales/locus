@@ -85,15 +85,33 @@ struct AgentModeOverlays: Codable, Hashable {
     var ask = ""
     var work = ""
     var plan = ""
-    var build = ""
+    var grill = ""
 
     func instruction(for mode: WorkMode) -> String {
         switch mode {
         case .ask: ask
         case .work: work
         case .plan: plan
-        case .build: build
+        case .grill: grill
         }
+    }
+
+    init() {}
+
+    /// Decoded leniently because synthesized `Decodable` ignores the property
+    /// defaults above and throws `keyNotFound` on the retired `build` key —
+    /// and `AgentBehavior` swallows that with `try?`, so one missing key would
+    /// drop a team's Ask, Work and Plan overlays too.
+    ///
+    /// The old `build` overlay is deliberately not carried into `grill`: GSD
+    /// guidance describes how to execute, grilling describes what to ask, so
+    /// migrating it would inject execution instructions into an interview.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ask = (try? container.decode(String.self, forKey: .ask)) ?? ""
+        work = (try? container.decode(String.self, forKey: .work)) ?? ""
+        plan = (try? container.decode(String.self, forKey: .plan)) ?? ""
+        grill = (try? container.decode(String.self, forKey: .grill)) ?? ""
     }
 }
 
@@ -324,7 +342,7 @@ struct AgentBehavior: Codable, Hashable {
         modeInstructions.ask = String(modeInstructions.ask.prefix(4_000))
         modeInstructions.work = String(modeInstructions.work.prefix(4_000))
         modeInstructions.plan = String(modeInstructions.plan.prefix(4_000))
-        modeInstructions.build = String(modeInstructions.build.prefix(4_000))
+        modeInstructions.grill = String(modeInstructions.grill.prefix(4_000))
         memoryPolicy.clamp()
         runtimePolicy.clamp()
     }

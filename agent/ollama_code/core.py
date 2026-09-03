@@ -88,6 +88,8 @@ PermissionDecider = Callable[[str, str, str, str], str]
 
 _SOLO_ROOT_ONLY_TOOLS = {
     "delegate_read_only",
+    # Only the visible root chat has a user to ask.
+    "ask_question",
     "todo_write",
     "submit_plan",
     "capture_context_snapshot",
@@ -232,7 +234,8 @@ Rules:
 4. Paths are relative to the working directory unless they start with /.
 5. Keep going: after a tool result comes back, continue with the next step until the task is fully done, then stop calling tools and give your final answer.
 6. Be concise. Final answers: 1-3 short sentences saying what you did and which files changed.
-7. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once so it appears in the review-only Memory Inbox. Never propose guesses, secrets, or transient task details.
+7. When a decision is genuinely the user's — a product choice, a naming call, a tradeoff you cannot settle from the workspace — call ask_question and wait. Never use it for facts you can find yourself, and never ask for a password, token, API key, or payment detail.
+8. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once so it appears in the review-only Memory Inbox. Never propose guesses, secrets, or transient task details.
 
 Environment:
 - OS: {os_name}
@@ -532,7 +535,10 @@ class AgentCore:
             fallback_instructions=fallback_instructions,
         )
         self.agent_id = str(agent_id or "primary")[:128]
-        self.agent_mode = mode if mode in {"ask", "work", "plan", "build"} else "work"
+        # Keep "grill" listed: `sessions.py` drops the mode-instruction section
+        # for ask/work only, so an unlisted mode would coerce to "work" here and
+        # silently strip the $grilling activation on the parity path.
+        self.agent_mode = mode if mode in {"ask", "work", "plan", "grill", "build"} else "work"
         self.agent_role_contract = str(role_contract or "")[:8_000]
         self.memory_context = str(memory_context or "")[:24_000]
         self.continuity_context = (
@@ -1327,6 +1333,7 @@ class AgentCore:
         self.tool_ctx.todos = []
         self.tool_ctx.plan_document = None
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.questions_asked_this_turn = 0
         self._last_user_message = None
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
@@ -1622,6 +1629,7 @@ class AgentCore:
         self._interrupt.clear()
         self.begin_steerable_turn()
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.questions_asked_this_turn = 0
         self._last_user_message = user_text
         if allow_tools:
             self.reload_context()
@@ -2155,6 +2163,7 @@ class AgentCore:
                 self._steer_event.clear()
                 self._accepting_steers = True
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.questions_asked_this_turn = 0
         self._last_user_message = user_text
         # Stale counts from a previous turn must not leak into this turn's
         # budget projection.
@@ -2443,6 +2452,7 @@ class AgentCore:
         self.messages = self.messages[: index + 1]
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.questions_asked_this_turn = 0
         # Branch onto a fresh saved session so the original transcript survives.
         self.session = self._new_session_store()
         for message in self.messages[1:]:

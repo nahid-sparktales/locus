@@ -34,7 +34,7 @@ struct PlanPanelPresentation: Equatable {
             switch dispatchedMode {
             case .plan:
                 return PlanPanelPresentation(phase: .planning, stoppedOutcome: nil)
-            case .build where !todos.isEmpty:
+            case .work where !todos.isEmpty:
                 return PlanPanelPresentation(phase: .executing, stoppedOutcome: nil)
             default:
                 return PlanPanelPresentation(phase: .working, stoppedOutcome: nil)
@@ -43,7 +43,7 @@ struct PlanPanelPresentation: Equatable {
         if !todos.isEmpty,
            let completion = latestCompletion,
            completion.outcome != .complete,
-           completion.mode == .work || completion.mode == .plan || completion.mode == .build
+           completion.mode == .work || completion.mode == .plan
         {
             return PlanPanelPresentation(
                 phase: .stopped,

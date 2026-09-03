@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_MODES = {"ask", "work", "plan", "build"}
+#: "build" is the retired GSD mode, kept so stored agent configs still parse.
+VALID_MODES = {"ask", "work", "plan", "grill", "build"}
 VALID_TONES = {"balanced", "direct", "warm", "analytical"}
 VALID_VERBOSITY = {"concise", "balanced", "detailed"}
 VALID_MEMORY_SCOPES = {"personal", "workspace", "agent"}

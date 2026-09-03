@@ -94,8 +94,9 @@ def _dispatch_companion_chat(
     if len(prompt) > 240_000:
         raise HTTPException(413, "prompt is too large")
     mode = str(body.get("mode") or "work").strip().lower()
-    if mode not in {"ask", "work", "plan", "build"}:
-        raise HTTPException(422, "mode must be ask, work, plan, or build")
+    # "build" is the retired GSD mode, kept so existing schedule rows still load.
+    if mode not in {"ask", "work", "plan", "grill", "build"}:
+        raise HTTPException(422, "mode must be ask, work, plan, or grill")
 
     requested_session_id = str(body.get("session_id") or "").strip()
     task: TaskCheckout | None = None

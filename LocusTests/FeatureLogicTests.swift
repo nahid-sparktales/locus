@@ -1335,7 +1335,7 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testModelRoutingTagsClassifyLocallyWithoutReturningPromptContent() {
         let prompt = "Debug the failing Swift API test for CustomerSecretValue"
-        let tags = AppModel.modelRoutingTags(for: prompt, mode: .build)
+        let tags = AppModel.modelRoutingTags(for: prompt, mode: .grill)
         XCTAssertTrue(tags.contains("coding"))
         XCTAssertTrue(tags.contains("debugging"))
         XCTAssertTrue(tags.contains("testing"))
@@ -3726,23 +3726,23 @@ final class FeatureLogicTests: XCTestCase {
         // the number is what points at a setting instead — a config carrying
         // max_iterations: 5 stopped turns early for a week without saying so.
         let named = TurnCompletion(
-            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000,
+            outcome: .maxIterations, mode: .grill, durationMilliseconds: 1_000,
             iterationLimit: 5
         )
         XCTAssertEqual(named.title, "Iteration limit reached (5 steps)")
 
         let unknown = TurnCompletion(
-            outcome: .maxIterations, mode: .build, durationMilliseconds: 1_000
+            outcome: .maxIterations, mode: .grill, durationMilliseconds: 1_000
         )
         XCTAssertEqual(unknown.title, "Iteration limit reached", "no number, no parenthetical")
 
         let finished = TurnCompletion(
-            outcome: .complete, mode: .build, durationMilliseconds: 1_000
+            outcome: .complete, mode: .grill, durationMilliseconds: 1_000
         )
-        XCTAssertEqual(finished.title, "Task finished")
+        XCTAssertEqual(finished.title, "Grilling finished")
 
         let teamBudget = TurnCompletion(
-            outcome: .modelCallBudget, mode: .build, durationMilliseconds: 1_000,
+            outcome: .modelCallBudget, mode: .grill, durationMilliseconds: 1_000,
             iterationLimit: 24
         )
         XCTAssertEqual(teamBudget.title, "Team call budget reached (24 calls)")
@@ -3818,12 +3818,50 @@ final class FeatureLogicTests: XCTestCase {
 
     // MARK: - Plan panel presentation
 
+    func testQuestionRequestDecodesLeniently() throws {
+        // Lenient on purpose: a decode failure would drop the panel *and*
+        // leave the agent's worker thread parked on an answer that can never
+        // arrive, so unknown or missing keys must never throw.
+        let request = try JSONDecoder().decode(AgentQuestionRequest.self, from: Data("""
+        {"request_id":"r1","id":"call-1","tool":"ask_question","unexpected":true,
+         "questions":[
+           {"id":"q1","header":"Storage","question":"Where?","multi_select":true,
+            "options":[{"label":"A","description":"first"},{"label":"B"}]},
+           {"question":"What should we call it?"}
+         ]}
+        """.utf8))
+
+        XCTAssertEqual(request.id, "r1")
+        XCTAssertEqual(request.toolID, "call-1")
+        XCTAssertTrue(request.questions[0].multiSelect)
+        XCTAssertEqual(request.questions[0].options[1].description, "")
+        // Second question omits everything optional: no options is the
+        // free-text shape, and the panel still renders it.
+        XCTAssertEqual(request.questions[1].id, "q1")
+        XCTAssertEqual(request.questions[1].header, "")
+        XCTAssertFalse(request.questions[1].multiSelect)
+        XCTAssertEqual(request.questions[1].options, [])
+    }
+
+    func testQuestionAnswerEncodesLabelsNotIndices() throws {
+        // Labels, not indices: the panel and the backend can then never
+        // disagree about ordering.
+        let encoded = try JSONEncoder().encode(
+            AgentQuestionAnswer(id: "q1", selected: ["SQLite"], text: "or Postgres")
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(object["selected"] as? [String], ["SQLite"])
+        XCTAssertEqual(object["text"] as? String, "or Postgres")
+    }
+
     func testPlanPanelPhaseUsesAttentionAndRunStatePrecedence() {
         let pending = [TodoItem(content: "Inspect the panel", status: .pending)]
         let complete = [TodoItem(content: "Inspect the panel", status: .completed)]
         let stopped = TurnCompletion(
             outcome: .interrupted,
-            mode: .build,
+            mode: .work,
             durationMilliseconds: 2_000,
             iterationLimit: nil
         )
@@ -3837,7 +3875,8 @@ final class FeatureLogicTests: XCTestCase {
             .readyForApproval
         )
         XCTAssertEqual(planPhase(busy: true, mode: .plan), .planning)
-        XCTAssertEqual(planPhase(busy: true, mode: .build, todos: pending), .executing)
+        XCTAssertEqual(planPhase(busy: true, mode: .work, todos: pending), .executing)
+        XCTAssertEqual(planPhase(busy: true, mode: .grill, todos: pending), .working)
         XCTAssertEqual(planPhase(busy: true, mode: .work), .working)
         XCTAssertEqual(planPhase(todos: complete), .completed)
         XCTAssertEqual(planPhase(todos: pending, completion: stopped), .stopped)
@@ -3943,7 +3982,7 @@ final class FeatureLogicTests: XCTestCase {
         behavior.responseStyle.tone = .analytical
         behavior.responseStyle.verbosity = .detailed
         behavior.customInstructions = "Prefer focused patches."
-        behavior.modeInstructions.build = "Run the smallest relevant tests."
+        behavior.modeInstructions.grill = "Always ask about rollback before schema changes."
         behavior.capabilityPolicy.network = false
         behavior.memoryPolicy.scopes = [.personal, .agent, .personal]
         behavior.memoryPolicy.maxAutomaticMemories = 500
@@ -3957,7 +3996,7 @@ final class FeatureLogicTests: XCTestCase {
 
         XCTAssertEqual(restored.displayName, "Research Builder")
         XCTAssertEqual(restored.responseStyle.tone, .analytical)
-        XCTAssertEqual(restored.modeInstructions.build, "Run the smallest relevant tests.")
+        XCTAssertEqual(restored.modeInstructions.grill, "Always ask about rollback before schema changes.")
         XCTAssertFalse(restored.capabilityPolicy.network)
         XCTAssertEqual(restored.memoryPolicy.scopes, [.personal, .agent])
         XCTAssertEqual(restored.memoryPolicy.maxAutomaticMemories, 20)

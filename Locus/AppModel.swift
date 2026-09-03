@@ -239,7 +239,7 @@ final class AppModel: ObservableObject {
         }
     }
     /// Compatibility state for profiles written before Solo delegation became
-    /// adaptive. Every non-team Solo Work/Plan/GSD turn now enables it.
+    /// adaptive. Every non-team Solo Work/Plan/Grill Me turn now enables it.
     @Published var soloSwarmEnabled = true {
         didSet {
             guard soloSwarmEnabled != oldValue else { return }
@@ -300,6 +300,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var backgroundServices: [BackgroundServiceRecord] = []
     private var backgroundServicesRefreshGeneration = 0
     @Published var mcpInputRequest: MCPInputRequest?
+    /// The agent is parked on a worker thread waiting for this answer.
+    @Published private(set) var pendingQuestion: AgentQuestionRequest?
     @Published var mcpDeviceAuthorization: MCPDeviceAuthorizationPrompt?
     private var orchestrationEventIDs: Set<String> = []
     @Published var sessions: [SessionSummary] = []
@@ -882,12 +884,15 @@ final class AppModel: ObservableObject {
         }
         let initialInspectorTab = loadedSettings.resolvedRestoredInspectorTab
 
-        let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
+        // Retained only to persist that the one-shot migration ran. The profile
+        // rewrite it used to gate is now handled by `WorkMode.stored`, which maps
+        // the retired `build` raw value at decode time for every store.
+        let adaptiveWorkMigrationJustRan = !loadedSettings.adaptiveWorkMigrationCompleted
         loadedSettings.adaptiveWorkMigrationCompleted = true
         let migrateLegacyWalletFeatureAccess = loadedSettings.migrateLegacyWalletFeatureAccess(
             environment: ProcessInfo.processInfo.environment
         )
-        if (migrateLegacyBuildMode || migrateLegacyWalletFeatureAccess), persistenceEnabled,
+        if (adaptiveWorkMigrationJustRan || migrateLegacyWalletFeatureAccess), persistenceEnabled,
            let data = try? JSONEncoder().encode(loadedSettings)
         {
             defaults.set(data, forKey: "Locus.settings")
@@ -920,15 +925,7 @@ final class AppModel: ObservableObject {
            let data = defaults.data(forKey: "Locus.workspaceProfiles"),
            let saved = try? JSONDecoder().decode([WorkspaceProfile].self, from: data)
         {
-            var recent = saved.sorted { $0.lastOpened > $1.lastOpened }
-            if migrateLegacyBuildMode {
-                recent = Self.migrateLegacyBuildProfiles(recent)
-                if persistenceEnabled,
-                   let migratedData = try? JSONEncoder().encode(recent)
-                {
-                    defaults.set(migratedData, forKey: "Locus.workspaceProfiles")
-                }
-            }
+            let recent = saved.sorted { $0.lastOpened > $1.lastOpened }
             workspaceProfiles = recent
             restoredWorkspacePaths = recent.map(\.path)
         }
@@ -1492,6 +1489,14 @@ final class AppModel: ObservableObject {
         blocks.contains { $0.tool?.status == .awaitingPermission }
     }
 
+    var hasPendingQuestion: Bool { pendingQuestion != nil }
+
+    /// Anything that blocks starting a new turn because the agent is waiting on
+    /// the user. `hasPendingPermission` stays permission-specific: several of
+    /// its ~20 readers mean "a tool card is stuck awaiting", not "a turn cannot
+    /// start", so widening it in place would change those too.
+    var awaitingUserDecision: Bool { hasPendingPermission || hasPendingQuestion }
+
     /// Bridged into settings so the choice persists; views observe it through
     /// the published `settings`.
     var thinkingVisibility: ThinkingVisibility {
@@ -1564,6 +1569,9 @@ final class AppModel: ObservableObject {
     var currentWorkPhase: String {
         if let steeringState { return steeringState }
         if let orchestrationState, isBusy { return orchestrationState.title }
+        // Ahead of the permission branch: the turn is genuinely stalled on the
+        // user here, and "Working…" would be a lie.
+        if pendingQuestion != nil { return "Waiting for your answer" }
         if let request = activePermissionRequest {
             if toolActivityVisibility == .hidden { return "Action needs approval" }
             return "Waiting for permission · \(request.tool)"
@@ -3840,7 +3848,7 @@ final class AppModel: ObservableObject {
     }
 
     private func hasLocalWriterCollision(for runtime: ChatWorkerRuntime) -> Bool {
-        guard runtime.dispatchedMode == .work || runtime.dispatchedMode == .build,
+        guard runtime.dispatchedMode == .work,
               runtime.sessionInfo?.environment?["type"] != ChatExecutionEnvironment.worktree.rawValue,
               let root = runtime.sessionInfo?.environment?["canonical_repository"]
                 ?? runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
@@ -3848,7 +3856,7 @@ final class AppModel: ObservableObject {
         let canonical = URL(fileURLWithPath: root).standardizedFileURL.path
         return taskWorkers.values.contains { other in
             guard other !== runtime, other.occupiesExecutionSlot,
-                  other.dispatchedMode == .work || other.dispatchedMode == .build,
+                  other.dispatchedMode == .work,
                   other.sessionInfo?.environment?["type"]
                     != ChatExecutionEnvironment.worktree.rawValue,
                   let otherRoot = other.sessionInfo?.environment?["canonical_repository"]
@@ -3998,7 +4006,7 @@ final class AppModel: ObservableObject {
     }
 
     private func drainQueuedMessages() {
-        guard !isBusy, !hasPendingPermission, !planApprovalPending, !queuedMessages.isEmpty else {
+        guard !isBusy, !awaitingUserDecision, !planApprovalPending, !queuedMessages.isEmpty else {
             return
         }
         guard isAgentOnline else { return }
@@ -6405,6 +6413,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Answer the open question. `action` is "answer" or "cancel"; a cancel
+    /// still carries whatever was collected, so a partial run reaches the model.
+    func resolveQuestion(_ answers: [AgentQuestionAnswer], action: String = "answer") {
+        guard let request = pendingQuestion else { return }
+        // UI tests drive the panel against a dead socket; clearing locally is
+        // what lets it advance and dismiss, exactly as `decide` does.
+        if !isUITesting {
+            guard conversationBackend.send([
+                "type": "question_response",
+                "request_id": request.id,
+                "action": action,
+                "answers": answers.compactMap(encodedJSONObject),
+            ]) else {
+                showToast("The agent disconnected before your answer was sent")
+                return
+            }
+        }
+        pendingQuestion = nil
+    }
+
+    func cancelQuestion() { resolveQuestion([], action: "cancel") }
+
     func answerMCPInput(action: String, content: [String: Any] = [:]) {
         guard let request = mcpInputRequest else { return }
         let sent = backend.send([
@@ -8648,7 +8678,7 @@ final class AppModel: ObservableObject {
             state.selectedRouteModel = selectedModel
             state.runStatus = orchestrationState
             state.isBusy = isBusy
-            state.hasPendingPermission = hasPendingPermission
+            state.hasPendingPermission = awaitingUserDecision
         }
     }
 
@@ -9372,7 +9402,10 @@ final class AppModel: ObservableObject {
                 return
             }
             planApprovalPending = false
-            selectedMode = .build
+            // Work, not Grill Me: the user just approved a plan, so an
+            // interview is the opposite of "Proceed". Work plus the explicit
+            // follow-up below is a complete dispatch.
+            selectedMode = .work
             Task { [weak self] in
                 guard let self else { return }
                 send(
@@ -10933,7 +10966,7 @@ final class AppModel: ObservableObject {
         case .askMode: selectedMode = .ask
         case .workMode: selectedMode = .work
         case .planMode: selectedMode = .plan
-        case .buildMode: selectedMode = .build
+        case .grillMode: selectedMode = .grill
         case .chooseWorkspace: chooseWorkspace()
         case .newWorkspace: createWorkspace()
         case .browseModels: modelLibraryPresented = true
@@ -10970,6 +11003,10 @@ final class AppModel: ObservableObject {
         handle(event)
     }
 
+    func drainQueuedMessagesForTesting() {
+        drainQueuedMessages()
+    }
+
     /// SwiftUI queues a sibling sheet while Settings is still visible. Record
     /// the destination and complete the handoff from the dismissal callback.
     func openModelLibraryFromSettings() {
@@ -11001,15 +11038,6 @@ final class AppModel: ObservableObject {
 
     func prepareOpenSettingsForUpdate() -> Bool {
         settingsUpdatePreparation?.handler() ?? true
-    }
-
-    static func migrateLegacyBuildProfiles(_ profiles: [WorkspaceProfile]) -> [WorkspaceProfile] {
-        profiles.map { profile in
-            guard profile.mode == .build else { return profile }
-            var migrated = profile
-            migrated.mode = .work
-            return migrated
-        }
     }
 
     private func backendIsHealthy() async -> Bool {
@@ -11503,7 +11531,11 @@ final class AppModel: ObservableObject {
         if let state = paneState(containing: runtime.sessionID) {
             state.runStatus = updated.state
             state.isBusy = runtime.occupiesExecutionSlot
+            // Covers questions too: the flag gates the same "the agent is
+            // waiting on you" affordances, and without it a background
+            // chat's question is invisible while its worker stays parked.
             state.hasPendingPermission = type == "permission_request"
+                || type == "question_required"
         }
         if let runID = updated.runID {
             lifecycleJournal?.record(
@@ -13032,6 +13064,34 @@ final class AppModel: ObservableObject {
                 synchronizeSessionPlan(todos)
             }
 
+        case "question_required":
+            let request = decode(AgentQuestionRequest.self, from: event)
+            if let request, !request.id.isEmpty, !request.questions.isEmpty {
+                pendingQuestion = request
+            } else {
+                // A question we cannot render still has a worker thread parked
+                // on it, so refusing silently would wedge the agent until Stop.
+                if let requestID = event["request_id"] as? String, !requestID.isEmpty {
+                    _ = conversationBackend.send([
+                        "type": "question_response",
+                        "request_id": requestID,
+                        "action": "cancel",
+                        "answers": [],
+                    ])
+                }
+                blocks.append(ChatBlock(
+                    kind: .error,
+                    text: "The agent asked a question this version of Locus cannot display."
+                ))
+            }
+
+        case "question_resolved":
+            if let requestID = event["request_id"] as? String,
+               pendingQuestion?.id == requestID
+            {
+                pendingQuestion = nil
+            }
+
         case "plan_ready":
             if let raw = event["plan"] as? [String: Any],
                let plan = decode(PlanDocument.self, from: raw),
@@ -13063,7 +13123,10 @@ final class AppModel: ObservableObject {
             let completedRunID = event["run_id"] as? String
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
-            if reason == "complete", dispatchedMode == .build {
+            // Gated on the approved plan, not just the mode: Work is the
+            // catch-all, so mode alone would auto-complete a dangling todo
+            // after every Work turn.
+            if reason == "complete", dispatchedMode == .work, activePlan != nil {
                 reconcileFinishedPlanStep()
             }
             if turnDispatchedTeamRunID == nil {
@@ -13092,6 +13155,7 @@ final class AppModel: ObservableObject {
             pendingRetry = false
             steeringState = nil
             mcpInputRequest = nil
+            pendingQuestion = nil
             streamingAssistantID = nil
             streamedCharsThisTurn = 0
             streamingReply.resetTurn()
@@ -13463,6 +13527,11 @@ final class AppModel: ObservableObject {
         // A pending "implement this plan?" survives the blip on purpose: the
         // decision is client-side state, and answering "implement" while
         // still disconnected is caught by resolvePlanApproval's guard.
+        //
+        // A pending question is the opposite and must clear: the backend
+        // cancels every waiting question when the socket drops, so the thread
+        // it was blocking is already gone and an answer would reach nobody.
+        pendingQuestion = nil
         planTodosChangedThisTurn = false
         turnDispatchedInPlanMode = false
         turnDispatchedMode = nil
@@ -13881,7 +13950,7 @@ final class AppModel: ObservableObject {
                 kind: .note,
                 completion: TurnCompletion(
                     outcome: .complete,
-                    mode: .build,
+                    mode: .grill,
                     durationMilliseconds: 84_000
                 )
             ),
@@ -14208,7 +14277,7 @@ final class AppModel: ObservableObject {
                 lastOpened: Date(),
                 model: "qwen3:8b",
                 accountID: nil,
-                mode: .build,
+                mode: .grill,
                 previewURL: "http://localhost:3000",
                 contextFiles: [],
                 draft: ""
@@ -14279,6 +14348,36 @@ final class AppModel: ObservableObject {
             )
             todos = activePlan?.steps.map { TodoItem(content: $0, status: .pending) } ?? []
             planApprovalPending = true
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_QUESTION"] == "1" {
+            // Two questions, one with options and one without, so the audit
+            // covers both renderings of the same panel.
+            pendingQuestion = AgentQuestionRequest(
+                id: "req-ui-question",
+                toolID: "seed-tool-question",
+                questions: [
+                    AgentQuestion(
+                        id: "q1",
+                        header: "Storage",
+                        question: "Where should the response cache live?",
+                        options: [
+                            AgentQuestionOption(
+                                label: "In-memory",
+                                description: "Fastest, lost on restart."
+                            ),
+                            AgentQuestionOption(
+                                label: "SQLite",
+                                description: "Durable, adds a dependency."
+                            ),
+                        ]
+                    ),
+                    AgentQuestion(
+                        id: "q2",
+                        header: "Naming",
+                        question: "What should the public API call this?"
+                    ),
+                ]
+            )
         }
         seedUITestRunFixtureIfNeeded()
 
@@ -15698,7 +15797,7 @@ extension AppModel {
         }
         let modeRaw = CompanionPayload.string("mode", in: request.payload) ?? WorkMode.work.rawValue
         guard let mode = WorkMode(rawValue: modeRaw) else {
-            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or GSD.")
+            throw CompanionProtocolError(code: "invalid_mode", message: "Choose Ask, Work, Plan, or Grill Me.")
         }
         var body: [String: Any] = [
             "request_id": request.id,
@@ -15960,7 +16059,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
     case askMode
     case workMode
     case planMode
-    case buildMode
+    case grillMode
     case chooseWorkspace
     case newWorkspace
     case browseModels
@@ -15985,7 +16084,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "Turn on Just Chat"
         case .workMode: "Use adaptive Work mode"
         case .planMode: "Switch to Plan mode"
-        case .buildMode: "Switch to GSD mode"
+        case .grillMode: "Switch to Grill Me mode"
         case .chooseWorkspace: "Choose a workspace"
         case .newWorkspace: "Create a new workspace folder"
         case .browseModels: "Browse Hugging Face models"
@@ -16010,7 +16109,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "bubble.left"
         case .workMode: "sparkles"
         case .planMode: "list.bullet.clipboard"
-        case .buildMode: "hammer"
+        case .grillMode: "flame"
         case .chooseWorkspace: "folder"
         case .newWorkspace: "folder.badge.plus"
         case .browseModels: "shippingbox.and.arrow.backward"
@@ -16035,7 +16134,7 @@ enum CommandAction: String, CaseIterable, Identifiable {
         case .askMode: "⌥A"
         case .workMode: "⌥W"
         case .planMode: "⌥P"
-        case .buildMode: "⌥B"
+        case .grillMode: "⌥G"
         case .showShortcuts: "⌘/"
         case .showNotebook: "⇧⌘9"
         case .searchConversations: "⇧⌘F"
