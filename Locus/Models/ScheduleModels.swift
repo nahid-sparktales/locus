@@ -141,6 +141,7 @@ enum AgentConfigurationKind: String, CaseIterable, Identifiable {
 
 enum ConfigureAgentTab: String, CaseIterable, Identifiable {
     case configurations
+    case agents
     case sources
     case runHistory = "run_history"
 
@@ -149,6 +150,7 @@ enum ConfigureAgentTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .configurations: "Configurations"
+        case .agents: "Agents"
         case .sources: "Sources"
         case .runHistory: "Run History"
         }

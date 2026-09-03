@@ -14,6 +14,11 @@ private func rustSignEVMTransaction(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_derive_accounts_json")
+private func rustDeriveAccounts(
+    _ entropyHex: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_string_free")
 private func rustFreeString(_ value: UnsafeMutablePointer<CChar>)
 
@@ -40,9 +45,42 @@ final class WalletAnvilIntegrationTests: XCTestCase {
     private static let pinnedAnvilVersion = "1.7.1"
     private static let entropy = String(repeating: "00", count: 32)
 
+    func testRustDerivedAccountsDecodeThroughProductionSwiftBoundary() throws {
+        let pointer = Self.entropy.withCString { rustDeriveAccounts($0) }
+        let resultPointer = try XCTUnwrap(pointer)
+        defer { rustFreeString(resultPointer) }
+
+        let accounts = try WalletDerivedAccountsDecoder.decode(
+            Data(String(cString: resultPointer).utf8)
+        )
+
+        XCTAssertEqual(accounts.map(\.id), [
+            "locus-vault-evm-0",
+            "locus-vault-solana-0",
+            "locus-vault-sui-0",
+        ])
+        XCTAssertEqual(accounts.map(\.chain), [.evm, .solana, .sui])
+        XCTAssertEqual(accounts.map(\.address), [
+            "0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb",
+            "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx",
+            "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c",
+        ])
+        XCTAssertEqual(accounts.map(\.label), [
+            "Locus Vault EVM",
+            "Locus Vault Solana",
+            "Locus Vault Sui",
+        ])
+        XCTAssertEqual(accounts.map(\.networkIDs), [
+            ["eip155:1", "eip155:11155111"],
+            ["solana:mainnet-beta", "solana:devnet"],
+            ["sui:mainnet", "sui:testnet"],
+        ])
+    }
+
     func testPinnedSignerCoreBroadcastReplayRecheckAndRecoveryOnAnvil() async throws {
         let environment = ProcessInfo.processInfo.environment
-        guard let endpoint = environment["LOCUS_ANVIL_RPC_URL"] else {
+        guard let endpoint = environment["LOCUS_ANVIL_RPC_URL"],
+              !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw XCTSkip("Run Tools/RunWalletChainTests.sh with pinned Anvil v1.7.1.")
         }
         XCTAssertEqual(environment["LOCUS_ANVIL_VERSION"], Self.pinnedAnvilVersion)

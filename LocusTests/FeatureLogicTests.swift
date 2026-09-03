@@ -5437,6 +5437,20 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(queue.isFirst("second"))
     }
 
+    func testBackgroundChatAdmissionQueueLetsEligibleWorkBypassABlockedChat() {
+        var queue = ChatAdmissionQueue()
+        queue.enqueue("blocked-writer")
+        queue.enqueue("independent-reader")
+        queue.enqueue("later-writer")
+
+        XCTAssertTrue(queue.isFirstEligible("independent-reader") { sessionID in
+            sessionID != "blocked-writer"
+        })
+        XCTAssertFalse(queue.isFirstEligible("later-writer") { sessionID in
+            sessionID != "blocked-writer"
+        })
+    }
+
     func testFaviconCandidateURLDecisionTable() {
         let page = URL(string: "https://docs.example.com/guide")!
 

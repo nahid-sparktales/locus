@@ -81,7 +81,8 @@ final class LocusUITests: XCTestCase {
     /// than by XCTest. Resolve and validate that running child directly;
     /// bundle-identifier attachment is unreliable for nested helpers on macOS.
     private func waitForRecoveryApplication(
-        timeout: TimeInterval = 10
+        timeout: TimeInterval = 10,
+        excluding excludedProcessIdentifiers: Set<pid_t> = []
     ) -> NSRunningApplication? {
         var result: NSRunningApplication?
         guard waitUntil(timeout: timeout, condition: {
@@ -89,6 +90,7 @@ final class LocusUITests: XCTestCase {
                 withBundleIdentifier: "io.sparktales.locus.WalletRecovery"
             ).first(where: {
                 !$0.isTerminated
+                    && !excludedProcessIdentifiers.contains($0.processIdentifier)
                     && $0.bundleURL?.path.hasSuffix(
                         "Locus.app/Contents/Helpers/WalletRecovery.app"
                     ) == true
@@ -99,6 +101,12 @@ final class LocusUITests: XCTestCase {
             return result != nil
         }) else { return nil }
         return result
+    }
+
+    private func runningRecoveryProcessIdentifiers() -> Set<pid_t> {
+        Set(NSRunningApplication.runningApplications(
+            withBundleIdentifier: "io.sparktales.locus.WalletRecovery"
+        ).filter { !$0.isTerminated }.map(\.processIdentifier))
     }
 
     private func assertRecoveryApplicationPresented(
@@ -1142,8 +1150,11 @@ final class LocusUITests: XCTestCase {
     func testWalletCreateRecoveryApplicationPresentsConfirmsCancelsAndRetries() throws {
         relaunchWalletFixture("setup", anchor: "settings.wallet.create")
 
+        let existingRecoveryProcesses = runningRecoveryProcessIdentifiers()
         anyElement("settings.wallet.create").click()
-        guard let recovery = waitForRecoveryApplication() else {
+        guard let recovery = waitForRecoveryApplication(
+            excluding: existingRecoveryProcesses
+        ) else {
             return XCTFail("The signed recovery application did not start.")
         }
         addTeardownBlock { recovery.terminate() }
@@ -1157,8 +1168,11 @@ final class LocusUITests: XCTestCase {
         app.activate()
         let create = anyElement("settings.wallet.create")
         XCTAssertTrue(waitUntilHittable(create, timeout: 5))
+        let recoveryProcessesBeforeRetry = runningRecoveryProcessIdentifiers()
         create.click()
-        guard let retry = waitForRecoveryApplication() else {
+        guard let retry = waitForRecoveryApplication(
+            excluding: recoveryProcessesBeforeRetry
+        ) else {
             return XCTFail("The recovery application did not reopen for retry.")
         }
         addTeardownBlock { retry.terminate() }
@@ -1173,8 +1187,11 @@ final class LocusUITests: XCTestCase {
     func testWalletRestoreRecoveryApplicationPresentsTwentyFourSecureFieldsAndCancels() throws {
         relaunchWalletFixture("setup", anchor: "settings.wallet.restore")
 
+        let existingRecoveryProcesses = runningRecoveryProcessIdentifiers()
         anyElement("settings.wallet.restore").click()
-        guard let recovery = waitForRecoveryApplication() else {
+        guard let recovery = waitForRecoveryApplication(
+            excluding: existingRecoveryProcesses
+        ) else {
             return XCTFail("The signed recovery application did not start.")
         }
         addTeardownBlock { recovery.terminate() }
@@ -1889,12 +1906,11 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        // Each destination creates the object it is about, so the primary
-        // button becomes New agent rather than another chat.
-        let newAgent = anyElement("sidebar.newAgent")
-        XCTAssertTrue(newAgent.waitForExistence(timeout: 3))
-        XCTAssertEqual(newAgent.label, "New agent")
-        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        // New Chat follows the destination, so the same action now starts a
+        // chat under the current or most recently used agent.
+        XCTAssertTrue(newChat.waitForExistence(timeout: 3))
+        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         // One name for the sheet, in both destinations.
         XCTAssertEqual(configureAgent.label, "Manage Agents")
@@ -1918,11 +1934,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
 
-        // Agents mode creates agents; chatting with one is a per-agent action.
-        let newAgent = anyElement("sidebar.newAgent")
-        XCTAssertTrue(newAgent.exists)
-        XCTAssertEqual(newAgent.label, "New agent")
-        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        // The primary action creates another chat for the selected agent.
+        let newChat = anyElement("sidebar.newSession")
+        XCTAssertTrue(newChat.exists)
+        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
         XCTAssertTrue(manage.exists)
@@ -2085,8 +2101,9 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        XCTAssertTrue(anyElement("sidebar.newAgent").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("sidebar.newSession").exists)
+        XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
+        XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
+        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("composer.context").exists)
@@ -3369,7 +3386,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
     }
 
-    func testConfigureAgentExposesSourcesConfigurationsAndSharedHistory() {
+    func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
         let configureAgent = anyElement("sidebar.configureAgent")
         XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))
         configureAgent.click()
@@ -3378,6 +3395,14 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.schedule").exists)
         XCTAssertTrue(anyElement("configureAgent.create.event").exists)
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
+
+        let agents = anyElement("configureAgent.tab.agents")
+        XCTAssertTrue(agents.waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("configureAgent.agents").exists)
+        agents.click()
+        XCTAssertTrue(anyElement("configureAgent.agents").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["No Agents Yet"].exists)
+        XCTAssertFalse(anyElement("configureAgent.create.schedule").exists)
 
         let sources = anyElement("configureAgent.tab.sources")
         XCTAssertTrue(sources.waitForExistence(timeout: 3))
@@ -3400,6 +3425,39 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(history.waitForExistence(timeout: 3))
         history.click()
         XCTAssertTrue(app.staticTexts["Choose a Configuration"].waitForExistence(timeout: 3))
+    }
+
+    func testSavedConfigurationsLiveOnTheAgentsTab() {
+        relaunchWithAgentFixture()
+
+        anyElement("sidebar.configureAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.create.event").exists)
+        XCTAssertFalse(anyElement("configureAgent.eventTrigger.seed-agent").exists)
+
+        anyElement("configureAgent.tab.agents").click()
+        XCTAssertTrue(
+            anyElement("configureAgent.eventTrigger.seed-agent").waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(anyElement("configureAgent.create.event").exists)
+    }
+
+    func testAgentEventQueueFanOutAndSharedLimitAreVisible() {
+        relaunchWithAgentFixture()
+
+        anyElement("sidebar.configureAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.eventProcessing").exists)
+        XCTAssertTrue(anyElement("configureAgent.maximumActiveChats").exists)
+
+        anyElement("configureAgent.tab.agents").click()
+        let eventAgent = anyElement("configureAgent.eventTrigger.seed-agent")
+        XCTAssertTrue(eventAgent.waitForExistence(timeout: 3))
+        eventAgent.click()
+        anyElement("configureAgent.tab.run_history").click()
+
+        XCTAssertTrue(app.staticTexts["WAITING IN CHAT QUEUE"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Matched 2 agents"].exists)
     }
 
     func testConfigureAgentOffersComposerDraftWithoutClearingIt() {

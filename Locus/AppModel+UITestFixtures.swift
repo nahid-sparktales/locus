@@ -681,6 +681,25 @@ extension AppModel {
         }
         let deliveries = [
             EventDelivery(
+                id: "seed-delivery-pending",
+                triggerID: triggerID,
+                sourceEventID: "msg-3",
+                source: .gmail,
+                receivedAt: now - 30,
+                occurredAt: now - 35,
+                event: event("msg-3", subject: "Locus ab invoice burst", at: now - 35),
+                state: "pending",
+                runState: nil,
+                attempt: 0,
+                sessionID: nil,
+                runID: nil,
+                error: nil,
+                createdAt: now - 30,
+                updatedAt: now - 30,
+                targetSessionID: newestChat.id,
+                matchedTriggerCount: 2
+            ),
+            EventDelivery(
                 id: "seed-delivery-done",
                 triggerID: triggerID,
                 sourceEventID: "msg-2",

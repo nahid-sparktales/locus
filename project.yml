@@ -148,6 +148,7 @@ targets:
       - path: WalletSignerService
       - path: Locus/WalletSignerProtocol.swift
       - path: Locus/WalletNetworkModels.swift
+      - path: Locus/WalletVaultKeychain.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -182,7 +183,7 @@ targets:
         LOCUS_WALLET_REVIEW_MANIFEST_BASE64: ""
       configs:
         Debug:
-          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_STYLE: Automatic
           CODE_SIGN_IDENTITY: "Apple Development"
           DEVELOPMENT_TEAM: 4X4RJA7GMD
           ENABLE_HARDENED_RUNTIME: NO
@@ -190,6 +191,7 @@ targets:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Developer ID Application"
           DEVELOPMENT_TEAM: 4X4RJA7GMD
+          PROVISIONING_PROFILE_SPECIFIER: "$(LOCUS_WALLET_SIGNER_PROVISIONING_PROFILE_SPECIFIER)"
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
   Locus:

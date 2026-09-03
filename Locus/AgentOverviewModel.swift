@@ -212,6 +212,7 @@ struct AgentOverview: Equatable {
         let sessionID: String?
         let error: String?
         let attempt: Int
+        let matchedTriggerCount: Int
         let sourceSymbol: String
         /// Retry acts on the delivery; schedule occurrences have no retry.
         let delivery: EventDelivery?
@@ -224,7 +225,7 @@ struct AgentOverview: Equatable {
             title = !subject.isEmpty ? subject : (!text.isEmpty ? String(text.prefix(120)) : fallback)
             // Delivery states are backend strings; the terminal ones are stable
             // (`TERMINAL_STATES` in runstore), the rest describe dispatch.
-            stateTitle = delivery.state.replacingOccurrences(of: "_", with: " ").capitalized
+            stateTitle = delivery.displayState
             isFailed = delivery.error != nil
                 || ["failed", "interrupted", "cancelled"].contains(delivery.state)
             isInFlight = ["pending", "claiming", "queued", "dispatching", "running"]
@@ -233,9 +234,10 @@ struct AgentOverview: Equatable {
             observedPrice = delivery.event.eventType == "price.quote"
                 ? delivery.event.data["price"]?.string : nil
             receivedAt = Date(timeIntervalSince1970: delivery.receivedAt)
-            sessionID = delivery.sessionID
+            sessionID = delivery.conversationSessionID
             error = delivery.error
             attempt = delivery.attempt
+            matchedTriggerCount = delivery.matchedTriggerCount
             sourceSymbol = delivery.source.symbol
             self.delivery = delivery
         }
@@ -260,6 +262,7 @@ struct AgentOverview: Equatable {
             sessionID = occurrence.sessionID
             error = occurrence.error
             attempt = 1
+            matchedTriggerCount = 1
             sourceSymbol = "calendar.badge.clock"
             delivery = nil
         }

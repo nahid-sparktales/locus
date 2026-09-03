@@ -665,7 +665,10 @@ extension AppModel {
                     runtime,
                     state: finalState
                 )
+                flushPendingConnectorCapability(for: runtime)
             }
+            flushPendingConnectorCapability()
+            eventAutomations.wakeDispatcher()
             syncPreferredPermissionMode(to: conversationBackend)
             pendingRetry = false
             steeringState = nil
@@ -786,6 +789,12 @@ extension AppModel {
             // the worker's final session writes.
 
         case "command_error":
+            if event["operation"] as? String == "set_connector_control" {
+                // This is an internal capability handshake, not a failed user
+                // request. Retry after the turn without polluting its transcript.
+                deferRejectedConnectorCapability()
+                return
+            }
             let message = annotatingRejectedKey(
                 event["message"] as? String ?? "The command was rejected."
             )

@@ -2536,6 +2536,26 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedConnectorCapabilityIsDeferredWithoutAChatError() {
+        let model = AppModel(startImmediately: false)
+        model.isBusy = true
+        model.handleEventForTesting(["type": "message_start"])
+        model.handleEventForTesting(["type": "token", "text": "still streaming"])
+        let countBeforeDiagnostic = model.blocks.count
+
+        model.handleEventForTesting([
+            "type": "command_error",
+            "operation": "set_connector_control",
+            "message": "Wait for the active turn to finish.",
+        ])
+
+        XCTAssertTrue(model.isBusy)
+        XCTAssertTrue(model.blocks.contains(where: \.isStreaming))
+        XCTAssertEqual(model.blocks.count, countBeforeDiagnostic)
+        XCTAssertTrue(model.pendingMainConnectorCapabilitySync)
+    }
+
+    @MainActor
     func testTurnDoneWithoutMessageEndFinalizesStreamingBlock() {
         let model = AppModel(startImmediately: false)
         model.handleEventForTesting(["type": "message_start"])

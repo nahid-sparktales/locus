@@ -370,6 +370,7 @@ final class AppModel: ObservableObject {
     var pendingSimulatorActions: [String: (sessionID: String, task: Task<Void, Never>)] = [:]  // internal(for: AppModel extension files)
     /// Backends that refused the browser handshake because a turn was running.
     var pendingBrowserCapabilityTransports: [BackendService] = []  // internal(for: AppModel extension files)
+    var pendingMainConnectorCapabilitySync = false  // internal(for: AppModel extension files)
     var conversationBackend: BackendService {  // internal(for: AppModel extension files)
         taskWorkers[currentSessionID]?.service ?? backend
     }
@@ -925,11 +926,7 @@ final class AppModel: ObservableObject {
                 return true
             },
             onCapabilityChanged: { [weak self] in
-                guard let self else { return }
-                self.sendConnectorCapability(to: self.backend)
-                for runtime in self.taskWorkers.values {
-                    self.sendConnectorCapability(to: runtime.service)
-                }
+                self?.announceConnectorCapability()
             },
             refreshSessions: { [weak self] in
                 await self?.refreshMetadata()

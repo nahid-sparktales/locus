@@ -112,6 +112,7 @@
 		3C7DCC4EA8F20CB4F0330FC5 /* CompanionWireTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622AFAF0F2B7F699AB240371 /* CompanionWireTypes.swift */; };
 		3D805FA7BB37C64980BE38D1 /* BrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DCECBAA7DADB611159A90E /* BrowserService.swift */; };
 		3DAC82E08795459837842303 /* WalletGatewayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E76206A025463F2FC7DDC557 /* WalletGatewayTests.swift */; };
+		3DFB3FCE81952BEC44272D7B /* WalletVaultKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */; };
 		3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
 		3E9DBD5583F2845258755151 /* WalletRecoveryXPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8566E23502F03462F5C1EFDD /* WalletRecoveryXPCClient.swift */; };
 		3EB73A207975893878E53D8B /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
@@ -389,6 +390,7 @@
 		DAC9BDD3759C84F504BBD92F /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
 		DB01030D810C7016FA244FF9 /* LandingFlowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E292075DE9F84B3C78158F /* LandingFlowModel.swift */; };
 		DB56B70CD46781DCFDE41672 /* GitWorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFF112DFD138A58ACB32658 /* GitWorkspaceModel.swift */; };
+		DBE93012FD1B8A034F5EE0E4 /* WalletVaultKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */; };
 		DD91D26D55202523E05B0B26 /* BrowserCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */; };
 		E0C4DE034C58C7E3A4FB6ED6 /* MarkdownTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */; };
 		E1C0DFD50327C12B2D73AD9C /* WalletSolanaRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01CC51562DC9D45DE8CC92E2 /* WalletSolanaRPCClient.swift */; };
@@ -403,6 +405,7 @@
 		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
 		E7071BB89FEA175C28347A9C /* VoiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C05527F03B7D68A59343C4E /* VoiceModels.swift */; };
 		E7E90DA379510A6781080FAA /* RecoveryProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B5177694AC5EFC291A4D61 /* RecoveryProcessController.swift */; };
+		E8283077F6EA81B0285DF271 /* WalletVaultKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */; };
 		E8D85FE96A82FE02DC67E6F8 /* EventWebhookServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED889C7219DB222230353F3 /* EventWebhookServer.swift */; };
 		E8DC03D0AF0457F76ADD775A /* ChatTranscriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 863D25BB6163522EFF5A58B4 /* ChatTranscriptBuilder.swift */; };
 		E93509193D03839A222A7B5F /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
@@ -753,6 +756,7 @@
 		DC12E6C12585983905497773 /* WalletPublicStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletPublicStore.swift; sourceTree = "<group>"; };
 		DC50A772A73C632C7A5100DA /* SessionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionState.swift; sourceTree = "<group>"; };
 		DC810CE30AC24EDB05F14614 /* InspectorAgentTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentTab.swift; sourceTree = "<group>"; };
+		DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletVaultKeychain.swift; sourceTree = "<group>"; };
 		E11B2324D330884AA4555A92 /* Sheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sheets.swift; sourceTree = "<group>"; };
 		E16033E84DC973F0FD1BFA21 /* AppModel+ActivityCenterFacade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ActivityCenterFacade.swift"; sourceTree = "<group>"; };
 		E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
@@ -1098,6 +1102,7 @@
 				9506793B59FF339DD8E1CB39 /* WalletSignerXPCClient.swift */,
 				01CC51562DC9D45DE8CC92E2 /* WalletSolanaRPCClient.swift */,
 				D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */,
+				DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */,
 				EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */,
 				766496079870F565A68EE51D /* WorkspaceArtifactOpener.swift */,
 				4765B1A3BBFEF5F98D1FD22A /* WorkspaceFileModel.swift */,
@@ -1616,6 +1621,7 @@
 				8AA1558B78A23A350B5E4DB9 /* WalletNetworkModels.swift in Sources */,
 				646013AB15E7DD4264876516 /* WalletSignerProtocol.swift in Sources */,
 				F65B179134580E460E487B29 /* WalletSignerService.swift in Sources */,
+				E8283077F6EA81B0285DF271 /* WalletVaultKeychain.swift in Sources */,
 				2A696014C4C8EEBBC97D25A7 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1796,6 +1802,7 @@
 				2FFB6A7399CBB12CBA1F9D2C /* WalletSignerXPCClient.swift in Sources */,
 				E1C0DFD50327C12B2D73AD9C /* WalletSolanaRPCClient.swift in Sources */,
 				90C1DAA74424D23F3285E83E /* WalletSuiGraphQLClient.swift in Sources */,
+				DBE93012FD1B8A034F5EE0E4 /* WalletVaultKeychain.swift in Sources */,
 				C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */,
 				BA520D9DACB642C9F28474E2 /* WorkspaceArtifactOpener.swift in Sources */,
 				249F108823C504A4A0785741 /* WorkspaceFileModel.swift in Sources */,
@@ -1982,6 +1989,7 @@
 				C6C03C9466FF039AB3E93407 /* WalletSignerXPCClient.swift in Sources */,
 				15CBB134E8FBCE312F08441C /* WalletSolanaRPCClient.swift in Sources */,
 				0267DE32A2FA09423C7B0B53 /* WalletSuiGraphQLClient.swift in Sources */,
+				3DFB3FCE81952BEC44272D7B /* WalletVaultKeychain.swift in Sources */,
 				06A23CF5AE9CED9B211FAA4B /* WorkspaceAccess.swift in Sources */,
 				96EEA5E8CFC6F8467CA2BDB5 /* WorkspaceArtifactOpener.swift in Sources */,
 				51C5514D5FC2B6DFDE86EFB0 /* WorkspaceFileModel.swift in Sources */,
@@ -2461,6 +2469,7 @@
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;
+				PROVISIONING_PROFILE_SPECIFIER = "$(LOCUS_WALLET_SIGNER_PROVISIONING_PROFILE_SPECIFIER)";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 			};
@@ -2473,7 +2482,7 @@
 				ARCHS = arm64;
 				CODE_SIGN_ENTITLEMENTS = Config/WalletSigner.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_HARDENED_RUNTIME = NO;

@@ -931,6 +931,7 @@ final class AgentOverviewTests: XCTestCase {
         let eventTrigger = trigger()
         model.editAgentTrigger(eventTrigger, isDedicatedAgent: true)
         XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentTab, .agents)
         XCTAssertEqual(
             model.configureAgentPendingTriggerEdit,
             PendingEventTriggerEdit(trigger: eventTrigger, targetSessionID: "chat-new", isDedicatedAgent: true)
@@ -991,36 +992,32 @@ final class AgentOverviewTests: XCTestCase {
     }
 
     @MainActor
-    func testThePrimaryActionCreatesTheThingEachDestinationIsAbout() {
+    func testThePrimaryActionStartsAChatForTheActiveDestination() {
         let model = AppModel(startImmediately: false)
-        model.sessions = [session("chat-new", age: 60)]
-        model.currentSessionID = "chat-new"
+        model.sessions = [session("plain", triggerID: nil, name: nil, age: 60)]
+        model.currentSessionID = "plain"
 
-        // Agents mode: ⌘N opens an empty agent, not another chat.
+        // With no configured agent, New Chat takes the user to configuration
+        // instead of creating an unrelated workspace chat.
         model.sidebarDestination = .agents
         model.newChatForSidebarDestination()
         XCTAssertTrue(model.configureAgentPresented)
         XCTAssertEqual(model.configureAgentTab, .configurations)
-        XCTAssertEqual(
-            model.configureAgentPendingTriggerEdit,
-            PendingEventTriggerEdit(
-                trigger: nil,
-                targetSessionID: "chat-new",
-                isDedicatedAgent: false,
-                triggerKind: .event
-            )
-        )
-
-        // Mounting the sheet turns that request into a fresh editor draft.
-        model.mountPendingConfigureAgentEditor()
         XCTAssertNil(model.configureAgentPendingTriggerEdit)
-        let draft = model.eventAutomations.editorDraft
-        XCTAssertNil(draft?.id, "a new agent, not an edit")
-        XCTAssertEqual(draft?.triggerKind, .event)
-        XCTAssertEqual(draft?.targetSessionID, EventTriggerEditorDraft.dedicatedAgentChat)
 
-        // A price agent can be requested directly.
+        // With an agent selected, the same action stays in Agents and starts
+        // the side-chat path instead of reopening configuration.
         model.dismissConfigureAgent()
+        model.sessions = [session("chat-new", age: 60)]
+        model.currentSessionID = "chat-new"
+        model.eventAutomations.seedForUITesting(
+            connections: [], triggers: [trigger()], deliveries: []
+        )
+        model.schedule.seedForUITesting(tasks: [])
+        model.newChatForSidebarDestination()
+        XCTAssertFalse(model.configureAgentPresented)
+
+        // Creating a new agent remains available as an explicit action.
         model.presentNewAgent(kind: .price)
         model.mountPendingConfigureAgentEditor()
         XCTAssertEqual(model.eventAutomations.editorDraft?.triggerKind, .price)

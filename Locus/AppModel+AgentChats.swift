@@ -13,14 +13,12 @@ struct PendingEventTriggerEdit: Equatable {
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
-    /// The sidebar's primary button and ⌘N share this. Each destination creates
-    /// the thing it is about: Ask makes a chat in the workspace, Agents makes an
-    /// agent. Chatting with an existing agent is a per-agent action, reached
-    /// from that agent's row or from the Agent panel, because it needs to name
-    /// which agent it belongs to.
+    /// The sidebar's primary button and ⌘N share this. Both destinations start
+    /// chats: Ask starts a workspace chat, while Agents starts the next chat for
+    /// the current (or most recently used) agent.
     func newChatForSidebarDestination() {
         if sidebarDestination == .agents {
-            presentNewAgent()
+            newAgentChat()
         } else {
             newSession()
         }
@@ -209,6 +207,7 @@ extension AppModel {
         } else {
             configureAgentPendingTriggerEdit = edit
             presentConfigureAgent(draftText: "")
+            configureAgentTab = .agents
         }
     }
 

@@ -220,7 +220,7 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
 
     static let all: [SettingsSearchDescriptor] = [
         .init("settings.launchAtLogin", page: .general, title: "Launch at login", keywords: ["startup", "menu bar"]),
-        .init("settings.maximumActiveChats", page: .general, title: "Background chats", keywords: ["concurrency", "worktrees"]),
+        .init("settings.maximumActiveChats", page: .general, title: "Parallel chats and agent events", keywords: ["concurrency", "queue", "automations", "worktrees"]),
         .init("settings.appearance", page: .appearance, title: "Appearance", keywords: ["light", "dark", "system"]),
         .init("settings.accentColor", page: .appearance, title: "Accent colour", keywords: ["logo", "brand", "lime", "green", "dark green", "blue", "purple", "orange", "pink", "neutral", "grey", "gray", "custom"]),
         .init("settings.showTeamProgressInHeader", page: .appearance, title: "Header status", keywords: ["team", "context usage"]),

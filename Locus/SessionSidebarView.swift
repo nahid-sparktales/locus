@@ -506,9 +506,8 @@ struct SessionSidebarView: View {
         .padding(.bottom, 12)
     }
 
-    /// Each destination creates the object it is about: a chat in Ask, an agent
-    /// in Agents. Chatting with a particular agent lives on that agent's row,
-    /// where which agent it belongs to is unambiguous.
+    /// New Chat follows the active destination. In Agents it continues the
+    /// current agent, falling back to the most recently used one.
     private var primaryCreationButton: some View {
         let isAgents = model.sidebarDestination == .agents
         return Button {
@@ -517,7 +516,7 @@ struct SessionSidebarView: View {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text(isAgents ? "New agent" : "New chat")
+                Text("New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -533,10 +532,10 @@ struct SessionSidebarView: View {
         }
         .buttonStyle(.locus())
         .help(isAgents
-            ? "Configure an agent that wakes on email, messages, webhooks, or a price (⌘N)"
+            ? "Start a new chat with the current or most recent agent (⌘N)"
             : "Start a new chat (⌘N)")
-        .accessibilityLabel(isAgents ? "New agent" : "New chat")
-        .accessibilityIdentifier(isAgents ? "sidebar.newAgent" : "sidebar.newSession")
+        .accessibilityLabel("New chat")
+        .accessibilityIdentifier("sidebar.newSession")
     }
 
     private var activityButton: some View {

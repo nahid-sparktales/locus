@@ -22,6 +22,40 @@ struct WalletAccount: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Decodes the signer core's snake-case public account payload without
+/// changing the camel-case representation used by the Swift/XPC protocol and
+/// persisted account files.
+enum WalletDerivedAccountsDecoder {
+    private struct Payload: Decodable {
+        let accounts: [DerivedAccount]
+    }
+
+    private struct DerivedAccount: Decodable {
+        let id: String
+        let chain: WalletChain
+        let address: String
+        let label: String
+        let networkIDs: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case id, chain, address, label
+            case networkIDs = "network_ids"
+        }
+
+        var walletAccount: WalletAccount {
+            WalletAccount(
+                id: id, chain: chain, address: address, label: label,
+                networkIDs: networkIDs
+            )
+        }
+    }
+
+    static func decode(_ data: Data) throws -> [WalletAccount] {
+        try JSONDecoder().decode(Payload.self, from: data)
+            .accounts.map(\.walletAccount)
+    }
+}
+
 struct WalletTypedArgument: Codable, Equatable, Sendable {
     let type: String
     let value: String

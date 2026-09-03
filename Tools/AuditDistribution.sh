@@ -403,6 +403,16 @@ else
         echo "error: WalletSigner.xpc is not sandboxed" >&2
         exit 1
     }
+    wallet_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
+        "${wallet_entitlements}" 2>/dev/null || true)"
+    [[ "${wallet_access_group}" == "4X4RJA7GMD.io.sparktales.locus.WalletSigner" ]] || {
+        echo "error: WalletSigner.xpc is missing its secure-storage access group" >&2
+        exit 1
+    }
+    [[ -f "${wallet_signer}/Contents/embedded.provisionprofile" ]] || {
+        echo "error: WalletSigner.xpc is missing its provisioning profile" >&2
+        exit 1
+    }
     for forbidden in \
         com.apple.security.network.client \
         com.apple.security.network.server \
@@ -428,6 +438,18 @@ else
     [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
         "${recovery_signer_entitlements}" 2>/dev/null || true)" == "true" ]] || {
         echo "error: recovery WalletSigner.xpc is not sandboxed" >&2
+        exit 1
+    }
+    recovery_signer_access_group="$(/usr/bin/plutil -extract \
+        'keychain-access-groups.0' raw -o - \
+        "${recovery_signer_entitlements}" 2>/dev/null || true)"
+    [[ "${recovery_signer_access_group}" \
+        == "4X4RJA7GMD.io.sparktales.locus.WalletSigner" ]] || {
+        echo "error: recovery WalletSigner.xpc is missing its secure-storage access group" >&2
+        exit 1
+    }
+    [[ -f "${wallet_recovery_signer}/Contents/embedded.provisionprofile" ]] || {
+        echo "error: recovery WalletSigner.xpc is missing its provisioning profile" >&2
         exit 1
     }
     for forbidden in \
