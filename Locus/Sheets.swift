@@ -2349,9 +2349,9 @@ struct SettingsView: View {
             }
 
             if model.settingsPage == .general {
-                Section("Background chats") {
+                Section("Parallel chats and agent events") {
                 Stepper(
-                    "Up to \(draft.maximumActiveChats) active chats",
+                    "Up to \(draft.maximumActiveChats) chats and agent events at once",
                     value: $draft.maximumActiveChats,
                     in: 1...4
                 )
@@ -2372,7 +2372,7 @@ struct SettingsView: View {
                 )
                 .accessibilityIdentifier("settings.worktreeRetentionLimit")
 
-                Text("Running chats stay attached to their own worker when you switch conversations. Worktrees isolate concurrent edits in the same Git repository.")
+                Text("Events for one chat wait in arrival order. Choose 1 for fully sequential processing. Different chats share this limit; worktrees isolate concurrent edits in the same Git repository.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

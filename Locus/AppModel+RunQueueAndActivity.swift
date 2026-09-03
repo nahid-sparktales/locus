@@ -47,10 +47,11 @@ extension AppModel {
 
     func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
         let wasPresented = configureAgentPresented
+        let destinationTab: ConfigureAgentTab = task == nil ? .configurations : .agents
 
         let presentDraft: (ScheduleEditorDraft) -> Void = { [weak self] draft in
             guard let self else { return }
-            self.configureAgentTab = .configurations
+            self.configureAgentTab = destinationTab
             if wasPresented {
                 self.schedule.scheduleEditorDraft = draft
             } else {

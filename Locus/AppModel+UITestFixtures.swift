@@ -547,6 +547,35 @@ extension AppModel {
                 recommended: "Exponential with jitter"
             )
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BLOCKING_QUESTION"] == "1" {
+            selectedMode = .grill
+            pendingBlockingQuestion = AgentQuestionRequest(
+                id: "seed-blocking-question",
+                toolID: "seed-tool-question",
+                questions: [
+                    AgentQuestion(
+                        id: "q1",
+                        header: "Storage",
+                        question: "Where should the response cache live?",
+                        options: [
+                            AgentQuestionOption(
+                                label: "In-memory",
+                                description: "Fastest, but lost on restart."
+                            ),
+                            AgentQuestionOption(
+                                label: "SQLite",
+                                description: "Durable, with a small storage cost."
+                            ),
+                        ]
+                    ),
+                    AgentQuestion(
+                        id: "q2",
+                        header: "Naming",
+                        question: "What should the public API call this?"
+                    ),
+                ]
+            )
+        }
         seedUITestRunFixtureIfNeeded()
 
         if let simulatorFixture = ProcessInfo.processInfo.environment[
@@ -680,6 +709,25 @@ extension AppModel {
             )
         }
         let deliveries = [
+            EventDelivery(
+                id: "seed-delivery-pending",
+                triggerID: triggerID,
+                sourceEventID: "msg-3",
+                source: .gmail,
+                receivedAt: now - 30,
+                occurredAt: now - 35,
+                event: event("msg-3", subject: "Locus ab invoice burst", at: now - 35),
+                state: "pending",
+                runState: nil,
+                attempt: 0,
+                sessionID: nil,
+                runID: nil,
+                error: nil,
+                createdAt: now - 30,
+                updatedAt: now - 30,
+                targetSessionID: newestChat.id,
+                matchedTriggerCount: 2
+            ),
             EventDelivery(
                 id: "seed-delivery-done",
                 triggerID: triggerID,

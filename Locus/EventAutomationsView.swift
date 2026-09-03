@@ -10,6 +10,7 @@ struct ConfigureAgentView: View {
     @State private var connectionSheet: ConnectorKind?
     @State private var selection: AgentConfigurationReference?
     @State private var pendingConnectionRemoval: ConnectorConnection?
+    @State private var knownConfigurationIDs: Set<String>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +20,7 @@ struct ConfigureAgentView: View {
             Group {
                 switch app.configureAgentTab {
                 case .configurations: configurationsTab
+                case .agents: agentsTab
                 case .sources: sourcesTab
                 case .runHistory: runHistoryTab
                 }
@@ -73,6 +75,7 @@ struct ConfigureAgentView: View {
         }
         .task {
             await refresh()
+            knownConfigurationIDs = Set(configurationReferences.map(\.id))
             normalizeSelection()
             applyRequestedFocus()
         }
@@ -81,10 +84,17 @@ struct ConfigureAgentView: View {
         .onChange(of: app.configureAgentPendingTriggerEdit) {
             app.mountPendingConfigureAgentEditor()
         }
-        .onChange(of: configurationReferences.map(\.id)) { oldValue, newValue in
-            if let newID = Set(newValue).subtracting(oldValue).first,
+        .onChange(of: configurationReferences.map(\.id)) { _, newValue in
+            let currentIDs = Set(newValue)
+            defer { knownConfigurationIDs = currentIDs }
+            guard let knownConfigurationIDs else {
+                normalizeSelection()
+                return
+            }
+            if let newID = currentIDs.subtracting(knownConfigurationIDs).first,
                let reference = configurationReferences.first(where: { $0.id == newID }) {
                 selection = reference
+                app.configureAgentTab = .agents
             } else {
                 normalizeSelection()
             }
@@ -171,6 +181,8 @@ struct ConfigureAgentView: View {
                     draftSuggestionBanner
                 }
 
+                eventProcessingCard
+
                 VStack(alignment: .leading, spacing: 10) {
                     sectionHeading(
                         "Start something new",
@@ -204,73 +216,83 @@ struct ConfigureAgentView: View {
                         }
                     }
                 }
+            }
+            .padding(.horizontal, 22)
+            .padding(.bottom, 22)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("configureAgent.center")
+    }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        sectionHeading(
-                            "Your configurations",
-                            detail: "Schedules, incoming events, and price alerts in one place."
+    private var agentsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    sectionHeading(
+                        "Your configurations",
+                        detail: "Schedules, incoming events, and price alerts in one place."
+                    )
+                    Spacer()
+                    Text("\(configurationReferences.count)")
+                        .font(.locus(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+
+                if let error = automation.lastError, !error.isEmpty {
+                    errorBanner(error)
+                }
+
+                if configurationReferences.isEmpty {
+                    ContentUnavailableView(
+                        "No Agents Yet",
+                        systemImage: "gearshape.2",
+                        description: Text(
+                            "Open Configurations to configure your first agent."
                         )
-                        Spacer()
-                        Text("\(configurationReferences.count)")
-                            .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
-                    }
-
-                    if let error = automation.lastError, !error.isEmpty {
-                        errorBanner(error)
-                    }
-
-                    if configurationReferences.isEmpty {
-                        ContentUnavailableView(
-                            "No Configurations Yet",
-                            systemImage: "gearshape.2",
-                            description: Text("Choose a trigger above to configure your first agent.")
-                        )
-                        .frame(maxWidth: .infinity, minHeight: 180)
-                        .locusCard(radius: 12)
-                    } else {
-                        LazyVStack(spacing: 10) {
-                            ForEach(schedule.scheduledTasks) { task in
-                                TimeTriggerRow(
-                                    task: task,
-                                    selected: selection?.id == "schedule:\(task.id)",
-                                    onSelect: { selectSchedule(task) },
-                                    onEdit: { app.presentScheduleEditor(task: task) },
-                                    onRun: { schedule.runScheduleNow(task) },
-                                    onToggle: {
-                                        schedule.setScheduleEnabled(task, enabled: !task.enabled)
-                                    },
-                                    onDelete: { schedule.deleteSchedule(task) }
-                                )
-                            }
-                            ForEach(automation.triggers) { trigger in
-                                EventTriggerRow(
-                                    trigger: trigger,
-                                    connection: automation.connections.first {
-                                        $0.id == trigger.connectionID
-                                    },
-                                    targetChat: sessionCatalog.snapshot
-                                        .sessionsByID[trigger.targetSessionID]?
-                                        .displayTitle ?? "Missing chat",
-                                    selected: selection?.id == configurationID(for: trigger),
-                                    onSelect: { selectTrigger(trigger) },
-                                    onEdit: {
-                                        automation.presentEditor(
-                                            trigger: trigger,
-                                            targetSessionID: trigger.targetSessionID,
-                                            isDedicatedAgent: sessionCatalog.snapshot
-                                                .sessionsByID[trigger.targetSessionID]?
-                                                .isAgentChat == true
-                                        )
-                                    },
-                                    onToggle: {
-                                        automation.setTrigger(trigger, enabled: !trigger.enabled)
-                                    },
-                                    onRearm: { automation.rearm(trigger) },
-                                    onDelete: { automation.deleteTrigger(trigger) }
-                                )
-                            }
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .locusCard(radius: 12)
+                } else {
+                    LazyVStack(spacing: 10) {
+                        ForEach(schedule.scheduledTasks) { task in
+                            TimeTriggerRow(
+                                task: task,
+                                selected: selection?.id == "schedule:\(task.id)",
+                                onSelect: { selectSchedule(task) },
+                                onEdit: { app.presentScheduleEditor(task: task) },
+                                onRun: { schedule.runScheduleNow(task) },
+                                onToggle: {
+                                    schedule.setScheduleEnabled(task, enabled: !task.enabled)
+                                },
+                                onDelete: { schedule.deleteSchedule(task) }
+                            )
+                        }
+                        ForEach(automation.triggers) { trigger in
+                            EventTriggerRow(
+                                trigger: trigger,
+                                connection: automation.connections.first {
+                                    $0.id == trigger.connectionID
+                                },
+                                targetChat: sessionCatalog.snapshot
+                                    .sessionsByID[trigger.targetSessionID]?
+                                    .displayTitle ?? "Missing chat",
+                                selected: selection?.id == configurationID(for: trigger),
+                                onSelect: { selectTrigger(trigger) },
+                                onEdit: {
+                                    automation.presentEditor(
+                                        trigger: trigger,
+                                        targetSessionID: trigger.targetSessionID,
+                                        isDedicatedAgent: sessionCatalog.snapshot
+                                            .sessionsByID[trigger.targetSessionID]?
+                                            .isAgentChat == true
+                                    )
+                                },
+                                onToggle: {
+                                    automation.setTrigger(trigger, enabled: !trigger.enabled)
+                                },
+                                onRearm: { automation.rearm(trigger) },
+                                onDelete: { automation.deleteTrigger(trigger) }
+                            )
                         }
                     }
                 }
@@ -279,7 +301,7 @@ struct ConfigureAgentView: View {
             .padding(.bottom, 22)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("configureAgent.center")
+        .accessibilityIdentifier("configureAgent.agents")
     }
 
     private var sourcesTab: some View {
@@ -393,7 +415,7 @@ struct ConfigureAgentView: View {
                                     EventDeliveryCard(
                                         delivery: delivery,
                                         onRetry: { automation.retry(delivery) },
-                                        onOpen: { openChat(delivery.sessionID) }
+                                        onOpen: { openChat(delivery.conversationSessionID) }
                                     )
                                 }
                             }
@@ -480,6 +502,52 @@ struct ConfigureAgentView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("configureAgent.draftSuggestion")
+    }
+
+    private var eventProcessingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.locus(size: 13, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
+                    .frame(width: 28, height: 28)
+                    .background(LocusTheme.signal.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Event processing")
+                        .font(.locus(size: 11, weight: .bold))
+                    Text("Different agent chats can run together.")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                Spacer(minLength: 12)
+                Stepper(
+                    "Up to \(app.settings.maximumActiveChats) chats and agent events at once",
+                    value: Binding(
+                        get: { app.settings.maximumActiveChats },
+                        set: { value in
+                            var updated = app.settings
+                            updated.maximumActiveChats = value
+                            app.applySettings(updated, showConfirmation: false)
+                        }
+                    ),
+                    in: 1...4
+                )
+                .fixedSize()
+                .accessibilityLabel(
+                    "Up to \(app.settings.maximumActiveChats) chats and agent events at once"
+                )
+                .accessibilityIdentifier("configureAgent.maximumActiveChats")
+            }
+            Text("Events for one chat wait in arrival order. Choose 1 for fully sequential processing. Write-capable chats sharing an unisolated folder also wait until that folder is free.")
+                .font(.locus(size: 8))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(13)
+        .locusCard(radius: 11)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("configureAgent.eventProcessing")
     }
 
     private func creationCard(
@@ -679,6 +747,7 @@ struct ConfigureAgentView: View {
         async let refreshSchedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
         _ = await (refreshEvents, refreshSchedules)
     }
+
 }
 
 private struct AgentConfigurationReference: Identifiable, Hashable {
@@ -858,6 +927,7 @@ private struct EventTriggerRow: View {
         .background(selected ? LocusTheme.signal.opacity(0.12) : LocusTheme.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay { RoundedRectangle(cornerRadius: 10).stroke(selected ? LocusTheme.signalDeep : LocusTheme.line) }
+        .accessibilityIdentifier("configureAgent.eventTrigger.\(trigger.id)")
         .alert("Delete \(trigger.name)?", isPresented: $confirmsDelete) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive, action: onDelete)
@@ -884,7 +954,7 @@ private struct EventDeliveryCard: View {
                 Label(delivery.source.title, systemImage: delivery.source.symbol)
                     .font(.locus(size: 9, weight: .bold))
                 Spacer()
-                Text(delivery.state.replacingOccurrences(of: "_", with: " ").uppercased())
+                Text(delivery.displayState.uppercased())
                     .font(.locus(size: 7, weight: .bold, design: .monospaced))
                     .foregroundStyle(delivery.error == nil ? LocusTheme.muted : LocusTheme.warning)
             }
@@ -905,6 +975,11 @@ private struct EventDeliveryCard: View {
             Text("Untrusted event data · \(Date(timeIntervalSince1970: delivery.receivedAt).formatted(date: .abbreviated, time: .shortened))")
                 .font(.locus(size: 7, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted)
+            if delivery.matchedTriggerCount > 1 {
+                Text("Matched \(delivery.matchedTriggerCount) agents")
+                    .font(.locus(size: 8, weight: .semibold))
+                    .foregroundStyle(LocusTheme.signalDeep)
+            }
             if let error = delivery.error, !error.isEmpty {
                 Text(error)
                     .font(.locus(size: 8))
@@ -914,7 +989,7 @@ private struct EventDeliveryCard: View {
                 if ["failed", "interrupted", "cancelled"].contains(delivery.state) {
                     Button("Retry", action: onRetry)
                 }
-                if delivery.sessionID != nil { Button("Open Chat", action: onOpen) }
+                if delivery.conversationSessionID != nil { Button("Open Chat", action: onOpen) }
                 Spacer()
             }
             .font(.locus(size: 8, weight: .semibold))

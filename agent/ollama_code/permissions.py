@@ -495,6 +495,14 @@ def build_preview(
                 for t in todos if isinstance(t, dict)
             )
         return f"update task list ({n} tasks)", detail
+    if name == "ask_question":
+        questions = args.get("questions")
+        n = len(questions) if isinstance(questions, list) else 0
+        first = ""
+        if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+            first = str(questions[0].get("question") or "")
+        plural = "" if n == 1 else "s"
+        return f"ask the user {n} question{plural}", _shorten(first, 200)
     if name == "submit_plan":
         steps = args.get("steps")
         n = len(steps) if isinstance(steps, list) else 0

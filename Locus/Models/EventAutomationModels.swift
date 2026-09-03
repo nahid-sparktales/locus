@@ -328,6 +328,11 @@ struct EventDelivery: Identifiable, Codable, Hashable {
     let runState: String?
     let attempt: Int
     let sessionID: String?
+    /// The configured destination even before a pending delivery is claimed.
+    let targetSessionID: String?
+    /// Number of configurations on this connection that accepted the same
+    /// source event. A value above one is intentional fan-out, not a retry.
+    let matchedTriggerCount: Int
     let runID: String?
     let error: String?
     let createdAt: Double
@@ -341,10 +346,86 @@ struct EventDelivery: Identifiable, Codable, Hashable {
         case occurredAt = "occurred_at"
         case runState = "run_state"
         case sessionID = "session_id"
+        case targetSessionID = "target_session_id"
+        case matchedTriggerCount = "matched_trigger_count"
         case runID = "run_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
+
+    init(
+        id: String,
+        triggerID: String,
+        sourceEventID: String,
+        source: ConnectorKind,
+        receivedAt: Double,
+        occurredAt: Double,
+        event: InboundEvent,
+        state: String,
+        runState: String?,
+        attempt: Int,
+        sessionID: String?,
+        runID: String?,
+        error: String?,
+        createdAt: Double,
+        updatedAt: Double,
+        targetSessionID: String? = nil,
+        matchedTriggerCount: Int = 1
+    ) {
+        self.id = id
+        self.triggerID = triggerID
+        self.sourceEventID = sourceEventID
+        self.source = source
+        self.receivedAt = receivedAt
+        self.occurredAt = occurredAt
+        self.event = event
+        self.state = state
+        self.runState = runState
+        self.attempt = attempt
+        self.sessionID = sessionID
+        self.targetSessionID = targetSessionID ?? sessionID
+        self.matchedTriggerCount = max(matchedTriggerCount, 1)
+        self.runID = runID
+        self.error = error
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        triggerID = try container.decode(String.self, forKey: .triggerID)
+        sourceEventID = try container.decode(String.self, forKey: .sourceEventID)
+        source = try container.decode(ConnectorKind.self, forKey: .source)
+        receivedAt = try container.decode(Double.self, forKey: .receivedAt)
+        occurredAt = try container.decode(Double.self, forKey: .occurredAt)
+        event = try container.decode(InboundEvent.self, forKey: .event)
+        state = try container.decode(String.self, forKey: .state)
+        runState = try container.decodeIfPresent(String.self, forKey: .runState)
+        attempt = try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 0
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        targetSessionID = try container.decodeIfPresent(
+            String.self, forKey: .targetSessionID
+        ) ?? sessionID
+        matchedTriggerCount = max(
+            try container.decodeIfPresent(Int.self, forKey: .matchedTriggerCount) ?? 1,
+            1
+        )
+        runID = try container.decodeIfPresent(String.self, forKey: .runID)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        createdAt = try container.decode(Double.self, forKey: .createdAt)
+        updatedAt = try container.decode(Double.self, forKey: .updatedAt)
+    }
+
+    var displayState: String {
+        switch state {
+        case "pending": "Waiting in chat queue"
+        case "claiming": "Starting"
+        default: state.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    var conversationSessionID: String? { sessionID ?? targetSessionID }
 }
 
 struct EventTriggerEditorDraft: Identifiable, Hashable {

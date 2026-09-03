@@ -128,10 +128,6 @@ private struct RustGeneratedVault: Decodable {
     let words: [String]
 }
 
-private struct RustAccounts: Decodable {
-    let accounts: [WalletAccount]
-}
-
 private struct RustPreparedEVM: Decodable {
     let from: String
     let digest: String
@@ -440,6 +436,50 @@ private enum SignerUnsignedInteger {
     }
 }
 
+private final class WalletOwnerAuthenticationResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var succeeded = false
+
+    func store(_ succeeded: Bool) {
+        lock.lock()
+        self.succeeded = succeeded
+        lock.unlock()
+    }
+
+    func load() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return succeeded
+    }
+}
+
+private struct WalletOwnerAuthenticator {
+    func authenticate(reason: String) throws {
+        let context = LAContext()
+        var policyError: NSError?
+        guard context.canEvaluatePolicy(
+            .deviceOwnerAuthentication,
+            error: &policyError
+        ) else {
+            throw WalletVaultStore.StoreError.authentication
+        }
+
+        let completion = WalletOwnerAuthenticationResult()
+        let semaphore = DispatchSemaphore(value: 0)
+        context.evaluatePolicy(
+            .deviceOwnerAuthentication,
+            localizedReason: reason
+        ) { succeeded, _ in
+            completion.store(succeeded)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard completion.load() else {
+            throw WalletVaultStore.StoreError.authentication
+        }
+    }
+}
+
 private final class WalletVaultStore {
     enum StoreError: LocalizedError {
         case random
@@ -450,6 +490,14 @@ private final class WalletVaultStore {
         var errorDescription: String? {
             switch self {
             case .random: "Secure random generation failed."
+            case .keychain(errSecMissingEntitlement):
+                "The vault key could not be stored because this build's Keychain "
+                    + "configuration is invalid (\(errSecMissingEntitlement))."
+            case .keychain(errSecInteractionNotAllowed):
+                "The vault key could not be stored because macOS blocked secure "
+                    + "storage for this build. Unlock your Mac and try again; if "
+                    + "the error remains, install a properly signed build "
+                    + "(\(errSecInteractionNotAllowed))."
             case .keychain(let status): "Keychain operation failed (\(status))."
             case .malformedVault: "The encrypted Locus Vault cannot be read."
             case .authentication: "Local authentication was not completed."
@@ -462,6 +510,7 @@ private final class WalletVaultStore {
     private let legacyService = "io.sparktales.locus.WalletSigner.wrap.v1"
     private let legacyAccount = "locus-vault"
     private let fileManager = FileManager.default
+    private let authenticator = WalletOwnerAuthenticator()
 
     private var directory: URL {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -484,18 +533,12 @@ private final class WalletVaultStore {
         guard status == errSecSuccess else { throw StoreError.random }
         defer { keyData.resetBytes(in: 0..<keyData.count) }
 
-        var accessError: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(
-            nil,
-            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-            .userPresence,
-            &accessError
-        ) else { throw StoreError.authentication }
-
         SecItemDelete(productionQuery() as CFDictionary)
-        var query = productionQuery()
-        query[kSecValueData as String] = keyData
-        query[kSecAttrAccessControl as String] = access
+        let query = WalletVaultKeychainQuery.add(
+            service: productionService,
+            account: productionAccount,
+            keyData: keyData
+        )
         let addStatus = SecItemAdd(query as CFDictionary, nil)
         guard addStatus == errSecSuccess else { throw StoreError.keychain(addStatus) }
 
@@ -515,12 +558,10 @@ private final class WalletVaultStore {
     }
 
     func decrypt(reason: String) throws -> Data {
+        try authenticator.authenticate(reason: reason)
         var query = productionQuery()
-        let context = LAContext()
-        context.localizedReason = reason
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecUseAuthenticationContext as String] = context
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let keyData = result as? Data else {
@@ -586,11 +627,7 @@ private final class WalletVaultStore {
     }
 
     private func baseQuery(service: String, account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
+        WalletVaultKeychainQuery.base(service: service, account: account)
     }
 }
 
@@ -1639,9 +1676,18 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
             throw NSError(domain: "WalletSigner", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: failure.error])
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(RustAccounts.self, from: data).accounts
+        do {
+            return try WalletDerivedAccountsDecoder.decode(data)
+        } catch {
+            throw NSError(
+                domain: "WalletSigner", code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Wallet account derivation failed because the signing core "
+                        + "returned invalid public account metadata."
+                ]
+            )
+        }
     }
 
     private func prepareNativeTransfer(

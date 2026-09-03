@@ -271,6 +271,13 @@ def test_startup_skills_are_trusted_ordered_and_shadow_safe(tmp_path):
         "Explicitly activated skill $builtin:grill-me"
     )
 
+    # Grill Me's mode instruction mentions the bare name, not "builtin:grilling":
+    # a user-authored `grilling` skill shadows the builtin, which disables the
+    # builtin id, so the qualified form would silently resolve to nothing while
+    # the bare name correctly falls through to the user's copy.
+    registry.begin_turn("follow the activated $grilling skill", str(tmp_path))
+    assert "Explicitly activated skill $builtin:grilling" in registry.explicit_skill_context
+
     shadow = _skill(tmp_path / "user-skills", name="using-superpowers")
     manager.import_skill(str(shadow))
     startup = manager.startup_skills(str(tmp_path))

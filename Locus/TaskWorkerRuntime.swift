@@ -29,6 +29,16 @@ struct ChatAdmissionQueue {
     func isFirst(_ sessionID: String) -> Bool {
         sessionIDs.first == sessionID
     }
+
+    /// Preserve FIFO among chats that can start now while allowing an older
+    /// writer blocked on a shared local workspace to stop holding unrelated
+    /// work behind it.
+    func isFirstEligible(
+        _ sessionID: String,
+        where isEligible: (String) -> Bool
+    ) -> Bool {
+        sessionIDs.first(where: isEligible) == sessionID
+    }
 }
 
 /// One isolated local agent service for any chat. The main backend remains the
@@ -52,6 +62,7 @@ final class ChatWorkerRuntime {
     var dispatchedTeamRunID: String?
     var reservedRunID: String?
     var dispatchedInPlanMode = false
+    var needsConnectorCapabilitySync = false
     var queuedMessages: [String] = []
     var streamingBlockID: UUID?
     var streamingText = ""
@@ -62,6 +73,8 @@ final class ChatWorkerRuntime {
     /// A completed background turn's unanswered question, promoted to the
     /// popup when the chat is brought to the foreground.
     var pendingQuestion: UserQuestion?
+    /// A live structured question whose worker remains parked for an answer.
+    var pendingBlockingQuestion: AgentQuestionRequest?
 
     var occupiesExecutionSlot: Bool {
         switch executionState {

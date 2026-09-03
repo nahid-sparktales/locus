@@ -7,7 +7,15 @@ Interview the user relentlessly until you reach a shared understanding. Map this
 
 Work the tree one decision at a time. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Pick the highest-leverage question on that frontier, ask exactly that one question, give your recommended answer, and wait for the user's response before asking another.
 
-Each question should be formatted like so:
+Ask each question with the `ask_question` tool — one call per frontier question. The call blocks until the user answers, so you stay inside the same turn and keep the tree you have already built. Pass a single entry in `questions`:
+
+- `header` — two or three words naming the decision (`"Storage"`, `"Auth model"`).
+- `question` — the decision itself, with whatever context the user needs to decide. End it with your recommended answer and why, so the user can agree in one keystroke. Put the recommendation *in the question*, not in an option: the transcript must keep your pick distinguishable from theirs.
+- `options` — the concrete candidate answers when there are two to four real ones, each with a one-line `description` of what choosing it commits to. Omit `options` entirely when the answer is genuinely open-ended. The user can always type a free-text answer either way, so never pad the list to look complete.
+
+Never batch frontier questions into one call: one question, one call, one answer, then recompute the frontier. If the user dismisses the box, stop asking — summarize what is still undecided and what you would assume.
+
+If `ask_question` is unavailable, fall back to asking in prose, one question per turn, in this shape:
 
 ```
 ❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>

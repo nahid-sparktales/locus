@@ -318,6 +318,46 @@ def test_ingestion_deduplicates_and_dispatches_fifo_per_chat(tmp_path) -> None:
     assert store.claim_event_delivery(second["id"])[1]["id"] == second["id"]
 
 
+def test_overlapping_triggers_fan_out_and_separate_chats_claim_concurrently(
+    tmp_path,
+) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _connection(store)
+    _trigger(
+        store,
+        trigger_id="broad",
+        session_id="broad-chat",
+        filters={"subject_contains": ["locus"]},
+    )
+    _trigger(
+        store,
+        trigger_id="specific",
+        session_id="specific-chat",
+        filters={"subject_contains": ["locus ab"]},
+    )
+
+    deliveries = store.ingest_event(
+        "source", _event("overlap-1", subject="Locus ab status"), now=10
+    )
+    duplicate = store.ingest_event(
+        "source", _event("overlap-1", subject="Locus ab status"), now=11
+    )
+
+    assert [item["trigger_id"] for item in deliveries] == ["broad", "specific"]
+    assert {item["target_session_id"] for item in deliveries} == {
+        "broad-chat",
+        "specific-chat",
+    }
+    assert {item["matched_trigger_count"] for item in deliveries} == {2}
+    assert [item["id"] for item in duplicate] == [item["id"] for item in deliveries]
+    assert len(store.event_deliveries()) == 2
+
+    broad = next(item for item in deliveries if item["trigger_id"] == "broad")
+    specific = next(item for item in deliveries if item["trigger_id"] == "specific")
+    assert store.claim_event_delivery(broad["id"])[1]["state"] == "claiming"
+    assert store.claim_event_delivery(specific["id"])[1]["state"] == "claiming"
+
+
 def test_trigger_creation_is_idempotent_for_client_generated_id(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     _connection(store)

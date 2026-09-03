@@ -148,7 +148,9 @@ extension AppModel {
             self.sendBrowserCapability(to: runtime.service)
             self.sendNotesCapability(to: runtime.service)
             self.sendWalletCapability(to: runtime.service)
-            self.sendConnectorCapability(to: runtime.service)
+            runtime.needsConnectorCapabilitySync = !self.sendConnectorCapability(
+                to: runtime.service
+            )
             self.syncPreferredPermissionMode(to: runtime.service)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
@@ -242,7 +244,9 @@ extension AppModel {
         sendBrowserCapability(to: runtime.service)
         sendNotesCapability(to: runtime.service)
         sendWalletCapability(to: runtime.service)
-        sendConnectorCapability(to: runtime.service)
+        runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
+            to: runtime.service
+        )
         syncPreferredPermissionMode(to: runtime.service)
         syncBrowserProtectedSessions()
         return runtime
@@ -484,6 +488,10 @@ extension AppModel {
                 event, workspacePath: runtime.workspacePath, on: runtime.service
             )
         }
+        if type == "command_error",
+           event["operation"] as? String == "set_connector_control" {
+            runtime.needsConnectorCapabilitySync = true
+        }
         if type == "error" {
             state = .failed
             runtime.lastError = event["message"] as? String
@@ -495,6 +503,27 @@ extension AppModel {
            !question.question.isEmpty || !question.options.isEmpty
         {
             runtime.capturedQuestion = question
+        }
+        if type == "question_required" {
+            if let request = decode(AgentQuestionRequest.self, from: event),
+               !request.id.isEmpty, !request.questions.isEmpty {
+                runtime.pendingBlockingQuestion = request
+                runtime.pendingForegroundEvent = event
+                state = .waitingPermission
+            } else if let requestID = event["request_id"] as? String,
+                      !requestID.isEmpty {
+                _ = runtime.service.send([
+                    "type": "question_response",
+                    "request_id": requestID,
+                    "action": "cancel",
+                    "answers": [],
+                ])
+            }
+        }
+        if type == "question_resolved",
+           let requestID = event["request_id"] as? String,
+           runtime.pendingBlockingQuestion?.id == requestID {
+            runtime.pendingBlockingQuestion = nil
         }
         if type == "turn_done" {
             let reason = event["reason"] as? String ?? "complete"
@@ -517,6 +546,10 @@ extension AppModel {
             refreshSplitPane(runtime.sessionID)
         }
         runtime.executionState = state
+        if type == "turn_done" {
+            flushPendingConnectorCapability(for: runtime)
+            eventAutomations.wakeDispatcher()
+        }
         var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
         if let raw = event["task"] as? [String: Any],
            let record = decode(TaskRecord.self, from: raw)
@@ -540,6 +573,7 @@ extension AppModel {
             state.runStatus = updated.state
             state.isBusy = runtime.occupiesExecutionSlot
             state.hasPendingPermission = type == "permission_request"
+                || type == "question_required"
         }
         if let runID = updated.runID {
             lifecycleJournal?.record(

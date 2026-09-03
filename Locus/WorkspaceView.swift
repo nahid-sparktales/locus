@@ -2175,7 +2175,7 @@ struct SidebarDestinationControl: View {
     var body: some View {
         HStack(spacing: 0) {
             segment(
-                title: "Ask",
+                title: "Agent",
                 selected: destination == .ask,
                 identifier: "sidebar.mode.ask"
             ) {
@@ -2183,7 +2183,7 @@ struct SidebarDestinationControl: View {
             }
 
             segment(
-                title: "Agents",
+                title: "Work",
                 selected: destination == .agents,
                 identifier: "sidebar.mode.agents"
             ) {
@@ -2201,10 +2201,10 @@ struct SidebarDestinationControl: View {
         .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
         .animation(LocusMotion.spatial, value: destination)
-        .help(destination == .agents ? "Show persistent agents" : "Show conversations")
+        .help(destination == .agents ? "Show persistent work" : "Show agent conversations")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Ask or Agents")
-        .accessibilityValue(destination == .agents ? "Agents" : "Ask")
+        .accessibilityLabel("Agent or Work")
+        .accessibilityValue(destination == .agents ? "Work" : "Agent")
         .accessibilityIdentifier("sidebar.destination")
     }
 
@@ -3207,13 +3207,14 @@ private struct EmptyConversationView: View {
             BrandMark(accent: model.effectiveAccent, compact: true)
                 .padding(.bottom, 6)
 
-            Text("How can I help with \(workspaceName)?")
+            Text("How can Locus help?")
                 .font(.locus(size: 26, weight: .medium))
                 .tracking(-0.7)
                 .foregroundStyle(LocusTheme.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityIdentifier("conversation.welcome.title")
 
-            Text("Ask about the project, make a plan, or start a focused change.")
+            Text("Ask a question or describe what you’d like Locus to do.")
                 .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
                 .multilineTextAlignment(.center)
@@ -3226,7 +3227,7 @@ private struct EmptyConversationView: View {
             }
 
             VStack(spacing: 7) {
-                ForEach(Array(model.locusRecommendations.prefix(3))) { recommendation in
+                ForEach(RecommendationEngine.conversationStarters) { recommendation in
                     LocusRecommendationCard(
                         recommendation: recommendation,
                         identifier: "conversation.recommendation.\(recommendation.id)",
@@ -3244,10 +3245,6 @@ private struct EmptyConversationView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Welcome to Locus")
         .accessibilityIdentifier("conversation.welcome")
-    }
-
-    private var workspaceName: String {
-        URL(fileURLWithPath: model.workspacePath).lastPathComponent
     }
 
     private var activeRuntimePhase: RuntimePhase {

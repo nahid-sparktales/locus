@@ -430,7 +430,12 @@ extension AppModel {
             let occupied = taskWorkers.values.filter {
                 $0 !== runtime && $0.occupiesExecutionSlot
             }.count
-            if chatAdmissionQueue.isFirst(runtime.sessionID),
+            if chatAdmissionQueue.isFirstEligible(runtime.sessionID, where: { sessionID in
+                guard let candidate = taskWorkers[sessionID], candidate.process.isRunning else {
+                    return false
+                }
+                return !hasLocalWriterCollision(for: candidate)
+            }),
                occupied < AppSettings.clampMaximumActiveChats(settings.maximumActiveChats),
                !hasLocalWriterCollision(for: runtime) {
                 chatAdmissionQueue.remove(runtime.sessionID)

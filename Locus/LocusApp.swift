@@ -103,9 +103,9 @@ struct LocusApp: App {
             }
 
             CommandGroup(replacing: .newItem) {
-                // The label follows the destination: ⌘N makes a chat in Ask and
-                // an agent in Agents, so a fixed title would misdescribe one.
-                Button(model.sidebarDestination == .agents ? "New Agent" : "New Session") {
+                // The active destination decides whether this is a workspace
+                // chat or an agent chat; the user-facing action stays the same.
+                Button("New Chat") {
                     model.newChatForSidebarDestination()
                 }
                     .keyboardShortcut("n", modifiers: .command)
@@ -324,7 +324,10 @@ struct LocusApp: App {
                 .background(LocusTheme.surfaceCanvas)
         case "question-prompt":
             Group {
-                if let question = model.pendingUserQuestion {
+                if let question = model.pendingBlockingQuestion {
+                    BlockingQuestionPromptView(request: question)
+                        .frame(maxWidth: 740)
+                } else if let question = model.pendingUserQuestion {
                     QuestionPromptView(question: question)
                         .frame(maxWidth: 740)
                 }

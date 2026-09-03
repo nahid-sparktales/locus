@@ -27,6 +27,74 @@ final class TranscriptRelayoutTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRepeatedLongWrappedProposalsMeasureEachWidthOnce() {
+        let view = makeTextView(text: Self.longProse, wraps: true)
+
+        let wide = view.measuredSize(for: 520, wraps: true)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 1)
+
+        for _ in 0..<100 {
+            XCTAssertEqual(view.measuredSize(for: 520, wraps: true), wide)
+        }
+        XCTAssertEqual(
+            view.textLayoutMeasurementCount, 1,
+            "Repeated SwiftUI proposals repeated TextKit layout at the same width"
+        )
+
+        let narrow = view.measuredSize(for: 310, wraps: true)
+        XCTAssertGreaterThan(narrow.height, wide.height)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 2)
+
+        // A later proposal for a previously measured width should reuse that
+        // width's layout answer rather than laying the long transcript out a
+        // third time.
+        XCTAssertEqual(view.measuredSize(for: 520, wraps: true), wide)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 2)
+    }
+
+    func testLongUnwrappedOutputReusesItsMeasurementAcrossViewportWidths() {
+        let view = makeTextView(text: Self.longProgramOutput, wraps: false)
+        let first = view.measuredSize(for: 240, wraps: false)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 1)
+
+        for width in stride(from: CGFloat(260), through: 1_200, by: 7) {
+            XCTAssertEqual(view.measuredSize(for: width, wraps: false), first)
+        }
+        XCTAssertEqual(
+            view.textLayoutMeasurementCount, 1,
+            "A viewport resize remeasured horizontally scrolling program output"
+        )
+    }
+
+    func testContentAndWrappingChangesInvalidateNativeMeasurements() {
+        let initial = MarkdownNativeText.plain(
+            Self.longProse,
+            font: .systemFont(ofSize: 13),
+            color: .textColor,
+            lineSpacing: 3
+        )
+        let view = makeTextView(attributedText: initial, wraps: true)
+
+        _ = view.measuredSize(for: 420, wraps: true)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 1)
+        XCTAssertFalse(view.configureWrapping(true))
+        XCTAssertFalse(view.replaceAttributedTextIfNeeded(NSAttributedString(attributedString: initial)))
+        _ = view.measuredSize(for: 420, wraps: true)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 1)
+
+        let changed = NSMutableAttributedString(attributedString: initial)
+        changed.append(NSAttributedString(string: "\nA genuinely new final line."))
+        XCTAssertTrue(view.replaceAttributedTextIfNeeded(changed))
+        _ = view.measuredSize(for: 420, wraps: true)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 2)
+
+        XCTAssertTrue(view.configureWrapping(false))
+        let unwrapped = view.measuredSize(for: 420, wraps: false)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 3)
+        XCTAssertEqual(view.measuredSize(for: 900, wraps: false), unwrapped)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 3)
+    }
+
     func testTranscriptRewrapsWhileTheInspectorIsDraggedWider() throws {
         let size = NSSize(width: 1_250, height: 760)
         let startWidth: CGFloat = 300
@@ -96,6 +164,39 @@ final class TranscriptRelayoutTests: XCTestCase {
     it occupies changes several times across the range of widths a divider \
     drag moves through.
     """
+
+    private static let longProse = Array(repeating: body, count: 80)
+        .joined(separator: "\n\n")
+
+    private static let longProgramOutput = (0..<600).map { index in
+        "[task \(index)] compiled /workspace/Sources/Feature\(index)/LongOutputFile.swift successfully"
+    }.joined(separator: "\n")
+
+    private func makeTextView(text: String, wraps: Bool) -> ResponseSelectableTextView {
+        makeTextView(
+            attributedText: MarkdownNativeText.plain(
+                text,
+                font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                color: .textColor,
+                lineSpacing: 2
+            ),
+            wraps: wraps
+        )
+    }
+
+    private func makeTextView(
+        attributedText: NSAttributedString,
+        wraps: Bool
+    ) -> ResponseSelectableTextView {
+        let view = ResponseSelectableTextView.make()
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.heightTracksTextView = false
+        view.isVerticallyResizable = true
+        XCTAssertTrue(view.configureWrapping(wraps))
+        XCTAssertTrue(view.replaceAttributedTextIfNeeded(attributedText))
+        return view
+    }
 
     private func mount(_ model: AppModel, size: NSSize) -> NSView {
         let host = NSHostingView(rootView: RelayoutProbeRoot()

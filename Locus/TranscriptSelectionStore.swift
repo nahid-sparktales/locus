@@ -555,6 +555,12 @@ final class TranscriptSelectionStore: ObservableObject {
 /// deliberately handles selection itself instead of letting AppKit clamp a drag
 /// to this view's own text storage.
 final class ResponseSelectableTextView: LocusSelectionTextView {
+    private struct MeasurementKey: Hashable {
+        let contentRevision: UInt
+        let wraps: Bool
+        let effectiveWidth: CGFloat
+    }
+
     /// Set while the store writes a range, so the app-wide selection observer
     /// can tell our own painting from a user editing somewhere else.
     static private(set) var isApplyingProgrammaticSelection = false
@@ -562,6 +568,15 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
     weak var selectionStore: TranscriptSelectionStore?
     var selectionSpanID: String?
     var onOpenURL: ((URL) -> Void)?
+
+    private var contentRevision: UInt = 0
+    private var configuredWraps: Bool?
+    private var measurementCache: [MeasurementKey: NSSize] = [:]
+
+    /// Deterministic diagnostic used by relayout tests. Cache hits deliberately
+    /// do not advance it, so the tests count actual TextKit measurement passes
+    /// rather than SwiftUI proposals.
+    private(set) var textLayoutMeasurementCount = 0
 
     /// Built against a hand-made TextKit 1 stack so inline-code runs can be
     /// drawn as rounded pills by `LocusMarkdownLayoutManager`.
@@ -574,24 +589,69 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    /// Height this text needs at `width`. Both `sizeThatFits` and
-    /// `intrinsicContentSize` route through here so the two can never answer
-    /// from different wrap widths.
-    func measuredHeight(for width: CGFloat) -> CGFloat {
-        guard let container = textContainer, let layoutManager else { return 1 }
-        container.containerSize = NSSize(
-            width: max(width, 1),
-            height: CGFloat.greatestFiniteMagnitude
+    /// Configures the native view only when its wrapping behavior really
+    /// changes. Reassigning these TextKit properties invalidates layout, even
+    /// when the new values equal the old ones.
+    @discardableResult
+    func configureWrapping(_ wraps: Bool) -> Bool {
+        guard configuredWraps != wraps else { return false }
+        configuredWraps = wraps
+        isHorizontallyResizable = !wraps
+        textContainer?.widthTracksTextView = wraps
+        autoresizingMask = wraps ? [.width] : []
+        if !wraps {
+            setTextContainerWidthIfNeeded(.greatestFiniteMagnitude)
+        }
+        invalidateMeasurementCache()
+        return true
+    }
+
+    /// Keeps the existing NSTextView, NSTextStorage, and NSLayoutManager alive
+    /// across SwiftUI updates. The content revision changes only when the
+    /// rendered attributed value changes.
+    @discardableResult
+    func replaceAttributedTextIfNeeded(_ attributedText: NSAttributedString) -> Bool {
+        guard !attributedString().isEqual(to: attributedText) else { return false }
+        textStorage?.setAttributedString(attributedText)
+        contentRevision &+= 1
+        invalidateMeasurementCache()
+        return true
+    }
+
+    /// Native size this text needs for a proposal. Wrapped text is keyed by
+    /// effective width; unwrapped program output always uses the same infinite
+    /// container width, so viewport resizing reuses its invariant measurement.
+    func measuredSize(for width: CGFloat, wraps: Bool) -> NSSize {
+        let effectiveWidth = wraps ? max(width, 1) : CGFloat.greatestFiniteMagnitude
+        let key = MeasurementKey(
+            contentRevision: contentRevision,
+            wraps: wraps,
+            effectiveWidth: effectiveWidth
         )
+        if let cached = measurementCache[key] { return cached }
+
+        guard let container = textContainer, let layoutManager else {
+            return NSSize(width: max(effectiveWidth, 1), height: 1)
+        }
+        setTextContainerWidthIfNeeded(effectiveWidth)
         layoutManager.ensureLayout(for: container)
-        return max(layoutManager.usedRect(for: container).height.rounded(.up), 1)
+        let usedRect = layoutManager.usedRect(for: container)
+        let measured = NSSize(
+            width: wraps
+                ? effectiveWidth
+                : max(attributedString().size().width.rounded(.up) + 2, 1),
+            height: max(usedRect.height.rounded(.up), 1)
+        )
+        measurementCache[key] = measured
+        textLayoutMeasurementCount += 1
+        return measured
     }
 
     override var intrinsicContentSize: NSSize {
-        let wraps = textContainer?.widthTracksTextView ?? true
+        let wraps = configuredWraps ?? textContainer?.widthTracksTextView ?? true
         return NSSize(
             width: NSView.noIntrinsicMetric,
-            height: measuredHeight(for: wraps ? max(bounds.width, 1) : .greatestFiniteMagnitude)
+            height: measuredSize(for: max(bounds.width, 1), wraps: wraps).height
         )
     }
 
@@ -602,7 +662,21 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
         // one no longer describes this text. Without this the row keeps the
         // height it had at the previous column width and its lines are drawn
         // over the row below it.
-        if widthChanged { invalidateIntrinsicContentSize() }
+        if widthChanged,
+           (configuredWraps ?? textContainer?.widthTracksTextView ?? true) {
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    private func setTextContainerWidthIfNeeded(_ width: CGFloat) {
+        guard let textContainer else { return }
+        let size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        guard textContainer.containerSize != size else { return }
+        textContainer.containerSize = size
+    }
+
+    private func invalidateMeasurementCache() {
+        measurementCache.removeAll(keepingCapacity: true)
     }
 
     override func selectAll(_ sender: Any?) {
@@ -710,13 +784,11 @@ struct ResponseSelectableText: NSViewRepresentable {
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.heightTracksTextView = false
         view.isVerticallyResizable = true
-        configureWidth(of: view)
         update(view)
         return view
     }
 
     func updateNSView(_ nsView: ResponseSelectableTextView, context: Context) {
-        configureWidth(of: nsView)
         update(nsView)
     }
 
@@ -730,7 +802,7 @@ struct ResponseSelectableText: NSViewRepresentable {
         nsView: ResponseSelectableTextView,
         context: Context
     ) -> CGSize? {
-        let width: CGFloat
+        let proposedWidth: CGFloat
         if wraps {
             // An unspecified proposal still has to be answered. Returning nil
             // handed SwiftUI the text view's own intrinsic size, and SwiftUI
@@ -739,37 +811,28 @@ struct ResponseSelectableText: NSViewRepresentable {
             // moment ago and its lines ran over the row beneath. Falling back
             // to the width the view currently has keeps every answer tied to a
             // width this text was actually laid out for.
-            width = proposal.width.flatMap { $0 > 0 ? $0 : nil } ?? max(nsView.bounds.width, 1)
+            proposedWidth = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                ?? max(nsView.bounds.width, 1)
         } else {
-            width = max(nsView.attributedString().size().width.rounded(.up) + 2, 1)
+            proposedWidth = .greatestFiniteMagnitude
         }
-        let height = nsView.measuredHeight(
-            for: wraps ? width : CGFloat.greatestFiniteMagnitude
+        let measurement = nsView.measuredSize(for: proposedWidth, wraps: wraps)
+        return CGSize(
+            width: wraps ? proposedWidth : measurement.width,
+            height: measurement.height
         )
-        return CGSize(width: width, height: height)
     }
 
     private func update(_ view: ResponseSelectableTextView) {
-        if !view.attributedString().isEqual(to: attributedText) {
-            view.textStorage?.setAttributedString(attributedText)
-        }
+        let wrappingChanged = view.configureWrapping(wraps)
+        let contentChanged = view.replaceAttributedTextIfNeeded(attributedText)
         // The wash follows the accent, so it is re-resolved on every update
         // rather than only at construction.
         view.refreshSelectionWash()
         view.onOpenURL = onOpenURL
         store.register(span, view: view)
-        view.invalidateIntrinsicContentSize()
-    }
-
-    private func configureWidth(of view: ResponseSelectableTextView) {
-        view.isHorizontallyResizable = !wraps
-        view.textContainer?.widthTracksTextView = wraps
-        view.autoresizingMask = wraps ? [.width] : []
-        if !wraps {
-            view.textContainer?.containerSize = NSSize(
-                width: CGFloat.greatestFiniteMagnitude,
-                height: CGFloat.greatestFiniteMagnitude
-            )
+        if wrappingChanged || contentChanged {
+            view.invalidateIntrinsicContentSize()
         }
     }
 }

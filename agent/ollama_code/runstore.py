@@ -1139,6 +1139,16 @@ class RunStore:
     @staticmethod
     def _event_delivery_row(row: sqlite3.Row) -> dict[str, Any]:
         run_state = row["run_state"] if "run_state" in row.keys() else None
+        target_session_id = (
+            row["target_session_id"]
+            if "target_session_id" in row.keys()
+            else row["session_id"]
+        )
+        matched_trigger_count = (
+            int(row["matched_trigger_count"] or 1)
+            if "matched_trigger_count" in row.keys()
+            else 1
+        )
         state = row["state"]
         if state == "queued" and run_state in TERMINAL_STATES:
             state = run_state
@@ -1154,6 +1164,8 @@ class RunStore:
             "run_state": run_state,
             "attempt": int(row["attempt"] or 0),
             "session_id": row["session_id"],
+            "target_session_id": target_session_id,
+            "matched_trigger_count": max(matched_trigger_count, 1),
             "run_id": row["run_id"],
             "error": row["error"],
             "created_at": row["created_at"],
@@ -1618,7 +1630,17 @@ class RunStore:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock, self._connect(readonly=True) as connection:
             rows = connection.execute(
-                "SELECT deliveries.*, runs.state AS run_state FROM event_deliveries AS deliveries"
+                "SELECT deliveries.*, runs.state AS run_state,"
+                " triggers.target_session_id AS target_session_id,"
+                " (SELECT COUNT(DISTINCT peers.trigger_id)"
+                " FROM event_deliveries AS peers"
+                " JOIN event_triggers AS peer_triggers"
+                " ON peer_triggers.id=peers.trigger_id"
+                " WHERE peer_triggers.connection_id=triggers.connection_id"
+                " AND peers.source_event_id=deliveries.source_event_id)"
+                " AS matched_trigger_count"
+                " FROM event_deliveries AS deliveries"
+                " LEFT JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id"
                 " LEFT JOIN runs ON runs.id=deliveries.run_id" + where +
                 " ORDER BY deliveries.received_at DESC, deliveries.created_at DESC LIMIT ?",
                 (*values, bounded),
@@ -1628,7 +1650,17 @@ class RunStore:
     def event_delivery(self, delivery_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect(readonly=True) as connection:
             row = connection.execute(
-                "SELECT deliveries.*, runs.state AS run_state FROM event_deliveries AS deliveries"
+                "SELECT deliveries.*, runs.state AS run_state,"
+                " triggers.target_session_id AS target_session_id,"
+                " (SELECT COUNT(DISTINCT peers.trigger_id)"
+                " FROM event_deliveries AS peers"
+                " JOIN event_triggers AS peer_triggers"
+                " ON peer_triggers.id=peers.trigger_id"
+                " WHERE peer_triggers.connection_id=triggers.connection_id"
+                " AND peers.source_event_id=deliveries.source_event_id)"
+                " AS matched_trigger_count"
+                " FROM event_deliveries AS deliveries"
+                " LEFT JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id"
                 " LEFT JOIN runs ON runs.id=deliveries.run_id WHERE deliveries.id=?",
                 (delivery_id,),
             ).fetchone()

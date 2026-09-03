@@ -3282,7 +3282,7 @@ def test_websocket_ordinary_agentic_solo_turns_enable_adaptive_delegation(client
         lambda _service, _operation, message: errors.append(message),
     )
 
-    for mode in ("work", "plan", "build"):
+    for mode in ("work", "plan", "grill", "build"):
         asyncio.run(server_mod._handle_client_message(service, {
             "type": "user_message",
             "text": "Inspect independent areas",
@@ -3290,8 +3290,8 @@ def test_websocket_ordinary_agentic_solo_turns_enable_adaptive_delegation(client
             "run_id": f"swarm-{mode}",
         }))
 
-    assert len(captured) == 3
-    for index, mode in enumerate(("work", "plan", "build")):
+    assert len(captured) == 4
+    for index, mode in enumerate(("work", "plan", "grill", "build")):
         call, args = captured[index]
         assert call is server_mod._run_user_turn
         assert args[-2:] == (f"swarm-{mode}", True)
@@ -3356,7 +3356,7 @@ def test_websocket_agentic_modes_route_image_attachments(client, monkeypatch):
         return True
 
     monkeypatch.setattr(service, "start_turn", capture_start)
-    for mode in ("work", "plan", "build"):
+    for mode in ("work", "plan", "grill", "build"):
         asyncio.run(server_mod._handle_client_message(service, {
             "type": "user_message",
             "text": "Fix the layout shown in this screenshot",
@@ -3368,7 +3368,7 @@ def test_websocket_agentic_modes_route_image_attachments(client, monkeypatch):
             }],
         }))
 
-    assert len(captured) == 3
+    assert len(captured) == 4
     for call, args in captured:
         assert call is server_mod._run_user_turn
         assert args[:3] == (service, "Fix the layout shown in this screenshot", False)
@@ -3620,6 +3620,291 @@ def test_run_turn_names_a_smaller_team_call_limit_instead_of_iteration_limit(tmp
     assert done["model_call_limit"] == 2
     assert done["iteration_limit"] == 5
     assert core.last_turn_result == done
+
+
+def test_ask_user_question_blocks_until_answered(tmp_path):
+    """The bridge parks the worker thread, exactly like the permission decider."""
+    import threading
+
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    service.ws = object()  # a client is attached, so a question can be answered
+    events = []
+    service.emit = events.append
+
+    result = {}
+    done = threading.Event()
+
+    def ask():
+        result["value"] = service.ask_user_question({"questions": [
+            {"id": "q1", "header": "Storage", "question": "Where should the cache live?"},
+        ]})
+        done.set()
+
+    worker = threading.Thread(target=ask, daemon=True)
+    worker.start()
+
+    required = None
+    for _ in range(200):
+        required = next((e for e in events if e["type"] == "question_required"), None)
+        if required is not None:
+            break
+        time.sleep(0.01)
+    assert required is not None, "question_required was never emitted"
+    assert required["tool"] == "ask_question"
+    assert required["questions"][0]["header"] == "Storage"
+
+    # Still waiting: nothing has answered yet.
+    assert not done.wait(0.05)
+
+    assert service.answer_question(required["request_id"], {
+        "action": "answer",
+        "answers": [{"id": "q1", "selected": ["SQLite"], "text": ""}],
+    })
+    assert done.wait(2), "the worker thread never unblocked"
+    assert "SQLite" in result["value"]
+
+    # The panel is told the wait is over, and the id is retired.
+    assert any(e["type"] == "question_resolved" for e in events)
+    assert service.pending_questions == {}
+    assert not service.answer_question(required["request_id"], {"action": "answer", "answers": []})
+
+
+def test_cancel_all_questions_unblocks_an_interrupted_turn(tmp_path):
+    import threading
+
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    service.ws = object()  # a client is attached, so a question can be answered
+    events = []
+    service.emit = events.append
+
+    result = {}
+    done = threading.Event()
+
+    def ask():
+        result["value"] = service.ask_user_question({"questions": [
+            {"id": "q1", "header": "", "question": "Which one?"},
+        ]})
+        done.set()
+
+    threading.Thread(target=ask, daemon=True).start()
+    for _ in range(200):
+        if any(e["type"] == "question_required" for e in events):
+            break
+        time.sleep(0.01)
+
+    service.cancel_all_questions()
+    assert done.wait(2), "Stop left the worker thread parked"
+    # A dismissal is a legitimate outcome, not a tool failure: AgentCore reads
+    # a leading "Error" to decide `ok`.
+    assert not result["value"].startswith("Error")
+    assert "dismissed" in result["value"]
+
+
+def test_question_response_frame_unblocks_the_waiting_turn(tmp_path, monkeypatch):
+    """The real inbound path: a `question_response` frame releases the thread."""
+    import threading
+
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    service.ws = object()
+    events = []
+    service.emit = events.append
+    errors = []
+    monkeypatch.setattr(
+        server_mod, "_command_error",
+        lambda _service, _operation, message: errors.append(message),
+    )
+
+    result = {}
+    done = threading.Event()
+
+    def ask():
+        result["value"] = service.ask_user_question({"questions": [
+            {"id": "q1", "header": "Storage", "question": "Where should the cache live?"},
+        ]})
+        done.set()
+
+    threading.Thread(target=ask, daemon=True).start()
+    required = None
+    for _ in range(200):
+        required = next((e for e in events if e["type"] == "question_required"), None)
+        if required is not None:
+            break
+        time.sleep(0.01)
+    assert required is not None
+
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "question_response",
+        "request_id": required["request_id"],
+        "action": "answer",
+        "answers": [{"id": "q1", "selected": ["SQLite"], "text": "or Postgres"}],
+    }))
+
+    assert done.wait(2), "the question_response frame did not release the turn"
+    assert "SQLite" in result["value"]
+    assert "or Postgres" in result["value"]
+    assert errors == []
+
+    # Answering twice is rejected rather than silently accepted.
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "question_response",
+        "request_id": required["request_id"],
+        "action": "answer", "answers": [],
+    }))
+    assert errors == ["That question is no longer waiting."]
+
+    # And a bogus action is refused without touching any waiter.
+    errors.clear()
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "question_response", "request_id": "x", "action": "nonsense",
+    }))
+    assert errors == ["Unknown question action."]
+
+
+def test_ask_user_question_refuses_when_nobody_is_attached(tmp_path):
+    """Scheduled, cron and evaluation turns have no one to answer.
+
+    Blocking there would hold the turn slot until the process died, so the
+    tool fails fast and tells the model to proceed on its own judgment.
+    """
+    core = _core(tmp_path, [])
+    service = server_mod.ChatService(core)
+    assert service.ws is None
+    events = []
+    service.emit = events.append
+
+    result = service.ask_user_question({"questions": [{"id": "q1", "question": "Which?"}]})
+
+    assert result.startswith("Error:")
+    assert "unattended" in result
+    assert not any(e["type"] == "question_required" for e in events)
+    assert service.pending_questions == {}
+
+
+def test_ask_question_returns_the_users_answer_to_the_model(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("ask_question", {
+            "questions": [{
+                "header": "Storage",
+                "question": "Where should the response cache live?",
+                "options": [
+                    {"label": "In-memory", "description": "Fastest, lost on restart."},
+                    {"label": "SQLite", "description": "Durable, adds a dependency."},
+                ],
+            }],
+        })], done=True),
+        ChatResponse(content_parts=["Using SQLite."], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    seen = {}
+
+    def answer(payload):
+        seen.update(payload)
+        return "Q (Storage) Where should the response cache live?\nA: SQLite"
+
+    core.tool_ctx.ask_question = answer
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn("design the cache")
+
+    # The question reaches the bridge normalized, with a stable per-question id.
+    assert seen["questions"][0]["id"] == "q1"
+    assert seen["questions"][0]["header"] == "Storage"
+    assert [o["label"] for o in seen["questions"][0]["options"]] == ["In-memory", "SQLite"]
+
+    # And the answer comes back as the tool's own result, not as a new turn.
+    result = next(e for e in events if e["type"] == "tool_result" and e["tool"] == "ask_question")
+    assert "SQLite" in result["result"]
+    assert result["ok"] is True
+
+
+def test_ask_question_is_unavailable_without_a_bridge(tmp_path):
+    core = _core(tmp_path, [])
+    assert core.tool_ctx.ask_question is None
+    result = execute_tool("ask_question", {"questions": [{"question": "Which one?"}]}, core.tool_ctx)
+    assert result.startswith("Error:")
+    assert "delegated" in result
+
+
+def test_ask_question_refuses_credential_shaped_questions(tmp_path):
+    core = _core(tmp_path, [])
+    called = []
+    core.tool_ctx.ask_question = lambda payload: called.append(payload) or "leaked"
+
+    for probe in ("What is your GitHub API key?", "Paste the DB password", "What is your SSN?"):
+        result = execute_tool("ask_question", {"questions": [{"question": probe}]}, core.tool_ctx)
+        assert result.startswith("Error:"), probe
+    # The point of the guard is that the panel never renders at all.
+    assert called == []
+
+
+def test_ask_question_normalizes_options(tmp_path):
+    core = _core(tmp_path, [])
+    seen = {}
+    core.tool_ctx.ask_question = lambda payload: seen.update(payload) or "ok"
+
+    # A lone option is not a choice, so it collapses to the free-text shape.
+    execute_tool("ask_question", {"questions": [
+        {"question": "Pick?", "options": [{"label": "Only"}]},
+    ]}, core.tool_ctx)
+    assert seen["questions"][0]["options"] == []
+
+    # Duplicate labels would make the answer ambiguous, since the client
+    # reports the chosen label rather than its index.
+    execute_tool("ask_question", {"questions": [
+        {"question": "Pick?", "options": [{"label": "Yes"}, {"label": "yes"}, {"label": "No"}]},
+    ]}, core.tool_ctx)
+    assert [o["label"] for o in seen["questions"][0]["options"]] == ["Yes", "No"]
+
+    # multi_select is meaningless below two options.
+    execute_tool("ask_question", {"questions": [
+        {"question": "Name it?", "multi_select": True},
+    ]}, core.tool_ctx)
+    assert seen["questions"][0]["multi_select"] is False
+    assert seen["questions"][0]["options"] == []
+
+    # Five options clamp to four.
+    execute_tool("ask_question", {"questions": [
+        {"question": "Pick?", "options": [{"label": f"o{i}"} for i in range(5)]},
+    ]}, core.tool_ctx)
+    assert len(seen["questions"][0]["options"]) == 4
+
+
+def test_ask_question_is_bounded_per_turn(tmp_path):
+    from ollama_code.tools import _MAX_QUESTIONS_PER_TURN
+
+    core = _core(tmp_path, [])
+    calls = []
+    core.tool_ctx.ask_question = lambda payload: calls.append(payload) or "ok"
+    args = {"questions": [{"question": "Which one?"}]}
+
+    for _ in range(_MAX_QUESTIONS_PER_TURN):
+        assert execute_tool("ask_question", args, core.tool_ctx) == "ok"
+    result = execute_tool("ask_question", args, core.tool_ctx)
+    assert result.startswith("Error:")
+    assert len(calls) == _MAX_QUESTIONS_PER_TURN
+
+
+def test_ask_question_is_not_delegable_to_solo_workers(tmp_path):
+    from ollama_code.core import _SOLO_ROOT_ONLY_TOOLS
+    from ollama_code.solo_swarm import _NON_DELEGABLE_TOOLS
+
+    assert "ask_question" in _SOLO_ROOT_ONLY_TOOLS
+    assert "ask_question" in _NON_DELEGABLE_TOOLS
+
+
+def test_ask_question_never_asks_permission():
+    from ollama_code.tools import SAFE_TOOLS, TOOL_NAMES
+
+    assert "ask_question" in SAFE_TOOLS
+    # Not in TOOL_SCHEMAS: the registry appends it only where a ChatService
+    # exists to answer it, so the CLI is never offered it.
+    assert "ask_question" not in TOOL_NAMES
 
 
 def test_submit_plan_emits_structured_plan_ready(tmp_path):

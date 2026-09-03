@@ -36,6 +36,25 @@ def test_agent_configuration_bounds_and_normalizes_untrusted_settings():
     assert config.runtime_policy.max_output_tokens == 256
 
 
+def test_grill_is_a_valid_mode_and_retired_build_still_parses():
+    from ollama_code.agent_config import VALID_MODES
+
+    assert "grill" in VALID_MODES
+    # "build" was GSD. It stays valid so a stored agent config that still names
+    # it keeps its overlay instead of being silently dropped on load.
+    assert "build" in VALID_MODES
+
+    config = AgentConfiguration.parse({
+        "mode_instructions": {"grill": "Ask about rollback before schema changes."},
+    })
+    assert config.mode_instructions["grill"] == "Ask about rollback before schema changes."
+
+    legacy = AgentConfiguration.parse({
+        "mode_instructions": {"build": "Prefer small, verified patches."},
+    })
+    assert legacy.mode_instructions["build"] == "Prefer small, verified patches."
+
+
 def test_composer_keeps_locked_identity_and_safety_in_separate_first_layer():
     config = AgentConfiguration.parse({
         "display_name": "Friendly Editor",

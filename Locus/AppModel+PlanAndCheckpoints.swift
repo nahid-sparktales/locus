@@ -147,8 +147,34 @@ extension AppModel {
         drainQueuedMessages()
     }
 
+    /// Return structured answers to a worker parked by `ask_question`.
+    func resolveBlockingQuestion(
+        _ answers: [AgentQuestionAnswer],
+        action: String = "answer"
+    ) {
+        guard let request = pendingBlockingQuestion else { return }
+        if !isUITesting {
+            guard conversationBackend.send([
+                "type": "question_response",
+                "request_id": request.id,
+                "action": action,
+                "answers": answers.compactMap(encodedJSONObject),
+            ]) else {
+                showToast("The agent disconnected before your answer was sent")
+                return
+            }
+        }
+        pendingBlockingQuestion = nil
+        drainQueuedMessages()
+    }
+
+    func cancelBlockingQuestion() {
+        resolveBlockingQuestion([], action: "cancel")
+    }
+
     func clearPendingQuestion() {
         pendingUserQuestion = nil
         capturedQuestionThisTurn = nil
+        pendingBlockingQuestion = nil
     }
 }

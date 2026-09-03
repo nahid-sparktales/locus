@@ -1966,6 +1966,22 @@ mod tests {
             value["accounts"][2]["address"],
             "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
         );
+        assert_eq!(
+            value["accounts"][0]["network_ids"],
+            serde_json::json!(["eip155:1", "eip155:11155111"])
+        );
+        assert_eq!(
+            value["accounts"][1]["network_ids"],
+            serde_json::json!(["solana:mainnet-beta", "solana:devnet"])
+        );
+        assert_eq!(
+            value["accounts"][2]["network_ids"],
+            serde_json::json!(["sui:mainnet", "sui:testnet"])
+        );
+        for account in value["accounts"].as_array().unwrap() {
+            assert!(account.get("network_ids").is_some());
+            assert!(account.get("networkIDs").is_none());
+        }
     }
 
     fn reviewed_sui_native_request() -> serde_json::Value {

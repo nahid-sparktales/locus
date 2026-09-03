@@ -213,6 +213,10 @@ final class AppModel: ObservableObject {
     /// The question a completed turn asked the user. While set, the composer
     /// input is replaced by QuestionPromptView, the way plan approval is.
     @Published var pendingUserQuestion: UserQuestion?  // internal(for: AppModel+UITestFixtures)
+    /// A live question whose worker is blocked until this chat sends a
+    /// `question_response`. Kept separate from the completed-turn question
+    /// above so both current and older agent protocols remain compatible.
+    @Published var pendingBlockingQuestion: AgentQuestionRequest?
     /// Captured from `question_ready` mid-turn; armed only when the turn
     /// completes, so an interrupted or errored turn never offers a stale
     /// question.
@@ -370,6 +374,7 @@ final class AppModel: ObservableObject {
     var pendingSimulatorActions: [String: (sessionID: String, task: Task<Void, Never>)] = [:]  // internal(for: AppModel extension files)
     /// Backends that refused the browser handshake because a turn was running.
     var pendingBrowserCapabilityTransports: [BackendService] = []  // internal(for: AppModel extension files)
+    var pendingMainConnectorCapabilitySync = false  // internal(for: AppModel extension files)
     var conversationBackend: BackendService {  // internal(for: AppModel extension files)
         taskWorkers[currentSessionID]?.service ?? backend
     }
@@ -925,11 +930,7 @@ final class AppModel: ObservableObject {
                 return true
             },
             onCapabilityChanged: { [weak self] in
-                guard let self else { return }
-                self.sendConnectorCapability(to: self.backend)
-                for runtime in self.taskWorkers.values {
-                    self.sendConnectorCapability(to: runtime.service)
-                }
+                self?.announceConnectorCapability()
             },
             refreshSessions: { [weak self] in
                 await self?.refreshMetadata()
@@ -1496,6 +1497,10 @@ final class AppModel: ObservableObject {
         blocks.first(where: {
             $0.tool?.status == .awaitingPermission && $0.tool?.requestID != nil
         })?.tool
+    }
+
+    var awaitingUserDecision: Bool {
+        hasPendingPermission || pendingBlockingQuestion != nil
     }
 
     /// The window the meter measures against. The backend's `context_limit`

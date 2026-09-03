@@ -595,6 +595,25 @@ def test_split_parity_prompt_modes():
     assert (context, raw) == ("", "plain CLI text")
 
 
+def test_split_parity_prompt_keeps_the_grill_instruction():
+    """Grill Me depends on its instruction surviving into the parity context.
+
+    Section 1 is dropped for ask/work only. If "grill" ever falls out of the
+    mode allowlist in `AgentCore.configure_agent` it coerces to "work", and the
+    $grilling activation would be stripped on ChatGPT accounts while still
+    working on Ollama — a provider-specific failure that is very hard to spot.
+    """
+    decorated = (
+        "[Locus mode: Grill]\n\n"
+        "Interrogate the request before any of it gets built: follow the "
+        "activated $grilling skill.\n\n"
+        "User request:\nhelp me design a rate limiter"
+    )
+    context, raw = split_parity_prompt(decorated, "grill")
+    assert raw == "help me design a rate limiter"
+    assert "$grilling" in context
+
+
 class ParityFakeRuntime(FakeManagedRuntime):
     supports_parity = True
 
@@ -743,6 +762,26 @@ def test_parity_shell_and_update_plan_execute_as_canonical_tools(tmp_path):
         {"content": "look around", "status": "completed"},
         {"content": "fix it", "status": "in_progress"},
     ]
+
+
+def test_parity_schemas_offer_ask_question_in_every_mode(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+
+    def names(**kwargs):
+        return [item["function"]["name"] for item in core.tool_registry.parity_schemas(**kwargs)]
+
+    # Off until a ChatService announces a live chat: nothing else can answer.
+    assert "ask_question" not in names()
+
+    core.tool_registry.set_ask_question_enabled(True)
+    # Unlike submit_plan, a clarifying question is not gated to Plan mode.
+    assert "ask_question" in names()
+    assert "ask_question" in names(plan_mode=True)
+
+    # A read-only specialist or reviewer does not own the conversation.
+    core.tool_registry.set_mcp_agent_policy(None, access_ceiling="read_only")
+    assert "ask_question" not in names()
 
 
 def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):

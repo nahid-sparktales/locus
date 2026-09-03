@@ -1043,6 +1043,10 @@ private struct AgentEventRow: View {
                 if event.attempt > 1 {
                     Text("· attempt \(event.attempt)")
                 }
+                if event.matchedTriggerCount > 1 {
+                    Text("· matched \(event.matchedTriggerCount) agents")
+                        .foregroundStyle(LocusTheme.signalDeep)
+                }
                 Spacer(minLength: 0)
                 if event.canRetry {
                     Button("Retry", action: onRetry)

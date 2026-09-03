@@ -220,7 +220,7 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
 
     static let all: [SettingsSearchDescriptor] = [
         .init("settings.launchAtLogin", page: .general, title: "Launch at login", keywords: ["startup", "menu bar"]),
-        .init("settings.maximumActiveChats", page: .general, title: "Background chats", keywords: ["concurrency", "worktrees"]),
+        .init("settings.maximumActiveChats", page: .general, title: "Parallel chats and agent events", keywords: ["concurrency", "queue", "automations", "worktrees"]),
         .init("settings.appearance", page: .appearance, title: "Appearance", keywords: ["light", "dark", "system"]),
         .init("settings.accentColor", page: .appearance, title: "Accent colour", keywords: ["logo", "brand", "lime", "green", "dark green", "blue", "purple", "orange", "pink", "neutral", "grey", "gray", "custom"]),
         .init("settings.showTeamProgressInHeader", page: .appearance, title: "Header status", keywords: ["team", "context usage"]),
@@ -334,6 +334,43 @@ struct RecommendationContext: Equatable {
 }
 
 enum RecommendationEngine {
+    /// Stable conversation starters keep the empty workspace approachable.
+    /// They prefill the composer for review and never send on the user's behalf.
+    static var conversationStarters: [LocusRecommendation] {
+        [
+            LocusRecommendation(
+                id: "build-feature",
+                kind: .polishInterface,
+                title: "Build a feature",
+                rationale: "Describe what you want to add or change.",
+                priority: 300,
+                intent: .prefill(
+                    "Build a feature in this project. Start by understanding the relevant code, then implement and verify the change."
+                )
+            ),
+            LocusRecommendation(
+                id: "fix-bug",
+                kind: .recoverRun,
+                title: "Fix a bug",
+                rationale: "Share what’s broken or behaving unexpectedly.",
+                priority: 200,
+                intent: .prefill(
+                    "Find and fix a bug in this project. Diagnose the root cause, implement the fix, and verify the result."
+                )
+            ),
+            LocusRecommendation(
+                id: "explore-codebase",
+                kind: .exploreProject,
+                title: "Explore the codebase",
+                rationale: "Ask how the project works or where to begin.",
+                priority: 100,
+                intent: .prefill(
+                    "Explore this codebase and explain its architecture, main components, and the best place to begin."
+                )
+            ),
+        ]
+    }
+
     static func recommendations(for context: RecommendationContext) -> [LocusRecommendation] {
         var candidates: [LocusRecommendation] = []
 

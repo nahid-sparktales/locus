@@ -46,6 +46,8 @@ IGNORE_DIRS = {
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
     "ask_user_question",
+    # Asking the user a question mutates nothing, so it never prompts.
+    "ask_question",
     "search_workspace_knowledge", "search_memory", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
@@ -94,6 +96,13 @@ class ToolContext:
     #: Per-turn adaptive Solo executor. It is installed only for eligible Solo
     #: turns and removed before the turn identity is released.
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None
+    #: App-owned blocking bridge to the user's question panel. It parks the
+    #: worker thread until the user answers, exactly like the permission
+    #: decider. Installed only for the visible root chat; sub-agents,
+    #: parallel writers and the CLI leave it None.
+    ask_question: Callable[[dict[str, Any]], str] | None = None
+    #: Per-turn question budget, reset wherever ``read_files`` is cleared.
+    questions_asked_this_turn: int = 0
 
     def stopped(self) -> bool:
         return bool(self.should_stop and self.should_stop())
@@ -929,6 +938,82 @@ def _impl_ask_user_question(args: dict[str, Any], ctx: ToolContext) -> str:
     )
 
 
+#: A whole grilling interview is now a single turn, so this is generous
+#: rather than tight; ``turn_done: model_call_budget`` is the real backstop.
+#: It exists at all because, unlike ``submit_plan``, asking does not end the turn.
+_MAX_QUESTIONS_PER_TURN = 12
+
+#: This tool renders a text field and hands whatever is typed back to the
+#: model, so a prompt injection could use it to phish. Same intent as
+#: ``mcp_runtime._SENSITIVE_FIELD``, but deliberately not the same pattern:
+#: that one matches JSON property names (``api_key``, ``apiKey``), while a
+#: question is prose and says "your API key", so the separators must allow
+#: whitespace.
+_CREDENTIAL_SHAPED = re.compile(
+    r"password|passwd|secret|credential|token"
+    r"|api[\s_-]*key|private[\s_-]*key|access[\s_-]*key|seed[\s_-]*phrase"
+    r"|card[\s_-]*number|cvv|payment"
+    r"|ssn|social[\s_-]*security",
+    re.IGNORECASE,
+)
+
+
+def _impl_ask_question(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.ask_question is None:
+        return (
+            "Error: you cannot ask the user directly from here. State what you "
+            "need in your answer, or report it to the agent that delegated this task."
+        )
+    if ctx.questions_asked_this_turn >= _MAX_QUESTIONS_PER_TURN:
+        return (
+            f"Error: you have already asked the user {_MAX_QUESTIONS_PER_TURN} times "
+            "this turn. Proceed with your best judgment and state the assumption you made."
+        )
+    raw = args.get("questions")
+    if not isinstance(raw, list) or not raw:
+        return "Error: 'questions' must be a non-empty array."
+    questions: list[dict[str, Any]] = []
+    for index, item in enumerate(raw[:4]):
+        if not isinstance(item, dict):
+            return "Error: each entry in 'questions' must be an object."
+        body = str(item.get("question") or "").strip()[:1_000]
+        if not body:
+            return "Error: every question needs a non-empty 'question'."
+        if _CREDENTIAL_SHAPED.search(body):
+            return (
+                "Error: never ask the user for a password, token, API key, or payment "
+                "detail. Tell them where to enter it themselves instead."
+            )
+        options: list[dict[str, str]] = []
+        seen: set[str] = set()
+        raw_options = item.get("options")
+        for option in (raw_options if isinstance(raw_options, list) else [])[:4]:
+            if not isinstance(option, dict):
+                continue
+            label = str(option.get("label") or "").strip()[:80]
+            # A duplicated label makes the answer ambiguous, because the client
+            # reports the chosen label rather than its index.
+            if not label or label.lower() in seen:
+                continue
+            seen.add(label.lower())
+            options.append({
+                "label": label,
+                "description": str(option.get("description") or "").strip()[:240],
+            })
+        if len(options) == 1:
+            # One "choice" is not a choice; the free-text field already covers it.
+            options = []
+        questions.append({
+            "id": f"q{index + 1}",
+            "header": str(item.get("header") or "").strip()[:24],
+            "question": body,
+            "multi_select": bool(item.get("multi_select")) and len(options) > 1,
+            "options": options,
+        })
+    ctx.questions_asked_this_turn += 1
+    return ctx.ask_question({"questions": questions})
+
+
 def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> str:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -1130,6 +1215,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "record_skill_observation": _impl_record_skill_observation,
     "capture_context_snapshot": _impl_capture_context_snapshot,
     "delegate_read_only": _impl_delegate_read_only,
+    "ask_question": _impl_ask_question,
 }
 
 
@@ -1422,5 +1508,65 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         [],
     ),
 ]
+
+#: Deliberately NOT in ``TOOL_SCHEMAS``: the registry appends it only when a
+#: `ChatService` is present to answer it, the way `DELEGATE_READ_ONLY_SCHEMA`
+#: is appended. The CLI REPL builds an `AgentCore` with no service, and must
+#: never be offered a question that nothing could ever deliver.
+ASK_QUESTION_SCHEMA = _schema(
+    "ask_question",
+    "Ask the user 1 to 4 structured questions and wait for the answer. Use it only for "
+    "decisions that are genuinely the user's to make; find facts yourself instead of "
+    "asking. Never ask for passwords, tokens, API keys, or payment details. Returns the "
+    "user's answers as text.",
+    {
+        "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "description": "The questions to ask, in order.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "header": {
+                        "type": "string",
+                        "description": "Two or three words naming the decision, e.g. 'Storage'.",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The question itself. One decision only.",
+                    },
+                    "options": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 4,
+                        "description": (
+                            "Concrete choices, best first. Omit entirely for a free-text "
+                            "question; never supply exactly one. The user can always type "
+                            "their own answer instead."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Short answer text."},
+                                "description": {
+                                    "type": "string",
+                                    "description": "What choosing it commits to.",
+                                },
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                    "multi_select": {
+                        "type": "boolean",
+                        "description": "Allow more than one option to be chosen.",
+                    },
+                },
+                "required": ["question"],
+            },
+        }
+    },
+    ["questions"],
+)
 
 TOOL_NAMES = [s["function"]["name"] for s in TOOL_SCHEMAS]

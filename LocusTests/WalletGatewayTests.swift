@@ -1,4 +1,5 @@
 import CryptoKit
+import Security
 import XCTest
 @testable import Locus
 
@@ -283,6 +284,62 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertFalse(text.contains("raw_transaction"))
         XCTAssertFalse(text.contains("digest"))
         XCTAssertEqual(try JSONDecoder().decode(WalletSemanticAction.self, from: encoded), action)
+    }
+
+    func testSignerDerivedAccountsPayloadMapsSnakeCaseNetworkIDs() throws {
+        let payload = Data(
+            #"""
+            {"accounts":[{"id":"locus-vault-evm-0","chain":"evm","address":"0xabc","label":"Locus Vault EVM","network_ids":["eip155:1","eip155:11155111"]}]}
+            """#.utf8
+        )
+
+        let accounts = try WalletDerivedAccountsDecoder.decode(payload)
+
+        XCTAssertEqual(accounts, [WalletAccount(
+            id: "locus-vault-evm-0", chain: .evm, address: "0xabc",
+            label: "Locus Vault EVM",
+            networkIDs: ["eip155:1", "eip155:11155111"]
+        )])
+        let swiftWire = String(
+            decoding: try JSONEncoder().encode(accounts[0]), as: UTF8.self
+        )
+        XCTAssertTrue(swiftWire.contains("\"networkIDs\""))
+        XCTAssertFalse(swiftWire.contains("network_ids"))
+    }
+
+    func testWalletVaultKeyUsesProvisionedDataProtectionKeychain() {
+        let base = WalletVaultKeychainQuery.base(
+            service: "io.sparktales.locus.WalletSigner.wrap.v2",
+            account: "locus-mainnet-vault"
+        )
+        let add = WalletVaultKeychainQuery.add(
+            service: "io.sparktales.locus.WalletSigner.wrap.v2",
+            account: "locus-mainnet-vault",
+            keyData: Data(repeating: 3, count: 32)
+        )
+
+        for query in [base, add] {
+            XCTAssertEqual(query[kSecUseDataProtectionKeychain as String] as? Bool, true)
+            XCTAssertEqual(
+                query[kSecAttrAccessGroup as String] as? String,
+                WalletVaultKeychainQuery.accessGroup
+            )
+            XCTAssertNil(query[kSecAttrAccessControl as String])
+        }
+        XCTAssertNil(base[kSecAttrAccessible as String])
+        XCTAssertEqual(
+            add[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+        )
+        XCTAssertEqual(
+            add[kSecAttrService as String] as? String,
+            base[kSecAttrService as String] as? String
+        )
+        XCTAssertEqual(
+            add[kSecAttrAccount as String] as? String,
+            base[kSecAttrAccount as String] as? String
+        )
+        XCTAssertEqual(add[kSecValueData as String] as? Data, Data(repeating: 3, count: 32))
     }
 
     func testRecoveryCeremonyReturnsOnlyStatusAndPublicAccountsToMainProcess() async throws {

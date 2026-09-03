@@ -3,7 +3,221 @@ import Foundation
 import XCTest
 @testable import Locus
 
+private actor EventDispatchGate {
+    private var arrivedIDs: [String] = []
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func arrive(_ id: String) async {
+        arrivedIDs.append(id)
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    var arrivals: [String] { arrivedIDs }
+
+    func releaseAll() {
+        let waiting = continuations
+        continuations = []
+        waiting.forEach { $0.resume() }
+    }
+}
+
 final class EventAutomationTests: XCTestCase {
+    private func deliveryPayload(
+        id: String,
+        triggerID: String,
+        targetSessionID: String,
+        state: String = "pending"
+    ) -> [String: Any] {
+        [
+            "id": id,
+            "trigger_id": triggerID,
+            "source_event_id": "message-\(id)",
+            "source": "gmail",
+            "received_at": 10,
+            "occurred_at": 9,
+            "event": [
+                "source": "gmail",
+                "source_event_id": "message-\(id)",
+                "event_type": "message",
+                "occurred_at": 9,
+                "actor": [:],
+                "subject": "Locus ab",
+                "text": "",
+                "recipients": [],
+                "labels": [],
+                "attachments": [],
+                "data": [:],
+            ],
+            "state": state,
+            "attempt": 0,
+            "target_session_id": targetSessionID,
+            "matched_trigger_count": 2,
+            "created_at": 10,
+            "updated_at": 10,
+        ]
+    }
+
+    private func dispatchPayload(
+        delivery: [String: Any],
+        runID: String,
+        sessionID: String
+    ) -> [String: Any] {
+        var queuedDelivery = delivery
+        queuedDelivery["state"] = "queued"
+        queuedDelivery["session_id"] = sessionID
+        queuedDelivery["run_id"] = runID
+        return [
+            "ok": true,
+            "delivery": queuedDelivery,
+            "run": [
+                "id": runID,
+                "session_id": sessionID,
+                "state": "queued",
+                "request": "Handle event",
+                "created_at": 10,
+                "updated_at": 10,
+                "last_seq": 0,
+                "pinned": false,
+                "legacy": false,
+                "recoverable": false,
+            ],
+        ]
+    }
+
+    func testEventDeliveryDecodesQueueAndFanOutMetadataCompatibly() throws {
+        let legacy = try JSONDecoder().decode(
+            EventDelivery.self,
+            from: Data(#"{"id":"delivery-1","trigger_id":"trigger-1","source_event_id":"message-1","source":"gmail","received_at":10,"occurred_at":9,"event":{"source":"gmail","source_event_id":"message-1","event_type":"message","occurred_at":9,"actor":{},"subject":"Locus ab","text":"","recipients":[],"labels":[],"attachments":[],"data":{}},"state":"pending","attempt":0,"session_id":"chat-1","created_at":10,"updated_at":10}"#.utf8)
+        )
+
+        XCTAssertEqual(legacy.targetSessionID, "chat-1")
+        XCTAssertEqual(legacy.conversationSessionID, "chat-1")
+        XCTAssertEqual(legacy.matchedTriggerCount, 1)
+        XCTAssertEqual(legacy.displayState, "Waiting in chat queue")
+
+        let fanOut = EventDelivery(
+            id: "delivery-2",
+            triggerID: "trigger-2",
+            sourceEventID: "message-1",
+            source: .gmail,
+            receivedAt: 10,
+            occurredAt: 9,
+            event: legacy.event,
+            state: "pending",
+            runState: nil,
+            attempt: 0,
+            sessionID: nil,
+            runID: nil,
+            error: nil,
+            createdAt: 10,
+            updatedAt: 10,
+            targetSessionID: "chat-2",
+            matchedTriggerCount: 2
+        )
+        XCTAssertEqual(fanOut.conversationSessionID, "chat-2")
+        XCTAssertEqual(fanOut.matchedTriggerCount, 2)
+    }
+
+    @MainActor
+    func testUnchangedRefreshOnlyAnnouncesConnectorCapabilityOnce() async {
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/connectors") { _ in
+            ["connections": [], "read_only": false]
+        }
+        BackendStub.respond(toPath: "/api/event-triggers") { _ in
+            ["triggers": [], "read_only": false]
+        }
+        BackendStub.respond(toPath: "/api/event-deliveries") { _ in
+            ["deliveries": []]
+        }
+        let model = EventAutomationModel()
+        var announcementCount = 0
+        model.configure(
+            backend: stubbedBackendService(),
+            onQueuedRun: { _ in },
+            canDispatchToSession: { _ in true },
+            onCapabilityChanged: { announcementCount += 1 },
+            refreshSessions: {},
+            agentProviderRoute: { [:] },
+            openAgentSession: { _ in },
+            showMessage: { _ in }
+        )
+
+        await model.refresh()
+        await model.refresh()
+
+        XCTAssertEqual(announcementCount, 1)
+    }
+
+    @MainActor
+    func testDispatcherStartsDifferentChatsTogetherAndOneDeliveryPerChat() async throws {
+        BackendStub.reset()
+        let chatAFirst = deliveryPayload(
+            id: "a-first", triggerID: "trigger-a", targetSessionID: "chat-a"
+        )
+        let chatASecond = deliveryPayload(
+            id: "a-second", triggerID: "trigger-a", targetSessionID: "chat-a"
+        )
+        let chatBFirst = deliveryPayload(
+            id: "b-first", triggerID: "trigger-b", targetSessionID: "chat-b"
+        )
+        BackendStub.respond(toPath: "/api/connectors") { _ in
+            ["connections": [], "read_only": false]
+        }
+        BackendStub.respond(toPath: "/api/event-triggers") { _ in
+            ["triggers": [], "read_only": false]
+        }
+        BackendStub.respond(toPath: "/api/event-deliveries") { _ in
+            ["deliveries": []]
+        }
+        BackendStub.respond(toPath: "/api/event-deliveries/pending") { _ in
+            ["deliveries": [chatAFirst, chatASecond, chatBFirst]]
+        }
+        BackendStub.respond(whenPathHasPrefix: "/api/event-deliveries/") { url in
+            let deliveryID = url.path.split(separator: "/").dropLast().last.map(String.init) ?? ""
+            let selected = deliveryID == "b-first" ? chatBFirst : chatAFirst
+            let sessionID = deliveryID == "b-first" ? "chat-b" : "chat-a"
+            return self.dispatchPayload(
+                delivery: selected,
+                runID: "run-\(deliveryID)",
+                sessionID: sessionID
+            )
+        }
+        let gate = EventDispatchGate()
+        let model = EventAutomationModel()
+        model.configure(
+            backend: stubbedBackendService(),
+            onQueuedRun: { run in await gate.arrive(run.id) },
+            canDispatchToSession: { _ in true },
+            onCapabilityChanged: {},
+            refreshSessions: {},
+            agentProviderRoute: { [:] },
+            openAgentSession: { _ in },
+            showMessage: { _ in }
+        )
+        model.start()
+        defer {
+            model.stop()
+            Task { await gate.releaseAll() }
+        }
+
+        for _ in 0..<100 {
+            if await gate.arrivals.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let arrivals = await gate.arrivals
+        let dispatchPaths = BackendStub.requestPaths.filter { $0.hasSuffix("/dispatch") }
+
+        XCTAssertEqual(Set(arrivals), ["run-a-first", "run-b-first"])
+        XCTAssertEqual(Set(dispatchPaths), [
+            "/api/event-deliveries/a-first/dispatch",
+            "/api/event-deliveries/b-first/dispatch",
+        ])
+        XCTAssertFalse(dispatchPaths.contains("/api/event-deliveries/a-second/dispatch"))
+    }
+
     func testWebhookSignatureAcceptsExactFreshBodyAndRejectsStaleOrModifiedData() {
         let secret = "local-secret"
         let timestamp = "1700000000"

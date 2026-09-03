@@ -435,11 +435,54 @@ extension AppModel {
         ])
     }
 
-    func sendConnectorCapability(to transport: BackendService) {
-        _ = transport.send([
+    @discardableResult
+    func sendConnectorCapability(to transport: BackendService) -> Bool {
+        transport.send([
             "type": "set_connector_control",
             "capability": eventAutomations.connectorCapability(),
         ])
+    }
+
+    /// Connector availability is an app-owned capability. Workers reject
+    /// changes during a turn so the tool surface cannot move underneath the
+    /// model; remember those workers and deliver the latest snapshot once
+    /// their turn reaches its terminal boundary.
+    func announceConnectorCapability() {
+        if conversationBackend === backend && isBusy {
+            pendingMainConnectorCapabilitySync = true
+        } else {
+            pendingMainConnectorCapabilitySync = !sendConnectorCapability(to: backend)
+        }
+        for runtime in taskWorkers.values {
+            if runtime.occupiesExecutionSlot {
+                runtime.needsConnectorCapabilitySync = true
+            } else {
+                runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
+                    to: runtime.service
+                )
+            }
+        }
+    }
+
+    func deferRejectedConnectorCapability() {
+        if let runtime = taskWorkers[currentSessionID] {
+            runtime.needsConnectorCapabilitySync = true
+        } else {
+            pendingMainConnectorCapabilitySync = true
+        }
+    }
+
+    func flushPendingConnectorCapability(for runtime: ChatWorkerRuntime? = nil) {
+        if let runtime, runtime.needsConnectorCapabilitySync,
+           !runtime.occupiesExecutionSlot {
+            runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
+                to: runtime.service
+            )
+        }
+        if pendingMainConnectorCapabilitySync,
+           !(conversationBackend === backend && isBusy) {
+            pendingMainConnectorCapabilitySync = !sendConnectorCapability(to: backend)
+        }
     }
 
     func refreshWalletCapabilities() {

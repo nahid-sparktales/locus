@@ -29,7 +29,12 @@ final class EventAutomationModel: ObservableObject {
     private let gmailOAuth = GmailOAuthCoordinator()
     private var connectorTasks: [String: Task<Void, Never>] = [:]
     private var dispatchTask: Task<Void, Never>?
+    private var deliveryDispatchTasks: [String: Task<Void, Never>] = [:]
+    private var dispatcherStarted = false
+    private var isScanningPendingDeliveries = false
+    private var pendingDeliveryScanRequested = false
     private var runtimeFingerprint = ""
+    private var lastConnectorCapabilityFingerprint: String?
     private var onQueuedRun: ((OrchestrationRun) async -> Void)?
     private var canDispatchToSession: ((String) -> Bool)?
     private var onCapabilityChanged: (() -> Void)?
@@ -47,6 +52,7 @@ final class EventAutomationModel: ObservableObject {
 
     deinit {
         connectorTasks.values.forEach { $0.cancel() }
+        deliveryDispatchTasks.values.forEach { $0.cancel() }
         dispatchTask?.cancel()
     }
 
@@ -87,6 +93,7 @@ final class EventAutomationModel: ObservableObject {
 
     func start() {
         guard dispatchTask == nil else { return }
+        dispatcherStarted = true
         dispatchTask = Task { [weak self] in
             guard let self else { return }
             await refresh(announceFailure: false)
@@ -98,8 +105,13 @@ final class EventAutomationModel: ObservableObject {
     }
 
     func stop() {
+        dispatcherStarted = false
         dispatchTask?.cancel()
         dispatchTask = nil
+        deliveryDispatchTasks.values.forEach { $0.cancel() }
+        deliveryDispatchTasks = [:]
+        isScanningPendingDeliveries = false
+        pendingDeliveryScanRequested = false
         connectorTasks.values.forEach { $0.cancel() }
         connectorTasks = [:]
         webhookServer.stop()
@@ -132,7 +144,7 @@ final class EventAutomationModel: ObservableObject {
             announceAgentsStoppedByLocus(previous: previous, current: triggers)
             lastError = nil
             restartNativeRuntimeIfNeeded()
-            onCapabilityChanged?()
+            announceConnectorCapabilityIfChanged()
         } catch {
             // A refresh cancelled with its caller (a panel's poll ending as
             // the chat changes) is not a failure of the automations.
@@ -446,7 +458,7 @@ final class EventAutomationModel: ObservableObject {
                 connections.append(connection)
                 runtimeFingerprint = ""
                 restartNativeRuntimeIfNeeded()
-                onCapabilityChanged?()
+                announceConnectorCapabilityIfChanged()
                 showMessage?("Gmail connected")
             } catch {
                 try? credentials.delete(for: identifier)
@@ -542,7 +554,7 @@ final class EventAutomationModel: ObservableObject {
                 connections.append(connection)
                 runtimeFingerprint = ""
                 restartNativeRuntimeIfNeeded()
-                onCapabilityChanged?()
+                announceConnectorCapabilityIfChanged()
                 showMessage?("Price source connected · \(quote.price) \(quote.quoteCurrency)")
                 return true
             } catch {
@@ -566,7 +578,7 @@ final class EventAutomationModel: ObservableObject {
                 connections.removeAll { $0.id == connection.id }
                 runtimeFingerprint = ""
                 restartNativeRuntimeIfNeeded()
-                onCapabilityChanged?()
+                announceConnectorCapabilityIfChanged()
             } catch {
                 showMessage?("Could not delete connection: \(error.localizedDescription)")
             }
@@ -584,6 +596,17 @@ final class EventAutomationModel: ObservableObject {
             "protocol_version": 1,
             "connections": available.map { ["id": $0.id, "kind": $0.kind.rawValue] },
         ]
+    }
+
+    private func announceConnectorCapabilityIfChanged() {
+        let capability = connectorCapability()
+        let connections = (capability["connections"] as? [[String: String]] ?? [])
+            .map { "\($0["id"] ?? ""):\($0["kind"] ?? "")" }
+            .sorted()
+        let fingerprint = connections.joined(separator: "|")
+        guard fingerprint != lastConnectorCapabilityFingerprint else { return }
+        lastConnectorCapabilityFingerprint = fingerprint
+        onCapabilityChanged?()
     }
 
     func transcriptContext(for run: OrchestrationRun) -> EventTranscriptContext? {
@@ -670,7 +693,7 @@ final class EventAutomationModel: ObservableObject {
                 connections.append(connection)
                 runtimeFingerprint = ""
                 restartNativeRuntimeIfNeeded()
-                onCapabilityChanged?()
+                announceConnectorCapabilityIfChanged()
                 showMessage?("\(kind.title) connected")
             } catch {
                 try? credentials.delete(for: identifier)
@@ -768,6 +791,7 @@ final class EventAutomationModel: ObservableObject {
             as: EventIngestResponse.self
         )
         for delivery in response.deliveries { replace(delivery) }
+        if !response.deliveries.isEmpty { wakeDispatcher() }
     }
 
     private func updateCursor(
@@ -798,33 +822,62 @@ final class EventAutomationModel: ObservableObject {
         try? await updateCursor(connectionID, cursor: cursor, health: "connected", error: "")
     }
 
+    /// Polling is the recovery fallback; ingestion and terminal turns use this
+    /// path to drain the durable queue without waiting for the next interval.
+    func wakeDispatcher() {
+        guard dispatcherStarted else { return }
+        pendingDeliveryScanRequested = true
+        Task { [weak self] in await self?.processPendingDeliveries() }
+    }
+
     private func processPendingDeliveries() async {
-        guard let backend else { return }
+        guard dispatcherStarted, let backend else { return }
+        if isScanningPendingDeliveries {
+            pendingDeliveryScanRequested = true
+            return
+        }
+        isScanningPendingDeliveries = true
+        pendingDeliveryScanRequested = false
+        defer {
+            isScanningPendingDeliveries = false
+            if pendingDeliveryScanRequested {
+                pendingDeliveryScanRequested = false
+                Task { [weak self] in await self?.processPendingDeliveries() }
+            }
+        }
         do {
             let response: EventDeliveriesResponse = try await backend.get(
                 "/api/event-deliveries/pending",
                 query: [URLQueryItem(name: "limit", value: "50")],
                 as: EventDeliveriesResponse.self
             )
+            var visitedSessions = Set<String>()
             for pending in response.deliveries {
-                guard let targetSessionID = triggers.first(where: {
-                    $0.id == pending.triggerID
-                })?.targetSessionID,
-                      canDispatchToSession?(targetSessionID) != false else { continue }
-                do {
-                    let dispatched: EventDispatchResponse = try await backend.post(
-                        "/api/event-deliveries/\(pending.id)/dispatch", body: [:],
-                        timeout: 30, as: EventDispatchResponse.self
-                    )
-                    replace(dispatched.delivery)
-                    await onQueuedRun?(dispatched.run)
-                } catch let error as NSError where error.domain == "Locus.Backend"
-                    && error.code == 409 {
-                    continue
-                } catch {
-                    // Dispatch failures are durable delivery state. A refresh
-                    // exposes the explicit Retry control without rerunning work.
-                    continue
+                let targetSessionID = pending.targetSessionID
+                    ?? triggers.first(where: { $0.id == pending.triggerID })?.targetSessionID
+                guard let targetSessionID,
+                      visitedSessions.insert(targetSessionID).inserted,
+                      deliveryDispatchTasks[targetSessionID] == nil,
+                      canDispatchToSession?(targetSessionID) != false
+                else { continue }
+                deliveryDispatchTasks[targetSessionID] = Task { [weak self] in
+                    guard let self else { return }
+                    defer { self.deliveryDispatchTasks.removeValue(forKey: targetSessionID) }
+                    do {
+                        let dispatched: EventDispatchResponse = try await backend.post(
+                            "/api/event-deliveries/\(pending.id)/dispatch", body: [:],
+                            timeout: 30, as: EventDispatchResponse.self
+                        )
+                        self.replace(dispatched.delivery)
+                        await self.onQueuedRun?(dispatched.run)
+                    } catch let error as NSError where error.domain == "Locus.Backend"
+                        && error.code == 409 {
+                        // Another process or the previous turn won the durable
+                        // claim. The next poll/terminal wake will try the head.
+                    } catch {
+                        // Dispatch failures are durable delivery state. A
+                        // refresh exposes Retry without replaying the event.
+                    }
                 }
             }
             if !response.deliveries.isEmpty { await refresh(announceFailure: false) }

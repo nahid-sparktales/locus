@@ -58,6 +58,49 @@ class AgentBusyError(RuntimeError):
     """Raised when a state mutation races with an active turn."""
 
 
+def _format_question_answers(
+    questions: list[dict[str, Any]], response: dict[str, Any]
+) -> str:
+    """Render the user's answers as the `ask_question` tool result.
+
+    Never starts with "Error", including on cancel: a dismissed question is a
+    legitimate outcome, not a tool failure, and `AgentCore` reads that prefix to
+    decide `ok`. A Stop is handled separately — `core.interrupt()` runs before
+    the wait is cancelled, so the loop unwinds at its next `stopped()` check.
+    """
+    action = str(response.get("action") or "cancel")
+    answers = {
+        str(item.get("id")): item
+        for item in (response.get("answers") or [])
+        if isinstance(item, dict)
+    }
+    lines: list[str] = []
+    for question in questions:
+        answer = answers.get(str(question.get("id")))
+        body = str(question.get("question") or "")
+        header = str(question.get("header") or "")
+        lines.append(f"Q ({header}) {body}" if header else f"Q {body}")
+        if answer is None:
+            lines.append("A: (not answered)")
+            lines.append("")
+            continue
+        selected = [str(value)[:200] for value in (answer.get("selected") or [])][:4]
+        text = str(answer.get("text") or "").strip()[:4_000]
+        if selected:
+            lines.append("A: " + "; ".join(selected))
+        if text:
+            lines.append(f"A (in the user's own words): {text}")
+        if not selected and not text:
+            lines.append("A: (skipped)")
+        lines.append("")
+    if action != "answer":
+        lines.append(
+            "The user dismissed the question box. Do not ask the same question "
+            "again — continue with your best judgment and state the assumption you made."
+        )
+    return "\n".join(lines).strip() or "The user did not answer."
+
+
 class ChatService:
     """Holds the core plus the state needed to bridge it to a WebSocket."""
 
@@ -99,6 +142,8 @@ class ChatService:
         self.pending_notes_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_wallet_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_connector_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_questions: dict[str, Future[dict[str, Any]]] = {}
+        self._pending_questions_guard = RLock()
         self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
         self._parallel_writer_cores: dict[str, AgentCore] = {}
@@ -137,6 +182,11 @@ class ChatService:
         # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
         self.core.tool_ctx.background_service = self._execute_background_service
+        # A question needs somebody on the other end. Only a live chat session
+        # has one, so the tool is installed and advertised here rather than in
+        # `AgentCore`, which the CLI and every evaluation core also build.
+        self.core.tool_ctx.ask_question = self.ask_user_question
+        self.core.tool_registry.set_ask_question_enabled(True)
 
     @property
     def codex(self) -> Any:
@@ -287,6 +337,7 @@ class ChatService:
                 event.setdefault("traceparent", traceparent_for_run(record))
         persisted_types = {
             "message_start", "message_end", "tool_call_proposed", "permission_request",
+            "question_required",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "simulator_action_request",
             "browser_action_request", "notes_action_request", "wallet_action_request",
@@ -405,6 +456,63 @@ class ChatService:
             for fut in self.pending_permissions.values():
                 if not fut.done():
                     fut.set_result("deny")
+
+    # -- structured question (blocks the worker thread until answered) --
+    def ask_user_question(self, payload: dict[str, Any]) -> str:
+        """Put a question to the user and block until they answer.
+
+        Deliberately untimed, unlike MCP elicitation: there the counterparty is
+        a third-party server, here it is the user, and a deadline that discards
+        a half-typed answer is worse than waiting. Stop and socket teardown are
+        the only things that end the wait.
+        """
+        questions = payload.get("questions") or []
+        # Nobody is attached, so nobody can answer: a scheduled or cron run, an
+        # evaluation worker, or a dropped connection. Blocking here would hold
+        # the turn slot until the process died. Fail fast with guidance instead
+        # — the model is told to proceed and state its assumption.
+        if self.ws is None:
+            return (
+                "Error: nobody is available to answer right now — this turn is "
+                "running unattended. Proceed with your best judgment and state "
+                "the assumption you made."
+            )
+        request_id = uuid.uuid4().hex[:12]
+        future: Future[dict[str, Any]] = Future()
+        with self._pending_questions_guard:
+            self.pending_questions[request_id] = future
+        self.emit({
+            "type": "question_required",
+            "request_id": request_id,
+            "id": self.core.active_tool_call_id,
+            "tool": "ask_question",
+            "questions": questions,
+        })
+        try:
+            response = future.result()
+        finally:
+            with self._pending_questions_guard:
+                self.pending_questions.pop(request_id, None)
+            self.emit({
+                "type": "question_resolved",
+                "request_id": request_id,
+            })
+        return _format_question_answers(questions, response)
+
+    def answer_question(self, request_id: str, response: dict[str, Any]) -> bool:
+        with self._pending_questions_guard:
+            future = self.pending_questions.get(request_id)
+            if future is None or future.done():
+                return False
+            future.set_result(response)
+            return True
+
+    def cancel_all_questions(self) -> None:
+        """Unblock every waiting question so an interrupted turn can end."""
+        with self._pending_questions_guard:
+            for future in self.pending_questions.values():
+                if not future.done():
+                    future.set_result({"action": "cancel", "answers": []})
 
     def register_parallel_writer_core(self, job_id: str, core: AgentCore) -> None:
         with self._parallel_writer_guard:
