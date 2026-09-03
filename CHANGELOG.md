@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 — 2026-09-03
 
 ### Added
 
@@ -45,6 +45,16 @@
 
 ### Fixed
 
+- **Incoming events no longer hold the agent queue indefinitely.** Each worker
+  now acknowledges an accepted dispatch. If that acknowledgement never
+  arrives, Locus safely interrupts only the not-yet-started run, releases its
+  execution slot, and leaves the event available to retry without pausing the
+  agent.
+- **Vault activation completes after a correct recovery confirmation.** The
+  signer account payload now decodes its cross-language network identifiers
+  explicitly, and vault credentials use the provisioned Keychain access group
+  with a clear registration path for existing Macs. Post-confirmation failures
+  are reported as activation errors rather than incorrect recovery words.
 - **Wallet creation and restore now open reliably.** The unsupported recovery
   window formerly hosted inside an XPC service has moved to a signed, sandboxed
   accessory application with explicit presentation acknowledgement, Bring to
