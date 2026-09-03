@@ -99,6 +99,7 @@
 		386CA92D41F5CF96C5D700E1 /* BrowserAnnotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F07D2B0078D88B65F9AA0FE /* BrowserAnnotationTests.swift */; };
 		387433BAAF6C2B9D0277AD2F /* CompanionWireTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622AFAF0F2B7F699AB240371 /* CompanionWireTypes.swift */; };
 		3904FFCBA508404034843585 /* AppModel+PermissionsAndCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F1D91E4EBBD0BE7E4027FD /* AppModel+PermissionsAndCapabilities.swift */; };
+		39A8C59555920212F6EAA8B8 /* WalletSignerService.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1A7536131C96359528103360 /* WalletSignerService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		3ADED25B5030F2CD34B36E35 /* AppModel+LandingFlowFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494AA2883078C54BAF0BF14C /* AppModel+LandingFlowFacade.swift */; };
 		3AEFFA65AC2FCC64061F9F9D /* SessionCatalogModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098BDBE9B53A4C18575502B4 /* SessionCatalogModel.swift */; };
 		3B8A090FB2704FB3B2908B2B /* AppModel+TeamRunLiveFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C84873DD1B30B35462F4F21 /* AppModel+TeamRunLiveFacade.swift */; };
@@ -145,7 +146,6 @@
 		4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */; };
 		4D7CCBB0E36C6A6369C169B5 /* AppModel+InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D5728B8989537F3360FE252 /* AppModel+InspectorLayout.swift */; };
 		4DA79DCF7630A692E19D8E67 /* AppModel+RunQueueAndActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F806C35C762C83FB3B82CD9 /* AppModel+RunQueueAndActivity.swift */; };
-		4FA4526DED9426CD07B27138 /* WalletRecoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3465435F0C0539E8D03B8ACC /* WalletRecoveryService.swift */; };
 		4FC230C8586C4286AAA377E1 /* AppModel+OrchestrationRunsFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3E3D606BE661E35AB2E9606 /* AppModel+OrchestrationRunsFacade.swift */; };
 		5130646B3EC7A5D0D92B39D4 /* BrowserAnnotationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70017AB3BFB7BC69CBD1CC85 /* BrowserAnnotationView.swift */; };
 		515A0BC847C8FF04723FDD26 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CC3300CABBD87F954E4C63 /* WorkspaceView.swift */; };
@@ -202,6 +202,7 @@
 		75FF0B7CA9E8580EE2585DE0 /* CodexComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111E527F52DFD9F5F6EC39D9 /* CodexComponentTests.swift */; };
 		761AC5EBD60B20ED1FC22FEB /* WalletPublicStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC12E6C12585983905497773 /* WalletPublicStore.swift */; };
 		763176C60443FC7B886014DE /* CompanionSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E940CB9835CFDD6B6864DD28 /* CompanionSecurity.swift */; };
+		76E341FD67734B80CEACA3B3 /* RecoverySignerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC7C7852A461B03BC55CDAB7 /* RecoverySignerClient.swift */; };
 		77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */; };
 		78B4B59BB52C09E38B5C39CB /* ModelLibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8FCD4DB1FD5A4E1FD862797 /* ModelLibraryService.swift */; };
 		7AB28660BBE371371C4FE6E6 /* QuestionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 160A256D1C92F0937B961AB8 /* QuestionPromptView.swift */; };
@@ -210,7 +211,6 @@
 		7BB469D1D343AC36016AD38B /* WalletNetworkModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9380C80545F00AEE138D317A /* WalletNetworkModels.swift */; };
 		7BDF45BDB2A7B99922CCBC2B /* BrowserFavicons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A256B308D8C600193136B212 /* BrowserFavicons.swift */; };
 		7C15D94FB4FCC2D44EBCDD97 /* AppModel+PermissionsAndCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F1D91E4EBBD0BE7E4027FD /* AppModel+PermissionsAndCapabilities.swift */; };
-		7CE32BBD6359D94014628078 /* WalletRecoveryService.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = 12475B5238E2855EB7350538 /* WalletRecoveryService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		7D574CD4392C1B789A8677E3 /* EvaluationsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DA74AD4E22D8B98449672B3 /* EvaluationsModelTests.swift */; };
 		7DF85FCAE34A64B48D707FC7 /* GitRemote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821D2EE07104AAF4E9163C6A /* GitRemote.swift */; };
 		7E0B38C59FEFB081EAB457E5 /* AppModel+AgentTeamsFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7261686C41E5A17833AC6E /* AppModel+AgentTeamsFacade.swift */; };
@@ -224,6 +224,7 @@
 		832B3EAC906F6E1C3A210D60 /* AppModel+SplitChatPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D16150F05480F3D9E417239 /* AppModel+SplitChatPanes.swift */; };
 		83AADDDF785F1C1B6E461820 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
 		83EBDB8F13B284432B48E7AF /* SessionCatalogModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098BDBE9B53A4C18575502B4 /* SessionCatalogModel.swift */; };
+		8424F91EB3C70B59C2792AF5 /* WalletRecoveryApplication.app in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 2BD327B2486D43F4C5C19281 /* WalletRecoveryApplication.app */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8519267D24CCB11D4BDDDFB4 /* WalletProviderCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9E1A0B244EB9A2F9852BA8A /* WalletProviderCoordinator.swift */; };
 		86FBF385C78D058DE267F94F /* WorkspaceFileViewerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81DA82E9A9DD4E4C835FD984 /* WorkspaceFileViewerTests.swift */; };
 		873027C93A71AC0112D86F5B /* SettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC2E6FEB488D4F4DA5260EE /* SettingsModels.swift */; };
@@ -291,7 +292,6 @@
 		A69A590FDE2C024480D9873F /* EvaluationsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4452FAF6D288142B4A7D97 /* EvaluationsModel.swift */; };
 		A6D846A90EED0F655A108FE8 /* Sheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11B2324D330884AA4555A92 /* Sheets.swift */; };
 		A7A8E9F8326A91976B5DAF43 /* AppModel+VoiceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08EBAE40DE85C2315DFA1510 /* AppModel+VoiceControls.swift */; };
-		A7E37875EED7C80AED823FC3 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023BA4E01117B37B6C72556B /* main.swift */; };
 		A9F6D4B4D70B586B320801F5 /* PinnedSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3BD017D09599617E1B75708 /* PinnedSummaryView.swift */; };
 		AAD0DA38D1058E2C52EE1EF2 /* AppModel+ToastFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FCAE1E8B009CE43FD465A3 /* AppModel+ToastFacade.swift */; };
 		AC88EB3E4227F317281D9123 /* PlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3244D05902CA55ED7D6FB60 /* PlanningModels.swift */; };
@@ -301,6 +301,7 @@
 		ADB5339D466EB316F9370689 /* AppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEDE792B67295C1B0196FC71 /* AppUpdateController.swift */; };
 		ADB8ADEC8EBFF7A805964166 /* ThirdPartyLicenses in Resources */ = {isa = PBXBuildFile; fileRef = 40301E70BE817C7039EA22EB /* ThirdPartyLicenses */; };
 		AE7A7798A6B2868B653AFE09 /* OrchestrationRunsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 928A9C1E5F1E4F7BF2E6D28E /* OrchestrationRunsModelTests.swift */; };
+		AEA049EEDDFA368BC075339E /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023BA4E01117B37B6C72556B /* main.swift */; };
 		B02DC6304F1E5B8BA6A8941A /* AgentTeamsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 246491EFA199B2B975050307 /* AgentTeamsModelTests.swift */; };
 		B0CCC5369F8741A6284D9424 /* AppModel+SessionActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532B1372E8A5EE9DED6EAE97 /* AppModel+SessionActivity.swift */; };
 		B1CE4F1F020F1C9A6504EDFC /* CodexComponentInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07B62C798D0E60793ED30FF0 /* CodexComponentInstaller.swift */; };
@@ -326,6 +327,7 @@
 		BB3B4FBD72B6DCBDACCBD36D /* ApplicationContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66094C6E78704DAC44D56838 /* ApplicationContextService.swift */; };
 		BBA8BFD52B305C0947380763 /* AppModel+AgentTeamsFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7261686C41E5A17833AC6E /* AppModel+AgentTeamsFacade.swift */; };
 		BBDE84D324F6199CD80D6E0F /* TranscriptSelectionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418F31828D4EE1F1E605A01F /* TranscriptSelectionGeometry.swift */; };
+		BBF42AA54E6CB32F9225AD5E /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
 		BD91203025F291F9DE16135F /* TeamRunLiveModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DCAB1A0871266055F11C11 /* TeamRunLiveModelTests.swift */; };
 		BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */; };
 		BFD9B220064B1A7D36E1D116 /* HostedScreenshotConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */; };
@@ -400,6 +402,7 @@
 		E67550109750DDEA67D1557A /* EventAutomationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD0205FA722D64452114722 /* EventAutomationModel.swift */; };
 		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
 		E7071BB89FEA175C28347A9C /* VoiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C05527F03B7D68A59343C4E /* VoiceModels.swift */; };
+		E7E90DA379510A6781080FAA /* RecoveryProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B5177694AC5EFC291A4D61 /* RecoveryProcessController.swift */; };
 		E8D85FE96A82FE02DC67E6F8 /* EventWebhookServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED889C7219DB222230353F3 /* EventWebhookServer.swift */; };
 		E8DC03D0AF0457F76ADD775A /* ChatTranscriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 863D25BB6163522EFF5A58B4 /* ChatTranscriptBuilder.swift */; };
 		E93509193D03839A222A7B5F /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
@@ -429,10 +432,10 @@
 		F65B179134580E460E487B29 /* WalletSignerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2E919D274EF4890562BF10C /* WalletSignerService.swift */; };
 		F69F6A46ED5B05CE30CFDADA /* ComputerControlService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 731F4ECD2268E698A675A53D /* ComputerControlService.swift */; };
 		F71E9354E1DDD892AAB84463 /* AppModel+MobileCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B7FCF48D140BDC503F90A41 /* AppModel+MobileCompanion.swift */; };
+		F8B8E51117980A173D7CF763 /* RecoveryPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D999480C4998DAC48C47DD /* RecoveryPanelController.swift */; };
 		F931472E8E4FA66CB54043F5 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD24095E0EA6433F8AF94214 /* ScheduleModels.swift */; };
 		F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3793FC69B1D813ED07567A2E /* BackendService.swift */; };
 		FA376F12956F2CAE3B426C17 /* NotesDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 154F2AD569E232B4B8A4909C /* NotesDocument.swift */; };
-		FAE7395429D1203C0A8F9713 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
 		FB4E051B7DF5AA5AC0AE9EBF /* QuestionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBAE276C6EEC0680C848F97 /* QuestionModels.swift */; };
 		FB861DE1EB0815DC7FF9BF53 /* ChatAttachmentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6C801D489BBF80BE16EBD6 /* ChatAttachmentLoader.swift */; };
 		FC0B36C3B5F1E9FE34F908C1 /* TranscriptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED943A053F7F7F66F864BD69 /* TranscriptModels.swift */; };
@@ -449,13 +452,6 @@
 			remoteGlobalIDString = 4896638691C4AFF8C4B6701D;
 			remoteInfo = Locus;
 		};
-		4AA80B4A6D15E11B5E5567C7 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 8DBA792C48B38FC2FB7E7A8F;
-			remoteInfo = WalletRecoveryService;
-		};
 		69C7013C16BB875F883D4384 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
@@ -470,12 +466,26 @@
 			remoteGlobalIDString = 7323BA3A6165E3D7FD525C6C;
 			remoteInfo = LocusMAS;
 		};
+		ADE6BF72E16EDF99DF35B486 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 40730FA6AAEF53B1AA334285;
+			remoteInfo = WalletRecoveryApplication;
+		};
 		C34DCDDD96F4EB05E4117417 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 4896638691C4AFF8C4B6701D;
 			remoteInfo = Locus;
+		};
+		CD6454804E07635895C567C0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EB04EC8B4299D1D64DC4EDE5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 64C83A6D8AFCD6169F49C520;
+			remoteInfo = WalletSignerService;
 		};
 		D4FAC04EBFA714AD4FC1F65B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -487,13 +497,33 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		35D2D8DDA19636BFB9E06DA1 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				39A8C59555920212F6EAA8B8 /* WalletSignerService.xpc in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1FA13CCEDE907876FD5C092 /* Embed Dependencies */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				8424F91EB3C70B59C2792AF5 /* WalletRecoveryApplication.app in Embed Dependencies */,
+			);
+			name = "Embed Dependencies";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CFE78B62D3E66C1B18626615 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
 			dstSubfolderSpec = 16;
 			files = (
-				7CE32BBD6359D94014628078 /* WalletRecoveryService.xpc in CopyFiles */,
 				1D833F7E4F2DD3AA519B4825 /* WalletSignerService.xpc in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -528,7 +558,6 @@
 		10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorFilesTab.swift; sourceTree = "<group>"; };
 		111E527F52DFD9F5F6EC39D9 /* CodexComponentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexComponentTests.swift; sourceTree = "<group>"; };
 		113F63D8FC35F53C8044F1A4 /* EventConnectorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventConnectorClient.swift; sourceTree = "<group>"; };
-		12475B5238E2855EB7350538 /* WalletRecoveryService.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = WalletRecoveryService.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		12CD78F68FC2B3B1CBAFD1AD /* CodexComponent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexComponent.swift; sourceTree = "<group>"; };
 		154F2AD569E232B4B8A4909C /* NotesDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesDocument.swift; sourceTree = "<group>"; };
 		15FBD1A1C4963CEA3D54440E /* TranscriptSelectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptSelectionStore.swift; sourceTree = "<group>"; };
@@ -553,6 +582,7 @@
 		29912FD4FFA8E9056AD4FCA2 /* AgentTeamsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTeamsSettingsView.swift; sourceTree = "<group>"; };
 		2ABFAA15924627CFCA8729D3 /* WorkspaceKnowledgeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceKnowledgeModel.swift; sourceTree = "<group>"; };
 		2AC7A301E8916E63A1E59F07 /* BrowserPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPrivacy.swift; sourceTree = "<group>"; };
+		2BD327B2486D43F4C5C19281 /* WalletRecoveryApplication.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WalletRecoveryApplication.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C05527F03B7D68A59343C4E /* VoiceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceModels.swift; sourceTree = "<group>"; };
 		2CBE8AF1AA0E88FC532FCF8D /* InspectorSimulatorTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorSimulatorTab.swift; sourceTree = "<group>"; };
 		2D31BF62A06142F7A228ABB2 /* GitHubConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubConnectionTests.swift; sourceTree = "<group>"; };
@@ -561,7 +591,6 @@
 		2E32D0129D54375A8701B85D /* BrowserInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInputTests.swift; sourceTree = "<group>"; };
 		2EC88909073BDCF25DC61A04 /* NotebookModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookModelTests.swift; sourceTree = "<group>"; };
 		319231FBA55F2DE9A5EB9377 /* HostedScreenshotConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedScreenshotConsent.swift; sourceTree = "<group>"; };
-		3465435F0C0539E8D03B8ACC /* WalletRecoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletRecoveryService.swift; sourceTree = "<group>"; };
 		374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextKit.swift; sourceTree = "<group>"; };
 		3793FC69B1D813ED07567A2E /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -632,8 +661,10 @@
 		7FE2B3114660DB1F97EBB87C /* CompanionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSettingsView.swift; sourceTree = "<group>"; };
 		81270ABC0C4D667173248A3F /* AppLifecycleJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycleJournal.swift; sourceTree = "<group>"; };
 		819B94A8EAA15CE9EDBDDC53 /* ExtensionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionModels.swift; sourceTree = "<group>"; };
+		81D999480C4998DAC48C47DD /* RecoveryPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryPanelController.swift; sourceTree = "<group>"; };
 		81DA82E9A9DD4E4C835FD984 /* WorkspaceFileViewerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileViewerTests.swift; sourceTree = "<group>"; };
 		821D2EE07104AAF4E9163C6A /* GitRemote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitRemote.swift; sourceTree = "<group>"; };
+		82B5177694AC5EFC291A4D61 /* RecoveryProcessController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryProcessController.swift; sourceTree = "<group>"; };
 		8566E23502F03462F5C1EFDD /* WalletRecoveryXPCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletRecoveryXPCClient.swift; sourceTree = "<group>"; };
 		863D25BB6163522EFF5A58B4 /* ChatTranscriptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTranscriptBuilder.swift; sourceTree = "<group>"; };
 		8B3ACD7AD15138A194268B22 /* InspectorBrowserTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorBrowserTab.swift; sourceTree = "<group>"; };
@@ -706,6 +737,7 @@
 		C54FE5D2A0326696C2F35B14 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeCoordinator.swift; sourceTree = "<group>"; };
 		CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutputWatcher.swift; sourceTree = "<group>"; };
+		CC7C7852A461B03BC55CDAB7 /* RecoverySignerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoverySignerClient.swift; sourceTree = "<group>"; };
 		CCBABE255234EFEAAAE40D72 /* BackendStubSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendStubSupport.swift; sourceTree = "<group>"; };
 		CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorChangesTab.swift; sourceTree = "<group>"; };
 		CD8940F735082E4C168BC58F /* WalletAnvilIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletAnvilIntegrationTests.swift; sourceTree = "<group>"; };
@@ -783,7 +815,7 @@
 				38EED4FF1CBA575694CE08AA /* LocusTests.xctest */,
 				73FB5B7D276424050FE55E24 /* LocusUITests.xctest */,
 				3D6CB3BEB98FC222452EF5BD /* LocusWalletChainTests.xctest */,
-				12475B5238E2855EB7350538 /* WalletRecoveryService.xpc */,
+				2BD327B2486D43F4C5C19281 /* WalletRecoveryApplication.app */,
 				1A7536131C96359528103360 /* WalletSignerService.xpc */,
 			);
 			name = Products;
@@ -895,7 +927,9 @@
 			children = (
 				569480B264D98967D6095A68 /* Info.plist */,
 				023BA4E01117B37B6C72556B /* main.swift */,
-				3465435F0C0539E8D03B8ACC /* WalletRecoveryService.swift */,
+				81D999480C4998DAC48C47DD /* RecoveryPanelController.swift */,
+				82B5177694AC5EFC291A4D61 /* RecoveryProcessController.swift */,
+				CC7C7852A461B03BC55CDAB7 /* RecoverySignerClient.swift */,
 			);
 			path = WalletRecoveryService;
 			sourceTree = "<group>";
@@ -1119,6 +1153,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		40730FA6AAEF53B1AA334285 /* WalletRecoveryApplication */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9899DC172ECD0B69A0615E92 /* Build configuration list for PBXNativeTarget "WalletRecoveryApplication" */;
+			buildPhases = (
+				E935F522C30B9F7555181E02 /* Sources */,
+				35D2D8DDA19636BFB9E06DA1 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6653B4EE9971E1487900E8E2 /* PBXTargetDependency */,
+			);
+			name = WalletRecoveryApplication;
+			packageProductDependencies = (
+			);
+			productName = WalletRecoveryApplication;
+			productReference = 2BD327B2486D43F4C5C19281 /* WalletRecoveryApplication.app */;
+			productType = "com.apple.product-type.application";
+		};
 		4896638691C4AFF8C4B6701D /* Locus */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 499F5785D4491853643B4C0D /* Build configuration list for PBXNativeTarget "Locus" */;
@@ -1128,13 +1181,14 @@
 				DD475AF090311C77FAF727EA /* Resources */,
 				CFE78B62D3E66C1B18626615 /* CopyFiles */,
 				DEBCA3DC4F29E1709B9E6BB8 /* Frameworks */,
+				A1FA13CCEDE907876FD5C092 /* Embed Dependencies */,
 				4836D3ED752C1F2CAD3869A8 /* Build pinned Simulator bridge */,
 				314A6CA35922466E9F0C1B81 /* Bundle local agent runtime */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A88672329D65884EA82D1E92 /* PBXTargetDependency */,
+				71B87981A5EA943A5EF737FB /* PBXTargetDependency */,
 				EE6E1A363D58384E760196B9 /* PBXTargetDependency */,
 			);
 			name = Locus;
@@ -1243,23 +1297,6 @@
 			productReference = 3D09F5FF64508E5EFEF22945 /* LocusMAS.app */;
 			productType = "com.apple.product-type.application";
 		};
-		8DBA792C48B38FC2FB7E7A8F /* WalletRecoveryService */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = DC3266AE185E18F48224AA5A /* Build configuration list for PBXNativeTarget "WalletRecoveryService" */;
-			buildPhases = (
-				C1180408C45A24024A7A4BA2 /* Sources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = WalletRecoveryService;
-			packageProductDependencies = (
-			);
-			productName = WalletRecoveryService;
-			productReference = 12475B5238E2855EB7350538 /* WalletRecoveryService.xpc */;
-			productType = "com.apple.product-type.xpc-service";
-		};
 		A0463F65BF102D8D5DE8EDD0 /* LocusTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2A3122EA61774C96D036B4DE /* Build configuration list for PBXNativeTarget "LocusTests" */;
@@ -1288,6 +1325,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					40730FA6AAEF53B1AA334285 = {
+						DevelopmentTeam = 4X4RJA7GMD;
+					};
 					4896638691C4AFF8C4B6701D = {
 						DevelopmentTeam = 4X4RJA7GMD;
 					};
@@ -1306,9 +1346,6 @@
 						DevelopmentTeam = 4X4RJA7GMD;
 					};
 					7323BA3A6165E3D7FD525C6C = {
-						DevelopmentTeam = 4X4RJA7GMD;
-					};
-					8DBA792C48B38FC2FB7E7A8F = {
 						DevelopmentTeam = 4X4RJA7GMD;
 					};
 					A0463F65BF102D8D5DE8EDD0 = {
@@ -1335,7 +1372,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				8DBA792C48B38FC2FB7E7A8F /* WalletRecoveryService */,
+				40730FA6AAEF53B1AA334285 /* WalletRecoveryApplication */,
 				64C83A6D8AFCD6169F49C520 /* WalletSignerService */,
 				4896638691C4AFF8C4B6701D /* Locus */,
 				7323BA3A6165E3D7FD525C6C /* LocusMAS */,
@@ -1979,13 +2016,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		C1180408C45A24024A7A4BA2 /* Sources */ = {
+		E935F522C30B9F7555181E02 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4FA4526DED9426CD07B27138 /* WalletRecoveryService.swift in Sources */,
-				FAE7395429D1203C0A8F9713 /* WalletSignerProtocol.swift in Sources */,
-				A7E37875EED7C80AED823FC3 /* main.swift in Sources */,
+				F8B8E51117980A173D7CF763 /* RecoveryPanelController.swift in Sources */,
+				E7E90DA379510A6781080FAA /* RecoveryProcessController.swift in Sources */,
+				76E341FD67734B80CEACA3B3 /* RecoverySignerClient.swift in Sources */,
+				BBF42AA54E6CB32F9225AD5E /* WalletSignerProtocol.swift in Sources */,
+				AEA049EEDDFA368BC075339E /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1997,10 +2036,15 @@
 			target = 4896638691C4AFF8C4B6701D /* Locus */;
 			targetProxy = 69C7013C16BB875F883D4384 /* PBXContainerItemProxy */;
 		};
-		A88672329D65884EA82D1E92 /* PBXTargetDependency */ = {
+		6653B4EE9971E1487900E8E2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 8DBA792C48B38FC2FB7E7A8F /* WalletRecoveryService */;
-			targetProxy = 4AA80B4A6D15E11B5E5567C7 /* PBXContainerItemProxy */;
+			target = 64C83A6D8AFCD6169F49C520 /* WalletSignerService */;
+			targetProxy = CD6454804E07635895C567C0 /* PBXContainerItemProxy */;
+		};
+		71B87981A5EA943A5EF737FB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 40730FA6AAEF53B1AA334285 /* WalletRecoveryApplication */;
+			targetProxy = ADE6BF72E16EDF99DF35B486 /* PBXContainerItemProxy */;
 		};
 		DC8669A2F8C3CDEAADC5C59D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -2025,6 +2069,32 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		01F2B024B519671691A1A75E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = NO;
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 4X4RJA7GMD;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletRecovery;
+				PRODUCT_NAME = WalletRecovery;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
 		0306EFA1CE0152B3C697CC8C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2320,6 +2390,33 @@
 			};
 			name = ReleaseMAS;
 		};
+		63C06ABECE545F35587BEF57 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = NO;
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 4X4RJA7GMD;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletRecovery;
+				PRODUCT_NAME = WalletRecovery;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 		75994370E6DB55C689B57EC7 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2431,27 +2528,6 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) LOCUS_DIRECT_DOWNLOAD";
 			};
 			name = Release;
-		};
-		86E536FF2B6DA9898CFCC2EC /* ReleaseMAS */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = NO;
-				ARCHS = arm64;
-				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
-				COMBINE_HIDPI_IMAGES = YES;
-				ENABLE_APP_SANDBOX = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletRecovery;
-				PRODUCT_NAME = WalletRecovery;
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
-			};
-			name = ReleaseMAS;
 		};
 		89F5AB675D7C0E63ADE7226A /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -2660,18 +2736,15 @@
 			};
 			name = Debug;
 		};
-		CD2D13CD7984400954D9AB73 /* Debug */ = {
+		D13CD8F99B877F1A2E36D592 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = NO;
 				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -2683,33 +2756,7 @@
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 			};
-			name = Debug;
-		};
-		D79BFED7EFE2A0D8C4740151 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = NO;
-				ARCHS = arm64;
-				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
-				CODE_SIGN_IDENTITY = "Developer ID Application";
-				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
-				CODE_SIGN_STYLE = Manual;
-				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = 4X4RJA7GMD;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletRecovery;
-				PRODUCT_NAME = WalletRecovery;
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
-			};
-			name = Release;
+			name = ReleaseMAS;
 		};
 		EC219525ECF2D2F87B9312BB /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -2796,22 +2843,22 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		9899DC172ECD0B69A0615E92 /* Build configuration list for PBXNativeTarget "WalletRecoveryApplication" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				01F2B024B519671691A1A75E /* Debug */,
+				63C06ABECE545F35587BEF57 /* Release */,
+				D13CD8F99B877F1A2E36D592 /* ReleaseMAS */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		C34C6F5FFA29630BF5CFC152 /* Build configuration list for PBXNativeTarget "LocusMASUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				89F5AB675D7C0E63ADE7226A /* Debug */,
 				34130EDEFF2C83EB257640A9 /* Release */,
 				A04AECD7AA141A3068BB6922 /* ReleaseMAS */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
-		DC3266AE185E18F48224AA5A /* Build configuration list for PBXNativeTarget "WalletRecoveryService" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				CD2D13CD7984400954D9AB73 /* Debug */,
-				D79BFED7EFE2A0D8C4740151 /* Release */,
-				86E536FF2B6DA9898CFCC2EC /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

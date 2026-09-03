@@ -1345,6 +1345,7 @@ enum WalletRecoveryCeremonyMode: String, Codable, Equatable, Sendable {
 
 struct WalletRecoveryCeremonyRequest: Codable, Equatable, Sendable {
     let mode: WalletRecoveryCeremonyMode
+    var allowPresentationOverExistingVaultForUITesting = false
 }
 
 struct WalletRecoveryCeremonyHandle: Codable, Equatable, Sendable {
@@ -1379,7 +1380,15 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
 enum WalletXPCCodeSigningRequirement {
     static let hostApplication = requirement(identifier: "io.sparktales.locus")
     static let signerService = requirement(identifier: "io.sparktales.locus.WalletSigner")
-    static let recoveryService = requirement(identifier: "io.sparktales.locus.WalletRecovery")
+    static let recoveryApplication = requirement(identifier: "io.sparktales.locus.WalletRecovery")
+    static let signerBootstrapClient: String = {
+        #if DEBUG
+        return "(identifier \"io.sparktales.locus\" or identifier \"io.sparktales.locus.WalletRecovery\")"
+        #else
+        return "(identifier \"io.sparktales.locus\" or identifier \"io.sparktales.locus.WalletRecovery\") "
+            + "and anchor apple generic and certificate leaf[subject.OU] = \"4X4RJA7GMD\""
+        #endif
+    }()
 
     private static func requirement(identifier: String) -> String {
         #if DEBUG
@@ -1393,16 +1402,121 @@ enum WalletXPCCodeSigningRequirement {
     }
 }
 
+enum WalletRecoveryProcessMessageKind: String, Codable, Equatable, Sendable {
+    case start
+    case cancel
+    case presented
+    case terminal
+}
+
+/// A bounded, status-only message used between Locus and WalletRecovery.app.
+/// Only `start` may carry a ceremony mode; only `terminal` may carry a public
+/// recovery result. Recovery words, entropy, and signer endpoints have no
+/// representation in this protocol.
+struct WalletRecoveryProcessMessage: Codable, Equatable, Sendable {
+    static let protocolVersion = 1
+
+    let protocolVersion: Int
+    let invocationID: String
+    let kind: WalletRecoveryProcessMessageKind
+    let mode: WalletRecoveryCeremonyMode?
+    let result: WalletRecoveryCeremonyResult?
+    var allowPresentationOverExistingVaultForUITesting = false
+
+    init(
+        invocationID: String,
+        kind: WalletRecoveryProcessMessageKind,
+        mode: WalletRecoveryCeremonyMode? = nil,
+        result: WalletRecoveryCeremonyResult? = nil,
+        allowPresentationOverExistingVaultForUITesting: Bool = false
+    ) {
+        protocolVersion = Self.protocolVersion
+        self.invocationID = invocationID
+        self.kind = kind
+        self.mode = mode
+        self.result = result
+        self.allowPresentationOverExistingVaultForUITesting =
+            allowPresentationOverExistingVaultForUITesting
+    }
+
+    var isStructurallyValid: Bool {
+        guard protocolVersion == Self.protocolVersion,
+              UUID(uuidString: invocationID) != nil else { return false }
+        switch kind {
+        case .start:
+            return mode != nil && result == nil
+        case .cancel, .presented:
+            return mode == nil && result == nil
+        case .terminal:
+            return mode == nil && result != nil
+        }
+    }
+}
+
+enum WalletRecoveryProcessFrameError: LocalizedError, Equatable {
+    case empty
+    case oversized
+    case malformed
+
+    var errorDescription: String? {
+        switch self {
+        case .empty: "The recovery helper sent an empty message."
+        case .oversized: "The recovery helper sent an oversized message."
+        case .malformed: "The recovery helper sent a malformed message."
+        }
+    }
+}
+
+struct WalletRecoveryProcessFrameDecoder {
+    static let maximumPayloadBytes = 64 * 1_024
+    private(set) var bufferedData = Data()
+
+    static func encode(_ message: WalletRecoveryProcessMessage) throws -> Data {
+        let payload = try JSONEncoder().encode(message)
+        guard !payload.isEmpty else { throw WalletRecoveryProcessFrameError.empty }
+        guard payload.count <= maximumPayloadBytes else {
+            throw WalletRecoveryProcessFrameError.oversized
+        }
+        var length = UInt32(payload.count).bigEndian
+        var frame = withUnsafeBytes(of: &length) { Data($0) }
+        frame.append(payload)
+        return frame
+    }
+
+    mutating func append(_ data: Data) throws -> [WalletRecoveryProcessMessage] {
+        bufferedData.append(data)
+        var messages: [WalletRecoveryProcessMessage] = []
+        while bufferedData.count >= MemoryLayout<UInt32>.size {
+            let length = bufferedData.prefix(4).reduce(UInt32.zero) {
+                ($0 << 8) | UInt32($1)
+            }
+            guard length > 0 else { throw WalletRecoveryProcessFrameError.empty }
+            guard length <= Self.maximumPayloadBytes else {
+                throw WalletRecoveryProcessFrameError.oversized
+            }
+            let frameLength = 4 + Int(length)
+            guard bufferedData.count >= frameLength else { break }
+            let payload = bufferedData.subdata(in: 4..<frameLength)
+            bufferedData.removeSubrange(0..<frameLength)
+            guard let message = try? JSONDecoder().decode(
+                WalletRecoveryProcessMessage.self, from: payload
+            ), message.isStructurallyValid else {
+                throw WalletRecoveryProcessFrameError.malformed
+            }
+            messages.append(message)
+        }
+        guard bufferedData.count <= Self.maximumPayloadBytes + 4 else {
+            throw WalletRecoveryProcessFrameError.oversized
+        }
+        return messages
+    }
+}
+
 /// The Objective-C-compatible boundary uses Data, while every payload inside
 /// that Data is a specific Codable type. NSDictionary is deliberately avoided:
 /// selector spelling and allowed classes cannot silently widen the protocol.
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
-    func beginRecoveryCeremony(
-        _ request: Data,
-        reply: @escaping (Data, NSXPCListenerEndpoint?) -> Void
-    )
-    func cancelRecoveryCeremony(_ ceremonyID: String, reply: @escaping (Data) -> Void)
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)
@@ -1429,6 +1543,27 @@ enum WalletXPCCodeSigningRequirement {
     func deleteRecoveryVault(_ confirmation: String, reply: @escaping (Data) -> Void)
 }
 
+/// The public service listener exports only this bootstrap interface. Each
+/// method returns an anonymous endpoint which independently verifies the
+/// caller before exposing its narrower privileged interface.
+@objc protocol WalletSignerBootstrapXPCProtocol {
+    func connectHost(reply: @escaping (NSXPCListenerEndpoint?) -> Void)
+    func connectRecovery(reply: @escaping (NSXPCListenerEndpoint?) -> Void)
+}
+
+/// Recovery-only signer access. The main application cannot connect to this
+/// endpoint because the anonymous listener requires WalletRecovery.app's
+/// signature.
+@objc protocol WalletRecoverySignerXPCProtocol {
+    func status(reply: @escaping (Data) -> Void)
+    func beginRecoveryCeremony(
+        _ request: Data,
+        reply: @escaping (Data, NSXPCListenerEndpoint?) -> Void
+    )
+    func cancelRecoveryCeremony(_ ceremonyID: String, reply: @escaping (Data) -> Void)
+    func lock(reply: @escaping (Data) -> Void)
+}
+
 /// This interface exists only on the signer's anonymous, one-time listener.
 /// The listener accepts the signed WalletRecovery service and rejects Locus,
 /// web content, agents, and unrelated local processes.
@@ -1441,15 +1576,4 @@ enum WalletXPCCodeSigningRequirement {
         _ ceremonyID: String, request: Data, reply: @escaping (Data) -> Void
     )
     func cancel(_ ceremonyID: String, reply: @escaping (Data) -> Void)
-}
-
-/// The main app may only ask the isolated view service to present a ceremony.
-/// Secret inputs and phrase display stay in that process and travel directly
-/// to the signer broker endpoint.
-@objc protocol WalletRecoveryServiceXPCProtocol {
-    func presentCeremony(
-        _ handle: Data,
-        signerEndpoint: NSXPCListenerEndpoint,
-        reply: @escaping (Data) -> Void
-    )
 }

@@ -201,10 +201,14 @@ struct SessionState: Codable, Equatable {
     var outputs: [SessionOutput] = []
     /// Everything the conversation drew on; ordering is a view concern.
     var sources: [SessionSource] = []
+    /// When the current — or, once it has finished, the most recent — request
+    /// began. The Overview's activity list is everything since this moment, so
+    /// a finished run stays on screen until the next request replaces it.
+    var requestStartedAt: Int?
 
     enum CodingKeys: String, CodingKey {
         case status, statusReason, workspace, model, plan, events, files, resources
-        case lastRun, suggestions, outputs, sources
+        case lastRun, suggestions, outputs, sources, requestStartedAt
     }
 
     init(
@@ -219,7 +223,8 @@ struct SessionState: Codable, Equatable {
         lastRun: SessionRunSummary?,
         suggestions: [String],
         outputs: [SessionOutput] = [],
-        sources: [SessionSource] = []
+        sources: [SessionSource] = [],
+        requestStartedAt: Int? = nil
     ) {
         self.status = status
         self.statusReason = statusReason
@@ -233,6 +238,7 @@ struct SessionState: Codable, Equatable {
         self.suggestions = suggestions
         self.outputs = outputs
         self.sources = sources
+        self.requestStartedAt = requestStartedAt
     }
 
     /// States persisted before outputs/sources existed must keep decoding, so
@@ -251,6 +257,7 @@ struct SessionState: Codable, Equatable {
         suggestions = try container.decodeIfPresent([String].self, forKey: .suggestions) ?? []
         outputs = try container.decodeIfPresent([SessionOutput].self, forKey: .outputs) ?? []
         sources = try container.decodeIfPresent([SessionSource].self, forKey: .sources) ?? []
+        requestStartedAt = try container.decodeIfPresent(Int.self, forKey: .requestStartedAt)
     }
 
     static func empty(
@@ -278,7 +285,8 @@ struct SessionState: Codable, Equatable {
             lastRun: nil,
             suggestions: [],
             outputs: [],
-            sources: []
+            sources: [],
+            requestStartedAt: nil
         )
     }
 
@@ -354,6 +362,9 @@ enum SessionEvent: Codable, Equatable {
     case sourceProvided(items: [SessionProvidedItem], at: Int)
     /// The agent drew on a URL, MCP server, or web search.
     case sourceUsed(kind: SessionSource.Kind, label: String, target: String?, at: Int)
+    /// The user sent a request. Marks where the Overview's activity list
+    /// starts over.
+    case requestStarted(at: Int)
 
     var timestamp: Int {
         switch self {
@@ -363,7 +374,7 @@ enum SessionEvent: Codable, Equatable {
              .message(_, let at), .tokens(_, _, _, let at),
              .status(_, _, let at), .runFinished(_, _, let at),
              .websiteOutput(_, let at), .sourceProvided(_, let at),
-             .sourceUsed(_, _, _, let at):
+             .sourceUsed(_, _, _, let at), .requestStarted(let at):
             at
         }
     }
@@ -468,6 +479,9 @@ enum SessionStateReducer {
                 activity: kind == .url ? .read : nil,
                 at: at
             )
+
+        case .requestStarted(let at):
+            next.requestStartedAt = at
 
         case .message:
             next.resources.messages += 1

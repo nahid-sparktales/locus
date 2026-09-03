@@ -77,6 +77,59 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    /// Recovery is intentionally launched as an exact child executable rather
+    /// than by XCTest. Resolve and validate that running child directly;
+    /// bundle-identifier attachment is unreliable for nested helpers on macOS.
+    private func waitForRecoveryApplication(
+        timeout: TimeInterval = 10
+    ) -> NSRunningApplication? {
+        var result: NSRunningApplication?
+        guard waitUntil(timeout: timeout, condition: {
+            result = NSRunningApplication.runningApplications(
+                withBundleIdentifier: "io.sparktales.locus.WalletRecovery"
+            ).first(where: {
+                !$0.isTerminated
+                    && $0.bundleURL?.path.hasSuffix(
+                        "Locus.app/Contents/Helpers/WalletRecovery.app"
+                    ) == true
+                    && $0.executableURL?.path.hasSuffix(
+                        "WalletRecovery.app/Contents/MacOS/WalletRecovery"
+                    ) == true
+            })
+            return result != nil
+        }) else { return nil }
+        return result
+    }
+
+    private func assertRecoveryApplicationPresented(
+        _ recovery: NSRunningApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            anyElement("settings.wallet.recovery.presented").waitForExistence(timeout: 10),
+            "Locus did not receive the helper's visible/key-window acknowledgment.",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            guard let windows = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID
+            ) as? [[String: Any]] else { return false }
+            return windows.contains(where: {
+                ($0[kCGWindowOwnerPID as String] as? pid_t) == recovery.processIdentifier
+                    && ($0[kCGWindowIsOnscreen as String] as? Bool) == true
+            })
+        }, "The recovery process had no on-screen window.", file: file, line: line)
+        XCTAssertTrue(
+            recovery.isActive,
+            "The recovery application was not frontmost after presenting.",
+            file: file,
+            line: line
+        )
+    }
+
     /// SwiftUI alerts surface as sheets labeled "alert" on current macOS;
     /// their message text is exposed as a value, not a label.
     private func staticTextWithValue(containing fragment: String) -> XCUIElement {
@@ -1084,6 +1137,51 @@ final class LocusUITests: XCTestCase {
     func testWalletHubSetupFixture() {
         relaunchWalletFixture("setup", anchor: "settings.wallet.create")
         XCTAssertTrue(app.staticTexts["Create a separate vault"].exists)
+    }
+
+    func testWalletCreateRecoveryApplicationPresentsConfirmsCancelsAndRetries() throws {
+        relaunchWalletFixture("setup", anchor: "settings.wallet.create")
+
+        anyElement("settings.wallet.create").click()
+        guard let recovery = waitForRecoveryApplication() else {
+            return XCTFail("The signed recovery application did not start.")
+        }
+        addTeardownBlock { recovery.terminate() }
+        assertRecoveryApplicationPresented(recovery)
+        app.activate()
+        anyElement("settings.wallet.recovery.bring-to-front").click()
+        XCTAssertTrue(waitUntil(timeout: 5) { recovery.isActive })
+        app.activate()
+        anyElement("settings.wallet.recovery.cancel").click()
+        XCTAssertTrue(waitUntil(timeout: 5) { recovery.isTerminated })
+        app.activate()
+        let create = anyElement("settings.wallet.create")
+        XCTAssertTrue(waitUntilHittable(create, timeout: 5))
+        create.click()
+        guard let retry = waitForRecoveryApplication() else {
+            return XCTFail("The recovery application did not reopen for retry.")
+        }
+        addTeardownBlock { retry.terminate() }
+        assertRecoveryApplicationPresented(retry)
+        XCTAssertNotEqual(retry.processIdentifier, recovery.processIdentifier)
+        app.activate()
+        anyElement("settings.wallet.recovery.cancel").click()
+        XCTAssertTrue(waitUntil(timeout: 5) { retry.isTerminated })
+
+    }
+
+    func testWalletRestoreRecoveryApplicationPresentsTwentyFourSecureFieldsAndCancels() throws {
+        relaunchWalletFixture("setup", anchor: "settings.wallet.restore")
+
+        anyElement("settings.wallet.restore").click()
+        guard let recovery = waitForRecoveryApplication() else {
+            return XCTFail("The signed recovery application did not start.")
+        }
+        addTeardownBlock { recovery.terminate() }
+        assertRecoveryApplicationPresented(recovery)
+        app.activate()
+        anyElement("settings.wallet.recovery.cancel").click()
+        XCTAssertTrue(waitUntil(timeout: 5) { recovery.isTerminated })
     }
 
     func testWalletHubLockedFixture() {

@@ -5,18 +5,25 @@ Protocol: wallet signer v2
 
 ## Authority boundary
 
-The direct-download app embeds two sandboxed XPC services:
+The direct-download app embeds a sandboxed signer and a sandboxed accessory
+recovery application:
 
 - `WalletSigner.xpc` owns entropy, derived private keys, active policies,
   cumulative budgets, prepared intents, and final signatures. It has no network
-  entitlement and accepts only the signed Locus host.
-- `WalletRecovery.xpc` owns phrase display, backup verification, and restore
-  input. It has no network entitlement. It connects to the signer through a
-  single-use anonymous endpoint that accepts only the signed recovery service.
+  entitlement. Its bootstrap creates caller-specific anonymous endpoints: the
+  host endpoint accepts signed Locus and excludes recovery methods.
+- `WalletRecovery.app` owns a real AppKit recovery panel, phrase display,
+  backup verification, and restore input. It has no network entitlement and
+  embeds its own byte-identical `WalletSigner.xpc`. The recovery-only signer
+  endpoint and single-use broker both accept only the signed recovery app.
+  Typed words are masked by default; the explicit reveal control and retained
+  mismatch retry values remain entirely inside this protected helper.
 
-The main app receives recovery status and public accounts, never entropy or
-phrase words. If the signer, recovery service, or their one-time channel is
-interrupted, pending recovery state is cleared and signing authority locks.
+The main app launches the helper's exact executable and receives only bounded
+presentation state, errors, outcome, and public accounts over a framed process
+protocol—never entropy, phrases, or signer endpoints. A ten-second visibility
+timeout and process/XPC invalidation paths cancel pending recovery and lock
+signing authority.
 
 The signer exports typed EVM, Solana, and Sui protocol-v2 operations. Arbitrary
 digest signing, raw messages, opaque calldata, unresolved Solana instructions,

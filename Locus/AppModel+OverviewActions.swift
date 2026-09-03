@@ -403,7 +403,7 @@ extension AppModel {
             target = blocks.reversed().first(where: {
                 $0.tool.map { $0.summary.contains(needle) || $0.detail.contains(needle) } == true
             })
-        case .sourceProvided:
+        case .sourceProvided, .requestStarted:
             target = blocks.reversed().first(where: { $0.kind == .user })
         case .runFinished, .status, .tokens, .planCreated, .stepState:
             target = blocks.reversed().first(where: {

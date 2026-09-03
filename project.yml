@@ -108,8 +108,8 @@ targetTemplates:
         LOCUS_GOOGLE_OAUTH_CLIENT_ID: 976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov.apps.googleusercontent.com
         LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID: com.googleusercontent.apps.976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov
 targets:
-  WalletRecoveryService:
-    type: xpc-service
+  WalletRecoveryApplication:
+    type: application
     platform: macOS
     sources:
       - path: WalletRecoveryService
@@ -137,6 +137,10 @@ targets:
           DEVELOPMENT_TEAM: 4X4RJA7GMD
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - target: WalletSignerService
+        embed: true
+        codeSign: true
   WalletSignerService:
     type: xpc-service
     platform: macOS
@@ -210,9 +214,13 @@ targets:
         LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL: ""
         LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL: ""
     dependencies:
-      - target: WalletRecoveryService
+      - target: WalletRecoveryApplication
         embed: true
+        link: false
         codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
       - target: WalletSignerService
         embed: true
         codeSign: true

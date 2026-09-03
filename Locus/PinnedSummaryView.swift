@@ -7,6 +7,7 @@ import SwiftUI
 /// the accessibility identifier suffix and the collapse-state storage key.
 enum SummarySectionKey: String, CaseIterable {
     case plan
+    case activity
     case outputs
     case subagents
     case processes
@@ -25,10 +26,10 @@ enum SummaryDetail: Hashable {
 
 // MARK: - Card
 
-/// Codex's pinned summary: Plan → Outputs → Subagents → Background processes
-/// → Sources, each a collapsible section, each present only while it has
-/// something to say (Outputs and Sources always show so their "+" actions
-/// stay discoverable).
+/// Codex's pinned summary: Plan → Activity → Outputs → Subagents →
+/// Background processes → Sources, each a collapsible section, each present
+/// only while it has something to say (Outputs and Sources always show so
+/// their "+" actions stay discoverable).
 struct PinnedSummaryCard: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -41,6 +42,7 @@ struct PinnedSummaryCard: View {
 
     private var state: SessionState { session.state }
     private var planRow: PinnedSummary.PlanRow? { PinnedSummary.plan(state: state, document: model.activePlan) }
+    private var activity: [PinnedSummary.ActivityRow] { PinnedSummary.activity(state: state) }
     private var outputs: [PinnedSummary.OutputRow] { PinnedSummary.outputs(state: state) }
     private var sources: [PinnedSummary.SourceRow] { PinnedSummary.sources(state: state) }
     private var processes: [BackgroundServiceRecord] {
@@ -53,12 +55,18 @@ struct PinnedSummaryCard: View {
             sessionID: model.currentSessionID
         )
     }
-    private var visibility: [Bool] { [planRow != nil, !subagents.isEmpty, !processes.isEmpty] }
+    private var visibility: [Bool] {
+        [planRow != nil, !activity.isEmpty, !subagents.isEmpty, !processes.isEmpty]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             if let planRow {
                 planSection(planRow)
+                    .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
+            }
+            if !activity.isEmpty {
+                activitySection
                     .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
             }
             outputsSection
@@ -96,6 +104,66 @@ struct PinnedSummaryCard: View {
                 help: "Open the plan"
             ) {
                 openDetail(.plan)
+            }
+        }
+    }
+
+    // MARK: Activity
+
+    /// What the request in flight — or the last one to finish — actually did.
+    /// It survives the turn on purpose: a run that ends leaves the Overview
+    /// describing it until the next request replaces the list.
+    private var activitySection: some View {
+        SummarySection(key: .activity, title: "Activity", count: activity.count) {
+            SummaryList(activity, identifierPrefix: "plan.activity", noun: "activity rows") { index, row in
+                activityRow(row, index: index)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func activityRow(_ row: PinnedSummary.ActivityRow, index: Int) -> some View {
+        switch row.kind {
+        case .command(let failed):
+            SummaryRow(
+                icon: .process,
+                label: row.label,
+                meta: row.meta,
+                metaColor: failed ? LocusTheme.danger : LocusTheme.muted,
+                identifier: "plan.activity.row.\(index)",
+                accessibilityLabel: [row.label, row.meta].compactMap { $0 }.joined(separator: ", "),
+                help: row.label,
+                // A command reads left to right: the binary and its first
+                // arguments are what identify it, not the tail.
+                truncation: .tail
+            )
+            .contextMenu {
+                // Without the "$ " the label carries, what lands on the
+                // clipboard is a command that can just be run.
+                Button("Copy Command") {
+                    model.copyMessage(
+                        row.label.hasPrefix("$ ") ? String(row.label.dropFirst(2)) : row.label
+                    )
+                }
+            }
+        case .file:
+            SummaryRow(
+                icon: .forPath(row.target ?? row.label),
+                label: row.label,
+                meta: row.meta,
+                identifier: "plan.activity.row.\(index)",
+                accessibilityLabel: [row.label, row.meta].compactMap { $0 }.joined(separator: ", "),
+                help: row.target ?? row.label
+            ) {
+                if let target = row.target { model.openSessionFile(target) }
+            }
+            .contextMenu {
+                if let target = row.target {
+                    Button("Reveal in Finder") { model.revealInFinder(target) }
+                    Button("Copy Path") { model.copyMessage(target) }
+                    Divider()
+                    Button("Add to Context") { model.addWorkspaceFileToContext(target) }
+                }
             }
         }
     }
