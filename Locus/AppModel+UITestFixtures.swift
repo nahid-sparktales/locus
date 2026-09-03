@@ -547,6 +547,35 @@ extension AppModel {
                 recommended: "Exponential with jitter"
             )
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BLOCKING_QUESTION"] == "1" {
+            selectedMode = .grill
+            pendingBlockingQuestion = AgentQuestionRequest(
+                id: "seed-blocking-question",
+                toolID: "seed-tool-question",
+                questions: [
+                    AgentQuestion(
+                        id: "q1",
+                        header: "Storage",
+                        question: "Where should the response cache live?",
+                        options: [
+                            AgentQuestionOption(
+                                label: "In-memory",
+                                description: "Fastest, but lost on restart."
+                            ),
+                            AgentQuestionOption(
+                                label: "SQLite",
+                                description: "Durable, with a small storage cost."
+                            ),
+                        ]
+                    ),
+                    AgentQuestion(
+                        id: "q2",
+                        header: "Naming",
+                        question: "What should the public API call this?"
+                    ),
+                ]
+            )
+        }
         seedUITestRunFixtureIfNeeded()
 
         if let simulatorFixture = ProcessInfo.processInfo.environment[

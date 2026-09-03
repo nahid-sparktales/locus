@@ -535,6 +535,7 @@ struct SessionSidebarView: View {
             ? "Start a new chat with the current or most recent agent (⌘N)"
             : "Start a new chat (⌘N)")
         .accessibilityLabel("New chat")
+        .accessibilityValue(isAgents ? "Agent chat" : "Standard chat")
         .accessibilityIdentifier("sidebar.newSession")
     }
 

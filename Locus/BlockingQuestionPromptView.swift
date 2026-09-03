@@ -297,14 +297,20 @@ struct BlockingQuestionPromptView: View {
             index += 1
             resetForCurrentQuestion()
         } else {
-            model.resolveBlockingQuestion(answers)
+            let completedAnswers = answers
+            Task { @MainActor in
+                model.resolveBlockingQuestion(completedAnswers)
+            }
         }
     }
 
     /// Sends whatever has been collected so far, so a partial run still reaches
     /// the model rather than being thrown away.
     private func skip() {
-        model.resolveBlockingQuestion(answers, action: "cancel")
+        let partialAnswers = answers
+        Task { @MainActor in
+            model.resolveBlockingQuestion(partialAnswers, action: "cancel")
+        }
     }
 
     private func resetForCurrentQuestion() {

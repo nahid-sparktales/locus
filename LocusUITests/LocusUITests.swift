@@ -2836,6 +2836,20 @@ final class LocusUITests: XCTestCase {
         try auditCurrentSurface()
     }
 
+    func testBlockingQuestionAdvancesAndCancelsWithoutStrandingTheChat() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_BLOCKING_QUESTION"] = "1"
+        app.launch()
+
+        XCTAssertTrue(anyElement("question.panel").waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement("question.option.1").exists)
+        app.typeKey("1", modifierFlags: [])
+        XCTAssertTrue(anyElement("question.progress").waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(anyElement("question.panel")))
+        XCTAssertTrue(anyElement("composer.input").waitForExistence(timeout: 3))
+    }
+
     func testDocumentationScreenshots() {
         let captures = [
             (surface: "workspace", anchor: "files.search", name: "locus-workspace"),
@@ -3420,9 +3434,9 @@ final class LocusUITests: XCTestCase {
         let agents = anyElement("configureAgent.tab.agents")
         XCTAssertTrue(agents.waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("configureAgent.agents").exists)
-        agents.click()
-        XCTAssertTrue(anyElement("configureAgent.agents").waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["No Agents Yet"].exists)
+        agents.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(waitUntil { agents.value as? String == "Selected" })
+        XCTAssertTrue(app.staticTexts["No Agents Yet"].waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("configureAgent.create.schedule").exists)
 
         let sources = anyElement("configureAgent.tab.sources")
