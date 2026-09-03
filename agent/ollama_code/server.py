@@ -1976,6 +1976,18 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             call = _run_user_turn
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
+        else:
+            request_id = str(msg.get("request_id") or "")[:160]
+            if request_id:
+                # WebSocket send completion only confirms that bytes reached
+                # the socket.  This application-level acknowledgement lets the
+                # native queue distinguish an accepted turn from a silently
+                # lost dispatch before it holds the execution slot forever.
+                svc.queue_event({
+                    "type": "turn_accepted",
+                    "request_id": request_id,
+                    "run_id": str(msg.get("run_id") or "")[:160],
+                })
     elif mtype == "permission_decision":
         svc.answer_permission(
             str(msg.get("request_id", "")),

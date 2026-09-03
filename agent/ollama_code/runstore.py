@@ -2364,6 +2364,30 @@ class RunStore:
             if cursor.rowcount != 1:
                 raise RunStoreError("queued run not found")
 
+    def fail_unstarted_dispatch(self, run_id: str, reason: str) -> dict[str, Any]:
+        """Stop only a dispatch that no worker has begun processing.
+
+        Native admission and the worker WebSocket live on separate transports.
+        If the socket drops the user message after admission, the durable row
+        would otherwise remain ``dispatching`` forever and hold the chat's
+        execution slot.  The state/sequence predicate is the race boundary: a
+        worker that has recorded even its first event owns the run and cannot
+        be stopped by this recovery path.
+        """
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET state='interrupted', completed_at=?, updated_at=?,"
+                " recoverable=0, recovery_reason=?"
+                " WHERE id=? AND state='dispatching' AND last_seq=0",
+                (now, now, reason[:4_000], run_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("the run has already started or stopped")
+        return self.run(run_id) or {}
+
     def mark_abandoned(
         self, lease_active: Callable[[str], bool] | None = None
     ) -> list[dict[str, Any]]:

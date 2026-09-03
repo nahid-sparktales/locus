@@ -75,6 +75,8 @@ final class ChatWorkerRuntime {
     var pendingQuestion: UserQuestion?
     /// A live structured question whose worker remains parked for an answer.
     var pendingBlockingQuestion: AgentQuestionRequest?
+    private var awaitingTurnRequestIDs = Set<String>()
+    private var acceptedTurnRequestIDs = Set<String>()
 
     var occupiesExecutionSlot: Bool {
         switch executionState {
@@ -102,6 +104,27 @@ final class ChatWorkerRuntime {
     func stop() {
         service.disconnect()
         process.stop()
+    }
+
+    func prepareForTurnAcceptance(_ requestID: String) {
+        awaitingTurnRequestIDs.insert(requestID)
+        acceptedTurnRequestIDs.remove(requestID)
+    }
+
+    func recordTurnAcceptance(_ requestID: String) {
+        guard !requestID.isEmpty, awaitingTurnRequestIDs.contains(requestID) else { return }
+        acceptedTurnRequestIDs.insert(requestID)
+    }
+
+    func consumeTurnAcceptance(_ requestID: String) -> Bool {
+        guard acceptedTurnRequestIDs.remove(requestID) != nil else { return false }
+        awaitingTurnRequestIDs.remove(requestID)
+        return true
+    }
+
+    func cancelTurnAcceptance(_ requestID: String) {
+        awaitingTurnRequestIDs.remove(requestID)
+        acceptedTurnRequestIDs.remove(requestID)
     }
 }
 

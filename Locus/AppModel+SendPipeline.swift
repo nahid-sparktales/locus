@@ -305,6 +305,7 @@ extension AppModel {
                 "type": "user_message",
                 "text": payload,
                 "mode": dispatchedMode.rawValue,
+                "request_id": reservedRunID,
             ]
             if let agentConfig = encodedJSONObject(self.primaryAgentBehavior) {
                 request["agent_config"] = agentConfig
@@ -383,12 +384,19 @@ extension AppModel {
                 self.finishChatRuntime(worker, state: .failed, error: "The queued run could not start")
                 return
             }
+            worker.prepareForTurnAcceptance(reservedRunID)
             guard worker.service.send(request) else {
+                worker.cancelTurnAcceptance(reservedRunID)
+                _ = await self.recoverUnacknowledgedDispatch(
+                    runID: reservedRunID,
+                    sessionID: dispatchedSessionID,
+                    worker: worker,
+                    eventDeliveryID: nil
+                )
                 self.discardAutomaticModelRoutingTurn(
                     for: dispatchedSessionID,
                     matching: preparedModelRoute
                 )
-                self.finishChatRuntime(worker, state: .failed, error: "The turn could not be delivered")
                 if self.currentSessionID == dispatchedSessionID {
                     self.isBusy = false
                     self.turnStartedAt = nil
@@ -402,6 +410,34 @@ extension AppModel {
                     )
                 }
                 return
+            }
+            if !(await self.waitForTurnAcceptance(reservedRunID, from: worker)) {
+                let recovered = await self.recoverUnacknowledgedDispatch(
+                    runID: reservedRunID,
+                    sessionID: dispatchedSessionID,
+                    worker: worker,
+                    eventDeliveryID: nil
+                )
+                if recovered {
+                    self.discardAutomaticModelRoutingTurn(
+                        for: dispatchedSessionID,
+                        matching: preparedModelRoute
+                    )
+                    if self.currentSessionID == dispatchedSessionID {
+                        self.isBusy = false
+                        self.turnStartedAt = nil
+                        self.turnDispatchedMode = nil
+                        self.turnDispatchedTeamRunID = nil
+                        self.turnDispatchedInPlanMode = false
+                        self.stashUnsent(
+                            text,
+                            requeue: requeueingOnFailure,
+                            preserveDraft: preservingDraftOnFailure
+                        )
+                    }
+                    self.showToast("The agent did not accept this chat. It is ready to retry.")
+                    return
+                }
             }
             // Appshots are explicit one-message captures. Retain them through
             // queue and transport failures; clear only after accepted delivery.
@@ -452,6 +488,71 @@ extension AppModel {
         }
         chatAdmissionQueue.remove(runtime.sessionID)
         return false
+    }
+
+    func waitForTurnAcceptance(
+        _ requestID: String,
+        from runtime: ChatWorkerRuntime,
+        timeout: Duration = .seconds(5)
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while runtime.process.isRunning, runtime.isConnected {
+            if runtime.consumeTurnAcceptance(requestID) { return true }
+            if Task.isCancelled || clock.now >= deadline {
+                runtime.cancelTurnAcceptance(requestID)
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if runtime.consumeTurnAcceptance(requestID) { return true }
+        runtime.cancelTurnAcceptance(requestID)
+        return false
+    }
+
+    /// Returns true only when this method won the atomic recovery race and
+    /// stopped a dispatch that the worker never began. A false result means a
+    /// start event landed concurrently and the live turn must be left alone.
+    func recoverUnacknowledgedDispatch(
+        runID: String,
+        sessionID: String,
+        worker: ChatWorkerRuntime,
+        eventDeliveryID: String?
+    ) async -> Bool {
+        let message = "The task was not accepted by its agent worker. No work began; retry it."
+        do {
+            let _: OrchestrationRun = try await backend.patch(
+                "/api/runs/\(runID)/queue",
+                body: ["action": "fail_dispatch", "reason": message],
+                as: OrchestrationRun.self
+            )
+        } catch {
+            if let latest = try? await backend.get(
+                "/api/runs/\(runID)", as: OrchestrationRun.self
+            ) {
+                if latest.lastSequence > 0
+                    || ["running", "reviewing", "waiting_dispatch_approval",
+                        "waiting_permission", "waiting_computer"].contains(latest.state) {
+                    return false
+                }
+            }
+        }
+
+        finishChatRuntime(worker, state: .interrupted, error: message)
+        chatAdmissionQueue.remove(sessionID)
+        if taskWorkers[sessionID] === worker {
+            taskWorkers.removeValue(forKey: sessionID)
+            worker.stop()
+        }
+        if let eventDeliveryID {
+            let _: EventDelivery? = try? await backend.post(
+                "/api/event-deliveries/\(eventDeliveryID)/fail",
+                body: ["error": message, "pause_trigger": false],
+                as: EventDelivery.self
+            )
+            eventAutomations.wakeDispatcher()
+        }
+        return true
     }
 
     private func hasLocalWriterCollision(for runtime: ChatWorkerRuntime) -> Bool {

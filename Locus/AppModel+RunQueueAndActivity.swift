@@ -283,6 +283,7 @@ extension AppModel {
                     ),
                     "mode": retryMode.rawValue,
                     "run_id": retry.id,
+                    "request_id": retry.id,
                 ]
                 if let config = encodedJSONObject(primaryAgentBehavior) {
                     request["agent_config"] = config
@@ -300,12 +301,28 @@ extension AppModel {
                         request["solo_swarm"] = ["enabled": true]
                     }
                 }
+                worker.prepareForTurnAcceptance(retry.id)
                 guard worker.service.send(request) else {
-                    finishChatRuntime(worker, state: .failed, error: "The retry could not be delivered")
+                    worker.cancelTurnAcceptance(retry.id)
+                    _ = await recoverUnacknowledgedDispatch(
+                        runID: retry.id,
+                        sessionID: sessionID,
+                        worker: worker,
+                        eventDeliveryID: retry.manifest?["event_delivery_id"]?.string
+                    )
                     return
                 }
                 worker.startedAt = Date()
                 updateBackgroundChatState(worker)
+                guard await waitForTurnAcceptance(retry.id, from: worker) else {
+                    _ = await recoverUnacknowledgedDispatch(
+                        runID: retry.id,
+                        sessionID: sessionID,
+                        worker: worker,
+                        eventDeliveryID: retry.manifest?["event_delivery_id"]?.string
+                    )
+                    return
+                }
                 showToast("Retry queued in \(session.displayTitle)")
                 await activity.refreshActivityRuns()
             } catch { showToast(error.localizedDescription) }
@@ -385,6 +402,7 @@ extension AppModel {
                 ),
                 "mode": mode.rawValue,
                 "run_id": run.id,
+                "request_id": run.id,
             ]
             if let config = encodedJSONObject(primaryAgentBehavior) {
                 request["agent_config"] = config
@@ -420,12 +438,36 @@ extension AppModel {
                 splitPaneBlocks[sessionID] = blocks
                 paneState(containing: sessionID)?.blocks = blocks
             }
+            worker.prepareForTurnAcceptance(run.id)
             guard worker.service.send(request) else {
-                finishChatRuntime(worker, state: .interrupted, error: "The saved run could not be delivered")
+                worker.cancelTurnAcceptance(run.id)
+                restoredQueuedRunIDs.remove(run.id)
+                let recovered = await recoverUnacknowledgedDispatch(
+                    runID: run.id,
+                    sessionID: sessionID,
+                    worker: worker,
+                    eventDeliveryID: run.manifest?["event_delivery_id"]?.string
+                )
+                if recovered {
+                    showToast("An incoming event was not accepted. It is ready to retry.")
+                }
                 return
             }
             worker.startedAt = Date()
             updateBackgroundChatState(worker)
+            guard await waitForTurnAcceptance(run.id, from: worker) else {
+                restoredQueuedRunIDs.remove(run.id)
+                let recovered = await recoverUnacknowledgedDispatch(
+                    runID: run.id,
+                    sessionID: sessionID,
+                    worker: worker,
+                    eventDeliveryID: run.manifest?["event_delivery_id"]?.string
+                )
+                if recovered {
+                    showToast("An incoming event was not accepted. It is ready to retry.")
+                }
+                return
+            }
         } catch {
             finishChatRuntime(worker, state: .interrupted, error: error.localizedDescription)
         }

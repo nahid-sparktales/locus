@@ -3267,6 +3267,28 @@ def test_websocket_ask_mode_routes_through_the_tool_free_turn_boundary(client, m
     )]
 
 
+def test_websocket_acknowledges_an_accepted_correlated_turn(client, monkeypatch):
+    from ollama_code import server as server_mod
+
+    service = client.app.state.service
+    monkeypatch.setattr(service, "start_turn", lambda *_args, **_kwargs: True)
+
+    asyncio.run(server_mod._handle_client_message(service, {
+        "type": "user_message",
+        "text": "Handle the incoming event",
+        "mode": "work",
+        "run_id": "event-run-1",
+        "request_id": "event-run-1",
+    }))
+
+    acknowledgement = service.queue.get_nowait()
+    assert acknowledgement == {
+        "type": "turn_accepted",
+        "request_id": "event-run-1",
+        "run_id": "event-run-1",
+    }
+
+
 def test_websocket_ordinary_agentic_solo_turns_enable_adaptive_delegation(client, monkeypatch):
     from ollama_code import server as server_mod
 
@@ -5619,6 +5641,33 @@ def test_durable_run_queue_reorder_filter_cancel_and_retry(client):
     assert retried.json()["retry_parent_id"] == "queued-1"
     assert retried.json()["session_id"] == "chat-1"
     assert retried.json()["manifest"]["solo_swarm"] is True
+
+
+def test_durable_run_queue_can_release_only_an_unstarted_dispatch(client):
+    service = client.app.state.service
+    service.run_store.queue_run("lost-dispatch", session_id="chat-lost")
+    service.run_store.admit("lost-dispatch")
+
+    failed = client.patch("/api/runs/lost-dispatch/queue", json={
+        "action": "fail_dispatch",
+        "reason": "worker acknowledgement timed out",
+    })
+
+    assert failed.status_code == 200
+    assert failed.json()["state"] == "interrupted"
+    assert failed.json()["recovery_reason"] == "worker acknowledgement timed out"
+
+    service.run_store.queue_run("started-dispatch", session_id="chat-started")
+    service.run_store.admit("started-dispatch")
+    service.run_store.append_event("started-dispatch", {
+        "type": "run_started", "state": "running",
+    })
+
+    raced = client.patch("/api/runs/started-dispatch/queue", json={
+        "action": "fail_dispatch",
+    })
+    assert raced.status_code == 409
+    assert service.run_store.run("started-dispatch")["last_seq"] == 1
 
 
 def test_memory_diagnostics_and_selected_chat_reprocessing_are_content_free(client, tmp_path):

@@ -122,6 +122,7 @@ jobs:
           -only-testing:LocusTests
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
+          LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
       - name: Pinned Anvil wallet-chain integration
         env:
           FOUNDRY_VERSION: v1.7.1
@@ -149,7 +150,8 @@ jobs:
           test "$actual" = "$expected"
           tar -xzf "$foundry_dir/$asset" -C "$foundry_dir"
           LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh \
-            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
       - name: Direct and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip
@@ -246,3 +248,4 @@ jobs:
           -only-testing:LocusUITests
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
+          LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements

@@ -5465,6 +5465,33 @@ final class FeatureLogicTests: XCTestCase {
         })
     }
 
+    @MainActor
+    func testChatWorkerTurnAcceptanceIsCorrelatedAndConsumedOnce() {
+        let runtime = ChatWorkerRuntime(
+            requestedSessionID: "chat-a",
+            workspacePath: "/tmp/locus-acceptance-test",
+            process: BackendProcess(),
+            endpoint: URL(string: "http://127.0.0.1:65530")!
+        )
+
+        runtime.recordTurnAcceptance("run-a")
+        XCTAssertFalse(runtime.consumeTurnAcceptance("run-b"))
+        XCTAssertFalse(runtime.consumeTurnAcceptance("run-a"), "unsolicited acks are ignored")
+
+        runtime.prepareForTurnAcceptance("run-a")
+        runtime.recordTurnAcceptance("run-a")
+        XCTAssertTrue(runtime.consumeTurnAcceptance("run-a"))
+        XCTAssertFalse(runtime.consumeTurnAcceptance("run-a"))
+
+        runtime.recordTurnAcceptance("run-a")
+        XCTAssertFalse(runtime.consumeTurnAcceptance("run-a"))
+
+        runtime.prepareForTurnAcceptance("run-a")
+        runtime.cancelTurnAcceptance("run-a")
+        runtime.recordTurnAcceptance("run-a")
+        XCTAssertFalse(runtime.consumeTurnAcceptance("run-a"), "late acks are ignored")
+    }
+
     func testFaviconCandidateURLDecisionTable() {
         let page = URL(string: "https://docs.example.com/guide")!
 

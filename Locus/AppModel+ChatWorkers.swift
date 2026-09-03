@@ -396,6 +396,17 @@ extension AppModel {
     }
 
     private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
+        if let type = event["type"] as? String {
+            if type == "turn_accepted",
+               let requestID = event["request_id"] as? String {
+                runtime.recordTurnAcceptance(requestID)
+            } else if type == "run_started" || type == "orchestration_started",
+                      let runID = event["run_id"] as? String {
+                // The start boundary is also sufficient acknowledgement and
+                // keeps a mixed-version development runtime from timing out.
+                runtime.recordTurnAcceptance(runID)
+            }
+        }
         if let rawType = event["type"] as? String, rawType == "session_info",
            let info = decode(SessionInfo.self, from: event)
         {

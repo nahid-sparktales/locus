@@ -2455,7 +2455,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ARCHS = arm64;
-				CODE_SIGN_ENTITLEMENTS = Config/WalletSigner.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_WALLET_SIGNER_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Manual;
@@ -2472,6 +2472,7 @@
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
 				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
+				LOCUS_WALLET_SIGNER_ENTITLEMENTS = Config/WalletSigner.entitlements;
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;
@@ -2486,7 +2487,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ARCHS = arm64;
-				CODE_SIGN_ENTITLEMENTS = Config/WalletSigner.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_WALLET_SIGNER_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -2502,6 +2503,7 @@
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
 				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
+				LOCUS_WALLET_SIGNER_ENTITLEMENTS = Config/WalletSigner.entitlements;
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;
@@ -2608,7 +2610,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ARCHS = arm64;
-				CODE_SIGN_ENTITLEMENTS = Config/WalletSigner.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_WALLET_SIGNER_ENTITLEMENTS)";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WalletSignerService/Info.plist;
@@ -2620,6 +2622,7 @@
 				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
 				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
 				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
+				LOCUS_WALLET_SIGNER_ENTITLEMENTS = Config/WalletSigner.entitlements;
 				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
 				PRODUCT_NAME = WalletSigner;

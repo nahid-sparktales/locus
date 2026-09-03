@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from ollama_code.runstore import SCHEMA_VERSION, RunStore, sanitize_event
+from ollama_code.runstore import SCHEMA_VERSION, RunStore, RunStoreError, sanitize_event
 
 
 def test_run_store_orders_events_and_rebuilds_attempts(tmp_path) -> None:
@@ -233,6 +233,28 @@ def test_queued_runs_keep_fifo_order_across_abandonment_and_reordering(tmp_path)
     store.reorder_queue("first", "cancel")
     assert store.run("first")["state"] == "cancelled"
     assert store.run("second")["queue_position"] == 2
+
+
+def test_unstarted_dispatch_can_be_failed_without_racing_a_started_worker(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    store.queue_run("lost", session_id="chat-a")
+    store.admit("lost")
+
+    failed = store.fail_unstarted_dispatch("lost", "worker did not acknowledge")
+
+    assert failed["state"] == "interrupted"
+    assert failed["last_seq"] == 0
+    assert failed["recoverable"] is False
+    assert failed["recovery_reason"] == "worker did not acknowledge"
+
+    store.queue_run("started", session_id="chat-b")
+    store.admit("started")
+    store.append_event("started", {"type": "run_started", "state": "running"})
+
+    with pytest.raises(RunStoreError, match="already started or stopped"):
+        store.fail_unstarted_dispatch("started", "too late")
+    assert store.run("started")["state"] == "dispatching"
+    assert store.run("started")["last_seq"] == 1
 
 
 def test_live_state_event_clears_stale_recovery_metadata(tmp_path) -> None:

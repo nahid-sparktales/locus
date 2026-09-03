@@ -164,6 +164,11 @@ def run_queue_update(
         if action == "admit":
             service.run_store.admit(run_id)
             return service.run_store.run(run_id) or {}
+        if action == "fail_dispatch":
+            return service.run_store.fail_unstarted_dispatch(
+                run_id,
+                str(body.get("reason") or "The task was not accepted by its worker."),
+            )
         return service.run_store.reorder_queue(run_id, action)
     except RunStoreError as exc:
         raise HTTPException(409, str(exc)) from exc

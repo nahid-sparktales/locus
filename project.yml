@@ -172,7 +172,11 @@ targets:
         PRODUCT_NAME: WalletSigner
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: WalletSignerService/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Config/WalletSigner.entitlements
+        # Production builds use the provisioned Keychain access group. CI can
+        # override only this target with the sandbox-only ad-hoc entitlement;
+        # the shipped entitlement and persisted Keychain format stay fixed.
+        LOCUS_WALLET_SIGNER_ENTITLEMENTS: Config/WalletSigner.entitlements
+        CODE_SIGN_ENTITLEMENTS: "$(LOCUS_WALLET_SIGNER_ENTITLEMENTS)"
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
         ARCHS: arm64
