@@ -162,6 +162,119 @@ enum PinnedSummary {
         var completed: Int { steps.filter { $0.state == .done }.count }
     }
 
+    /// One thing the current — or most recently finished — request did.
+    struct ActivityRow: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case command(failed: Bool)
+            case file(SessionFileTouch.Kind)
+        }
+
+        let id: String
+        let kind: Kind
+        let label: String
+        let meta: String?
+        /// Workspace-relative path for file rows, so they can be opened; nil
+        /// for commands, which have nothing to open.
+        let target: String?
+        let timestamp: Int
+    }
+
+    // MARK: Activity
+
+    /// What this request did: the commands it ran and the files it touched,
+    /// newest first.
+    ///
+    /// Bounded by `requestStartedAt` rather than by the run record, so it
+    /// covers every turn and not only the ones that produced a run — and so a
+    /// finished request stays on screen until the next one starts, which is
+    /// the whole point of the section. Without a marker (a session persisted
+    /// before this existed) there is no request to describe, so nothing shows
+    /// rather than the entire session's history.
+    static func activity(state: SessionState) -> [ActivityRow] {
+        guard let since = state.requestStartedAt else { return [] }
+        var commands: [String: ActivityRow] = [:]
+        var commandCounts: [String: Int] = [:]
+        var files: [String: ActivityRow] = [:]
+        for event in state.events where event.timestamp >= since {
+            switch event {
+            case .command(let cmd, let exitCode, let at):
+                let label = cmd
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !label.isEmpty else { continue }
+                let count = (commandCounts[label] ?? 0) + 1
+                commandCounts[label] = count
+                var failed = (exitCode ?? 0) != 0
+                // One failure in a repeated command is still a failure worth
+                // showing, so the flag only ever goes one way.
+                if case .command(true)? = commands[label]?.kind { failed = true }
+                commands[label] = ActivityRow(
+                    id: "command:\(label)",
+                    kind: .command(failed: failed),
+                    label: label,
+                    meta: [failed ? "Failed" : nil, count > 1 ? "×\(count)" : nil]
+                        .compactMap { $0 }.joined(separator: " · ").nilIfEmpty,
+                    target: nil,
+                    timestamp: max(at, commands[label]?.timestamp ?? at)
+                )
+            case .fileRead(let path, let at):
+                upsertActivityFile(&files, path: path, kind: .read, at: at)
+            case .fileEdit(let path, _, _, let at):
+                upsertActivityFile(&files, path: path, kind: .edit, at: at)
+            case .fileCreate(let path, let at):
+                upsertActivityFile(&files, path: path, kind: .create, at: at)
+            default:
+                continue
+            }
+        }
+        return (Array(commands.values) + Array(files.values)).sorted {
+            $0.timestamp == $1.timestamp ? $0.label < $1.label : $0.timestamp > $1.timestamp
+        }
+    }
+
+    /// A file touched twice in one request is one row. Creating outranks
+    /// editing, which outranks reading — the strongest thing that happened to
+    /// it is what the row should say.
+    private static func upsertActivityFile(
+        _ files: inout [String: ActivityRow],
+        path rawPath: String,
+        kind: SessionFileTouch.Kind,
+        at: Int
+    ) {
+        let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+        var resolved = kind
+        if let existing = files[path], case .file(let previous) = existing.kind {
+            resolved = activityRank(previous) >= activityRank(kind) ? previous : kind
+        }
+        files[path] = ActivityRow(
+            id: "file:\(path)",
+            kind: .file(resolved),
+            label: URL(fileURLWithPath: path).lastPathComponent.nilIfEmpty ?? path,
+            meta: activityLabel(resolved),
+            target: path,
+            timestamp: max(at, files[path]?.timestamp ?? at)
+        )
+    }
+
+    private static func activityRank(_ kind: SessionFileTouch.Kind) -> Int {
+        switch kind {
+        case .read: 0
+        case .edit: 1
+        case .delete: 2
+        case .create: 3
+        }
+    }
+
+    static func activityLabel(_ kind: SessionFileTouch.Kind) -> String {
+        switch kind {
+        case .read: "Read"
+        case .edit: "Edited"
+        case .create: "Created"
+        case .delete: "Deleted"
+        }
+    }
+
     // MARK: Plan
 
     static func plan(state: SessionState, document: PlanDocument?) -> PlanRow? {
