@@ -459,6 +459,8 @@ extension AppModel {
         if let variant = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_FIXTURE"],
            !variant.isEmpty {
             seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
+            // "schedule" lands on the scheduled agent's chat so its panel shows.
+            if variant == "schedule" { currentSessionID = "seed-schedule-chat" }
         }
         seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
@@ -591,7 +593,10 @@ extension AppModel {
             title: "Chat 2",
             cwd: workspace,
             agentTriggerID: triggerID,
-            agentName: "Inbox Triage"
+            agentName: "Inbox Triage",
+            agentPrimary: true,
+            model: "qwen3:8b",
+            provider: "ollama"
         )
         let olderChat = SessionSummary(
             id: "seed-agent-chat-older",
@@ -793,6 +798,80 @@ extension AppModel {
             connections: [connection, priceFeed],
             triggers: [trigger, priceAlert, stoppedAgent],
             deliveries: deliveries
+        )
+
+        // A scheduled agent: one dedicated chat its runs continue, plus the
+        // occurrences that reached it, so the schedule kind is on screen.
+        let scheduleID = "seed-schedule"
+        let scheduleChat = SessionSummary(
+            id: "seed-schedule-chat",
+            name: "seed-schedule-chat.jsonl",
+            preview: "Review the workspace and summarize what changed.",
+            mtime: now - 3_600,
+            size: 900,
+            title: "Morning Review",
+            cwd: workspace,
+            agentTriggerID: scheduleID,
+            agentName: "Morning Review",
+            agentPrimary: true,
+            model: "qwen3:8b",
+            provider: "ollama"
+        )
+        sessions.append(scheduleChat)
+        let morningReview = ScheduledTask(
+            id: scheduleID,
+            name: "Morning Review",
+            prompt: "Review the workspace and summarize what changed since yesterday.",
+            workspaceRoot: workspace,
+            mode: .work,
+            executionEnvironment: .local,
+            runner: .solo,
+            teamID: nil,
+            teamName: nil,
+            provider: "ollama",
+            providerAccountID: nil,
+            model: "qwen3:8b",
+            timezone: TimeZone.current.identifier,
+            rule: ScheduleRule(kind: .weekdays, hour: 9, minute: 0),
+            enabled: true,
+            nextRunAt: now + 43_200,
+            createdAt: now - 604_800,
+            updatedAt: now - 3_600,
+            lastRunAt: now - 3_600,
+            lastRunID: "seed-schedule-run-2",
+            lastError: nil
+        )
+        let occurrences = [
+            ScheduleOccurrence(
+                id: "seed-schedule-occurrence-2",
+                scheduleID: scheduleID,
+                scheduleName: "Morning Review",
+                scheduledFor: now - 3_600,
+                trigger: "due",
+                state: "queued",
+                sessionID: scheduleChat.id,
+                runID: "seed-schedule-run-2",
+                error: nil,
+                createdAt: now - 3_600,
+                updatedAt: now - 3_500
+            ),
+            ScheduleOccurrence(
+                id: "seed-schedule-occurrence-1",
+                scheduleID: scheduleID,
+                scheduleName: "Morning Review",
+                scheduledFor: now - 90_000,
+                trigger: "due",
+                state: "skipped",
+                sessionID: scheduleChat.id,
+                runID: nil,
+                error: "Skipped: the previous run in this agent's chat was still in progress.",
+                createdAt: now - 90_000,
+                updatedAt: now - 89_900
+            ),
+        ]
+        schedule.seedForUITesting(
+            tasks: [morningReview],
+            occurrences: [scheduleID: occurrences]
         )
         // Set last: the destination change is what swaps the open Overview
         // for the Agent tab, exactly as choosing Agents in the sidebar does.

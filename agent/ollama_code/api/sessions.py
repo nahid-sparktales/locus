@@ -43,6 +43,25 @@ def _session_has_active_run(service: ChatService, session_id: str) -> bool:
     return session_has_active_run(service.run_store, session_id)
 
 
+def _agent_owning_chat(service: ChatService, session_id: str) -> str | None:
+    """The agent whose events land in this chat, if one still exists.
+
+    Deleting that chat would leave the agent pointing at nothing: every later
+    dispatch fails, the agent is paused with a 404, and even resuming or
+    renaming it fails because target validation runs first. Refusing here is
+    the only place the repair is cheap.
+    """
+    for trigger in service.run_store.event_triggers():
+        if str(trigger.get("target_session_id") or "") == session_id:
+            return str(trigger.get("name") or "an agent")
+    entry = SessionMeta.get(session_id)
+    if entry.get("agent_primary") and entry.get("agent_trigger_id"):
+        schedule = service.run_store.schedule(str(entry["agent_trigger_id"]))
+        if schedule is not None:
+            return str(schedule.get("name") or entry.get("agent_name") or "an agent")
+    return None
+
+
 def sessions(
     service: ServiceDependency,
     include_archived: bool = False,
@@ -243,6 +262,11 @@ def session_delete(session_id: str, service: ServiceDependency) -> dict[str, Any
         raise HTTPException(404, f"session not found: {session_id}")
     if _session_has_active_run(service, session_id):
         raise HTTPException(409, "wait for this chat to stop before deleting it")
+    owner = _agent_owning_chat(service, session_id)
+    if owner is not None:
+        raise HTTPException(
+            409, f"this chat receives {owner}'s events; delete the agent first"
+        )
     try:
         with service.state_mutation():
             deleted_active = session_id == service.core.session.session_id
@@ -497,6 +521,10 @@ def session_metadata_update(
             raise HTTPException(422, f"{field} must be true or false")
 
     archived = body.get("archived")
+    if archived and (owner := _agent_owning_chat(service, session_id)):
+        # Archiving takes the chat's worktree with it, which would leave the
+        # agent with nowhere to run and no way back.
+        raise HTTPException(409, f"this chat receives {owner}'s runs; pause the agent instead")
     if archived and session_id == service.core.session.session_id:
         raise HTTPException(409, "start a new session before archiving the active one")
     if archived and _session_has_active_run(service, session_id):

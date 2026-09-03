@@ -1879,6 +1879,60 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
     }
 
+    func testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet() {
+        relaunchWithAgentFixture("fleet")
+
+        // The schedule's dedicated chat groups under the schedule like any agent.
+        let group = anyElement("agent.seed-schedule")
+        XCTAssertTrue(group.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertTrue((group.label + " " + (group.value as? String ?? "")).contains("Active"))
+        XCTAssertTrue(anyElement("session.seed-schedule-chat").exists)
+
+        // The fleet lists it with its cadence, not a connector.
+        let row = anyElement("agentOverview.fleet.seed-schedule")
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertTrue(row.label.contains("Morning Review"))
+        XCTAssertTrue(row.label.contains("Active"))
+
+        // Schedules gain the one action triggers cannot have.
+        group.rightClick()
+        XCTAssertTrue(
+            app.menuItems["agent.seed-schedule.runNow"].waitForExistence(timeout: 3)
+                || app.descendants(matching: .any)["agent.seed-schedule.runNow"].exists
+        )
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    func testTheAgentPanelForAScheduleShowsItsCadenceRunsAndSkippedSlot() {
+        relaunchWithAgentFixture("schedule")
+
+        // A schedule is an agent: same panel, its own words.
+        let source = anyElement("agentOverview.source")
+        XCTAssertTrue(source.waitForExistence(timeout: Self.launchContentTimeout))
+        let sourceText = source.label + " " + (source.value as? String ?? "")
+        XCTAssertTrue(sourceText.contains("Weekdays at 09:00"), "the cadence is what starts it")
+
+        // Run Now is the action only a schedule has.
+        XCTAssertTrue(anyElement("agentOverview.runNow").exists)
+
+        // Its arrivals are runs, not events.
+        let runs = anyElement("agentOverview.stats.events")
+        XCTAssertTrue((runs.label + " " + (runs.value as? String ?? "")).contains("Runs"))
+
+        // The slot that was skipped left the agent healthy: a run overlapping
+        // the one before it is a normal outcome, not something to look at.
+        let status = anyElement("agentOverview.status")
+        XCTAssertTrue(
+            (status.label + " " + (status.value as? String ?? "")).contains("Active"),
+            "a skipped run is not a failure"
+        )
+
+        // Both tiles speak of runs, so the panel never calls a scheduled run
+        // an event.
+        let last = anyElement("agentOverview.stats.lastEvent")
+        XCTAssertTrue((last.label + " " + (last.value as? String ?? "")).contains("Last run"))
+    }
+
     func testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet() {
         relaunchWithAgentFixture("fleet")
 

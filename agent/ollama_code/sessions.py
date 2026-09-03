@@ -1197,6 +1197,11 @@ class SessionStore:
                 "environment": entry.get("environment"),
                 "agent_trigger_id": entry.get("agent_trigger_id"),
                 "agent_name": entry.get("agent_name"),
+                # The one chat an agent's events land in, as opposed to a side
+                # conversation started under the same identity.
+                "agent_primary": bool(entry.get("agent_primary") or False),
+                "model": entry.get("model"),
+                "provider": entry.get("provider"),
                 "folder_id": (
                     placement.get("folder_id") if isinstance(placement, dict) else None
                 ),

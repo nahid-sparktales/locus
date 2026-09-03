@@ -2249,8 +2249,13 @@ def test_schedule_crud_and_manual_dispatch_preserve_foreground_chat(client, tmp_
     assert client.app.state.service.core.session.session_id == foreground
     scheduled_session = result["run"]["session_id"]
     assert SessionStore.path_for(scheduled_session) is not None
+    # A schedule is an agent: every run continues its one dedicated chat,
+    # which carries the schedule's current name rather than a run timestamp.
     metadata = SessionMeta.get(scheduled_session)
-    assert metadata["title"].startswith("Weekly dependency audit · ")
+    assert metadata["title"] == "Weekly dependency audit"
+    assert metadata["agent_trigger_id"] == schedule_id
+    assert metadata["agent_name"] == "Weekly dependency audit"
+    assert metadata["agent_primary"] is True
 
     duplicate = client.post(
         f"/api/schedules/{schedule_id}/dispatch",

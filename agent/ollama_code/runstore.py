@@ -2106,8 +2106,8 @@ class RunStore:
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
-        if state not in {"queued", "failed"}:
-            raise RunStoreError("occurrence state must be queued or failed")
+        if state not in {"queued", "failed", "skipped"}:
+            raise RunStoreError("occurrence state must be queued, failed or skipped")
         current = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -2126,13 +2126,17 @@ class RunStore:
                     current, occurrence_id,
                 ),
             )
-            connection.execute(
-                "UPDATE schedules SET last_run_id=?, last_error=?, updated_at=? WHERE id=?",
-                (
-                    run_id or None, error[:4_000] or None, current,
-                    occurrence["schedule_id"],
-                ),
-            )
+            if state != "skipped":
+                # A skipped occurrence is a healthy overlap, not a failure: it
+                # must not overwrite the schedule's last run or raise its
+                # error, which is what the agent's status is read from.
+                connection.execute(
+                    "UPDATE schedules SET last_run_id=?, last_error=?, updated_at=? WHERE id=?",
+                    (
+                        run_id or None, error[:4_000] or None, current,
+                        occurrence["schedule_id"],
+                    ),
+                )
             updated = connection.execute(
                 "SELECT * FROM schedule_occurrences WHERE id=?", (occurrence_id,)
             ).fetchone()
@@ -2218,6 +2222,55 @@ class RunStore:
                         (position, message_id[:160], retry_parent_id[:160] or None, run_id),
                     )
         return self.run(run_id) or {}
+
+    def queue_run_if_idle(self, run_id: str, *, session_id: str, **fields: Any) -> dict[str, Any]:
+        """Queue a run only while the chat has nothing in flight.
+
+        The check and the reservation share the store lock, so a due tick and
+        a Run Now arriving together cannot both put a turn into one chat.
+        """
+        with self._lock:
+            if self.session_has_active_run(session_id):
+                raise RunStoreError("the chat is busy")
+            return self.queue_run(run_id, session_id=session_id, **fields)
+
+    def session_has_active_run(self, session_id: str) -> bool:
+        """Whether a run with a live owner is working in this chat.
+
+        A paused or interrupted run is waiting for a person, not working: it
+        must not count, or one unattended pause would silence a scheduled
+        agent for as long as the app stays open.
+        """
+        if not session_id:
+            return False
+        active = sorted(ACTIVE_NONRECOVERABLE_STATES | {"waiting_dispatch_approval"})
+        places = ",".join("?" * len(active))
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                f"SELECT 1 FROM runs WHERE session_id=? AND state IN ({places}) LIMIT 1",
+                (session_id, *active),
+            ).fetchone()
+        return row is not None
+
+    def rearm_schedule_slot(self, schedule_id: str, *, next_run_at: float) -> dict[str, Any]:
+        """Put back a slot whose occurrence was skipped rather than run.
+
+        Claiming an occurrence advances the cadence before the chat is known
+        to be free, and for a one-shot schedule that also switches it off. A
+        skip would otherwise drop the only run and leave the agent looking as
+        though a person had paused it.
+        """
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE schedules SET enabled=1, next_run_at=?, last_error=NULL,"
+                " updated_at=? WHERE id=?",
+                (float(next_run_at), time.time(), schedule_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("schedule not found")
+        return self.schedule(schedule_id) or {}
 
     def reorder_queue(self, run_id: str, action: str) -> dict[str, Any]:
         if self.read_only:

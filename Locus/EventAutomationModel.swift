@@ -18,6 +18,9 @@ final class EventAutomationModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var isSaving = false
     @Published private(set) var lastError: String?
+    /// Whether the trigger list has ever loaded. Until it has, an agent that
+    /// is not in `triggers` may simply not have arrived yet.
+    @Published private(set) var hasLoaded = false
 
     private var backend: BackendService?
     private let credentials: ConnectorCredentialStore
@@ -79,6 +82,7 @@ final class EventAutomationModel: ObservableObject {
         self.connections = connections
         self.triggers = triggers
         self.deliveries = deliveries
+        hasLoaded = true
     }
 
     func start() {
@@ -123,6 +127,7 @@ final class EventAutomationModel: ObservableObject {
             let previous = triggers
             connections = loadedConnections.connections
             triggers = loadedTriggers.triggers
+            hasLoaded = true
             deliveries = loadedDeliveries.deliveries
             announceAgentsStoppedByLocus(previous: previous, current: triggers)
             lastError = nil
@@ -170,9 +175,10 @@ final class EventAutomationModel: ObservableObject {
         if let trigger {
             var draft = EventTriggerEditorDraft(trigger: trigger)
             if isDedicatedAgent {
-                // Editing an existing agent must pass through the stable target
-                // endpoint again so its model route and top-level placement are
-                // repaired along with the trigger configuration.
+                // Editing an existing agent passes through the stable target
+                // endpoint again so its chat is recovered and its placement
+                // repaired. The route it runs on is left alone unless the
+                // person asks for the current one.
                 draft.targetSessionID = EventTriggerEditorDraft.dedicatedAgentChat
                 draft.templateSessionID = targetSessionID
             }
@@ -261,8 +267,15 @@ final class EventAutomationModel: ObservableObject {
                     "template_session_id": draft.templateSessionID,
                     "name": name,
                 ]
-                for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
-                    targetBody[key] = value
+                // A new agent takes the app's current route. An existing one
+                // keeps the route its chat already records — sending the
+                // current route on every edit re-pointed the agent's model,
+                // however unrelated the edit — unless the person asked for the
+                // current model, which is also how a broken route is repaired.
+                if draft.id == nil || draft.adoptCurrentRoute {
+                    for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
+                        targetBody[key] = value
+                    }
                 }
                 let response: AgentTargetSessionResponse = try await backend.post(
                     "/api/event-triggers/target-session",

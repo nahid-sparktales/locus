@@ -478,6 +478,34 @@ class TaskCheckoutStore:
         return record
 
     @staticmethod
+    def discard_unreadable(workspace: str, task_id: str) -> bool:
+        """Clear a half-built checkout directory that has no readable record.
+
+        A creation interrupted before its metadata was written leaves a
+        directory that refuses every later create for the same id. Ids derived
+        from their owner are stable, so without this the owner could never
+        rebuild its checkout.
+        """
+        task_dir = (TASKS_DIR / task_id).resolve()
+        if task_dir.parent != TASKS_DIR.resolve() or not task_dir.exists():
+            return False
+        if TaskCheckoutStore.load(task_id) is not None:
+            return False
+        root = Path(workspace).expanduser().resolve()
+        checkout = task_dir / "checkout"
+        if checkout.exists():
+            try:
+                _git(root, "worktree", "remove", "--force", str(checkout))
+            except WorktreeError:
+                pass
+        shutil.rmtree(task_dir, ignore_errors=True)
+        try:
+            _git(root, "worktree", "prune")
+        except WorktreeError:
+            pass
+        return True
+
+    @staticmethod
     def snapshot_and_remove(task_id: str) -> dict[str, Any]:
         """Save a restorable Git object, then remove only the managed checkout."""
         record = TaskCheckoutStore.load(task_id)
