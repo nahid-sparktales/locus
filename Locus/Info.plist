@@ -59,8 +59,14 @@
 	<string>public.app-category.developer-tools</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a WalletConnect QR code selected by you. Locus does not record camera images.</string>
 	<key>LocusComponentFeedURL</key>
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
+	<key>LocusSourceRevision</key>
+	<string>$(LOCUS_SOURCE_REVISION)</string>
+	<key>LocusWalletReleaseActivationURL</key>
+	<string>$(LOCUS_WALLET_RELEASE_ACTIVATION_URL)</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LocusGoogleOAuthClientID</key>

@@ -25,6 +25,8 @@ canary = [
     "incident_drill",
     "notarized_artifact",
     "signed_update_feed",
+    "derivation_reproduction",
+    "release_candidate_build",
 ]
 
 def evidence(approvals, destination):
@@ -60,7 +62,41 @@ def evidence(approvals, destination):
                 "loss_producing_decoder_discrepancy": 0,
             }
         rows.append(row)
-    payload = {"schemaVersion": 1, "releaseRevision": 1, "approvals": rows}
+    payload = {
+        "schemaVersion": 2,
+        "releaseRevision": 1,
+        "sourceRevision": "a" * 40,
+        "artifactIdentity": {
+            "bundleVersion": "1",
+            "outerAppCodeDirectorySHA256": "b" * 64,
+            "signerCodeDirectorySHA256": "c" * 64,
+            "archiveSHA256": "d" * 64,
+        },
+        "approvals": rows,
+        "chainTotals": [
+            {"chain": "evm", "successfulTransactions": 1},
+            {"chain": "solana", "successfulTransactions": 1},
+        ],
+        "actionCoverage": [],
+        "connectionCoverage": [
+            {
+                "networkID": network,
+                "connector": "phantom",
+                "direction": "external_account_to_locus",
+                "method": method,
+                "successfulSessions": 1,
+            }
+            for network, methods in {
+                "solana:devnet": [
+                    "list_accounts", "send_transaction", "sign_in_with_solana"
+                ],
+                "eip155:11155111": [
+                    "list_accounts", "send_transaction", "sign_in_with_ethereum"
+                ],
+            }.items()
+            for method in methods
+        ],
+    }
     destination.write_text(
         json.dumps(payload, sort_keys=True, separators=(",", ":")),
         encoding="utf-8",
@@ -79,6 +115,7 @@ def manifest(evidence_path, destination, stage, approvals, network, connector, m
             "capabilities": ["external_wallet"],
             "connectors": [{
                 "connector": connector,
+                "ownership": "connector_managed",
                 "directions": ["external_account_to_locus"],
                 "methods": methods,
             }],
@@ -104,7 +141,9 @@ manifest(
     ["list_accounts", "send_transaction", "sign_in_with_ethereum"],
 )
 
-ga = canary + ["release_candidate_soak"]
+ga = canary + [
+    "release_candidate_soak", "publication_disclosures", "support_security_readiness"
+]
 ga_evidence = root / "ga-evidence.json"
 evidence(ga, ga_evidence)
 manifest(
@@ -154,3 +193,31 @@ then
 fi
 
 echo "Wallet capability evidence and signing boundary verified."
+/usr/bin/xcrun swift "${repo_root}/Tools/SignWalletCapabilityManifest.swift" \
+    "${work_dir}/canary-manifest.json" "${work_dir}/canary-evidence.json" \
+    "${work_dir}/private-key.base64" "${work_dir}/signed-repeat.json" >/dev/null
+/usr/bin/python3 - "${work_dir}/signed.json" "${work_dir}/signed-repeat.json" <<'PY'
+import json
+import pathlib
+import sys
+
+first, repeated = [json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:]]
+assert first["manifest"] == repeated["manifest"], "Canonical manifest authority changed"
+PY
+# CryptoKit may use randomized Ed25519 nonces. Reproducibility concerns the
+# signed authority bytes; both independent signatures must verify over those
+# same bytes, not compare equal to one another.
+public_key="$(/usr/bin/sed -n 's/^public_key_base64=//p' "${work_dir}/sign-result.txt")"
+/usr/bin/xcrun swift -e '
+import CryptoKit
+import Foundation
+let key = try Curve25519.Signing.PublicKey(rawRepresentation: Data(base64Encoded: CommandLine.arguments[1])!)
+for path in CommandLine.arguments.dropFirst(2) {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    let signed = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    let canonical = try JSONSerialization.data(withJSONObject: signed["manifest"]!, options: [.sortedKeys, .withoutEscapingSlashes])
+    let signature = Data(base64Encoded: signed["signatureBase64"] as! String)!
+    guard key.isValidSignature(signature, for: canonical) else { exit(1) }
+}
+' "${public_key}" "${work_dir}/signed.json" "${work_dir}/signed-repeat.json"
+echo "Canonical capability authority and signatures verify across independent processes."

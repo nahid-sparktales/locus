@@ -21,6 +21,16 @@ enum ConnectorCredentialStoreError: LocalizedError {
 final class ConnectorCredentialStore {
     static let shared = ConnectorCredentialStore()
     private let service = "io.sparktales.locus.connector"
+    private let updateItem: (CFDictionary, CFDictionary) -> OSStatus
+    private let addItem: (CFDictionary) -> OSStatus
+
+    init(
+        updateItem: @escaping (CFDictionary, CFDictionary) -> OSStatus = SecItemUpdate,
+        addItem: @escaping (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+    ) {
+        self.updateItem = updateItem
+        self.addItem = addItem
+    }
 
     func save(_ value: [String: String], for connectionID: String) throws {
         let data = try JSONEncoder().encode(value)
@@ -29,11 +39,25 @@ final class ConnectorCredentialStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: connectionID,
         ]
-        SecItemDelete(query as CFDictionary)
+        // Updating preserves the last usable credential if Keychain is locked
+        // or a refresh fails. Delete-then-add would lose it on either failure.
+        let updated = updateItem(query as CFDictionary, [
+            kSecValueData as String: data,
+        ] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else {
+            throw ConnectorCredentialStoreError.keychain(updated)
+        }
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
+        var status = addItem(item as CFDictionary)
+        if status == errSecDuplicateItem {
+            // Another save may have created it after our initial lookup.
+            status = updateItem(query as CFDictionary, [
+                kSecValueData as String: data,
+            ] as CFDictionary)
+        }
         guard status == errSecSuccess else { throw ConnectorCredentialStoreError.keychain(status) }
     }
 

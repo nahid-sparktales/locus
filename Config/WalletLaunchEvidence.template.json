@@ -1,5 +1,15 @@
 {
+  "actionCoverage": [],
   "approvals": [],
+  "artifactIdentity": {
+    "archiveSHA256": "",
+    "bundleVersion": "",
+    "outerAppCodeDirectorySHA256": "",
+    "signerCodeDirectorySHA256": ""
+  },
+  "chainTotals": [],
+  "connectionCoverage": [],
   "releaseRevision": 1,
-  "schemaVersion": 1
+  "schemaVersion": 2,
+  "sourceRevision": ""
 }

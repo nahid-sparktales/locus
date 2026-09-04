@@ -1,0 +1,79 @@
+name: Wallet coverage-guided fuzzing
+on:
+  pull_request:
+    paths: ["Locus/**", "LocusTests/Wallet*", "WalletSignerCore/**", "WalletConnectionsRuntime/**", "FuzzCorpus/**", "Tools/*Wallet*", "project.yml", ".github/workflows/wallet-fuzz.yml"]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inputs:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Review dependency identities and unresolved licenses before fuzz builds
+        run: |
+          python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/signer.cdx.json"
+          python3 Tools/WalletConnectionsSBOM.py Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved project.yml "$RUNNER_TEMP/connections.cdx.json"
+          cd WalletConnectionsWeb
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+  rust:
+    needs: inputs
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [evm_ffi, solana_ffi, sui_ffi, authorization_ffi, calldata_ffi]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install pinned fuzz tooling
+        run: |
+          rustup toolchain install nightly-2026-09-01 --profile minimal
+          cargo +1.97.1 install cargo-fuzz --version 0.13.2 --locked
+      - name: Replay corpus and run production signer under ASan and checked arithmetic
+        env:
+          LOCUS_FUZZ_TARGET: ${{ matrix.target }}
+          LOCUS_FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || '1800' }}
+          LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-rust
+        run: Tools/RunWalletRustFuzz.sh
+      - name: Keep minimized candidates and completion logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-fuzz-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ runner.temp }}/wallet-fuzz-rust
+  swift:
+    needs: inputs
+    runs-on: macos-15
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install reviewed test-only fuzz runtime
+        run: brew install xcodegen llvm@21
+      - name: Generate source graph
+        run: |
+          xcodegen generate
+          git diff --exit-code -- Locus.xcodeproj/project.pbxproj
+      - name: Replay corpora and fuzz production Swift with ASan and boundary UBSan
+        env:
+          LOCUS_FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || '1800' }}
+          LOCUS_FUZZ_REQUIRE_CLEAN: "1"
+          LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-swift
+        run: |
+          export LOCUS_FUZZ_LLVM_PREFIX="$(brew --prefix llvm@21)"
+          python3 Tools/RunWalletSwiftFuzz.py
+      - name: Keep crash inputs, receipts, and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swift-fuzz-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wallet-fuzz-swift/*.json
+            ${{ runner.temp }}/wallet-fuzz-swift/*.log
+            ${{ runner.temp }}/wallet-fuzz-swift/artifacts
+            ${{ runner.temp }}/wallet-fuzz-swift/corpus

@@ -7,7 +7,7 @@ enum WalletChain: String, Codable, CaseIterable, Sendable {
     case sui
 }
 
-enum WalletExternalConnectorID: String, Codable, CaseIterable, Sendable {
+enum WalletExternalConnectorID: String, Codable, CaseIterable, Hashable, Sendable {
     case metamask
     case phantom
     case slush
@@ -961,7 +961,8 @@ enum WalletSwapAllowanceAdapter {
     static func resolve(
         action: WalletSemanticAction,
         registryEntry: WalletContractRegistryEntry,
-        configuration: WalletReviewedUniswapConfiguration
+        configuration: WalletReviewedUniswapConfiguration,
+        now: Date = Date()
     ) -> WalletEVMReviewedSemanticCall? {
         guard action.type == .swapAllowanceSetup,
               action.function == nil, action.arguments.isEmpty,
@@ -977,7 +978,7 @@ enum WalletSwapAllowanceAdapter {
               setup.binding.permit2Address.caseInsensitiveCompare(
                 configuration.contract(.permit2)?.address ?? ""
               ) == .orderedSame,
-              (setup.binding.route.quoteEvidence?.expiresAt ?? .distantPast) > Date(),
+              (setup.binding.route.quoteEvidence?.expiresAt ?? .distantPast) > now,
               setup.binding.amountInBaseUnits != "0",
               normalizedUnsigned(setup.binding.amountInBaseUnits)
                 == setup.binding.amountInBaseUnits,
@@ -1116,6 +1117,22 @@ struct WalletReviewedUniswapConfiguration: Codable, Equatable, Sendable {
         contracts.first { $0.role == role }
     }
 }
+
+extension WalletReviewedUniswapConfiguration {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(networkID, forKey: .networkID)
+        try values.encode(universalRouterContractID, forKey: .universalRouterContractID)
+        try values.encode(permit2ContractID, forKey: .permit2ContractID)
+        try values.encode(contracts, forKey: .contracts)
+        try values.encode(pools, forKey: .pools)
+        try values.encode(allowedIntermediaryAssetIDs.sorted(), forKey: .allowedIntermediaryAssetIDs)
+        try values.encode(allowedFeeTiers.sorted(), forKey: .allowedFeeTiers)
+        try values.encode(maximumHops, forKey: .maximumHops)
+        try values.encode(zeroFirstApprovalAssetIDs.sorted(), forKey: .zeroFirstApprovalAssetIDs)
+    }
+}
+
 
 enum WalletUniversalRouterV2Adapter {
     /// Decodes one Universal Router v2 `V2_SWAP_EXACT_IN` command. Composite
@@ -1923,6 +1940,15 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     let error: String
 }
 
+#if !LOCUS_APP_STORE
+struct WalletReleaseActivationStatus: Codable, Equatable, Sendable {
+    let revision: Int
+    let envelopeSHA256: String
+    let expiresAt: Date
+    let enabledNetworkIDs: Set<String>
+}
+#endif
+
 /// Code-signing requirements enforced by NSXPCConnection before either side
 /// accepts privileged wallet messages. Foundation performs this check from the
 /// connection's audit token, so sandboxed helpers never need to open and
@@ -2070,6 +2096,9 @@ struct WalletRecoveryProcessFrameDecoder {
 /// selector spelling and allowed classes cannot silently widen the protocol.
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
+    #if !LOCUS_APP_STORE
+    func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void)
+    #endif
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)

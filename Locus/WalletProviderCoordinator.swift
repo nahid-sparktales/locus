@@ -20,32 +20,51 @@ struct WalletBundledProviderConfiguration: Sendable {
 
     static func ethereum(
         network: WalletNetworkDescriptor,
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        reviewRegistry: WalletReviewRegistry? = nil
     ) -> WalletBundledProviderConfiguration? {
         guard network.chain == .evm else { return nil }
         let suffix = network.environment == .mainnet ? "EthereumMainnet" : "EthereumSepolia"
-        let alchemy = endpoint(
+        let reviewRegistry = reviewRegistry ?? WalletReviewRegistry.loadBundled(from: bundle)
+        let alchemy = reviewed(
+            endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletAlchemy\(suffix)RPCURL") as? String,
             provider: .alchemy, network: network, priority: 0
+            ), network: network, reviewRegistry: reviewRegistry
         )
-        let quickNode = endpoint(
+        let quickNode = reviewed(
+            endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletQuickNode\(suffix)RPCURL") as? String,
             provider: .quickNode, network: network, priority: 1
+            ), network: network, reviewRegistry: reviewRegistry
         )
         if let alchemy {
             return WalletBundledProviderConfiguration(primary: alchemy, fallback: quickNode)
+        }
+        if let quickNode {
+            return WalletBundledProviderConfiguration(primary: quickNode, fallback: nil)
         }
 
         // Development and unsigned builds retain the existing public endpoint.
         // Release verification requires the vendor-restricted Alchemy and
         // QuickNode identifiers to be injected and checks their absence.
-        let developmentURL = network.environment == .mainnet
-            ? WalletSepoliaRPCClient.mainnetDefaultEndpoint
-            : WalletSepoliaRPCClient.defaultEndpoint
+        guard network.environment != .mainnet else { return nil }
+        let developmentURL = WalletSepoliaRPCClient.defaultEndpoint
         guard let endpoint = endpoint(
             developmentURL, provider: .userDefined, network: network, priority: 0
         ) else { return nil }
         return WalletBundledProviderConfiguration(primary: endpoint, fallback: nil)
+    }
+
+    private static func reviewed(
+        _ endpoint: WalletProviderEndpoint?,
+        network: WalletNetworkDescriptor,
+        reviewRegistry: WalletReviewRegistry?
+    ) -> WalletProviderEndpoint? {
+        guard let endpoint else { return nil }
+        guard network.environment != .mainnet
+                || reviewRegistry?.containsProvider(endpoint) == true else { return nil }
+        return endpoint
     }
 
     private static func endpoint(

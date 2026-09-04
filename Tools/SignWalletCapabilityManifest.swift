@@ -13,7 +13,25 @@ struct CapabilityManifest: Codable {
     let networkGrants: [NetworkGrant]
     let approvedRegions: Set<String>
     let completedApprovals: Set<String>
+    var canaryLimits: [CanaryLimit]? = nil
 }
+
+extension CapabilityManifest {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(revision, forKey: .revision)
+        try values.encode(releaseStage, forKey: .releaseStage)
+        try values.encode(evidenceIndexSHA256, forKey: .evidenceIndexSHA256)
+        try values.encode(issuedAt, forKey: .issuedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(networkGrants, forKey: .networkGrants)
+        try values.encode(approvedRegions.sorted(), forKey: .approvedRegions)
+        try values.encode(completedApprovals.sorted(), forKey: .completedApprovals)
+        try values.encodeIfPresent(canaryLimits, forKey: .canaryLimits)
+    }
+}
+
 
 struct NetworkGrant: Codable {
     let networkID: String
@@ -21,16 +39,82 @@ struct NetworkGrant: Codable {
     let connectors: [ConnectorGrant]
 }
 
+struct CanaryLimit: Codable {
+    let networkID: String
+    let assetID: String
+    let action: String
+    let ownership: String
+    let connector: String?
+    let maximumTransactionBaseUnits: String
+    let maximumCumulativeBaseUnits: String
+    let maximumFeeBaseUnits: String
+    let maximumCumulativeFeeBaseUnits: String
+    let maximumTransactions: Int
+}
+
+extension NetworkGrant {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(networkID, forKey: .networkID)
+        try values.encode(capabilities.sorted(), forKey: .capabilities)
+        try values.encode(connectors, forKey: .connectors)
+    }
+}
+
+
 struct ConnectorGrant: Codable {
     let connector: String
+    let ownership: String
     let directions: Set<String>
     let methods: Set<String>
 }
 
+extension ConnectorGrant {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(connector, forKey: .connector)
+        try values.encode(ownership, forKey: .ownership)
+        try values.encode(directions.sorted(), forKey: .directions)
+        try values.encode(methods.sorted(), forKey: .methods)
+    }
+}
+
+
 struct LaunchEvidenceIndex: Codable {
     let schemaVersion: Int
     let releaseRevision: Int
+    let sourceRevision: String
+    let artifactIdentity: ReleaseArtifactIdentity
     let approvals: [LaunchApprovalEvidence]
+    let chainTotals: [ChainTransactionTotal]
+    let actionCoverage: [ActionCoverageEvidence]
+    let connectionCoverage: [ConnectionCoverageEvidence]
+}
+
+struct ReleaseArtifactIdentity: Codable {
+    let bundleVersion: String
+    let outerAppCodeDirectorySHA256: String
+    let signerCodeDirectorySHA256: String
+    let archiveSHA256: String
+}
+
+struct ChainTransactionTotal: Codable {
+    let chain: String
+    let successfulTransactions: Int
+}
+
+struct ActionCoverageEvidence: Codable {
+    let networkID: String
+    let action: String
+    let successfulTransactions: Int
+}
+
+struct ConnectionCoverageEvidence: Codable {
+    let networkID: String
+    let connector: String
+    let direction: String
+    let method: String
+    let successfulSessions: Int
 }
 
 struct LaunchApprovalEvidence: Codable {
@@ -60,8 +144,12 @@ let canaryApprovals: Set<String> = [
     "incident_drill",
     "notarized_artifact",
     "signed_update_feed",
+    "derivation_reproduction",
+    "release_candidate_build",
 ]
-let gaApprovals = canaryApprovals.union(["release_candidate_soak"])
+let gaApprovals = canaryApprovals.union([
+    "release_candidate_soak", "publication_disclosures", "support_security_readiness",
+])
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("error: \(message)\n".utf8))
@@ -81,6 +169,43 @@ do {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let manifest = try decoder.decode(CapabilityManifest.self, from: Data(contentsOf: inputURL))
+    let limits = manifest.canaryLimits ?? []
+    guard limits.count <= 10_000 else { fail("too many canary limits") }
+    var limitIDs = Set<String>()
+    for limit in limits {
+        let amounts = [limit.maximumTransactionBaseUnits, limit.maximumCumulativeBaseUnits,
+                       limit.maximumFeeBaseUnits, limit.maximumCumulativeFeeBaseUnits]
+        let identity = [limit.networkID, limit.assetID, limit.action, limit.ownership,
+                        limit.connector ?? "vault"].joined(separator: "|")
+        let expectedOwnership = ["metamask": "external", "slush": "external",
+                                 "phantom": "connector_managed"]
+        guard limitIDs.insert(identity).inserted, !limit.assetID.isEmpty,
+              limit.assetID.utf8.count <= 512,
+              ["native_transfer", "fungible_token_transfer", "nft_transfer",
+               "exact_input_swap", "swap_allowance_setup"].contains(limit.action),
+              (1...1_000_000).contains(limit.maximumTransactions),
+              (limit.ownership == "locus_vault" && limit.connector == nil)
+                || expectedOwnership[limit.connector ?? ""] == limit.ownership,
+              amounts.allSatisfy({ !$0.isEmpty && $0.count <= 78 && $0.first != "0"
+                  && $0.utf8.allSatisfy { (48...57).contains($0) } }) else {
+            fail("canary limit must bind an exact ownership, action, asset and finite budget")
+        }
+        func lessOrEqual(_ a: String, _ b: String) -> Bool {
+            a.count == b.count ? a <= b : a.count < b.count
+        }
+        guard lessOrEqual(limit.maximumTransactionBaseUnits, limit.maximumCumulativeBaseUnits),
+              lessOrEqual(limit.maximumFeeBaseUnits, limit.maximumCumulativeFeeBaseUnits) else {
+            fail("canary per-transaction limits exceed cumulative limits")
+        }
+    }
+    if manifest.releaseStage == "invited_canary" {
+        for grant in manifest.networkGrants where
+            ["eip155:1", "solana:mainnet-beta", "sui:mainnet"].contains(grant.networkID) {
+            guard limits.contains(where: { $0.networkID == grant.networkID }) else {
+                fail("each canary mainnet requires signed finite asset/action limits")
+            }
+        }
+    }
     guard manifest.schemaVersion == 3, manifest.revision > 0 else {
         fail("schemaVersion must be 3 and revision must be positive")
     }
@@ -116,6 +241,11 @@ do {
     let knownDirections: Set<String> = [
         "external_account_to_locus", "locus_vault_to_dapp",
     ]
+    let requiredOwnership: [String: String] = [
+        "metamask": "external", "phantom": "connector_managed",
+        "slush": "external", "embedded_browser": "locus_vault",
+        "wallet_connect": "locus_vault",
+    ]
     let knownMethods: Set<String> = [
         "list_accounts", "switch_network", "send_transaction",
         "sign_in_with_ethereum", "sign_in_with_solana",
@@ -138,6 +268,7 @@ do {
         }
         for connector in grant.connectors {
             guard knownConnectors.contains(connector.connector),
+                  connector.ownership == requiredOwnership[connector.connector],
                   !connector.directions.isEmpty,
                   connector.directions.isSubset(of: knownDirections),
                   !connector.methods.isEmpty,
@@ -191,8 +322,68 @@ do {
         fail("evidenceIndexSHA256 does not match the supplied evidence index")
     }
     let evidence = try decoder.decode(LaunchEvidenceIndex.self, from: evidenceData)
-    guard evidence.schemaVersion == 1, evidence.releaseRevision == manifest.revision else {
+    let lowercaseHex = CharacterSet(charactersIn: "0123456789abcdef")
+    func validSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.unicodeScalars.allSatisfy(lowercaseHex.contains)
+    }
+    guard evidence.schemaVersion == 2,
+          evidence.releaseRevision == manifest.revision,
+          (40...64).contains(evidence.sourceRevision.count),
+          evidence.sourceRevision.unicodeScalars.allSatisfy(lowercaseHex.contains),
+          !evidence.artifactIdentity.bundleVersion.isEmpty,
+          validSHA256(evidence.artifactIdentity.outerAppCodeDirectorySHA256),
+          validSHA256(evidence.artifactIdentity.signerCodeDirectorySHA256),
+          validSHA256(evidence.artifactIdentity.archiveSHA256) else {
         fail("the evidence index schema or release revision does not match the manifest")
+    }
+    let chainByNetwork = networkChains
+    let enabledChains = Set(manifest.networkGrants.compactMap {
+        chainByNetwork[$0.networkID]
+    })
+    let chainTotals = Dictionary(
+        uniqueKeysWithValues: evidence.chainTotals.map { ($0.chain, $0.successfulTransactions) }
+    )
+    guard chainTotals.count == evidence.chainTotals.count,
+          Set(chainTotals.keys).isSubset(of: ["evm", "solana", "sui"]),
+          enabledChains.allSatisfy({ chainTotals[$0, default: 0] > 0 }) else {
+        fail("the evidence index lacks explicit successful transaction totals for every enabled chain")
+    }
+    if manifest.releaseStage == "general_availability" {
+        guard enabledChains.allSatisfy({ chainTotals[$0, default: 0] >= 100 }) else {
+            fail("GA requires at least 100 successful transactions per enabled chain")
+        }
+    }
+    let coveredActions = Set(evidence.actionCoverage.compactMap { item -> String? in
+        guard item.successfulTransactions > 0 else { return nil }
+        return "\(item.networkID):\(item.action)"
+    })
+    let actionCapabilities: Set<String> = [
+        "native_transfer", "fungible_token_transfer", "nft_transfer",
+        "exact_input_swap", "reviewed_call", "standardized_sign_in",
+    ]
+    let requiredActions = Set(manifest.networkGrants.flatMap { grant in
+        grant.capabilities.intersection(actionCapabilities).map {
+            "\(grant.networkID):\($0)"
+        }
+    })
+    guard requiredActions.isSubset(of: coveredActions) else {
+        fail("the evidence index lacks success coverage for an explicitly enabled action")
+    }
+    let coveredConnections = Set(evidence.connectionCoverage.compactMap { item -> String? in
+        guard item.successfulSessions > 0 else { return nil }
+        return "\(item.networkID):\(item.connector):\(item.direction):\(item.method)"
+    })
+    let requiredConnections = Set(manifest.networkGrants.flatMap { grant in
+        grant.connectors.flatMap { connector in
+            connector.directions.flatMap { direction in
+                connector.methods.map { method in
+                    "\(grant.networkID):\(connector.connector):\(direction):\(method)"
+                }
+            }
+        }
+    })
+    guard requiredConnections.isSubset(of: coveredConnections) else {
+        fail("the evidence index lacks success coverage for an explicitly enabled connection path")
     }
     let grouped = Dictionary(grouping: evidence.approvals, by: \.approval)
     guard grouped.values.allSatisfy({ $0.count == 1 }) else {

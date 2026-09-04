@@ -20,6 +20,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CURRENT_PROJECT_VERSION: 24
     MARKETING_VERSION: 2.4.0
+    LOCUS_SOURCE_REVISION: ""
   configs:
     # A stable signing identity rather than ad-hoc. Keychain items are guarded by
     # an ACL bound to the code signature, and an ad-hoc signature changes on every
@@ -154,6 +155,7 @@ targets:
       - path: Locus/WalletNetworkModels.swift
       - path: Locus/WalletStructuredAuthorization.swift
       - path: Locus/WalletVaultKeychain.swift
+      - path: WalletConnectionsRuntime/WalletReleaseActivation.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -190,6 +192,7 @@ targets:
         LOCUS_WALLET_CAPABILITY_PUBLIC_KEY: ""
         LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64: ""
         LOCUS_WALLET_REVIEW_MANIFEST_BASE64: ""
+        LOCUS_SOURCE_REVISION: "$(LOCUS_SOURCE_REVISION)"
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
@@ -212,18 +215,22 @@ targets:
           - Resources
       - path: WalletConnectionsRuntime/Resources
         buildPhase: resources
+      - path: WalletConnectionsWeb/licenses
+        buildPhase: resources
       - path: Vendor/ReownSwift/LICENSE
         buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Config/LocusDirect.entitlements
+        LOCUS_DIRECT_ENTITLEMENTS: Config/LocusDirect.entitlements
+        CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
         LOCUS_REOWN_PROJECT_ID: ""
         LOCUS_WALLETCONNECT_REDIRECT_URL: ""
         LOCUS_PHANTOM_APP_ID: ""
         LOCUS_PHANTOM_REDIRECT_URL: ""
+        LOCUS_WALLET_RELEASE_ACTIVATION_URL: "https://github.com/nahid-sparktales/locus/releases/latest/download/wallet-activation.json"
         LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
@@ -335,6 +342,10 @@ schemes:
       environmentVariables:
         LOCUS_ANVIL_RPC_URL: "$(LOCUS_ANVIL_RPC_URL)"
         LOCUS_ANVIL_VERSION: "$(LOCUS_ANVIL_VERSION)"
+        LOCUS_SUI_LOCALNET_GRAPHQL_URL: "$(LOCUS_SUI_LOCALNET_GRAPHQL_URL)"
+        LOCUS_SUI_LOCALNET_FAUCET_URL: "$(LOCUS_SUI_LOCALNET_FAUCET_URL)"
+        LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER: "$(LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER)"
+        LOCUS_SUI_LOCALNET_VERSION: "$(LOCUS_SUI_LOCALNET_VERSION)"
         LOCUS_SOLANA_VALIDATOR_RPC_URL: "$(LOCUS_SOLANA_VALIDATOR_RPC_URL)"
         LOCUS_SOLANA_VALIDATOR_GENESIS_HASH: "$(LOCUS_SOLANA_VALIDATOR_GENESIS_HASH)"
         LOCUS_SOLANA_VALIDATOR_VERSION: "$(LOCUS_SOLANA_VALIDATOR_VERSION)"

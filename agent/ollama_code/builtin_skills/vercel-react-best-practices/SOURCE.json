@@ -6,5 +6,5 @@
   "upstream_path": "skills/react-best-practices",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic"
+  "activation": "explicit"
 }

@@ -24,16 +24,6 @@ jobs:
           # current-tree scan and never sees a secret committed and removed
           # within a PR's commit series — which still lands in public history.
           fetch-depth: 0
-      - name: Rust formatting, lint, and tests
-        working-directory: WalletSignerCore
-        run: |
-          rustup component add rustfmt clippy
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-      - name: Deterministic Rust wallet fuzz-smoke
-        working-directory: WalletSignerCore
-        run: cargo test --locked fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
       - name: Locked dependency, license, and SBOM gate
         run: python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/WalletSignerSBOM.cdx.json"
       - name: Wallet connection SDK provenance and activation gate
@@ -50,14 +40,24 @@ jobs:
         working-directory: WalletConnectionsWeb
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
           npm run build
           git diff --exit-code -- ../WalletConnectionsRuntime/Resources/WalletConnections.bundle.js
-          npm audit --omit=dev --audit-level=high
       - name: Rust advisory audit
         working-directory: WalletSignerCore
         run: |
           cargo install cargo-audit --locked
           cargo audit
+      - name: Rust formatting, lint, and tests
+        working-directory: WalletSignerCore
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Deterministic Rust wallet fuzz-smoke
+        working-directory: WalletSignerCore
+        run: cargo test --locked fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
       - name: Repository secret scan
         env:
           GITLEAKS_VERSION: 8.30.1
@@ -144,6 +144,7 @@ jobs:
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
           LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
       - name: Deterministic Swift wallet fuzz-smoke
         env:
           LOCUS_BUNDLE_MODE: skip
@@ -184,7 +185,8 @@ jobs:
           LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh \
             -derivedDataPath "$RUNNER_TEMP/locus-debug-anvil" \
             CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
       - name: Pinned Solana local-validator integration
         env:
           AGAVE_VERSION: v4.1.2
@@ -215,7 +217,17 @@ jobs:
             Tools/RunWalletSolanaTests.sh \
             -derivedDataPath "$RUNNER_TEMP/locus-debug-solana" \
             CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+      - name: Pinned Sui GraphQL localnet integration
+        run: |
+          brew install postgresql@17
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          Tools/RunWalletSuiTests.sh \
+            -derivedDataPath "$RUNNER_TEMP/locus-debug-sui" \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
       - name: Direct and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip
@@ -242,7 +254,7 @@ jobs:
           test ! -e "$direct/Contents/XPCServices/WalletConnections.xpc"
           test -f "$direct/Contents/Resources/WalletConnections.bundle.js"
           test "$(shasum -a 256 "$direct/Contents/Resources/WalletConnections.bundle.js" | awk '{print $1}')" = \
-            '99ed4b87f3fcd5e3e328c89a69a2cb66153f1f3382ac1e85b12e1232c350ee30'
+            '09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf'
           test -f "$direct/Contents/Resources/WalletConnectionsNotices.md"
           grep -Fq 'Portions © 2025 Reown, Inc. All Rights Reserved' \
             "$direct/Contents/Resources/WalletConnectionsNotices.md"
@@ -328,3 +340,4 @@ jobs:
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
           LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements

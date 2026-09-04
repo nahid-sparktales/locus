@@ -155,33 +155,48 @@ struct WalletSuiProviderConfiguration: Sendable {
 
     static func bundled(
         network: WalletNetworkDescriptor,
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        reviewRegistry: WalletReviewRegistry? = nil
     ) -> WalletSuiProviderConfiguration? {
         guard network.chain == .sui else { return nil }
         let suffix = network.environment == .mainnet ? "Mainnet" : "Testnet"
-        let alchemy = endpoint(
+        let reviewRegistry = reviewRegistry ?? WalletReviewRegistry.loadBundled(from: bundle)
+        let alchemy = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletAlchemySui\(suffix)GraphQLURL")
                 as? String,
             provider: .alchemy, network: network, priority: 0
-        )
-        let quickNode = endpoint(
+        ), network: network, reviewRegistry: reviewRegistry)
+        let quickNode = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletQuickNodeSui\(suffix)GraphQLURL")
                 as? String,
             provider: .quickNode, network: network, priority: 1
-        )
+        ), network: network, reviewRegistry: reviewRegistry)
         if let alchemy {
             return WalletSuiProviderConfiguration(primary: alchemy, fallback: quickNode)
+        }
+        if let quickNode {
+            return WalletSuiProviderConfiguration(primary: quickNode, fallback: nil)
         }
 
         // Development builds retain the Foundation endpoint. Release
         // verification separately requires restricted vendor endpoints.
-        let foundation = network.environment == .mainnet
-            ? WalletSuiGraphQLClient.mainnetDefaultEndpoint
-            : WalletSuiGraphQLClient.testnetDefaultEndpoint
+        guard network.environment != .mainnet else { return nil }
+        let foundation = WalletSuiGraphQLClient.testnetDefaultEndpoint
         guard let primary = endpoint(
             foundation, provider: .userDefined, network: network, priority: 0
         ) else { return nil }
         return WalletSuiProviderConfiguration(primary: primary, fallback: nil)
+    }
+
+    private static func reviewed(
+        _ endpoint: WalletProviderEndpoint?,
+        network: WalletNetworkDescriptor,
+        reviewRegistry: WalletReviewRegistry?
+    ) -> WalletProviderEndpoint? {
+        guard let endpoint else { return nil }
+        guard network.environment != .mainnet
+                || reviewRegistry?.containsProvider(endpoint) == true else { return nil }
+        return endpoint
     }
 
     private static func endpoint(
@@ -544,6 +559,36 @@ actor WalletSuiGraphQLClient {
         self.session = session
         self.now = now
     }
+
+    #if DEBUG
+    /// Local GraphQL integration only. Release has no HTTP initializer.
+    init(
+        testLoopbackEndpoint value: String,
+        expectedChainIdentifier: String,
+        session: URLSession = .shared,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) throws {
+        guard let url = URL(string: value), url.scheme == "http",
+              ["127.0.0.1", "localhost", "::1", "[::1]"].contains(url.host ?? ""),
+              url.user == nil, url.password == nil, url.fragment == nil,
+              WalletSuiChainIdentity.shortHex(expectedChainIdentifier) != nil else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        let testnet = WalletNetworkCatalog.suiTestnet
+        network = WalletNetworkDescriptor(
+            canonicalID: testnet.id, chain: .sui, environment: .local,
+            displayName: "Sui localnet",
+            identity: .init(kind: .suiChainIdentifier, value: expectedChainIdentifier),
+            nativeAssetID: testnet.nativeAssetID, nativeSymbol: testnet.nativeSymbol,
+            nativeDecimals: testnet.nativeDecimals,
+            explorerTransactionURLTemplate: testnet.explorerTransactionURLTemplate,
+            staticallyReviewedCapabilities: testnet.staticallyReviewedCapabilities
+        )
+        endpoint = url
+        self.session = session
+        self.now = now
+    }
+    #endif
 
     static func validatedEndpoint(_ value: String) -> URL? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)

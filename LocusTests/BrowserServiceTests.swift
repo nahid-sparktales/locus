@@ -164,13 +164,16 @@ final class BrowserServiceTests: XCTestCase {
         )
         let wallets = try XCTUnwrap(result as? [[String: Any]])
         XCTAssertEqual(wallets.count, 2)
-        let byChain = Dictionary(uniqueKeysWithValues: wallets.compactMap {
-            wallet -> (String, [String: Any])? in
-            guard let chain = (wallet["chains"] as? [String])?.first else {
-                return nil
-            }
-            return (chain, wallet)
+        // Wallet Standard advertises a wallet's compiled supported chains;
+        // connected account grants are tested separately in WalletGatewayTests.
+        // Do not treat array order as a selected testnet.
+        let byChain = Dictionary(uniqueKeysWithValues: wallets.flatMap {
+            wallet -> [(String, [String: Any])] in
+            (wallet["chains"] as? [String] ?? []).map { ($0, wallet) }
         })
+        XCTAssertEqual(Set(byChain.keys), [
+            "solana:mainnet-beta", "solana:devnet", "sui:mainnet", "sui:testnet",
+        ])
         XCTAssertEqual(byChain["solana:devnet"]?["name"] as? String, "Locus Vault")
         XCTAssertEqual(
             byChain["solana:devnet"]?["features"] as? [String],

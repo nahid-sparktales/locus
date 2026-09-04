@@ -28,17 +28,17 @@ struct WalletConnectorBuildIdentity: Equatable, Sendable {
         case .metamask:
             Self(
                 version: "2.1.1",
-                artifactSHA256: "5613e7ff576f226f026786cf43f0e213c7e5cf14ae7768887a165fa46d26ec99"
+                artifactSHA256: "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf"
             )
         case .phantom:
             Self(
                 version: "2.0.2",
-                artifactSHA256: "5613e7ff576f226f026786cf43f0e213c7e5cf14ae7768887a165fa46d26ec99"
+                artifactSHA256: "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf"
             )
         case .slush:
             Self(
                 version: "1.1.23",
-                artifactSHA256: "5613e7ff576f226f026786cf43f0e213c7e5cf14ae7768887a165fa46d26ec99"
+                artifactSHA256: "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf"
             )
         case .walletConnect:
             Self(
@@ -430,6 +430,13 @@ enum WalletConnectionNamespace: String, Codable, CaseIterable, Hashable, Sendabl
     case eip155
     case solana
     case sui
+
+    static func forNetworkID(_ networkID: String) -> Self? {
+        guard let prefix = networkID.split(separator: ":", maxSplits: 1).first else {
+            return nil
+        }
+        return Self(rawValue: String(prefix))
+    }
 }
 
 enum WalletConnectionEvent: String, Codable, CaseIterable, Hashable, Sendable {
@@ -455,9 +462,29 @@ struct WalletConnectionProposalReview: Equatable, Identifiable, Sendable {
     let peerName: String
     let peerURL: String?
     let namespaces: [WalletConnectionNamespaceProposal]
+    /// Public account metadata returned by an account-import connector. It is
+    /// shown only after the vendor connection step and before Locus persists
+    /// the session. WalletConnect proposals leave this empty.
+    let accounts: [WalletAccount]
     let expiresAt: Date
 
     var id: String { requestID }
+
+    init(
+        requestID: String,
+        peerName: String,
+        peerURL: String?,
+        namespaces: [WalletConnectionNamespaceProposal],
+        accounts: [WalletAccount] = [],
+        expiresAt: Date
+    ) {
+        self.requestID = requestID
+        self.peerName = peerName
+        self.peerURL = peerURL
+        self.namespaces = namespaces
+        self.accounts = accounts
+        self.expiresAt = expiresAt
+    }
 }
 
 enum WalletConnectionNamespaceValidator {

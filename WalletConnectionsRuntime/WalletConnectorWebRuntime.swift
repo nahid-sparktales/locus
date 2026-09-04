@@ -18,7 +18,7 @@ private struct WalletWebResponse<Value: Decodable>: Decodable {
 
 private struct WalletWebConfiguration: Encodable {
     let dappURL: String
-    let metamaskSepoliaRPCURL: String
+    let metamaskRPCURLs: [String: String]
     let phantomAppID: String
     let phantomRedirectURL: String
 }
@@ -50,13 +50,15 @@ final class WalletConnectorWebRuntime: NSObject {
     private static let maximumResponseBytes = 256 * 1_024
     private static let maximumBundleBytes = 4 * 1_024 * 1_024
     private static let reviewedBundleSHA256 =
-        "99ed4b87f3fcd5e3e328c89a69a2cb66153f1f3382ac1e85b12e1232c350ee30"
+        "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf"
 
     private let bundle: Bundle
     private let environment: [String: String]
+    private let connectorConfigurationValues: [String: String]
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     private let allowedHosts: Set<String>
+    private let reviewRegistry: WalletReviewRegistry?
     private let webView: WKWebView
     private var childWebViews: [WKWebView] = []
     private var panel: NSPanel?
@@ -72,6 +74,10 @@ final class WalletConnectorWebRuntime: NSObject {
     ) throws {
         self.bundle = bundle
         self.environment = environment
+        connectorConfigurationValues = WalletConnectorReleaseConfiguration.runtimeValues(
+            from: bundle, environment: environment
+        )
+        reviewRegistry = WalletReviewRegistry.loadBundled(from: bundle)
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         encoder = JSONEncoder()
@@ -131,15 +137,20 @@ final class WalletConnectorWebRuntime: NSObject {
     }
 
     func isConfigured(_ connector: WalletConnectionConnector) -> Bool {
-        switch connector {
+        guard let reviewRegistry,
+              let entry = reviewRegistry.manifest.connectors.first(where: {
+                  $0.connector == connector
+              }), let method = entry.methods.sorted(by: { $0.rawValue < $1.rawValue }).first,
+              reviewRegistry.containsConnector(
+                  connector, direction: .externalAccountToLocus, method: method,
+                  configurationValues: connectorConfigurationValues
+              ) else { return false }
+        return switch connector {
         case .metamask:
-            validHTTPSURL(configurationValue(
-                environmentKey: "LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL",
-                infoKey: "LocusWalletAlchemyEthereumSepoliaRPCURL"
-            )) || validHTTPSURL(configurationValue(
-                environmentKey: "LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL",
-                infoKey: "LocusWalletQuickNodeEthereumSepoliaRPCURL"
-            ))
+            !WalletConnectorReleaseConfiguration.metamaskRPCURLs(
+                values: connectorConfigurationValues,
+                reviewedProviders: reviewRegistry.manifest.providerIdentities
+            ).isEmpty
         case .slush:
             true
         case .phantom:
@@ -191,6 +202,9 @@ final class WalletConnectorWebRuntime: NSObject {
         connector: WalletConnectionConnector,
         payload: [String: Any]
     ) async throws -> Response {
+        if ["connect", "restore", "execute"].contains(operation), !isConfigured(connector) {
+            throw WalletConnectorRuntimeError.unconfigured("Wallet connections")
+        }
         try await waitUntilReady()
         let command = WalletWebCommand(
             id: UUID().uuidString.lowercased(), operation: operation,
@@ -253,10 +267,8 @@ final class WalletConnectorWebRuntime: NSObject {
         environmentKey: String,
         infoKey: String
     ) -> String {
-        let value = environment[environmentKey]
-            ?? bundle.object(forInfoDictionaryKey: infoKey) as? String
-            ?? ""
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = environmentKey
+        return connectorConfigurationValues[infoKey] ?? ""
     }
 
     private func validHTTPSURL(_ value: String) -> Bool {
@@ -267,17 +279,12 @@ final class WalletConnectorWebRuntime: NSObject {
     }
 
     private func configurePage() async throws {
-        let primaryRPC = configurationValue(
-            environmentKey: "LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL",
-            infoKey: "LocusWalletAlchemyEthereumSepoliaRPCURL"
-        )
-        let fallbackRPC = configurationValue(
-            environmentKey: "LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL",
-            infoKey: "LocusWalletQuickNodeEthereumSepoliaRPCURL"
-        )
         let pageConfiguration = WalletWebConfiguration(
             dappURL: "https://locus.app",
-            metamaskSepoliaRPCURL: primaryRPC.isEmpty ? fallbackRPC : primaryRPC,
+            metamaskRPCURLs: WalletConnectorReleaseConfiguration.metamaskRPCURLs(
+                values: connectorConfigurationValues,
+                reviewedProviders: reviewRegistry?.manifest.providerIdentities ?? []
+            ),
             phantomAppID: configurationValue(
                 environmentKey: "LOCUS_PHANTOM_APP_ID",
                 infoKey: "LocusPhantomAppID"

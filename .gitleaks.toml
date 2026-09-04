@@ -34,3 +34,17 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)LocusTests/WalletGatewayTests\.swift$''']
 regexes = ['''key: Curve25519\.Signing\.PrivateKey''']
+
+[[allowlists]]
+description = "Reown's Curve25519 property declarations are types, not embedded private keys"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^Vendor/ReownSwift/Sources/WalletConnectKMS/Crypto/CryptoKitWrapper/(SigningKeyCryptoKit|AgreementCryptoKit)\.swift$''']
+regexes = ['''^\s*private let key: Curve25519\.(Signing|KeyAgreement)\.PrivateKey\s*$''']
+
+[[allowlists]]
+description = "The connection manifest test accepts an in-memory signing-key parameter"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^LocusTests/WalletConnectionTests\.swift$''']
+regexes = ['''^\s*key: Curve25519\.Signing\.PrivateKey\s*$''']

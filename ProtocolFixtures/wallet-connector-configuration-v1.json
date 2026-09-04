@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "info": {
+    "LocusPhantomAppID": "fixture-phantom-app",
+    "LocusPhantomRedirectURL": "https://wallet.example/phantom/callback?release=canary",
+    "LocusReownProjectID": "fixture-project-123456",
+    "LocusWalletConnectRedirectURL": "locus-wallet://walletconnect",
+    "LocusWalletAlchemyEthereumMainnetRPCURL": "https://mainnet.example/v2/fixture",
+    "LocusWalletQuickNodeEthereumMainnetRPCURL": "https://fallback.example/fixture",
+    "LocusWalletQuickNodeEthereumSepoliaRPCURL": "https://sepolia.example/fixture"
+  },
+  "providerIdentities": [
+    {
+      "networkID": "eip155:1", "provider": "alchemy", "configurationID": "alchemy:eip155:1",
+      "endpointSHA256": "c1fcf26153ea09e802ebfd0f724ba2aca57f2155414d48b49a1f656be56705bb",
+      "expectedIdentity": { "kind": "eip155_chain_id", "value": "1" }
+    },
+    {
+      "networkID": "eip155:1", "provider": "quicknode", "configurationID": "quicknode:eip155:1",
+      "endpointSHA256": "1eb8079bbdb5a22c64192bde601e16ac1f080b99b7d66d68d37dba7c7a0da521",
+      "expectedIdentity": { "kind": "eip155_chain_id", "value": "1" }
+    },
+    {
+      "networkID": "eip155:11155111", "provider": "quicknode", "configurationID": "quicknode:eip155:11155111",
+      "endpointSHA256": "229f3b70c3ef600d93c4badb47c339a30d12b984b0ce7880700c09e7e75b1ec1",
+      "expectedIdentity": { "kind": "eip155_chain_id", "value": "11155111" }
+    }
+  ],
+  "vectors": [
+    {
+      "connector": "metamask",
+      "canonicalJSON": "{\"analyticsEnabled\":false,\"connector\":\"metamask\",\"dappName\":\"Locus\",\"dappURL\":\"https://locus.app\",\"format\":\"locus-wallet-connector-config-v1\",\"rpcURLs\":{\"eip155:1\":\"https://mainnet.example/v2/fixture\",\"eip155:11155111\":\"https://sepolia.example/fixture\"},\"skipAutoAnnounce\":true}",
+      "configurationSHA256": "181cac6eeb244cf7c8b50bb4ff8f81ab8eb7801de06d4a6b33cf7886dfcf6361"
+    },
+    {
+      "connector": "phantom",
+      "canonicalJSON": "{\"addressTypes\":[\"solana\"],\"appID\":\"fixture-phantom-app\",\"autoConnect\":true,\"connector\":\"phantom\",\"embeddedWalletType\":\"user-wallet\",\"format\":\"locus-wallet-connector-config-v1\",\"providers\":[\"phantom\"],\"redirectURL\":\"https://wallet.example/phantom/callback?release=canary\"}",
+      "configurationSHA256": "476c27a79c1ebc7e49f1c46283e2d7e1d981581c326d5cdbdd81dec0d6b1d405"
+    },
+    {
+      "connector": "slush",
+      "canonicalJSON": "{\"connector\":\"slush\",\"dappName\":\"Locus\",\"format\":\"locus-wallet-connector-config-v1\",\"mode\":\"wallet-standard\",\"origin\":\"https://my.slush.app\",\"walletName\":\"Slush\"}",
+      "configurationSHA256": "662276ba2c8bfae707dd86111bb7a16b7c2c4a4e6a51aca1c2ddd98d8f2a1ad1"
+    },
+    {
+      "connector": "wallet_connect",
+      "canonicalJSON": "{\"connector\":\"wallet_connect\",\"dappURL\":\"https://locus.app\",\"format\":\"locus-wallet-connector-config-v1\",\"mode\":\"walletconnect-sign\",\"projectID\":\"fixture-project-123456\",\"redirectURL\":\"locus-wallet://walletconnect\"}",
+      "configurationSHA256": "e3b21169f8d2e73cbc91ce9a6093030c6d3791a00ecdc577770a4aebf5fb583b"
+    },
+    {
+      "connector": "embedded_browser",
+      "canonicalJSON": "{\"connector\":\"embedded_browser\",\"format\":\"locus-wallet-connector-config-v1\",\"mode\":\"embedded-browser\",\"signerProtocolVersion\":3}",
+      "configurationSHA256": "bb9296bc1a4bcf18061260b4b685794b2adc20a01c5c5e41205c8d5a782e59de"
+    }
+  ]
+}

@@ -250,7 +250,8 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
                   }) else {
                 throw WalletConnectorRuntimeError.malformedRequest
             }
-        } else if request.pairingURI != nil || !request.offeredAccounts.isEmpty {
+        } else if request.requestedNetworkIDs.count != 1
+                    || request.pairingURI != nil || !request.offeredAccounts.isEmpty {
             throw WalletConnectorRuntimeError.malformedRequest
         }
     }

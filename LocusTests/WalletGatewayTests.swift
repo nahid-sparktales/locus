@@ -48,6 +48,12 @@ private func walletRPCRequestBody(_ request: URLRequest) throws -> Data {
 
 @MainActor
 private final class FakeWalletSigner: WalletSignerClient {
+    func applyReleaseActivation(
+        _ envelope: WalletSignedReleaseActivationEnvelope
+    ) async throws -> WalletReleaseActivationStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
+
     let isAvailable = true
     private(set) var sessionID: String?
     private(set) var authorizationCount = 0
@@ -55,6 +61,8 @@ private final class FakeWalletSigner: WalletSignerClient {
     private(set) var preparedContracts: [WalletContractRegistryEntry?] = []
     private(set) var executedIntentIDs: [String] = []
     private(set) var confirmedIntentIDs: [String] = []
+    private(set) var canceledIntentIDs: [String] = []
+    var confirmationHandler: ((String) async -> Void)?
     private(set) var activePolicyStatuses: [WalletActivePolicyStatus] = []
     var invalidationHandler: (() -> Void)?
     var riskFlags: [WalletRiskFlag] = []
@@ -125,7 +133,12 @@ private final class FakeWalletSigner: WalletSignerClient {
         fixture(request: preparedRequests.last!, riskFlags: riskFlags, adapterID: adapterID)
     }
 
-    func confirmExecution(intentID: String) async throws { confirmedIntentIDs.append(intentID) }
+    func confirmExecution(intentID: String) async throws {
+        confirmedIntentIDs.append(intentID)
+        await confirmationHandler?(intentID)
+    }
+
+    func cancelPreparation(intentID: String) { canceledIntentIDs.append(intentID) }
 
     func execute(intentID: String) async throws -> [String: Any] {
         executedIntentIDs.append(intentID)
@@ -528,8 +541,21 @@ final class WalletGatewayTests: XCTestCase {
             assets: [retained, extra], evmContracts: [],
             explorerTemplates: [:], adapterIDs: []
         )
-        let narrowed = try registry.restricted(
+        XCTAssertThrowsError(try registry.restricted(
             by: signedReview(restriction, key: privateKey),
+            publicKey: privateKey.publicKey,
+            now: issuedAt.addingTimeInterval(180)
+        )) { error in
+            XCTAssertEqual(error as? WalletReviewManifestError, .broaderThanBundledReview)
+        }
+        let exactRestriction = WalletReviewManifest(
+            schemaVersion: 2, revision: 5,
+            issuedAt: issuedAt.addingTimeInterval(120),
+            expiresAt: issuedAt.addingTimeInterval(10 * 24 * 60 * 60),
+            assets: [retained], evmContracts: [], explorerTemplates: [:], adapterIDs: []
+        )
+        let narrowed = try registry.restricted(
+            by: signedReview(exactRestriction, key: privateKey),
             publicKey: privateKey.publicKey,
             now: issuedAt.addingTimeInterval(180)
         )
@@ -1283,7 +1309,9 @@ final class WalletGatewayTests: XCTestCase {
             accountAddress: account, networkID: "eip155:1", now: now
         ))
         XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
-            for: action(protocolVersion: .v2, slippageBPS: 500),
+            // At 500 bps, floor(10 * 0.95) is still 9. Zero slippage
+            // requires all 10 units and must reject this supplied minimum.
+            for: action(protocolVersion: .v2, slippageBPS: 0),
             accountAddress: account, networkID: "eip155:1", now: now
         ))
 
@@ -4127,10 +4155,14 @@ final class WalletGatewayTests: XCTestCase {
     }
 
     func testSolanaCanonicalCoreMessageMatchesIndependentSignerShape() throws {
-        XCTAssertFalse(
+        XCTAssertTrue(
             WalletNetworkCatalog.solanaMainnet.staticallyReviewedCapabilities
                 .contains(.nftTransfer)
         )
+        XCTAssertThrowsError(try WalletLaunchGate().authorize(
+            networkID: WalletNetworkCatalog.solanaMainnet.id,
+            capability: .nftTransfer, regionCode: "CA"
+        ))
         XCTAssertTrue(
             WalletNetworkCatalog.solanaDevnet.staticallyReviewedCapabilities
                 .contains(.nftTransfer)
@@ -7460,12 +7492,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(recovery.presentedModes, [.create, .create])
     }
 
-    func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async {
+    func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         await gateway.refreshAccountSnapshots()
@@ -7620,13 +7649,66 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(signer.preparedRequests.last?.action.arguments.count, 2)
     }
 
+    /// The browser never inherits testnet authority from its environment flag.
+    /// Positive fixtures carry explicitly signed testnet network/method grants.
+    private func browserFixtureGateway(
+        signer: WalletSignerClient,
+        networkID: String = WalletGateway.sepoliaNetworkID
+    ) throws -> WalletGateway {
+        let network = try XCTUnwrap(WalletNetworkCatalog.descriptor(id: networkID))
+        XCTAssertEqual(network.environment, .testnet, "Fixtures must not grant mainnet authority.")
+        let key = Curve25519.Signing.PrivateKey()
+        let now = Date()
+        var methods: Set<WalletConnectionMethod> = [.listAccounts, .sendTransaction]
+        let signInAdapters: [WalletReviewedSignInAdapter]
+        switch network.chain {
+        case .evm:
+            methods.formUnion([.switchNetwork, .signInWithEthereum])
+            signInAdapters = [.init(format: .siwe, version: "1.0.0",
+                implementationSHA256: String(repeating: "a", count: 64), networkIDs: [networkID])]
+        case .solana:
+            methods.insert(.signInWithSolana)
+            signInAdapters = [.init(format: .siws, version: "1.0.0",
+                implementationSHA256: String(repeating: "a", count: 64), networkIDs: [networkID])]
+        case .sui:
+            signInAdapters = []
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let capability = WalletCapabilityManifest(
+            schemaVersion: 3, revision: 1, releaseStage: .invitedCanary,
+            evidenceIndexSHA256: String(repeating: "f", count: 64),
+            issuedAt: now.addingTimeInterval(-60), expiresAt: now.addingTimeInterval(600),
+            networkGrants: [.init(networkID: networkID,
+                capabilities: [.embeddedBrowser, .nativeTransfer, .standardizedSignIn],
+                connectors: [.init(connector: .embeddedBrowser, ownership: .locusVault,
+                    directions: [.locusVaultToDapp], methods: methods)])],
+            approvedRegions: ["CA"], completedApprovals: WalletLaunchGate.requiredCanaryApprovals
+        )
+        let gate = try WalletLaunchGate(signedManifest: .init(manifest: capability,
+            signatureBase64: key.signature(for: encoder.encode(capability)).base64EncodedString()),
+            publicKey: key.publicKey, now: now)
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1,
+            issuedAt: now.addingTimeInterval(-60), expiresAt: now.addingTimeInterval(600),
+            assets: [], evmContracts: [], explorerTemplates: [:], adapterIDs: [],
+            connectors: [.init(connector: .embeddedBrowser, ownership: .locusVault,
+                version: "1.0.0", artifactSHA256: String(repeating: "b", count: 64),
+                directions: [.locusVaultToDapp], methods: methods,
+                configurationSHA256: WalletConnectorReleaseConfiguration.digest(
+                    for: .embeddedBrowser, values: [:]))], signInAdapters: signInAdapters)
+        let registry = try WalletReviewRegistry(signedManifest: signedReview(review, key: key),
+            publicKey: key.publicKey, now: now)
+        return WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                          "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1"],
+            launchGate: gate, reviewRegistry: registry, regionCode: "CA")
+    }
+
     @MainActor
-    func testBrowserAccountGrantIsOriginScopedAndRevoked() async {
+    func testBrowserAccountGrantIsOriginScopedAndRevoked() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let request = Task {
@@ -7654,14 +7736,27 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(accounts)
     }
 
-    func testGatewayRejectsSignerAutonomyForBrowserSource() async {
+    func testBrowserProviderEnvironmentFlagDoesNotGrantNetworkAuthority() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer,
+            connectionsClient: UnavailableWalletConnectionsClient(), environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+            ])
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let accounts = await gateway.requestBrowserAccounts(origin: "https://dapp.test")
+        XCTAssertNil(accounts)
+        XCTAssertNil(gateway.pendingBrowserOriginGrant)
+        XCTAssertFalse(gateway.canUseBrowserNetwork(WalletGateway.sepoliaNetworkID))
+        XCTAssertFalse(gateway.canUseBrowserNetwork(WalletNetworkCatalog.ethereumMainnet.id))
+    }
+
+    func testGatewayRejectsSignerAutonomyForBrowserSource() async throws {
         let signer = FakeWalletSigner()
         signer.policyDecision = "allowed_by_session_policy"
         signer.policyID = "policy-1"
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7682,12 +7777,9 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
-    func testSignerInterruptionWithdrawsAgentCapabilityAndBrowserGrants() async {
+    func testSignerInterruptionWithdrawsAgentCapabilityAndBrowserGrants() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7705,12 +7797,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(gateway.browserAccounts(origin: "https://dapp.test").isEmpty)
     }
 
-    func testRevokingBrowserOriginCancelsPendingExactTransaction() async {
+    func testRevokingBrowserOriginCancelsPendingExactTransaction() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7736,34 +7825,135 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
+    func testRevokingBrowserOriginDuringSignerPresencePreventsExecution() async throws {
+        let signer = FakeWalletSigner()
+        var approval: CheckedContinuation<Void, Never>?
+        signer.confirmationHandler = { _ in
+            await withCheckedContinuation { approval = $0 }
+        }
+        let gateway = try browserFixtureGateway(signer: signer)
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let connect = Task { await gateway.requestBrowserAccounts(origin: "https://dapp.test") }
+        for _ in 0..<100 where gateway.pendingBrowserOriginGrant == nil { await Task.yield() }
+        gateway.approveBrowserOrigin()
+        _ = await connect.value
+        let send = Task {
+            try await gateway.browserSendTransaction(origin: "https://dapp.test", transaction: [
+                "from": "0xabc", "to": "0x1111111111111111111111111111111111111111", "value": "0x1",
+            ])
+        }
+        for _ in 0..<100 where gateway.pendingConfirmation == nil { await Task.yield() }
+        XCTAssertNotNil(gateway.pendingConfirmation)
+        gateway.confirm(intentID: "intent-1")
+        for _ in 0..<100 where approval == nil { await Task.yield() }
+        XCTAssertNotNil(approval)
+        gateway.revokeBrowserOrigin("https://dapp.test", reason: .navigation)
+        XCTAssertNil(gateway.pendingConfirmation)
+        XCTAssertTrue(signer.canceledIntentIDs.contains("intent-1"))
+        approval?.resume()
+        do { _ = try await send.value; XCTFail("Navigation must cancel an approval already in progress.") }
+        catch { XCTAssertTrue(signer.executedIntentIDs.isEmpty) }
+    }
+
+    func testLockOrCancelDuringSignerPresencePreventsExecutionAndDuplicateReview() async {
+        for lock in [false, true] {
+            let signer = FakeWalletSigner()
+            var approval: CheckedContinuation<Void, Never>?
+            signer.confirmationHandler = { _ in
+                await withCheckedContinuation { approval = $0 }
+            }
+            let gateway = WalletGateway(signer: signer, environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            ])
+            let authorized = await gateway.authorizeSession()
+            XCTAssertTrue(authorized)
+            _ = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID, "account_id": "account-1",
+                "action": ["type": "native_transfer", "recipient": "0x1111111111111111111111111111111111111111", "amount_base_units": "1"],
+                "maximum_fee_base_units": "20",
+            ], source: .human)
+            let first = Task { await gateway.confirmAndExecuteHumanIntent(intentID: "intent-1") }
+            for _ in 0..<100 where approval == nil { await Task.yield() }
+            XCTAssertNotNil(approval)
+            let duplicate = await gateway.confirmAndExecuteHumanIntent(intentID: "intent-1")
+            XCTAssertFalse(duplicate)
+            XCTAssertEqual(signer.confirmedIntentIDs, ["intent-1"])
+            if lock { gateway.lock() } else { gateway.cancelConfirmation(intentID: "intent-1") }
+            approval?.resume()
+            let executed = await first.value
+            XCTAssertFalse(executed)
+            XCTAssertNil(gateway.pendingConfirmation)
+            XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+        }
+    }
+
+    func testConnectionLifecycleWithdrawsPreparedReviewAndSuspendedExecution() async {
+        for event in ["remove", "disconnect", "account", "network", "methods", "peer", "expiry", "reconnect"] {
+            let signer = FakeWalletSigner()
+            let client = UnavailableWalletConnectionsClient()
+            var approval: CheckedContinuation<Void, Never>?
+            signer.confirmationHandler = { _ in
+                await withCheckedContinuation { approval = $0 }
+            }
+            let gateway = WalletGateway(signer: signer, connectionsClient: client, environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            ])
+            let authorized = await gateway.authorizeSession()
+            XCTAssertTrue(authorized)
+            let now = Date()
+            func connection(changed: Bool) -> WalletConnectionRecord {
+                WalletConnectionRecord(
+                    id: "connection-1", direction: .locusVaultToDapp, connector: .walletConnect,
+                    accountOwnership: .locusVault, peerName: "Fixture dapp", peerURL: "https://dapp.test",
+                    peerID: changed && event == "peer" ? "other-peer" : "peer-1",
+                    networkIDs: changed && event == "network" ? ["eip155:1"] : [WalletGateway.sepoliaNetworkID],
+                    approvedMethods: changed && event == "methods" ? [.listAccounts] : [.sendTransaction],
+                    accountIDs: changed && event == "account" ? ["other-account"] : ["account-1"],
+                    state: changed && event == "expiry" ? .expired
+                        : changed && event == "reconnect" ? .reconnecting : .connected,
+                    createdAt: now, updatedAt: now,
+                    expiresAt: now.addingTimeInterval(600)
+                )
+            }
+            client.statusChangeHandler?(.init(connections: [connection(changed: false)], accounts: []))
+            let source = WalletRequestSource.walletConnect(peerID: "peer-1", origin: "https://dapp.test", displayName: "Fixture dapp")
+            _ = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID, "account_id": "account-1",
+                "action": ["type": "native_transfer", "recipient": "0x1111111111111111111111111111111111111111", "amount_base_units": "1"],
+                "maximum_fee_base_units": "20",
+            ], source: source)
+            XCTAssertNotNil(gateway.pendingConfirmation, event)
+            gateway.confirm(intentID: "intent-1")
+            let execution = Task {
+                await gateway.perform(tool: "wallet_execute_transaction", arguments: ["intent_id": "intent-1"], source: source)
+            }
+            for _ in 0..<100 where approval == nil { await Task.yield() }
+            XCTAssertNotNil(approval, event)
+            if event == "disconnect" {
+                await gateway.disconnectWalletConnection(id: "connection-1")
+            } else {
+                client.statusChangeHandler?(.init(
+                    connections: event == "remove" ? [] : [connection(changed: true)], accounts: []
+                ))
+            }
+            XCTAssertNil(gateway.pendingConfirmation, event)
+            XCTAssertTrue(signer.canceledIntentIDs.contains("intent-1"), event)
+            approval?.resume()
+            let result = await execution.value
+            XCTAssertNotNil(result["error"], event)
+            XCTAssertTrue(signer.executedIntentIDs.isEmpty, event)
+            gateway.confirm(intentID: "intent-1")
+            let replay = await gateway.perform(tool: "wallet_execute_transaction", arguments: ["intent_id": "intent-1"], source: source)
+            XCTAssertNotNil(replay["error"], event)
+        }
+    }
+
     func testBrowserPersonalSignAcceptsOnlyCanonicalReviewedSIWE() async throws {
         let signer = FakeWalletSigner()
         signer.accountAddress = "0x1111111111111111111111111111111111111111"
-        let key = Curve25519.Signing.PrivateKey()
         let now = Date()
-        let manifest = WalletReviewManifest(
-            schemaVersion: 2, revision: 1,
-            issuedAt: now.addingTimeInterval(-60),
-            expiresAt: now.addingTimeInterval(600),
-            assets: [], evmContracts: [], explorerTemplates: [:], adapterIDs: [],
-            signInAdapters: [.init(
-                format: .siwe, version: "1.0.0",
-                implementationSHA256: String(repeating: "a", count: 64),
-                networkIDs: [WalletGateway.sepoliaNetworkID]
-            )]
-        )
-        let registry = try WalletReviewRegistry(
-            signedManifest: signedReview(manifest, key: key),
-            publicKey: key.publicKey, now: now
-        )
-        let gateway = WalletGateway(
-            signer: signer,
-            environment: [
-                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-                "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-            ],
-            reviewRegistry: registry
-        )
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7878,10 +8068,9 @@ final class WalletGatewayTests: XCTestCase {
         signer.accountChain = .solana
         signer.accountAddress = "11111111111111111111111111111111"
         signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(
+            signer: signer, networkID: WalletNetworkCatalog.solanaDevnet.id
+        )
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let request = Task {

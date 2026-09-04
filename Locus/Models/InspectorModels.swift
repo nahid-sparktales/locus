@@ -176,7 +176,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .agents: "Profiles, teams, routing, and evaluation"
         case .knowledge: "Workspace memory, indexing, and handoffs"
         case .browser: "Built-in browsing, input, and privacy"
-        case .wallet: "Locus Vault, transaction policies, and external approval wallets"
+        case .wallet: "Your vault, connected accounts, and transaction approvals"
         case .extensions: "Skills and MCP integrations"
         case .permissions: "Agent authority and macOS access"
         case .network: "Proxy routing and connection security"

@@ -17,6 +17,7 @@ actor CompanionGateway {
     private var registry: CompanionDeviceRegistry
     private var nonces = CompanionPairingNonceStore()
     private var idempotency = CompanionIdempotencyCache()
+    private var pendingCommands: Set<String> = []
     private var rateLimiter = CompanionRateLimiter()
     private var commandHandler: CommandHandler?
     private var eventProvider: EventProvider?
@@ -171,6 +172,7 @@ actor CompanionGateway {
     }
 
     private func stop(status: String, preserveEnabled: Bool = false) {
+        nonces.revokeAll()
         listener?.cancel()
         listener = nil
         connections.values.forEach { $0.cancel() }
@@ -261,6 +263,10 @@ actor CompanionGateway {
     private func received(
         _ content: Data?, error: NWError?, on connection: NWConnection, id: UUID
     ) async {
+        guard state.running, connections[id] === connection else {
+            connection.cancel()
+            return
+        }
         if let error {
             connection.cancel()
             state.status = "A mobile connection ended: \(error.localizedDescription)"
@@ -307,21 +313,34 @@ actor CompanionGateway {
             receiveNext(on: connection, id: id)
             return
         }
-        let cacheKey = device.id + ":" + request.id
+        let response = await dispatchAuthenticated(request, deviceID: device.id)
+        guard connections[id] === connection else { return }
+        send(response, to: connection)
+        receiveNext(on: connection, id: id)
+    }
+
+    /// Called only after the receiving connection authenticates the device.
+    /// Claim the id before suspending, since another socket can carry its retry.
+    func dispatchAuthenticated(_ request: CompanionRequest, deviceID: String) async -> CompanionResponse {
+        let cacheKey = deviceID + ":" + request.id
         if let cached = idempotency.response(for: cacheKey) {
-            send(CompanionResponse(
+            return CompanionResponse(
                 version: cached.version, id: request.id, ok: cached.ok,
                 data: cached.data, error: cached.error
-            ), to: connection)
-            receiveNext(on: connection, id: id)
-            return
+            )
+        }
+        guard !pendingCommands.contains(cacheKey) else {
+            return .failure(
+                id: request.id, code: "request_in_progress",
+                message: "This request is still running. Retry shortly.", retryable: true
+            )
         }
         guard let commandHandler else {
-            send(.failure(id: request.id, code: "not_ready", message: "Locus is still starting.", retryable: true), to: connection)
-            receiveNext(on: connection, id: id)
-            return
+            return .failure(id: request.id, code: "not_ready", message: "Locus is still starting.", retryable: true)
         }
+        pendingCommands.insert(cacheKey)
         var response = await commandHandler(request)
+        pendingCommands.remove(cacheKey)
         if let data = response.data {
             response = CompanionResponse(
                 version: response.version, id: response.id, ok: response.ok,
@@ -333,8 +352,7 @@ actor CompanionGateway {
             version: response.version, id: cacheKey, ok: response.ok,
             data: response.data, error: response.error
         ))
-        send(response, to: connection)
-        receiveNext(on: connection, id: id)
+        return response
     }
 
     private func handlePairing(

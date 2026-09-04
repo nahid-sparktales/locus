@@ -52,12 +52,18 @@ common=(
 
 if [[ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" ]]; then
     identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
-    /usr/bin/codesign --force --sign "${identity}" "${helpers}/LocusSimulatorTouch"
-    /usr/bin/codesign --force --sign "${identity}" "${helpers}/LocusSimulatorTree"
+    hardened=()
+    if [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]]; then
+        hardened=(--options runtime --timestamp)
+    fi
+    /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${helpers}/LocusSimulatorTouch"
+    /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${helpers}/LocusSimulatorTree"
 fi
 
 touch_binary_sha="$(/usr/bin/shasum -a 256 "${helpers}/LocusSimulatorTouch" | /usr/bin/awk '{print $1}')"
 tree_binary_sha="$(/usr/bin/shasum -a 256 "${helpers}/LocusSimulatorTree" | /usr/bin/awk '{print $1}')"
+touch_unsigned_sha="$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${helpers}/LocusSimulatorTouch")"
+tree_unsigned_sha="$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${helpers}/LocusSimulatorTree")"
 {
     echo "upstream=https://github.com/martingeidobler/ios-mcp-server"
     echo "commit=bd5aca70704fe0fb5e974abaed205f54469799b0"
@@ -66,5 +72,7 @@ tree_binary_sha="$(/usr/bin/shasum -a 256 "${helpers}/LocusSimulatorTree" | /usr
     echo "tree_source_sha256=${tree_source_sha}"
     echo "touch_binary_sha256=${touch_binary_sha}"
     echo "tree_binary_sha256=${tree_binary_sha}"
+    echo "touch_unsigned_sha256=${touch_unsigned_sha}"
+    echo "tree_unsigned_sha256=${tree_unsigned_sha}"
     echo "architectures=$(/usr/bin/lipo -archs "${helpers}/LocusSimulatorTouch")"
 } > "${resources}/SimulatorBridgeProvenance.txt"

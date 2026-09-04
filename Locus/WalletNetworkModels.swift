@@ -515,6 +515,12 @@ struct WalletProviderEndpoint: Codable, Equatable, Identifiable, Sendable {
     let expectedIdentity: WalletChainIdentity
 
     var isProductionSafe: Bool { url.scheme?.lowercased() == "https" }
+
+    var endpointSHA256: String {
+        SHA256.hash(data: Data(url.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
 }
 
 enum WalletLaunchApproval: String, Codable, CaseIterable, Hashable, Sendable {
@@ -526,6 +532,27 @@ enum WalletLaunchApproval: String, Codable, CaseIterable, Hashable, Sendable {
     case incidentDrill = "incident_drill"
     case notarizedArtifact = "notarized_artifact"
     case signedUpdateFeed = "signed_update_feed"
+    case derivationReproduction = "derivation_reproduction"
+    case releaseCandidateBuild = "release_candidate_build"
+    case publicationDisclosures = "publication_disclosures"
+    case supportSecurityReadiness = "support_security_readiness"
+}
+
+/// Manifest-level ownership vocabulary. The connector identifier remains a
+/// separate signed field, so a grant cannot silently change MetaMask/Slush
+/// into a locally managed signer or expose Phantom as an external prompt.
+enum WalletConnectorAccountOwnership: String, Codable, CaseIterable, Sendable {
+    case locusVault = "locus_vault"
+    case external
+    case connectorManaged = "connector_managed"
+
+    static func required(for connector: WalletConnectionConnector) -> Self {
+        switch connector {
+        case .metamask, .slush: .external
+        case .phantom: .connectorManaged
+        case .embeddedBrowser, .walletConnect: .locusVault
+        }
+    }
 }
 
 enum WalletReleaseStage: String, Codable, CaseIterable, Sendable {
@@ -550,6 +577,7 @@ struct WalletCapabilityManifest: Codable, Equatable, Sendable {
     let networkGrants: [WalletNetworkCapabilityGrant]
     let approvedRegions: Set<String>
     let completedApprovals: Set<WalletLaunchApproval>
+    var canaryLimits: [WalletCanaryLimit]? = nil
 
     var enabledNetworkIDs: Set<String> { Set(networkGrants.map(\.networkID)) }
     var enabledCapabilities: Set<WalletNetworkCapability> {
@@ -561,17 +589,76 @@ struct WalletCapabilityManifest: Codable, Equatable, Sendable {
     }
 }
 
+extension WalletCapabilityManifest {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(revision, forKey: .revision)
+        try values.encode(releaseStage, forKey: .releaseStage)
+        try values.encode(evidenceIndexSHA256, forKey: .evidenceIndexSHA256)
+        try values.encode(issuedAt, forKey: .issuedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(networkGrants, forKey: .networkGrants)
+        try values.encode(approvedRegions.sorted(), forKey: .approvedRegions)
+        try values.encode(completedApprovals.sorted { $0.rawValue < $1.rawValue }, forKey: .completedApprovals)
+        try values.encodeIfPresent(canaryLimits, forKey: .canaryLimits)
+    }
+}
+
+
 struct WalletConnectorCapabilityGrant: Codable, Equatable, Sendable {
     let connector: WalletConnectionConnector
+    let ownership: WalletConnectorAccountOwnership
     let directions: Set<WalletConnectionDirection>
     let methods: Set<WalletConnectionMethod>
 }
+
+/// Signed finite budgets are independent of automation policy. They bind the
+/// exact ownership, asset and action and remain cumulative across restarts.
+struct WalletCanaryLimit: Codable, Equatable, Sendable {
+    let networkID: String
+    let assetID: String
+    let action: WalletActionKind
+    let ownership: WalletConnectorAccountOwnership
+    let connector: WalletConnectionConnector?
+    let maximumTransactionBaseUnits: String
+    let maximumCumulativeBaseUnits: String
+    let maximumFeeBaseUnits: String
+    let maximumCumulativeFeeBaseUnits: String
+    let maximumTransactions: Int
+
+    var identity: String {
+        [networkID, assetID, action.rawValue, ownership.rawValue,
+         connector?.rawValue ?? "vault"].joined(separator: "|")
+    }
+}
+
+extension WalletConnectorCapabilityGrant {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(connector, forKey: .connector)
+        try values.encode(ownership, forKey: .ownership)
+        try values.encode(directions.sorted { $0.rawValue < $1.rawValue }, forKey: .directions)
+        try values.encode(methods.sorted { $0.rawValue < $1.rawValue }, forKey: .methods)
+    }
+}
+
 
 struct WalletNetworkCapabilityGrant: Codable, Equatable, Sendable {
     let networkID: String
     let capabilities: Set<WalletNetworkCapability>
     let connectors: [WalletConnectorCapabilityGrant]
 }
+
+extension WalletNetworkCapabilityGrant {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(networkID, forKey: .networkID)
+        try values.encode(capabilities.sorted { $0.rawValue < $1.rawValue }, forKey: .capabilities)
+        try values.encode(connectors, forKey: .connectors)
+    }
+}
+
 
 struct WalletSignedCapabilityManifest: Codable, Equatable, Sendable {
     let manifest: WalletCapabilityManifest
@@ -592,6 +679,7 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
     let explorerTemplates: [String: String]
     let adapterIDs: Set<String>
     let connectors: [WalletReviewedConnector]
+    let providerIdentities: [WalletReviewedProviderIdentity]
     let signInAdapters: [WalletReviewedSignInAdapter]
     let programIdentities: [WalletReviewedProgramIdentity]
     let uniswapConfigurations: [WalletReviewedUniswapConfiguration]
@@ -606,6 +694,7 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
         explorerTemplates: [String: String],
         adapterIDs: Set<String>,
         connectors: [WalletReviewedConnector] = [],
+        providerIdentities: [WalletReviewedProviderIdentity] = [],
         signInAdapters: [WalletReviewedSignInAdapter] = [],
         programIdentities: [WalletReviewedProgramIdentity] = [],
         uniswapConfigurations: [WalletReviewedUniswapConfiguration] = []
@@ -619,6 +708,7 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
         self.explorerTemplates = explorerTemplates
         self.adapterIDs = adapterIDs
         self.connectors = connectors
+        self.providerIdentities = providerIdentities
         self.signInAdapters = signInAdapters
         self.programIdentities = programIdentities
         self.uniswapConfigurations = uniswapConfigurations
@@ -626,8 +716,26 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, revision, issuedAt, expiresAt, assets, evmContracts
-        case explorerTemplates, adapterIDs, connectors, signInAdapters, programIdentities
+        case explorerTemplates, adapterIDs, connectors, providerIdentities
+        case signInAdapters, programIdentities
         case uniswapConfigurations
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(revision, forKey: .revision)
+        try values.encode(issuedAt, forKey: .issuedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(assets, forKey: .assets)
+        try values.encode(evmContracts, forKey: .evmContracts)
+        try values.encode(explorerTemplates, forKey: .explorerTemplates)
+        try values.encode(adapterIDs.sorted(), forKey: .adapterIDs)
+        try values.encode(connectors, forKey: .connectors)
+        try values.encode(providerIdentities, forKey: .providerIdentities)
+        try values.encode(signInAdapters, forKey: .signInAdapters)
+        try values.encode(programIdentities, forKey: .programIdentities)
+        try values.encode(uniswapConfigurations, forKey: .uniswapConfigurations)
     }
 
     init(from decoder: Decoder) throws {
@@ -647,6 +755,9 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
         connectors = try container.decodeIfPresent(
             [WalletReviewedConnector].self, forKey: .connectors
         ) ?? []
+        providerIdentities = try container.decodeIfPresent(
+            [WalletReviewedProviderIdentity].self, forKey: .providerIdentities
+        ) ?? []
         signInAdapters = try container.decodeIfPresent(
             [WalletReviewedSignInAdapter].self, forKey: .signInAdapters
         ) ?? []
@@ -661,10 +772,215 @@ struct WalletReviewManifest: Codable, Equatable, Sendable {
 
 struct WalletReviewedConnector: Codable, Equatable, Sendable {
     let connector: WalletConnectionConnector
+    let ownership: WalletConnectorAccountOwnership
     let version: String
     let artifactSHA256: String
     let directions: Set<WalletConnectionDirection>
     let methods: Set<WalletConnectionMethod>
+    let configurationSHA256: String?
+
+    init(
+        connector: WalletConnectionConnector,
+        ownership: WalletConnectorAccountOwnership,
+        version: String,
+        artifactSHA256: String,
+        directions: Set<WalletConnectionDirection>,
+        methods: Set<WalletConnectionMethod>,
+        configurationSHA256: String? = nil
+    ) {
+        self.connector = connector
+        self.ownership = ownership
+        self.version = version
+        self.artifactSHA256 = artifactSHA256
+        self.directions = directions
+        self.methods = methods
+        self.configurationSHA256 = configurationSHA256
+    }
+}
+
+extension WalletReviewedConnector {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(connector, forKey: .connector)
+        try values.encode(ownership, forKey: .ownership)
+        try values.encode(version, forKey: .version)
+        try values.encode(artifactSHA256, forKey: .artifactSHA256)
+        try values.encodeIfPresent(configurationSHA256, forKey: .configurationSHA256)
+        try values.encode(directions.sorted { $0.rawValue < $1.rawValue }, forKey: .directions)
+        try values.encode(methods.sorted { $0.rawValue < $1.rawValue }, forKey: .methods)
+    }
+}
+
+#if !LOCUS_APP_STORE
+/// Domain-separated release configuration. Only its digest enters signed review
+/// metadata; the underlying URLs/identifiers must never enter diagnostics.
+/// The Python release audit reproduces these sorted, compact, ASCII JSON bytes.
+enum WalletConnectorReleaseConfiguration {
+    private static let padding = CharacterSet(charactersIn: " \t\r\n")
+
+    static func bundledValues(from bundle: Bundle = .main) -> [String: String] {
+        (bundle.infoDictionary ?? [:]).compactMapValues {
+            ($0 as? String)?.trimmingCharacters(in: padding)
+        }
+    }
+
+    /// Release never accepts process-environment replacement of sealed values.
+    /// Debug overrides still have to match the signed configuration digest.
+    static func runtimeValues(
+        from bundle: Bundle, environment: [String: String]
+    ) -> [String: String] {
+        var values = bundledValues(from: bundle)
+        #if DEBUG
+        let keys = [
+            "LocusPhantomAppID": "LOCUS_PHANTOM_APP_ID",
+            "LocusPhantomRedirectURL": "LOCUS_PHANTOM_REDIRECT_URL",
+            "LocusReownProjectID": "LOCUS_REOWN_PROJECT_ID",
+            "LocusWalletConnectRedirectURL": "LOCUS_WALLETCONNECT_REDIRECT_URL",
+            "LocusWalletAlchemyEthereumMainnetRPCURL": "LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL",
+            "LocusWalletQuickNodeEthereumMainnetRPCURL": "LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL",
+            "LocusWalletAlchemyEthereumSepoliaRPCURL": "LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL",
+            "LocusWalletQuickNodeEthereumSepoliaRPCURL": "LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL",
+        ]
+        for (infoKey, environmentKey) in keys {
+            if let override = environment[environmentKey] {
+                values[infoKey] = override.trimmingCharacters(in: padding)
+            }
+        }
+        #endif
+        return values
+    }
+
+    static func digest(
+        for connector: WalletConnectionConnector,
+        values: [String: String],
+        reviewedProviders: [WalletReviewedProviderIdentity] = []
+    ) -> String? {
+        guard let data = canonicalData(
+            for: connector, values: values, reviewedProviders: reviewedProviders
+        ) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func canonicalData(
+        for connector: WalletConnectionConnector,
+        values: [String: String],
+        reviewedProviders: [WalletReviewedProviderIdentity] = []
+    ) -> Data? {
+        var payload: [String: Any] = [
+            "format": "locus-wallet-connector-config-v1",
+            "connector": connector.rawValue,
+        ]
+        switch connector {
+        case .phantom:
+            let appID = value("LocusPhantomAppID", in: values)
+            let redirect = value("LocusPhantomRedirectURL", in: values)
+            guard matches(appID, pattern: "^[A-Za-z0-9._-]{1,128}$"),
+                  isCanonicalHTTPSURL(redirect) else { return nil }
+            payload.merge([
+                "appID": appID, "redirectURL": redirect,
+                "providers": ["phantom"], "addressTypes": ["solana"],
+                "embeddedWalletType": "user-wallet", "autoConnect": true,
+            ]) { _, new in new }
+        case .walletConnect:
+            let projectID = value("LocusReownProjectID", in: values)
+            let redirect = value("LocusWalletConnectRedirectURL", in: values)
+            guard matches(projectID, pattern: "^[A-Za-z0-9_-]{16,128}$"),
+                  redirect == "locus-wallet://walletconnect" else { return nil }
+            payload.merge([
+                "projectID": projectID, "redirectURL": redirect,
+                "mode": "walletconnect-sign", "dappURL": "https://locus.app",
+            ]) { _, new in new }
+        case .metamask:
+            let rpcURLs = metamaskRPCURLs(values: values, reviewedProviders: reviewedProviders)
+            guard !rpcURLs.isEmpty else { return nil }
+            payload.merge([
+                "rpcURLs": rpcURLs, "dappName": "Locus", "dappURL": "https://locus.app",
+                "analyticsEnabled": false, "skipAutoAnnounce": true,
+            ]) { _, new in new }
+        case .slush:
+            payload.merge([
+                "mode": "wallet-standard", "walletName": "Slush",
+                "dappName": "Locus", "origin": "https://my.slush.app",
+            ]) { _, new in new }
+        case .embeddedBrowser:
+            payload.merge(["mode": "embedded-browser", "signerProtocolVersion": 3]) {
+                _, new in new
+            }
+        }
+        return try? JSONSerialization.data(
+            withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    /// Exactly the provider map passed to MetaMask: reviewed Alchemy first,
+    /// otherwise reviewed QuickNode, with unavailable networks omitted.
+    static func metamaskRPCURLs(
+        values: [String: String],
+        reviewedProviders: [WalletReviewedProviderIdentity]
+    ) -> [String: String] {
+        var result: [String: String] = [:]
+        for (networkID, name) in [
+            ("eip155:1", "EthereumMainnet"), ("eip155:11155111", "EthereumSepolia"),
+        ] {
+            guard let network = WalletNetworkCatalog.descriptor(id: networkID) else { continue }
+            for (provider, providerName) in [
+                (WalletProviderKind.alchemy, "Alchemy"), (.quickNode, "QuickNode"),
+            ] {
+                let raw = value("LocusWallet\(providerName)\(name)RPCURL", in: values)
+                guard isCanonicalHTTPSURL(raw), let url = URL(string: raw) else { continue }
+                let endpoint = WalletProviderEndpoint(
+                    id: "\(provider.rawValue):\(networkID)", provider: provider,
+                    networkID: networkID, url: url,
+                    priority: provider == .alchemy ? 0 : 1, expectedIdentity: network.identity
+                )
+                guard reviewedProviders.contains(where: { $0.matches(endpoint) }) else { continue }
+                result[networkID] = raw
+                break
+            }
+        }
+        return result
+    }
+
+    private static func value(_ key: String, in values: [String: String]) -> String {
+        (values[key] ?? "").trimmingCharacters(in: padding)
+    }
+
+    private static func matches(_ value: String, pattern: String) -> Bool {
+        value.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private static func isCanonicalHTTPSURL(_ value: String) -> Bool {
+        guard (1...2_048).contains(value.utf8.count),
+              value.utf8.allSatisfy({ (33...126).contains($0) }),
+              !value.contains(where: { "\\<>\"{}|^`[]".contains($0) }),
+              value.range(of: "%(?![0-9A-Fa-f]{2})", options: .regularExpression) == nil,
+              let url = URL(string: value), url.absoluteString == value,
+              url.scheme == "https", url.host?.isEmpty == false,
+              url.port.map({ (1...65_535).contains($0) }) ?? true,
+              url.user == nil, url.password == nil, url.fragment == nil else { return false }
+        return true
+    }
+}
+#endif
+
+
+/// A release-reviewed provider configuration without persisting a credential-
+/// bearing URL. `endpointSHA256` is the SHA-256 of the exact absolute URL used
+/// by the app, including its path and any provider-specific project token.
+struct WalletReviewedProviderIdentity: Codable, Equatable, Sendable {
+    let networkID: String
+    let provider: WalletProviderKind
+    let configurationID: String
+    let endpointSHA256: String
+    let expectedIdentity: WalletChainIdentity
+
+    func matches(_ endpoint: WalletProviderEndpoint) -> Bool {
+        networkID == endpoint.networkID
+            && provider == endpoint.provider
+            && configurationID == endpoint.id
+            && expectedIdentity == endpoint.expectedIdentity
+            && endpointSHA256 == endpoint.endpointSHA256
+    }
 }
 
 struct WalletReviewedSignInAdapter: Codable, Equatable, Sendable {
@@ -673,6 +989,17 @@ struct WalletReviewedSignInAdapter: Codable, Equatable, Sendable {
     let implementationSHA256: String
     let networkIDs: Set<String>
 }
+
+extension WalletReviewedSignInAdapter {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(format, forKey: .format)
+        try values.encode(version, forKey: .version)
+        try values.encode(implementationSHA256, forKey: .implementationSHA256)
+        try values.encode(networkIDs.sorted(), forKey: .networkIDs)
+    }
+}
+
 
 enum WalletReviewedProgramKind: String, Codable, Sendable {
     case evmRuntime = "evm_runtime"
@@ -743,6 +1070,35 @@ struct WalletReviewRegistry: Sendable {
     var assets: [WalletAsset] { manifest.assets }
     var evmContracts: [WalletContractRegistryEntry] { manifest.evmContracts }
 
+    static func loadBundled(from bundle: Bundle = .main) -> WalletReviewRegistry? {
+        let authorityBundle: Bundle
+        if bundle.object(forInfoDictionaryKey: "LocusWalletCapabilityPublicKey") != nil {
+            authorityBundle = bundle
+        } else {
+            let signerURL = bundle.bundleURL
+                .appendingPathComponent("Contents/XPCServices/WalletSigner.xpc")
+            guard let signerBundle = Bundle(url: signerURL) else { return nil }
+            authorityBundle = signerBundle
+        }
+        guard let publicKeyText = authorityBundle.object(
+            forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+        ) as? String,
+        let publicKeyData = Data(base64Encoded: publicKeyText),
+        let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+        let manifestText = authorityBundle.object(
+            forInfoDictionaryKey: "LocusWalletReviewManifestBase64"
+        ) as? String,
+        let manifestData = Data(base64Encoded: manifestText) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let signed = try? decoder.decode(
+            WalletSignedReviewManifest.self, from: manifestData
+        ) else { return nil }
+        return try? WalletReviewRegistry(
+            signedManifest: signed, publicKey: publicKey
+        )
+    }
+
     func restricted(
         by remote: WalletSignedReviewManifest,
         publicKey: Curve25519.Signing.PublicKey,
@@ -753,6 +1109,31 @@ struct WalletReviewRegistry: Sendable {
         ).manifest
         guard restriction.revision >= manifest.revision else {
             throw WalletReviewManifestError.malformed
+        }
+        guard restriction.assets.allSatisfy({ restricted in
+            manifest.assets.contains { Self.sameAssetAuthority($0, restricted) }
+        }), restriction.evmContracts.allSatisfy({ manifest.evmContracts.contains($0) }),
+        restriction.explorerTemplates.allSatisfy({ networkID, template in
+            manifest.explorerTemplates[networkID] == template
+        }), restriction.adapterIDs.isSubset(of: manifest.adapterIDs),
+        restriction.connectors.allSatisfy({ restricted in
+            manifest.connectors.contains { ceiling in
+                ceiling.connector == restricted.connector
+                    && ceiling.ownership == restricted.ownership
+                    && ceiling.version == restricted.version
+                    && ceiling.artifactSHA256 == restricted.artifactSHA256
+                    && ceiling.configurationSHA256 == restricted.configurationSHA256
+                    && restricted.directions.isSubset(of: ceiling.directions)
+                    && restricted.methods.isSubset(of: ceiling.methods)
+            }
+        }), restriction.providerIdentities.allSatisfy({
+            manifest.providerIdentities.contains($0)
+        }), restriction.signInAdapters.allSatisfy({ manifest.signInAdapters.contains($0) }),
+        restriction.programIdentities.allSatisfy({ manifest.programIdentities.contains($0) }),
+        restriction.uniswapConfigurations.allSatisfy({
+            manifest.uniswapConfigurations.contains($0)
+        }) else {
+            throw WalletReviewManifestError.broaderThanBundledReview
         }
         let requestedAssets = Dictionary(
             uniqueKeysWithValues: restriction.assets.map { ($0.id, $0) }
@@ -775,20 +1156,26 @@ struct WalletReviewRegistry: Sendable {
                 $0.connector == reviewed.connector
                     && $0.version == reviewed.version
                     && $0.artifactSHA256 == reviewed.artifactSHA256
+                    && $0.configurationSHA256 == reviewed.configurationSHA256
             }) else { return nil }
             let directions = reviewed.directions.intersection(narrowed.directions)
             let methods = reviewed.methods.intersection(narrowed.methods)
             guard !directions.isEmpty, !methods.isEmpty else { return nil }
             return WalletReviewedConnector(
                 connector: reviewed.connector,
+                ownership: reviewed.ownership,
                 version: reviewed.version,
                 artifactSHA256: reviewed.artifactSHA256,
                 directions: directions,
-                methods: methods
+                methods: methods,
+                configurationSHA256: reviewed.configurationSHA256
             )
         }
         let signInAdapters = manifest.signInAdapters.filter {
             restriction.signInAdapters.contains($0)
+        }
+        let providerIdentities = manifest.providerIdentities.filter {
+            restriction.providerIdentities.contains($0)
         }
         let programIdentities = manifest.programIdentities.filter {
             restriction.programIdentities.contains($0)
@@ -804,6 +1191,7 @@ struct WalletReviewRegistry: Sendable {
             assets: assets, evmContracts: contracts,
             explorerTemplates: explorers, adapterIDs: adapters,
             connectors: connectors,
+            providerIdentities: providerIdentities,
             signInAdapters: signInAdapters,
             programIdentities: programIdentities,
             uniswapConfigurations: uniswapConfigurations
@@ -835,18 +1223,34 @@ struct WalletReviewRegistry: Sendable {
     func containsConnector(
         _ connector: WalletConnectionConnector,
         direction: WalletConnectionDirection,
-        method: WalletConnectionMethod
+        method: WalletConnectionMethod,
+        configurationValues: [String: String]? = nil
     ) -> Bool {
+        #if LOCUS_APP_STORE
+        return false
+        #else
+        guard let configurationDigest = WalletConnectorReleaseConfiguration.digest(
+            for: connector,
+            values: configurationValues ?? WalletConnectorReleaseConfiguration.bundledValues(),
+            reviewedProviders: manifest.providerIdentities
+        ) else { return false }
         let identity = WalletConnectorBuildIdentity.reviewed(connector)
         return manifest.connectors.contains { entry in
             entry.connector == connector
+                && entry.ownership == .required(for: connector)
                 && entry.directions.contains(direction)
                 && entry.methods.contains(method)
+                && entry.configurationSHA256 == configurationDigest
                 && (identity.map {
                     entry.version == $0.version
                         && entry.artifactSHA256 == $0.artifactSHA256
                 } ?? true)
         }
+        #endif
+    }
+
+    func containsProvider(_ endpoint: WalletProviderEndpoint) -> Bool {
+        manifest.providerIdentities.contains { $0.matches(endpoint) }
     }
 
     func uniswapConfiguration(
@@ -870,6 +1274,7 @@ struct WalletReviewRegistry: Sendable {
               manifest.assets.count <= 10_000,
               manifest.evmContracts.count <= 2_000,
               manifest.connectors.count <= WalletConnectionConnector.allCases.count,
+              manifest.providerIdentities.count <= WalletNetworkCatalog.all.count * 4,
               manifest.signInAdapters.count <= 8,
               manifest.programIdentities.count <= 256,
               manifest.uniswapConfigurations.count <= 8,
@@ -881,6 +1286,9 @@ struct WalletReviewRegistry: Sendable {
                   "\($0.networkID):\($0.checksumAddress.lowercased())"
               }).count == manifest.evmContracts.count,
               Set(manifest.connectors.map(\.connector)).count == manifest.connectors.count,
+              Set(manifest.providerIdentities.map {
+                  "\($0.networkID):\($0.configurationID)"
+              }).count == manifest.providerIdentities.count,
               Set(manifest.signInAdapters.map {
                   "\($0.format.rawValue):\($0.networkIDs.sorted().joined(separator: ","))"
               }).count == manifest.signInAdapters.count,
@@ -895,6 +1303,7 @@ struct WalletReviewRegistry: Sendable {
                   validContract(entry, manifest: manifest)
               }),
               manifest.connectors.allSatisfy(validConnector),
+              manifest.providerIdentities.allSatisfy(validProviderIdentity),
               manifest.signInAdapters.allSatisfy(validSignInAdapter),
               manifest.programIdentities.allSatisfy(validProgramIdentity),
               manifest.uniswapConfigurations.allSatisfy({ configuration in
@@ -916,6 +1325,8 @@ struct WalletReviewRegistry: Sendable {
 
     private static func validConnector(_ entry: WalletReviewedConnector) -> Bool {
         guard validVersion(entry.version), validSHA256(entry.artifactSHA256),
+              entry.configurationSHA256.map(validSHA256) ?? true,
+              entry.ownership == .required(for: entry.connector),
               !entry.directions.isEmpty, !entry.methods.isEmpty else { return false }
         switch entry.connector {
         case .metamask:
@@ -938,6 +1349,18 @@ struct WalletReviewRegistry: Sendable {
         case .embeddedBrowser, .walletConnect:
             return entry.directions == [.locusVaultToDapp]
         }
+    }
+
+    private static func validProviderIdentity(
+        _ entry: WalletReviewedProviderIdentity
+    ) -> Bool {
+        guard let network = WalletNetworkCatalog.descriptor(id: entry.networkID),
+              entry.expectedIdentity == network.identity,
+              validSHA256(entry.endpointSHA256),
+              entry.configurationID == "\(entry.provider.rawValue):\(entry.networkID)" else {
+            return false
+        }
+        return entry.provider != .local
     }
 
     private static func validSignInAdapter(_ entry: WalletReviewedSignInAdapter) -> Bool {
@@ -1223,6 +1646,7 @@ struct WalletLaunchGate: Sendable {
     static let requiredCanaryApprovals: Set<WalletLaunchApproval> = [
         .signerAudit, .applicationPenetrationTest, .legalRegionalMatrix,
         .providerFailoverLoadTest, .incidentDrill, .notarizedArtifact, .signedUpdateFeed,
+        .derivationReproduction, .releaseCandidateBuild,
     ]
 
     let bundledNetworks: [String: WalletNetworkDescriptor]
@@ -1315,6 +1739,7 @@ struct WalletLaunchGate: Sendable {
                 guard !directions.isEmpty, !methods.isEmpty else { return nil }
                 return WalletConnectorCapabilityGrant(
                     connector: bundledConnector.connector,
+                    ownership: bundledConnector.ownership,
                     directions: directions,
                     methods: methods
                 )
@@ -1341,7 +1766,10 @@ struct WalletLaunchGate: Sendable {
             networkGrants: networkGrants,
             approvedRegions: bundled.approvedRegions.intersection(restriction.approvedRegions),
             completedApprovals: bundled.completedApprovals
-                .intersection(restriction.completedApprovals)
+                .intersection(restriction.completedApprovals),
+            canaryLimits: (bundled.canaryLimits ?? []).filter { limit in
+                restriction.canaryLimits?.contains(limit) == true
+            }
         )
         return WalletLaunchGate(
             bundledNetworks: bundledNetworks,
@@ -1362,6 +1790,7 @@ struct WalletLaunchGate: Sendable {
             throw WalletLaunchGateError.capabilityNotReviewed
         }
         guard let manifest = effectiveManifest,
+              manifest.expiresAt > Date(),
               manifest.grant(for: networkID)?.capabilities.contains(capability) == true else {
             throw WalletLaunchGateError.capabilityNotReviewed
         }
@@ -1427,6 +1856,7 @@ struct WalletLaunchGate: Sendable {
                 case .walletConnect: .walletConnect
                 }
                 guard grant.capabilities.contains(requiredCapability),
+                      connector.ownership == .required(for: connector.connector),
                       !connector.directions.isEmpty, !connector.methods.isEmpty else {
                     return false
                 }
@@ -1477,7 +1907,7 @@ enum WalletNetworkCatalog {
         nativeAssetID: "eip155:1/slip44:60", nativeSymbol: "ETH", nativeDecimals: 18,
         explorerTransactionURLTemplate: "https://etherscan.io/tx/{transaction}",
         staticallyReviewedCapabilities: [
-            .nativeTransfer, .fungibleTokenTransfer, .exactInputSwap,
+            .nativeTransfer, .fungibleTokenTransfer, .nftTransfer, .exactInputSwap,
             .reviewedCall, .embeddedBrowser, .externalWallet, .walletConnect,
             .standardizedSignIn, .autonomousPolicy,
         ]
@@ -1502,7 +1932,7 @@ enum WalletNetworkCatalog {
         nativeAssetID: "solana:mainnet-beta/slip44:501", nativeSymbol: "SOL", nativeDecimals: 9,
         explorerTransactionURLTemplate: "https://explorer.solana.com/tx/{transaction}",
         staticallyReviewedCapabilities: [
-            .nativeTransfer, .fungibleTokenTransfer, .autonomousPolicy,
+            .nativeTransfer, .fungibleTokenTransfer, .nftTransfer, .autonomousPolicy,
             .embeddedBrowser, .externalWallet, .walletConnect, .standardizedSignIn,
         ]
     )

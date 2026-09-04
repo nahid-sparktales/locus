@@ -5,6 +5,6 @@
   "upstream_path": "commands/gsd/ns-ideate.md",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic",
+  "activation": "explicit",
   "adaptation": "Locus-native router; no Node runtime or hooks"
 }

@@ -87,7 +87,31 @@ private final class WalletConnectorWebDriver: WalletConnectorDriver {
             operation: "connect", connector: connector,
             payload: ["request": try runtime.jsonObject(request)]
         )
-        return try session(payload)
+        let connected = try session(payload)
+        let namespaces = Dictionary(grouping: connected.networkIDs) { networkID in
+            WalletConnectionNamespace.forNetworkID(networkID)
+        }.compactMap { namespace, networkIDs -> WalletConnectionNamespaceProposal? in
+            guard let namespace else { return nil }
+            return WalletConnectionNamespaceProposal(
+                namespace: namespace,
+                networkIDs: Set(networkIDs),
+                methods: connected.approvedMethods,
+                events: [.accountsChanged, .networkChanged, .disconnected]
+            )
+        }
+        let review = WalletConnectionProposalReview(
+            requestID: connected.connectionID,
+            peerName: connected.peerName,
+            peerURL: connected.peerURL,
+            namespaces: namespaces,
+            accounts: connected.accounts,
+            expiresAt: min(connected.expiresAt, request.expiresAt)
+        )
+        guard await approve(review) else {
+            await disconnect(connectionID: connected.connectionID)
+            throw WalletConnectorRuntimeError.sdkFailure("The connection was rejected in Locus.")
+        }
+        return connected
     }
 
     func execute(_ request: WalletExternalExecutionRequest) async throws

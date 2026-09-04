@@ -93,6 +93,26 @@
             value = "$(LOCUS_SOLANA_VALIDATOR_VERSION)"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER"
+            value = "$(LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LOCUS_SUI_LOCALNET_FAUCET_URL"
+            value = "$(LOCUS_SUI_LOCALNET_FAUCET_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LOCUS_SUI_LOCALNET_GRAPHQL_URL"
+            value = "$(LOCUS_SUI_LOCALNET_GRAPHQL_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LOCUS_SUI_LOCALNET_VERSION"
+            value = "$(LOCUS_SUI_LOCALNET_VERSION)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </TestAction>
    <LaunchAction

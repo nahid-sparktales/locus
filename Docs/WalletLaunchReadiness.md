@@ -27,6 +27,10 @@ absent from release manifests.
 
 ## Engineering implementation
 
+Checked implementation entries identify source and fixture coverage, not release
+approval. Every execution result must be repeated and attributed to the final
+clean candidate revision before canary activation.
+
 - [x] Isolated branch/worktree from recorded `origin/main` commit.
 - [x] Signer protocol v3 and canonical Ethereum/Solana/Sui network identities.
 - [x] Schema-v2 public connection records with account ownership, connection
@@ -56,7 +60,14 @@ absent from release manifests.
 - [x] Network-disabled recovery window and one-time authenticated signer channel.
 - [x] Preview-vault rotation and recovery-only retention.
 - [x] Public SQLite store and network-scoped browser grants.
-- [x] Evidence-bound canary/GA manifest and default-deny packaging.
+- [x] Evidence-bound canary/GA capability manifest and default-deny packaging.
+- [ ] Post-package activation, signer-owned rollback protection, signed finite
+  canary limits, exact connector ownership/configuration, and reviewed provider
+  identity gates pass the integrated candidate regression suite.
+- [ ] Dormant archive/export packaging passes on the release-signing Mac and an
+  independent clean Mac. `Tools/ArchiveWalletRelease.sh` uses Xcode Developer ID
+  export with the nested signer provisioning profiles; exported-artifact
+  packaging performs no plist/resource/signature rewriting.
 - [x] Signed review manifests for curated assets, exact EVM contracts,
   explorers, and compiled adapters, with intersection-only emergency updates.
 - [x] Indexed Ethereum inbound/outbound activity reconciliation and quarantine
@@ -193,8 +204,9 @@ absent from release manifests.
   dual-provider on-chain V2/V3 quote reproduction, 60-second evidence, 500-bps
   maximum slippage, the Swap UI, exact finite ERC-20/Permit2 setup, dapp
   `needsAllowance`, and post-submit semantic reconciliation are implemented.
-  V4, native wrapping, sub-plans, and independent Anvil execution fixtures
-  remain unavailable.
+  V4, native wrapping, and sub-plans remain unavailable. The remaining
+  stateful Anvil settlement and failure fixtures are tracked as unchecked
+  engineering gates below.
 - [x] MetaMask, Phantom, Slush, embedded EIP-1193/EIP-6963, Solana/Sui Wallet
   Standard, and WalletConnect runtime/lifecycle paths are present behind exact
   signed connector gates. Reown Swift 2.3.2 is vendored from its exact archive,
@@ -234,13 +246,15 @@ batching; Uniswap V4; Jupiter; and Cetus.
   local-chain matrix below.
 - [ ] Solana local-validator SPL and standalone Core state-transition fixtures
   cover every enabled fungible and collectible path.
-- [ ] Sui localnet equivalent suite using the production gRPC/GraphQL path.
+- [ ] Sui `testnet-v1.79.0` localnet equivalent suite using the production
+  GraphQL path and Debug-only loopback initialization. gRPC migration is deferred.
 - [x] Checked-in deterministic fuzz-smoke corpora mutate EVM calldata, Solana
   messages/instructions, Sui BCS, connection metadata, namespace proposals,
   provider envelopes, canonical sign-in, quote arithmetic, and Rust FFI
   requests with bounded inputs and responses on every CI run.
 - [ ] Continuous sanitizer-backed fuzz campaigns and their release-duration
-  evidence are complete.
+  evidence are complete: PR corpus replay and 60 seconds/target, nightly
+  30 minutes/target, and 24 clean CPU-hours/target on the exact canary revision.
 - [x] Connector-driver fixtures cover approval, rejection, timeout/vendor
   failure, missing configuration, restore, account/network change, disconnect,
   expiry, and suspend/reconnect behavior.
@@ -261,29 +275,50 @@ batching; Uniswap V4; Jupiter; and Cetus.
 - [ ] Independent cryptography/signer audit: zero unresolved critical/high.
 - [ ] Separate application/dapp penetration test: zero unresolved critical/high.
 - [ ] Counsel-approved regional capability matrix.
+- [ ] Counsel approves Reown terms and Phantom embedded-wallet beta terms.
+- [ ] `derivation_reproduction`: three independently maintained stacks reproduce
+  the public derivation fixture with attributable source/library identities.
+- [ ] `release_candidate_build`: the exact dormant export, CodeDirectory
+  identities, archive hash, and source revision are approved after packaging.
 - [ ] Provider capacity, identity, disagreement, and failover load test.
 - [ ] Incident drill: disable one chain/adapter, revoke sessions, ship signed
   update, restore on a clean Mac, and prove funds remain recoverable.
 - [ ] Notarized canary artifact and stapled-ticket verification.
 - [ ] Signed update feed verification.
 
-Only after these artifacts exist may a schema-v3 `invited_canary` manifest be
-signed. Canary distribution remains invited and limited-fund.
+Only after these artifacts exist may the post-package activation envelope for
+the schema-v3 `invited_canary` capability manifest be signed and published.
+Ethereum, Solana, and Sui activate together. Every enabled asset/action and
+ownership model requires signed finite per-action and cumulative limits;
+collectibles are restricted to explicitly reviewed low-value identities.
+The soak begins only when the exact notarized build, activation revision, and
+invited cohort are simultaneously available.
 
 ## Public GA evidence
 
 - [ ] At least 30 days of invited release-candidate soak.
 - [ ] At least 25 external testers.
 - [ ] At least 100 successful transactions per chain covering every supported
-  action and connection path.
+  action and connection path, with explicit connector/direction/method coverage
+  rather than an inferred global capability cross-product.
 - [ ] Zero unauthorized signing, secret exposure, unrecoverable vault,
   unresolved broadcast ambiguity, or loss-producing decoder discrepancy.
 - [ ] Wallet terms, privacy, recovery, provider disclosures, support, security
   contact, incident response, and funded reward program approved for publication.
 - [ ] Support and security response staffed for the published service levels.
+- [ ] Attributable `release_candidate_soak`, `publication_disclosures`, and
+  `support_security_readiness` approvals accompany schema-v2 launch evidence.
 - [ ] All CI/release gates green from a clean branch.
 - [ ] Final notarized artifact and signed update feed independently verified.
 
-The signing tool enforces the numeric soak thresholds and binds the evidence
-index hash into a `general_availability` manifest. Packaging rejects a GA build
-whose signed manifest has another stage.
+The signing tool enforces the numeric soak thresholds and binds the schema-v2
+evidence index hash into a `general_availability` manifest. Both canary and GA
+artifacts are packaged dormant; their post-package activation binds the exact
+exported identities, archive hash, source revision, release stage, issue/expiry
+times, and monotonic revision. See [WalletReleasePackaging.md](WalletReleasePackaging.md).
+
+Any security-boundary, dependency, decoder, preparer, signer, manifest, or
+connector change after activation invalidates downstream evidence and restarts
+the soak. A defined security-loss event requires a new candidate. Reports,
+credentials, provider contracts, tester identities, and staffing evidence remain
+outside the repository and are never completed automatically by these tools.

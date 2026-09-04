@@ -94,27 +94,28 @@ struct WalletExternalConnectorDescriptor: Identifiable, Equatable, Sendable {
     var id: String { kind.rawValue }
     let kind: WalletExternalConnectorID
     let name: String
-    let supportedTestNetworks: Set<String>
+    let supportedNetworks: Set<String>
     let transport: String
     let documentationURL: URL
     let state: WalletExternalConnectorState
 }
 
 /// Non-secret connector metadata and rollout order. The connector foundations
-/// deliberately expose no generic signing primitive and do not enable native
-/// mainnet, Solana, or Sui signing.
+/// deliberately expose no generic signing primitive. Runtime availability is
+/// always the intersection of this ceiling, the signed launch grant, and the
+/// signed connector review identity.
 enum WalletExternalConnectorCatalog {
     static let connectors: [WalletExternalConnectorDescriptor] = [
         WalletExternalConnectorDescriptor(
             kind: .metamask, name: "MetaMask",
-            supportedTestNetworks: ["eip155:11155111"],
+            supportedNetworks: ["eip155:1", "eip155:11155111"],
             transport: "MetaMask Connect · wallet-owned confirmation",
             documentationURL: URL(string: "https://docs.metamask.io/")!,
             state: .foundationReady
         ),
         WalletExternalConnectorDescriptor(
             kind: .phantom, name: "Phantom",
-            supportedTestNetworks: ["solana:devnet"],
+            supportedNetworks: ["solana:mainnet-beta", "solana:devnet"],
             transport: "Phantom embedded user wallet · exact Locus review",
             documentationURL: URL(
                 string: "https://docs.phantom.com/sdks/browser-sdk"
@@ -123,7 +124,7 @@ enum WalletExternalConnectorCatalog {
         ),
         WalletExternalConnectorDescriptor(
             kind: .slush, name: "Slush",
-            supportedTestNetworks: ["sui:testnet"],
+            supportedNetworks: ["sui:mainnet", "sui:testnet"],
             transport: "Sui Wallet Standard · wallet-owned confirmation",
             documentationURL: URL(string: "https://docs.sui.io/standards/wallet-standard")!,
             state: .foundationReady
@@ -533,6 +534,11 @@ protocol WalletSignerClient: AnyObject {
     var sessionID: String? { get }
     var invalidationHandler: (() -> Void)? { get set }
     func signerStatus() async throws -> WalletSignerStatus
+    #if LOCUS_DIRECT_DOWNLOAD
+    func applyReleaseActivation(
+        _ envelope: WalletSignedReleaseActivationEnvelope
+    ) async throws -> WalletReleaseActivationStatus
+    #endif
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus
     func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus
     func authorizeSession() async throws
@@ -547,6 +553,7 @@ protocol WalletSignerClient: AnyObject {
     ) async throws -> WalletPreparedTransaction
     func simulate(intentID: String) async throws -> WalletPreparedTransaction
     func confirmExecution(intentID: String) async throws
+    func cancelPreparation(intentID: String)
     func execute(intentID: String) async throws -> [String: Any]
     func activatePolicy(_ policy: WalletSessionPolicy) async throws -> [WalletActivePolicyStatus]
     func listPolicies() async throws -> [WalletActivePolicyStatus]
@@ -564,6 +571,8 @@ protocol WalletSignerClient: AnyObject {
 }
 
 extension WalletSignerClient {
+    func cancelPreparation(intentID: String) {}
+
     func quoteUniswap(
         request: WalletUniswapQuoteRequest,
         configuration: WalletReviewedUniswapConfiguration
@@ -578,6 +587,14 @@ final class UnavailableWalletSignerClient: WalletSignerClient {
     let sessionID: String? = nil
     var invalidationHandler: (() -> Void)?
     func signerStatus() async throws -> WalletSignerStatus { throw WalletGateway.Error.signerUnavailable }
+    #if LOCUS_DIRECT_DOWNLOAD
+    func applyReleaseActivation(
+        _ envelope: WalletSignedReleaseActivationEnvelope
+    ) async throws -> WalletReleaseActivationStatus {
+        _ = envelope
+        throw WalletGateway.Error.signerUnavailable
+    }
+    #endif
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
         throw WalletGateway.Error.signerUnavailable
     }
@@ -712,12 +729,28 @@ final class WalletGateway: ObservableObject {
     private let recoveryView: WalletRecoveryViewClient
     private let userDefaults: UserDefaults
     private let publicStore: WalletPublicStore?
-    private let launchGate: WalletLaunchGate
-    private let reviewRegistry: WalletReviewRegistry?
+    private var launchGate: WalletLaunchGate
+    private var reviewRegistry: WalletReviewRegistry?
+    #if LOCUS_DIRECT_DOWNLOAD
+    private let bundledReviewCeiling: WalletReviewRegistry?
+    private let activationPublicKey: Curve25519.Signing.PublicKey?
+    private let installedReleaseIdentity: WalletInstalledReleaseIdentity?
+    private let releaseActivationURL: URL?
+    private let usesBundledReleaseActivation: Bool
+    private var appliedActivationDigest: String?
+    private var activationExpiryTask: Task<Void, Never>?
+    private var activationRefreshTask: Task<Void, Never>?
+    private var activationRefreshTimer: Timer?
+    private var activationWakeObserver: NSObjectProtocol?
+    private var activationForegroundObserver: NSObjectProtocol?
+    private var appliedActivationRevision = 0
+    #endif
     private let regionCode: String
     let buildSupportsWalletAlpha: Bool
     private var prepared: [String: WalletPreparedTransaction] = [:]
     private var confirmedIntentIDs: Set<String> = []
+    private var connectionIntentBindings: [String: WalletConnectionRequestBinding] = [:]
+    private var executingIntentIDs: Set<String> = []
     private let registryDefaultsKey = "LocusWalletContractRegistryV1"
     private let policyTemplatesDefaultsKey = "LocusWalletPolicyTemplatesV1"
     private let activityDefaultsKey = "LocusWalletActivityV1"
@@ -728,6 +761,7 @@ final class WalletGateway: ObservableObject {
     private var browserGrantContinuation: CheckedContinuation<Bool, Never>?
     private var connectionProposalContinuation: CheckedContinuation<Bool, Never>?
     private var confirmationContinuations: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var consumedPairingDigests: [String: Date] = [:]
     private var uiFixtureHubState: WalletHubState?
     private var activeSwapQuoteAccountID: String?
     private var idleLockTimer: Timer?
@@ -754,10 +788,16 @@ final class WalletGateway: ObservableObject {
             environment: environment,
             buildSupportsWallet: buildSupportsWalletAlpha
         )
-        self.launchGate = launchGate
-            ?? Self.loadBundledLaunchGate()
-            ?? (try! WalletLaunchGate())
-        self.reviewRegistry = reviewRegistry ?? Self.loadBundledReviewRegistry()
+        let bundledReview = reviewRegistry ?? Self.loadBundledReviewRegistry()
+        self.launchGate = launchGate ?? (try! WalletLaunchGate())
+        self.reviewRegistry = bundledReview
+        #if LOCUS_DIRECT_DOWNLOAD
+        bundledReviewCeiling = bundledReview
+        activationPublicKey = Self.loadBundledActivationPublicKey()
+        installedReleaseIdentity = WalletInstalledReleaseIdentity.current()
+        releaseActivationURL = WalletReleaseActivationSource.endpoint()
+        usesBundledReleaseActivation = launchGate == nil && reviewRegistry == nil
+        #endif
         self.regionCode = regionCode.uppercased()
         self.buildSupportsWalletAlpha = buildSupportsWalletAlpha
         let legacyWalletEnabled = buildSupportsWalletAlpha
@@ -852,10 +892,43 @@ final class WalletGateway: ObservableObject {
         #if DEBUG
         configureUIFixture(environment: environment)
         #endif
+        #if LOCUS_DIRECT_DOWNLOAD
+        if buildSupportsWalletAlpha, usesBundledReleaseActivation,
+           activationPublicKey != nil, bundledReviewCeiling != nil,
+           environment["XCTestConfigurationFilePath"] == nil,
+           environment["LOCUS_UI_TESTING"] != "1" {
+            activationRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) {
+                [weak self] _ in
+                Task { @MainActor [weak self] in await self?.refreshReleaseActivation() }
+            }
+            activationWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in await self?.refreshReleaseActivation() }
+            }
+            activationForegroundObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in await self?.refreshReleaseActivation() }
+            }
+            Task { @MainActor [weak self] in await self?.refreshReleaseActivation() }
+        }
+        #endif
     }
 
     deinit {
         idleLockTimer?.invalidate()
+        #if LOCUS_DIRECT_DOWNLOAD
+        activationRefreshTimer?.invalidate()
+        activationRefreshTask?.cancel()
+        activationExpiryTask?.cancel()
+        if let activationWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationWakeObserver)
+        }
+        if let activationForegroundObserver {
+            NotificationCenter.default.removeObserver(activationForegroundObserver)
+        }
+        #endif
         if let localActivityMonitor { NSEvent.removeMonitor(localActivityMonitor) }
     }
 
@@ -870,6 +943,7 @@ final class WalletGateway: ObservableObject {
         return try? WalletPublicStore(url: url)
     }
 
+    #if LOCUS_DIRECT_DOWNLOAD
     private static func loadBundledLaunchGate(bundle: Bundle = .main) -> WalletLaunchGate? {
         let signerURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
@@ -892,10 +966,12 @@ final class WalletGateway: ObservableObject {
         ) else { return nil }
         return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
     }
+    #endif
 
     private static func loadBundledReviewRegistry(
         bundle: Bundle = .main
     ) -> WalletReviewRegistry? {
+        #if LOCUS_DIRECT_DOWNLOAD
         let signerURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("XPCServices", isDirectory: true)
@@ -918,7 +994,26 @@ final class WalletGateway: ObservableObject {
             WalletSignedReviewManifest.self, from: manifestData
         ) else { return nil }
         return try? WalletReviewRegistry(signedManifest: signed, publicKey: publicKey)
+        #else
+        // The App Store target has no signer, review configuration or activation.
+        return nil
+        #endif
     }
+
+    #if LOCUS_DIRECT_DOWNLOAD
+    private static func loadBundledActivationPublicKey(
+        bundle: Bundle = .main
+    ) -> Curve25519.Signing.PublicKey? {
+        let signerURL = bundle.bundleURL
+            .appendingPathComponent("Contents/XPCServices/WalletSigner.xpc")
+        guard let signerBundle = Bundle(url: signerURL),
+              let text = signerBundle.object(
+                forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+              ) as? String,
+              let data = Data(base64Encoded: text) else { return nil }
+        return try? Curve25519.Signing.PublicKey(rawRepresentation: data)
+    }
+    #endif
 
     private static func mergeReviewedAssets(
         signed: [WalletAsset], stored: [WalletAsset]
@@ -1025,6 +1120,10 @@ final class WalletGateway: ObservableObject {
     var signerAvailable: Bool { signer.isAvailable }
     var connectionHelperAvailable: Bool { connectionsClient.isAvailable }
 
+    func reportConnectionIntakeError(_ error: Swift.Error) {
+        lastError = error.localizedDescription
+    }
+
     var hubState: WalletHubState {
         if let uiFixtureHubState { return uiFixtureHubState }
         guard buildSupportsWalletAlpha else { return .unavailableBuild }
@@ -1040,8 +1139,192 @@ final class WalletGateway: ObservableObject {
     }
 
     func refreshStatus() async {
+        #if LOCUS_DIRECT_DOWNLOAD
+        await refreshReleaseActivation()
+        #endif
         await refreshStatus(clearErrorOnSuccess: true)
         await refreshConnections(clearErrorOnSuccess: false)
+    }
+
+    #if LOCUS_DIRECT_DOWNLOAD
+    private func refreshReleaseActivation() async {
+        if let activationRefreshTask {
+            await activationRefreshTask.value
+            return
+        }
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performReleaseActivationRefresh()
+        }
+        activationRefreshTask = task
+        await task.value
+        activationRefreshTask = nil
+    }
+
+    private func performReleaseActivationRefresh() async {
+        guard usesBundledReleaseActivation,
+              let publicKey = activationPublicKey,
+              let ceiling = bundledReviewCeiling,
+              let identity = installedReleaseIdentity else { return }
+        var candidates: [Data] = []
+        if let url = releaseActivationURL,
+           let remote = try? await WalletReleaseActivationSource.fetch(from: url) {
+            candidates.append(remote)
+        }
+        if let cached = WalletReleaseActivationCache.load(),
+           !candidates.contains(cached) {
+            candidates.append(cached)
+        }
+        for data in candidates {
+            do {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let signed = try decoder.decode(
+                    WalletSignedReleaseActivationEnvelope.self, from: data
+                )
+                let verified = try WalletReleaseActivationVerifier.verify(
+                    signed,
+                    publicKey: publicKey,
+                    bundledReviewCeiling: ceiling,
+                    installedIdentity: identity,
+                    minimumRevision: appliedActivationRevision,
+                    acceptedEnvelopeSHA256: appliedActivationDigest
+                )
+                let signerStatus = try await signer.applyReleaseActivation(signed)
+                guard let enabledNetworks = verified.launchGate.effectiveManifest?
+                    .enabledNetworkIDs else {
+                    throw WalletReleaseActivationError.malformed
+                }
+                guard signerStatus.revision == signed.envelope.revision,
+                      signerStatus.envelopeSHA256 == verified.envelopeSHA256,
+                      signerStatus.expiresAt == signed.envelope.expiresAt,
+                      signerStatus.enabledNetworkIDs == enabledNetworks else {
+                    throw WalletReleaseActivationError.identityMismatch
+                }
+                let isNewAuthority = verified.signedEnvelope.envelope.revision
+                    != appliedActivationRevision
+                launchGate = verified.launchGate
+                reviewRegistry = verified.reviewRegistry
+                appliedActivationRevision = verified.signedEnvelope.envelope.revision
+                appliedActivationDigest = verified.envelopeSHA256
+                if isNewAuthority {
+                    activationExpiryTask?.cancel()
+                    let expiresAt = min(signed.envelope.capabilityManifest.manifest.expiresAt,
+                        verified.reviewRegistry.manifest.expiresAt)
+                    activationExpiryTask = Task { [weak self] in
+                        do {
+                            try await Task.sleep(for: .seconds(max(0, expiresAt.timeIntervalSinceNow)))
+                        } catch { return }
+                        guard let self,
+                              self.appliedActivationDigest == verified.envelopeSHA256 else { return }
+                        self.launchGate = try! WalletLaunchGate()
+                        self.reviewRegistry = self.bundledReviewCeiling
+                        WalletReleaseActivationCache.remove()
+                        await self.cancelAuthorityAffectedByActivation()
+                    }
+                    await cancelAuthorityAffectedByActivation()
+                }
+                // Persistence is a best-effort optimization, never a condition
+                // for enforcing authority already accepted by both processes.
+                try? WalletReleaseActivationCache.store(data)
+                return
+            } catch {
+                continue
+            }
+        }
+        if let expiry = launchGate.effectiveManifest?.expiresAt, expiry <= Date() {
+            launchGate = try! WalletLaunchGate()
+            reviewRegistry = ceiling
+            WalletReleaseActivationCache.remove()
+            await cancelAuthorityAffectedByActivation()
+        }
+    }
+
+    private func cancelAuthorityAffectedByActivation() async {
+        requestRouter.cancel(reason: .walletDisabled)
+        for intentID in Array(confirmationContinuations.keys) {
+            cancelConfirmation(intentID: intentID)
+        }
+        prepared.removeAll(keepingCapacity: false)
+        confirmedIntentIDs.removeAll(keepingCapacity: false)
+        pendingConfirmation = nil
+        currentSwapQuote = nil
+        currentSwapAllowance = .unchecked
+        activePolicies = []
+        activePolicyStatuses = []
+
+        let activeConnections = connections.filter { !$0.state.isTerminal }
+        for connection in activeConnections {
+            let authorized = connection.networkIDs.allSatisfy { networkID in
+                (try? authorizeProviderBindings(networkID: networkID)) != nil
+                    && connection.approvedMethods.allSatisfy { method in
+                    (try? launchGate.authorizeConnection(
+                        networkID: networkID,
+                        connector: connection.connector,
+                        direction: connection.direction,
+                        method: method,
+                        regionCode: regionCode
+                    )) != nil
+                        && reviewRegistry?.containsConnector(
+                            connection.connector,
+                            direction: connection.direction,
+                            method: method
+                        ) == true
+                }
+            }
+            guard !authorized else { continue }
+            if connection.connector == .embeddedBrowser,
+               let origin = connection.peerURL {
+                revokeBrowserOrigin(origin, reason: .walletDisabled)
+            } else {
+                await disconnectWalletConnection(id: connection.id)
+            }
+        }
+
+        if let publicStore {
+            let storedAssets = (try? publicStore.loadAssets()) ?? []
+            assets = Self.mergeReviewedAssets(
+                signed: reviewRegistry?.assets ?? [], stored: storedAssets
+            )
+        }
+        let retainedLocalContracts = contractRegistry.filter {
+            WalletReviewedAdapters.validatedID(for: $0) == nil
+        }
+        contractRegistry = Self.mergeReviewedContracts(
+            signed: reviewRegistry?.evmContracts ?? [], local: retainedLocalContracts
+        )
+    }
+    #endif
+
+    private func authorizeProviderBindings(networkID: String) throws {
+        #if LOCUS_DIRECT_DOWNLOAD
+        guard usesBundledReleaseActivation,
+              let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.environment == .mainnet else { return }
+        guard let reviewRegistry, reviewRegistry.manifest.expiresAt > Date() else {
+            throw Error.policyDenied("This network has no current provider review.")
+        }
+        let endpoints: [WalletProviderEndpoint]
+        switch network.chain {
+        case .evm:
+            guard let config = WalletBundledProviderConfiguration.ethereum(network: network)
+            else { throw Error.policyDenied("Reviewed Ethereum providers are unavailable.") }
+            endpoints = [config.primary, config.fallback].compactMap { $0 }
+        case .solana:
+            guard let config = WalletSolanaProviderConfiguration.bundled(network: network)
+            else { throw Error.policyDenied("Reviewed Solana providers are unavailable.") }
+            endpoints = [config.primary, config.fallback].compactMap { $0 }
+        case .sui:
+            guard let config = WalletSuiProviderConfiguration.bundled(network: network)
+            else { throw Error.policyDenied("Reviewed Sui providers are unavailable.") }
+            endpoints = [config.primary, config.fallback].compactMap { $0 }
+        }
+        guard endpoints.count == 2, endpoints.allSatisfy(reviewRegistry.containsProvider) else {
+            throw Error.policyDenied("The active release no longer approves this network's configured providers.")
+        }
+        #else
+        throw Error.signerUnavailable
+        #endif
     }
 
     private func refreshStatus(clearErrorOnSuccess: Bool) async {
@@ -1073,6 +1356,7 @@ final class WalletGateway: ObservableObject {
     }
 
     private func refreshConnections(clearErrorOnSuccess: Bool) async {
+        guard uiFixtureHubState == nil else { return }
         guard buildSupportsWalletAlpha, walletEnabled, connectionsClient.isAvailable else {
             return
         }
@@ -1084,29 +1368,88 @@ final class WalletGateway: ObservableObject {
         }
     }
 
-    @discardableResult
-    func beginExternalWalletConnection(_ connector: WalletExternalConnectorID) async -> Bool {
-        guard walletEnabled, connectionsClient.isAvailable,
-              let descriptor = WalletExternalConnectorCatalog.connectors.first(
-                where: { $0.kind == connector }
-              ) else {
-            lastError = Error.connectionHelperUnavailable.localizedDescription
-            return false
-        }
-        let methods: Set<WalletConnectionMethod> = switch connector {
+    func availableExternalConnectionNetworks(
+        for connector: WalletExternalConnectorID
+    ) -> [WalletNetworkDescriptor] {
+        guard let descriptor = WalletExternalConnectorCatalog.connectors.first(
+            where: { $0.kind == connector }
+        ) else { return [] }
+        let connectionConnector = WalletConnectionConnector(rawValue: connector.rawValue)!
+        return descriptor.supportedNetworks.compactMap(WalletNetworkCatalog.descriptor(id:))
+            .filter { network in
+                externalConnectionMethods(
+                    connector: connectionConnector, networkID: network.id
+                ).contains(.sendTransaction)
+            }
+            .sorted { lhs, rhs in
+                if lhs.environment != rhs.environment {
+                    return lhs.environment == .testnet
+                }
+                return lhs.displayName < rhs.displayName
+            }
+    }
+
+    func externalConnectionMethods(
+        connector: WalletConnectionConnector,
+        networkID: String
+    ) -> Set<WalletConnectionMethod> {
+        let candidates: Set<WalletConnectionMethod> = switch connector {
         case .metamask:
             [.listAccounts, .switchNetwork, .sendTransaction, .signInWithEthereum]
         case .phantom:
             [.listAccounts, .switchNetwork, .sendTransaction, .signInWithSolana]
         case .slush:
             [.listAccounts, .switchNetwork, .sendTransaction]
+        case .embeddedBrowser, .walletConnect:
+            []
+        }
+        return Set(candidates.filter { method in
+            Self.method(method, appliesTo: networkID, connector: connector)
+                && (try? launchGate.authorizeConnection(
+                    networkID: networkID,
+                    connector: connector,
+                    direction: .externalAccountToLocus,
+                    method: method,
+                    regionCode: regionCode
+                )) != nil
+                && reviewRegistry?.containsConnector(
+                    connector,
+                    direction: .externalAccountToLocus,
+                    method: method
+                ) == true
+        })
+    }
+
+    @discardableResult
+    func beginExternalWalletConnection(
+        _ connector: WalletExternalConnectorID,
+        networkID: String,
+        methods requestedMethods: Set<WalletConnectionMethod>
+    ) async -> Bool {
+        guard walletEnabled, connectionsClient.isAvailable,
+              let descriptor = WalletExternalConnectorCatalog.connectors.first(
+                where: { $0.kind == connector }
+              ), descriptor.supportedNetworks.contains(networkID) else {
+            lastError = Error.connectionHelperUnavailable.localizedDescription
+            return false
+        }
+        let connectionConnector = WalletConnectionConnector(rawValue: connector.rawValue)!
+        let allowedMethods = externalConnectionMethods(
+            connector: connectionConnector, networkID: networkID
+        )
+        guard !requestedMethods.isEmpty,
+              requestedMethods.isSubset(of: allowedMethods),
+              requestedMethods.contains(.listAccounts),
+              requestedMethods.contains(.sendTransaction) else {
+            lastError = WalletLaunchGateError.connectorNotReviewed.localizedDescription
+            return false
         }
         let request = WalletConnectorPairingRequest(
             requestID: UUID().uuidString.lowercased(),
-            connector: WalletConnectionConnector(rawValue: connector.rawValue)!,
+            connector: connectionConnector,
             direction: .externalAccountToLocus,
-            requestedNetworkIDs: descriptor.supportedTestNetworks,
-            requestedMethods: methods,
+            requestedNetworkIDs: [networkID],
+            requestedMethods: requestedMethods,
             expiresAt: Date().addingTimeInterval(10 * 60)
         )
         do {
@@ -1123,6 +1466,27 @@ final class WalletGateway: ObservableObject {
 
     @discardableResult
     func beginWalletConnectPairing(uri: String) async -> Bool {
+        #if LOCUS_DIRECT_DOWNLOAD
+        let pairingURI: String
+        let pairingDigest: String
+        do {
+            pairingURI = try WalletPairingURIIntake.validated(uri)
+            pairingDigest = WalletPairingURIIntake.digest(pairingURI)
+            let now = Date()
+            consumedPairingDigests = consumedPairingDigests.filter { $0.value > now }
+            guard consumedPairingDigests[pairingDigest] == nil else {
+                throw WalletConnectorRuntimeError.duplicateRequest
+            }
+            consumedPairingDigests[pairingDigest] = now.addingTimeInterval(7 * 24 * 60 * 60)
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+        #else
+        let pairingURI = uri
+        lastError = Error.connectionHelperUnavailable.localizedDescription
+        return false
+        #endif
         let candidates = accounts.filter {
             $0.ownership == .locusVault && !$0.networkIDs.isEmpty
         }
@@ -1168,7 +1532,7 @@ final class WalletGateway: ObservableObject {
             requestedNetworkIDs: networkIDs,
             requestedMethods: methods,
             expiresAt: Date().addingTimeInterval(10 * 60),
-            pairingURI: uri.trimmingCharacters(in: .whitespacesAndNewlines),
+            pairingURI: pairingURI,
             offeredAccounts: offered
         )
         do {
@@ -1181,6 +1545,23 @@ final class WalletGateway: ObservableObject {
             await refreshConnections(clearErrorOnSuccess: false)
             return false
         }
+    }
+
+    @discardableResult
+    func beginWalletConnectPairing(deepLink: URL) async -> Bool {
+        #if LOCUS_DIRECT_DOWNLOAD
+        do {
+            return await beginWalletConnectPairing(
+                uri: try WalletPairingURIIntake.pairingURI(fromDeepLink: deepLink)
+            )
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+        #else
+        _ = deepLink
+        return false
+        #endif
     }
 
     func resolveConnectionProposal(approved: Bool) {
@@ -1257,7 +1638,12 @@ final class WalletGateway: ObservableObject {
     }
 
     func disconnectWalletConnection(id: String) async {
-        requestRouter.cancel(connectionID: id, reason: .disconnected)
+        cancelConnectionAuthority(connectionID: id, reason: .disconnected)
+        if let index = connections.firstIndex(where: { $0.id == id }),
+           let revoked = connections[index].transitioning(to: .revoked) {
+            connections[index] = revoked
+            try? publicStore?.upsertConnection(revoked)
+        }
         do {
             applyConnectionStatus(try await connectionsClient.disconnect(connectionID: id))
             lastError = nil
@@ -2772,6 +3158,13 @@ final class WalletGateway: ObservableObject {
             case .embeddedBrowser:
                 return false
             }
+        }.map { connection in
+            // A late vendor callback cannot resurrect an explicitly revoked
+            // local session. Reconnection creates a new reviewed connection ID.
+            if let previous = priorByID[connection.id], previous.state == .revoked {
+                return previous
+            }
+            return connection
         }
         let validExternalAccounts = serviceStatus.accounts.filter { account in
             guard let connectorID = account.ownership.connectorID else { return false }
@@ -2782,27 +3175,40 @@ final class WalletGateway: ObservableObject {
                     && (connection.state == .connected || connection.state == .reconnecting)
             }
         }
+        let replacedAccountIDs = Set(validExternalAccounts.compactMap { current in
+            accounts.first(where: { $0.id == current.id }).flatMap {
+                $0 == current ? nil : current.id
+            }
+        })
         connections = (preservedLocalConnections + validConnections).sorted {
             $0.updatedAt > $1.updatedAt
         }
         let currentHelperConnectionIDs = Set(validConnections.map(\.id))
         for removedID in priorHelperConnectionIDs.subtracting(currentHelperConnectionIDs) {
-            requestRouter.cancel(connectionID: removedID, reason: .disconnected)
+            cancelConnectionAuthority(connectionID: removedID, reason: .disconnected,
+                                      previous: priorByID[removedID])
         }
         for current in validConnections {
             if current.state == .expired {
-                requestRouter.cancel(connectionID: current.id, reason: .expired)
+                cancelConnectionAuthority(connectionID: current.id, reason: .expired,
+                                          previous: priorByID[current.id])
             } else if current.state.isTerminal || current.state == .reconnecting {
-                requestRouter.cancel(connectionID: current.id, reason: .disconnected)
+                cancelConnectionAuthority(connectionID: current.id, reason: .disconnected,
+                                          previous: priorByID[current.id])
             } else if let prior = priorByID[current.id] {
-                if prior.accountIDs != current.accountIDs {
-                    requestRouter.cancel(
-                        connectionID: current.id, reason: .accountChanged
-                    )
+                if prior.accountIDs != current.accountIDs
+                    || !prior.accountIDs.isDisjoint(with: replacedAccountIDs) {
+                    cancelConnectionAuthority(connectionID: current.id, reason: .accountChanged,
+                                              previous: prior)
                 } else if prior.networkIDs != current.networkIDs {
-                    requestRouter.cancel(
-                        connectionID: current.id, reason: .networkChanged
-                    )
+                    cancelConnectionAuthority(connectionID: current.id, reason: .networkChanged,
+                                              previous: prior)
+                } else if prior.approvedMethods != current.approvedMethods
+                            || prior.peerID != current.peerID || prior.peerURL != current.peerURL
+                            || prior.accountOwnership != current.accountOwnership
+                            || current.expiresAt < prior.expiresAt {
+                    cancelConnectionAuthority(connectionID: current.id, reason: .disconnected,
+                                              previous: prior)
                 }
             }
         }
@@ -2811,6 +3217,34 @@ final class WalletGateway: ObservableObject {
         synchronizeAccountSnapshots(with: accounts)
         for connection in validConnections {
             try? publicStore?.upsertConnection(connection)
+        }
+    }
+
+    private func cancelConnectionAuthority(
+        connectionID: String,
+        reason: WalletConnectionCancellationReason,
+        previous: WalletConnectionRecord? = nil
+    ) {
+        let connection = previous ?? connections.first { $0.id == connectionID }
+        requestRouter.cancel(connectionID: connectionID, reason: reason)
+        let intentIDs = prepared.values.filter { intent in
+            if connectionIntentBindings[intent.id]?.connectionID == connectionID { return true }
+            guard let connection else { return false }
+            if connection.direction == .externalAccountToLocus {
+                return connection.accountIDs.contains(intent.accountID)
+            }
+            return connection.peerID != nil && intent.source.kind == .walletConnectPeer
+                && intent.source.peerID == connection.peerID
+        }.map(\.id)
+        for intentID in intentIDs { cancelConfirmation(intentID: intentID) }
+        if let accountID = activeSwapQuoteAccountID,
+           connection?.accountIDs.contains(accountID) == true {
+            currentSwapQuote = nil
+            currentSwapAllowance = .unchecked
+            activeSwapQuoteAccountID = nil
+        }
+        if pendingConnectionProposal?.requestID == connectionID {
+            resolveConnectionProposal(approved: false)
         }
     }
 
@@ -2824,12 +3258,16 @@ final class WalletGateway: ObservableObject {
         let evmAddress = "0x8Ba1f109551bD432803012645Ac136ddd64DBA72"
         let evm = WalletAccount(
             id: "wallet-fixture-evm", chain: .evm, address: evmAddress,
-            label: "Sepolia account", networkIDs: [Self.sepoliaNetworkID]
+            label: "Sepolia account", networkIDs: [Self.sepoliaNetworkID],
+            ownership: fixture == "transaction-external"
+                ? .external(connectorID: .metamask) : .locusVault
         )
         let solana = WalletAccount(
             id: "wallet-fixture-solana", chain: .solana,
             address: "9xQeWvG816bUx9EPfEzphDFTeGmQqoZ8VjPzM8YjWm7k",
-            label: "Solana address", networkIDs: ["solana:devnet"]
+            label: "Solana address", networkIDs: ["solana:devnet"],
+            ownership: fixture == "transaction-managed"
+                ? .connectorManaged(connectorID: .phantom) : .locusVault
         )
         let sui = WalletAccount(
             id: "wallet-fixture-sui", chain: .sui,
@@ -2859,7 +3297,8 @@ final class WalletGateway: ObservableObject {
             uiFixtureHubState = .locked
             vaultState = .locked
             status = .locked
-        case "ready", "activity", "origin", "transaction":
+        case "ready", "activity", "origin", "transaction",
+             "transaction-external", "transaction-managed", "transaction-expiring":
             uiFixtureHubState = .ready
             vaultState = .unlocked
             status = .unlocked
@@ -2868,6 +3307,12 @@ final class WalletGateway: ObservableObject {
         }
 
         accounts = [evm, solana, sui]
+        if fixture == "transaction-external" || fixture == "transaction-managed" {
+            // These presentation fixtures own their synthetic public accounts.
+            // A real SDK startup callback must not replace them mid-review.
+            connectionsClient.invalidationHandler = nil
+            connectionsClient.statusChangeHandler = nil
+        }
         synchronizeAccountSnapshots(with: accounts)
         if let index = accountSnapshots.firstIndex(where: { $0.chain == .evm }) {
             accountSnapshots[index].balanceBaseUnits = "12500000000000000"
@@ -2916,31 +3361,39 @@ final class WalletGateway: ObservableObject {
                 id: UUID(), origin: "https://pay.example.com",
                 networkID: Self.sepoliaNetworkID
             )
-        } else if fixture == "transaction" {
+        } else if fixture.hasPrefix("transaction") {
+            let managed = fixture == "transaction-managed"
+            let external = fixture == "transaction-external" || managed
+            let account = managed ? solana : evm
+            let network = managed
+                ? WalletNetworkCatalog.solanaDevnet : WalletNetworkCatalog.ethereumSepolia
+            let amount = managed ? "10000000" : "10000000000000000"
+            let recipient = managed ? "11111111111111111111111111111111"
+                : "0x1111111111111111111111111111111111111111"
             pendingConfirmation = WalletPreparedTransaction(
                 id: "wallet-fixture-confirmation", digest: "0xfixture-digest",
-                networkID: Self.sepoliaNetworkID, accountID: evm.id,
-                source: .browser(origin: "https://pay.example.com"),
+                networkID: network.id, accountID: account.id,
+                source: external ? .human : .browser(origin: "https://pay.example.com"),
                 action: .nativeTransfer(
-                    recipient: "0x1111111111111111111111111111111111111111",
-                    amountBaseUnits: "10000000000000000"
+                    recipient: recipient, amountBaseUnits: amount
                 ),
-                summary: "Send 0.01 Sepolia ETH",
+                summary: "Send 0.01 \(network.nativeSymbol)",
                 effects: [WalletDecodedEffect(
                     id: "wallet-fixture-effect", kind: "native_transfer",
-                    assetID: WalletNetworkCatalog.ethereumSepolia.nativeAssetID,
-                    amountBaseUnits: "10000000000000000",
-                    from: evmAddress, to: "0x1111111111111111111111111111111111111111",
+                    assetID: network.nativeAssetID,
+                    amountBaseUnits: amount,
+                    from: account.address, to: recipient,
                     spender: nil
                 )],
-                riskFlags: [], contract: nil, adapterID: "native-eth-transfer-v1",
-                budgetAssetID: WalletNetworkCatalog.ethereumSepolia.nativeAssetID,
-                spendBaseUnits: "10000000000000000",
-                maximumFeeBaseUnits: "1000000000000000",
-                feeQuoteBaseUnits: "42000000000000", simulation: "Transfer succeeds",
+                riskFlags: [], contract: nil,
+                adapterID: managed ? "native-sol-transfer-v1" : "native-eth-transfer-v1",
+                budgetAssetID: network.nativeAssetID,
+                spendBaseUnits: amount,
+                maximumFeeBaseUnits: managed ? "10000" : "1000000000000000",
+                feeQuoteBaseUnits: managed ? "5000" : "42000000000000", simulation: "Transfer succeeds",
                 simulationSucceeded: true, nonce: "7", createdAt: Date(),
-                expiresAt: Date().addingTimeInterval(120),
-                policyDecision: "Browser transactions require exact confirmation.", policyID: nil
+                expiresAt: Date().addingTimeInterval(fixture == "transaction-expiring" ? 5 : 120),
+                policyDecision: "This transaction requires exact confirmation.", policyID: nil
             )
         }
     }
@@ -2951,6 +3404,7 @@ final class WalletGateway: ObservableObject {
         idleLockTimer?.invalidate()
         idleLockTimer = nil
         signer.lock()
+        connectionIntentBindings.removeAll()
         activePolicies.removeAll()
         activePolicyStatuses.removeAll()
         prepared.removeAll()
@@ -2968,6 +3422,7 @@ final class WalletGateway: ObservableObject {
     }
 
     private func handleSignerInvalidation() {
+        connectionIntentBindings.removeAll()
         recoveryView.cancel()
         recoveryCeremonyActive = false
         recoveryPresentationState = .idle
@@ -2989,6 +3444,15 @@ final class WalletGateway: ObservableObject {
     private func handleConnectionsInvalidation() {
         resolveConnectionProposal(approved: false)
         requestRouter.cancel(reason: .disconnected)
+        let externalAccountIDs = Set(accounts.filter { $0.ownership.connectorID != nil }.map(\.id))
+        let invalidIntents = prepared.values.filter {
+            externalAccountIDs.contains($0.accountID) || $0.source.kind == .walletConnectPeer
+        }.map(\.id)
+        for intentID in invalidIntents {
+            cancelConfirmation(intentID: intentID)
+            prepared[intentID] = nil
+            confirmedIntentIDs.remove(intentID)
+        }
         let now = Date()
         connections = connections.map { connection in
             guard !connection.state.isTerminal else { return connection }
@@ -3512,6 +3976,7 @@ final class WalletGateway: ObservableObject {
         currentSwapQuote = nil
         currentSwapAllowance = .unchecked
         do {
+            try authorizeProviderBindings(networkID: networkID)
             guard let account = accounts.first(where: {
                 $0.id == accountID && $0.chain == .evm
                     && $0.networkIDs.contains(networkID)
@@ -3777,7 +4242,9 @@ final class WalletGateway: ObservableObject {
 
     @discardableResult
     func confirmAndExecuteHumanIntent(intentID: String) async -> Bool {
-        guard prepared[intentID]?.source.kind == .humanUI else { return false }
+        guard let transaction = prepared[intentID], transaction.source.kind == .humanUI,
+              accounts.first(where: { $0.id == transaction.accountID })?.ownership == .locusVault
+        else { return false }
         confirm(intentID: intentID)
         do {
             _ = try await execute(["intent_id": intentID], source: .human)
@@ -3798,7 +4265,9 @@ final class WalletGateway: ObservableObject {
     }
 
     func cancelConfirmation(intentID: String) {
+        signer.cancelPreparation(intentID: intentID)
         prepared[intentID] = nil
+        connectionIntentBindings[intentID] = nil
         confirmedIntentIDs.remove(intentID)
         confirmationContinuations.removeValue(forKey: intentID)?.resume(returning: false)
         if pendingConfirmation?.id == intentID { pendingConfirmation = nil }
@@ -3889,7 +4358,7 @@ final class WalletGateway: ObservableObject {
         approvedBrowserOrigins = Set(browserOriginGrants.map(\.origin)).sorted()
         let now = Date()
         let chain = WalletNetworkCatalog.descriptor(id: request.networkID)?.chain
-        let methods: Set<WalletConnectionMethod> = switch chain {
+        let candidateMethods: Set<WalletConnectionMethod> = switch chain {
         case .evm:
             [.listAccounts, .switchNetwork, .sendTransaction, .signInWithEthereum]
         case .solana:
@@ -3898,6 +4367,24 @@ final class WalletGateway: ObservableObject {
             [.listAccounts, .sendTransaction]
         case nil:
             []
+        }
+        let methods = Set(candidateMethods.filter { method in
+            (try? launchGate.authorizeConnection(
+                networkID: request.networkID,
+                connector: .embeddedBrowser,
+                direction: .locusVaultToDapp,
+                method: method,
+                regionCode: regionCode
+            )) != nil
+                && reviewRegistry?.containsConnector(
+                    .embeddedBrowser,
+                    direction: .locusVaultToDapp,
+                    method: method
+                ) == true
+        })
+        guard methods.contains(.listAccounts), methods.contains(.sendTransaction) else {
+            denyBrowserOrigin()
+            return
         }
         let connection = WalletConnectionRecord(
             id: browserConnectionID(origin: request.origin, networkID: request.networkID),
@@ -3961,6 +4448,7 @@ final class WalletGateway: ObservableObject {
         origin: String, networkID: String = "eip155:11155111",
         method: String, params: [Any]
     ) async throws -> Any {
+        try authorizeProviderBindings(networkID: networkID)
         guard !browserAccounts(origin: origin, networkID: networkID).isEmpty else {
             throw Error.approvalRequired("This website is not connected to Locus Vault.")
         }
@@ -4126,10 +4614,12 @@ final class WalletGateway: ObservableObject {
     }
 
     func browserSendSolanaTransaction(
-        origin: String, transactionBase64: String,
+        origin: String, networkID: String, transactionBase64: String,
         accountAddress: String, minimumContextSlot: UInt64?
     ) async throws -> String {
-        let networkID = WalletNetworkCatalog.solanaDevnet.id
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana else {
+            throw Error.invalidArguments("The Solana network is not supported.")
+        }
         let (normalizedOrigin, account) = try browserAccount(
             origin: origin, networkID: networkID, address: accountAddress
         )
@@ -4148,9 +4638,12 @@ final class WalletGateway: ObservableObject {
     }
 
     func browserSendSuiTransaction(
-        origin: String, transactionBase64: String, accountAddress: String
+        origin: String, networkID: String,
+        transactionBase64: String, accountAddress: String
     ) async throws -> String {
-        let networkID = WalletNetworkCatalog.suiTestnet.id
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui else {
+            throw Error.invalidArguments("The Sui network is not supported.")
+        }
         let (normalizedOrigin, account) = try browserAccount(
             origin: origin, networkID: networkID, address: accountAddress
         )
@@ -4242,6 +4735,10 @@ final class WalletGateway: ObservableObject {
         guard let intentID = preparedResult["intent_id"] as? String else {
             throw Error.invalidArguments("The wallet did not return a transaction intent.")
         }
+        do { try requestRouter.validatePending(binding: binding) }
+        catch { cancelConfirmation(intentID: intentID); throw error }
+        connectionIntentBindings[intentID] = binding
+        defer { connectionIntentBindings[intentID] = nil }
         browserIntentOrigins[intentID] = normalizedOrigin
         defer { browserIntentOrigins[intentID] = nil }
         if pendingConfirmation?.id == intentID {
@@ -4351,9 +4848,12 @@ final class WalletGateway: ObservableObject {
     }
 
     func browserSignInWithSolana(
-        origin: String, message: String, accountAddress: String
+        origin: String, networkID: String,
+        message: String, accountAddress: String
     ) async throws -> WalletStructuredAuthorizationResult {
-        let networkID = WalletNetworkCatalog.solanaDevnet.id
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana else {
+            throw Error.invalidArguments("The SIWS network is not supported.")
+        }
         let (normalizedOrigin, account) = try browserAccount(
             origin: origin, networkID: networkID, address: accountAddress
         )
@@ -4514,6 +5014,9 @@ final class WalletGateway: ObservableObject {
         }
 
         let routed = WalletRoutedRequest(binding: binding, payload: routedPayload)
+        guard connections.contains(connection), accounts.contains(account) else {
+            throw Error.approvalRequired("The WalletConnect account or connection changed during decoding.")
+        }
         try requestRouter.begin(
             routed, connection: connection, account: account, now: binding.issuedAt
         )
@@ -4555,6 +5058,10 @@ final class WalletGateway: ObservableObject {
                     "action": actionObject,
                     "maximum_fee_base_units": maximumFee,
                 ], source: source)
+                do { try requestRouter.validatePending(binding: binding) }
+                catch { cancelConfirmation(intentID: preparedTransaction.id); throw error }
+                connectionIntentBindings[preparedTransaction.id] = binding
+                defer { connectionIntentBindings[preparedTransaction.id] = nil }
                 guard preparedTransaction.policyDecision != "allowed_by_session_policy" else {
                     throw Error.policyDenied(
                         "Connected dapps can never consume a signer automation policy."
@@ -4566,13 +5073,12 @@ final class WalletGateway: ObservableObject {
                         "The WalletConnect transaction was rejected or expired."
                     )
                 }
-                // Completing the authenticated outer binding immediately
-                // before signer execution makes disconnect/replay races fail.
-                _ = try requestRouter.complete(
-                    requestID: binding.requestID, callbackBinding: binding
-                )
+                try requestRouter.validatePending(binding: binding)
                 let executed = try await execute(
                     ["intent_id": preparedTransaction.id], source: source
+                )
+                _ = try requestRouter.complete(
+                    requestID: binding.requestID, callbackBinding: binding
                 )
                 guard let identifier = executed["transaction_hash"] as? String,
                       !identifier.isEmpty else {
@@ -4610,14 +5116,19 @@ final class WalletGateway: ObservableObject {
     }
 
     func canUseBrowserNetwork(_ networkID: String) -> Bool {
-        guard let network = WalletNetworkCatalog.descriptor(id: networkID) else {
+        guard WalletNetworkCatalog.descriptor(id: networkID) != nil,
+              (try? authorizeProviderBindings(networkID: networkID)) != nil else {
             return false
         }
-        if network.environment == .testnet { return true }
         return (try? launchGate.authorize(
             networkID: networkID, capability: .embeddedBrowser,
             regionCode: regionCode
         )) != nil
+            && reviewRegistry?.containsConnector(
+                .embeddedBrowser,
+                direction: .locusVaultToDapp,
+                method: .listAccounts
+            ) == true
     }
 
     private var evmAddresses: [String] {
@@ -4726,6 +5237,9 @@ final class WalletGateway: ObservableObject {
         source: WalletRequestSource = .agent
     ) async -> [String: Any] {
         do {
+            if let networkID = arguments["network_id"] as? String {
+                try authorizeProviderBindings(networkID: networkID)
+            }
             if tool == "wallet_lock" {
                 lock()
                 return ["text": "Locus Vault locked; intents, policies, and spending rules were cleared."]
@@ -4872,6 +5386,7 @@ final class WalletGateway: ObservableObject {
         _ request: WalletPrepareRequest,
         now: Date = Date()
     ) async throws -> WalletPreparedTransaction {
+        try authorizeProviderBindings(networkID: request.networkID)
         prepared = prepared.filter { $0.value.expiresAt > now }
         confirmedIntentIDs = confirmedIntentIDs.intersection(Set(prepared.keys))
         guard prepared.count < Self.maximumPreparedIntents else {
@@ -5006,6 +5521,7 @@ final class WalletGateway: ObservableObject {
     private func executeExternal(
         _ prepare: WalletPrepareRequest
     ) async throws -> [String: Any] {
+        try authorizeProviderBindings(networkID: prepare.networkID)
         #if !LOCUS_DIRECT_DOWNLOAD
         _ = prepare
         throw Error.connectionHelperUnavailable
@@ -5049,19 +5565,36 @@ final class WalletGateway: ObservableObject {
             issuedAt: now,
             expiresAt: min(connection.expiresAt, now.addingTimeInterval(2 * 60))
         )
-        let routed = WalletRoutedRequest(
-            binding: binding,
-            payload: .transaction(
-                action: prepare.action,
-                maximumFeeBaseUnits: prepare.maximumFeeBaseUnits
+        let routed: WalletRoutedRequest
+        if prepare.action.type == .swapAllowanceSetup {
+            guard let contract, let setup = prepare.action.swapAllowanceSetup,
+                  let configuration = reviewRegistry?.uniswapConfiguration(
+                    networkID: prepare.networkID,
+                    universalRouterContractID: setup.binding.universalRouterContractID
+                  ) else {
+                throw Error.invalidArguments(
+                    "Refresh the reviewed swap before setting up its finite allowance."
+                )
+            }
+            routed = try requestRouter.beginInternalSwapAllowance(
+                WalletInternalSwapAllowanceRequest(
+                    preparation: prepare, reviewedContract: contract,
+                    reviewedConfiguration: configuration
+                ),
+                binding: binding, connection: connection, account: account, now: now
             )
-        )
-        try requestRouter.begin(
-            routed,
-            connection: connection,
-            account: account,
-            now: now
-        )
+        } else {
+            routed = WalletRoutedRequest(
+                binding: binding,
+                payload: .transaction(
+                    action: prepare.action,
+                    maximumFeeBaseUnits: prepare.maximumFeeBaseUnits
+                )
+            )
+            try requestRouter.begin(
+                routed, connection: connection, account: account, now: now
+            )
+        }
         do {
             let result: WalletExternalExecutionResult
             var reviewedSemanticDigest: String?
@@ -5081,7 +5614,10 @@ final class WalletGateway: ObservableObject {
                     }
                 }()
             )
+            try requestRouter.validatePending(binding: binding)
             prepared[external.review.id] = external.review
+            connectionIntentBindings[external.review.id] = binding
+            defer { connectionIntentBindings[external.review.id] = nil }
             pendingConfirmation = external.review
             guard await waitForConfirmation(intentID: external.review.id) else {
                 throw Error.approvalRequired(
@@ -5091,7 +5627,21 @@ final class WalletGateway: ObservableObject {
             let refreshed = try await DirectWalletExternalPreparer.recheck(
                 external, request: prepare, binding: binding, account: account
             )
+            try requestRouter.validatePending(binding: binding)
+            try authorizeProviderBindings(networkID: prepare.networkID)
+            try launchGate.authorizeConnection(
+                networkID: prepare.networkID, connector: connection.connector,
+                direction: connection.direction, method: .sendTransaction,
+                regionCode: regionCode
+            )
             reviewedSemanticDigest = refreshed.semanticDigest
+            try WalletCanaryBudget.reserve(
+                transaction: external.review,
+                ownership: .required(for: connection.connector), connector: connection.connector,
+                manifest: launchGate.effectiveManifest,
+                sourceRevision: installedReleaseIdentity?.sourceRevision ?? "",
+                signerOwned: false
+            )
             result = try await connectionsClient.executeExternal(
                 WalletExternalExecutionRequest(
                     request: routed, prepared: refreshed
@@ -5099,11 +5649,7 @@ final class WalletGateway: ObservableObject {
             )
             prepared[external.review.id] = nil
             confirmedIntentIDs.remove(external.review.id)
-            _ = try requestRouter.complete(
-                requestID: binding.requestID,
-                callbackBinding: result.binding
-            )
-            guard !result.transactionID.isEmpty else {
+            guard result.binding == binding, !result.transactionID.isEmpty else {
                 throw Error.externalWallet(
                     "The external wallet did not return a transaction identifier."
                 )
@@ -5134,12 +5680,20 @@ final class WalletGateway: ObservableObject {
             transactionHistory.removeAll { $0.id == record.id }
             transactionHistory.insert(record, at: 0)
             try? publicStore?.upsertActivity(record)
+            // Keep the broadcast record even when authority was canceled while
+            // the wallet prompt was open; a canceled caller must not erase a
+            // transaction that still needs independent reconciliation.
+            _ = try requestRouter.complete(
+                requestID: binding.requestID, callbackBinding: result.binding
+            )
             // Attempt the first independent chain fetch immediately. A relay
             // identifier alone keeps the record pending; only reconciled
             // sender/network/effects can promote it to successful activity.
             await refreshTransactionHistory()
             return [
-                "text": "Submitted by \(connectorID.rawValue) after wallet confirmation.",
+                "text": account.ownership.requiresWalletOwnedConfirmation
+                    ? "Submitted by \(connectorID.rawValue) after wallet confirmation."
+                    : "Submitted by Phantom after exact Locus review.",
                 "intent_id": binding.requestID,
                 "transaction_hash": result.transactionID,
                 "network_id": prepare.networkID,
@@ -5886,12 +6440,27 @@ final class WalletGateway: ObservableObject {
               transaction.source == source else {
             throw Error.intentNotFound
         }
+        guard executingIntentIDs.insert(intentID).inserted else { throw Error.intentNotFound }
+        defer { executingIntentIDs.remove(intentID) }
+        func validateCurrentAuthority() throws {
+            guard prepared[intentID] == transaction, transaction.expiresAt > Date(),
+                  walletEnabled, status == .unlocked,
+                  accounts.contains(where: {
+                      $0.id == transaction.accountID && $0.ownership == .locusVault
+                          && $0.networkIDs.contains(transaction.networkID)
+                  }) else { throw Error.intentNotFound }
+            if let binding = connectionIntentBindings[intentID] {
+                try requestRouter.validatePending(binding: binding)
+            }
+        }
+        try validateCurrentAuthority()
         if transaction.policyDecision != "allowed_by_session_policy" {
             guard confirmedIntentIDs.remove(intentID) != nil else {
                 pendingConfirmation = transaction
                 throw Error.approvalRequired(transaction.policyDecision)
             }
             try await signer.confirmExecution(intentID: intentID)
+            try validateCurrentAuthority()
         }
         // The signer owns the bytes; execution accepts the opaque ID only.
         let result: [String: Any]
@@ -5908,8 +6477,13 @@ final class WalletGateway: ObservableObject {
             pendingConfirmation = nil
             throw Error.broadcastUnknown(transactionHash: transactionHash, message: message)
         }
-        activePolicyStatuses = (try? await signer.listPolicies()) ?? activePolicyStatuses
-        activePolicies = activePolicyStatuses.map(\.policy)
+        let policySessionID = signer.sessionID
+        let policyStatuses = try? await signer.listPolicies()
+        if status == .unlocked, signer.sessionID == policySessionID,
+           let policyStatuses {
+            activePolicyStatuses = policyStatuses
+            activePolicies = policyStatuses.map(\.policy)
+        }
         prepared[intentID] = nil
         pendingConfirmation = nil
         if let hash = result["transaction_hash"] as? String {
@@ -6184,12 +6758,15 @@ enum LocusWalletProviderScript {
         }));
       };
 
+      const solanaChains = Object.freeze(['solana:mainnet-beta', 'solana:devnet']);
       let solanaAccounts = Object.freeze([]);
       const solanaEvents = standardListeners();
-      const solanaConnect = async () => {
-        const records = await request({ method: 'locus_solana_connect' });
+      const solanaConnect = async (input = {}) => {
+        const chain = input?.chain;
+        if (!solanaChains.includes(chain)) throw new Error('Select a supported Solana network.');
+        const records = await request({ method: 'locus_solana_connect', params: [{ networkID: chain }] });
         solanaAccounts = Object.freeze((records || []).map(record => standardAccount(
-          record, 'solana:devnet', ['solana:signAndSendTransaction', 'solana:signIn']
+          record, record.networkID, ['solana:signAndSendTransaction', 'solana:signIn']
         )));
         solanaEvents.emit(solanaAccounts);
         return { accounts: solanaAccounts };
@@ -6200,18 +6777,21 @@ enum LocusWalletProviderScript {
       };
       const solanaSignAndSend = async (...inputs) => Promise.all(inputs.map(async input => {
         const account = input?.account || solanaAccounts[0];
-        if (!account || !input || input.chain !== 'solana:devnet') throw new Error('A connected Solana devnet account is required.');
+        if (!account || !input || !solanaChains.includes(input.chain) || !account.chains.includes(input.chain)) {
+          throw new Error('A connected account on the selected Solana network is required.');
+        }
         const signature = await request({
           method: 'locus_solana_signAndSendTransaction',
           params: [{
             transactionBase64: encodeBase64(input.transaction),
             accountAddress: account.address,
+            networkID: input.chain,
             minimumContextSlot: input.options?.minContextSlot == null ? null : String(input.options.minContextSlot),
           }],
         });
         return { signature: decodeBase58(signature) };
       }));
-      const canonicalSIWS = (input, address) => {
+      const canonicalSIWS = (input, address, chain) => {
         const domain = input?.domain || location.host;
         const uri = input?.uri || location.origin;
         const issuedAt = input?.issuedAt || new Date().toISOString();
@@ -6221,7 +6801,8 @@ enum LocusWalletProviderScript {
         }
         const lines = [`${domain} wants you to sign in with your Solana account:`, address, ''];
         if (input.statement) lines.push(input.statement, '');
-        lines.push(`URI: ${uri}`, 'Version: 1', 'Chain ID: devnet', `Nonce: ${input.nonce}`,
+        const chainID = chain === 'solana:mainnet-beta' ? 'mainnet' : 'devnet';
+        lines.push(`URI: ${uri}`, 'Version: 1', `Chain ID: ${chainID}`, `Nonce: ${input.nonce}`,
           `Issued At: ${issuedAt}`, `Expiration Time: ${expirationTime}`);
         if (input.notBefore) lines.push(`Not Before: ${input.notBefore}`);
         if (input.requestId) lines.push(`Request ID: ${input.requestId}`);
@@ -6232,10 +6813,15 @@ enum LocusWalletProviderScript {
       };
       const solanaSignIn = async (...inputs) => Promise.all(inputs.map(async input => {
         const account = solanaAccounts.find(item => !input?.address || item.address === input.address) || solanaAccounts[0];
-        if (!account) throw new Error('Connect Locus Vault before signing in.');
+        if (!account || !solanaChains.includes(input?.chain) || !account.chains.includes(input.chain)) {
+          throw new Error('Connect Locus Vault on the selected Solana network before signing in.');
+        }
         const result = await request({
           method: 'locus_solana_signIn',
-          params: [{ accountAddress: account.address, message: canonicalSIWS(input, account.address) }],
+          params: [{
+            accountAddress: account.address, networkID: input.chain,
+            message: canonicalSIWS(input, account.address, input.chain)
+          }],
         });
         return {
           account,
@@ -6244,7 +6830,7 @@ enum LocusWalletProviderScript {
         };
       }));
       const solanaWallet = Object.freeze({
-        version: '1.0.0', name: 'Locus Vault', icon: walletIcon, chains: Object.freeze(['solana:devnet']),
+        version: '1.0.0', name: 'Locus Vault', icon: walletIcon, chains: solanaChains,
         get accounts() { return solanaAccounts; },
         features: Object.freeze({
           'standard:connect': Object.freeze({ version: '1.0.0', connect: solanaConnect }),
@@ -6258,12 +6844,15 @@ enum LocusWalletProviderScript {
         }),
       });
 
+      const suiChains = Object.freeze(['sui:mainnet', 'sui:testnet']);
       let suiAccounts = Object.freeze([]);
       const suiEvents = standardListeners();
-      const suiConnect = async () => {
-        const records = await request({ method: 'locus_sui_connect' });
+      const suiConnect = async (input = {}) => {
+        const chain = input?.chain;
+        if (!suiChains.includes(chain)) throw new Error('Select a supported Sui network.');
+        const records = await request({ method: 'locus_sui_connect', params: [{ networkID: chain }] });
         suiAccounts = Object.freeze((records || []).map(record => standardAccount(
-          record, 'sui:testnet', ['sui:signAndExecuteTransaction']
+          record, record.networkID, ['sui:signAndExecuteTransaction']
         )));
         suiEvents.emit(suiAccounts);
         return { accounts: suiAccounts };
@@ -6283,18 +6872,21 @@ enum LocusWalletProviderScript {
       };
       const suiSignAndExecute = async input => {
         const account = input?.account || suiAccounts[0];
-        if (!account || !input || input.chain !== 'sui:testnet') throw new Error('A connected Sui testnet account is required.');
+        if (!account || !input || !suiChains.includes(input.chain) || !account.chains.includes(input.chain)) {
+          throw new Error('A connected account on the selected Sui network is required.');
+        }
         const digest = await request({
           method: 'locus_sui_signAndExecuteTransaction',
           params: [{
             transactionBase64: await suiTransactionBase64(input),
             accountAddress: account.address,
+            networkID: input.chain,
           }],
         });
         return { digest };
       };
       const suiWallet = Object.freeze({
-        version: '1.0.0', name: 'Locus Vault', icon: walletIcon, chains: Object.freeze(['sui:testnet']),
+        version: '1.0.0', name: 'Locus Vault', icon: walletIcon, chains: suiChains,
         get accounts() { return suiAccounts; },
         features: Object.freeze({
           'standard:connect': Object.freeze({ version: '1.0.0', connect: suiConnect }),

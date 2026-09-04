@@ -3538,8 +3538,14 @@ def test_http_request_body_limit_is_enforced(client, monkeypatch):
     from ollama_code import server as server_mod
 
     monkeypatch.setattr(server_mod, "MAX_HTTP_BODY_BYTES", 4)
-    response = client.post("/api/config", json={"model": "test-model"})
-    assert response.status_code == 413
+    # Middleware captures its limit at application construction, before the
+    # first request; recreate the app under the deliberately tiny test limit.
+    limited = TestClient(server_mod.create_app(chat_service=client.app.state.service))
+    try:
+        response = limited.post("/api/config", json={"model": "test-model"})
+        assert response.status_code == 413
+    finally:
+        limited.close()
 
 
 # ----------------------------------------------------------------- agent loop

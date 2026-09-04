@@ -69,6 +69,11 @@ struct LocusApp: App {
                     lifecycle.connect(model: model)
                     updates.setRelaunchHandler(lifecycle)
                 }
+                #if LOCUS_DIRECT_DOWNLOAD
+                .onOpenURL { url in
+                    Task { _ = await model.walletGateway.beginWalletConnectPairing(deepLink: url) }
+                }
+                #endif
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
                 .tint(model.accentActionColor)

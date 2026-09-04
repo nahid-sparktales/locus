@@ -53,7 +53,7 @@ done
 bundle_sha="$(/usr/bin/shasum -a 256 \
     "${direct_app}/Contents/Resources/WalletConnections.bundle.js" \
     | /usr/bin/awk '{print $1}')"
-[[ "${bundle_sha}" == "99ed4b87f3fcd5e3e328c89a69a2cb66153f1f3382ac1e85b12e1232c350ee30" ]] || {
+[[ "${bundle_sha}" == "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf" ]] || {
     echo "error: Direct connector bundle does not match its reviewed digest" >&2
     exit 1
 }
@@ -78,7 +78,10 @@ unexpected_direct_signing_symbols="$(/usr/bin/nm -gU "${direct_main}" 2>/dev/nul
 unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
     \( -name WalletSigner.xpc -o -name WalletConnections.xpc \
         -o -name WalletRecovery.app -o -name 'WalletConnections*' \
-        -o -name 'LocusReownSwift_*' -o -name 'ReownSwift*' \) \
+        -o -name 'LocusReownSwift_*' -o -name 'ReownSwift*' \
+        -o -iname '*wallet*activation*' -o -name 'WalletSignerSBOM*' \
+        -o -name 'phantom-wallet-sdk-*.LICENSE' -o -name 'eyes-0.1.8.LICENSE' \
+        -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) \
     -print -quit)"
 [[ -z "${unexpected_mas_resource}" ]] || {
     echo "error: Mac App Store app contains Direct-only wallet content: ${unexpected_mas_resource}" >&2
@@ -86,12 +89,13 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
 }
 
 ! /usr/bin/plutil -p "${mas_app}/Contents/Info.plist" | /usr/bin/grep -Eq \
-    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL)' || {
+    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode)' || {
     echo "error: Mac App Store Info.plist contains connector configuration" >&2
     exit 1
 }
 
-mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet'
+mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
+mas_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
 direct_macho_count=0
 mas_macho_count=0
 

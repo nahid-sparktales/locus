@@ -223,10 +223,9 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
     assert builtin["enabled"] is False
     assert next(item for item in skills if item["id"] == "frontend-design")["enabled"] is True
     bundled = [item for item in skills if item.get("builtin")]
-    assert len(bundled) == 26
+    assert len(bundled) == 25
     assert {
         "builtin:using-superpowers",
-        "builtin:task-observer",
         "builtin:grill-me",
         "builtin:grilling",
         "builtin:gsd-workflow",
@@ -254,22 +253,23 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
     assert persisted["builtin_skill_overrides"]
 
 
-def test_startup_skills_are_trusted_ordered_and_shadow_safe(tmp_path):
+def test_bundled_skills_are_manual_optional_and_shadow_safe(tmp_path):
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
-    assert [item["id"] for item in manager.startup_skills(str(tmp_path))] == [
-        "builtin:using-superpowers",
-        "builtin:task-observer",
-    ]
+    assert manager.startup_skills(str(tmp_path)) == []
 
     registry = ToolRegistry(manager)
+    registry.begin_turn("Fix this feature", str(tmp_path))
+    assert registry.explicit_skill_context == ""
+    assert "requires an explicit user mention" in registry.execute(
+        "load_skill", {"skill": "using-superpowers"}, ToolContext(cwd=str(tmp_path))
+    )
     registry.begin_turn("Use $grill-me to clarify this feature", str(tmp_path))
     context = registry.explicit_skill_context
-    assert context.index("Startup skill $using-superpowers") < context.index(
-        "Startup skill $task-observer"
-    )
-    assert context.index("Startup skill $task-observer") < context.index(
-        "Explicitly activated skill $builtin:grill-me"
-    )
+    assert "Startup skill" not in context
+    assert "Explicitly activated skill $builtin:grill-me" in context
+    assert "task-observer" not in context
+    registry.begin_turn("Use $using-superpowers for this task", str(tmp_path))
+    assert "Explicitly activated skill $builtin:using-superpowers" in registry.explicit_skill_context
 
     # Grill Me's mode instruction mentions the bare name, not "builtin:grilling":
     # a user-authored `grilling` skill shadows the builtin, which disables the
@@ -293,25 +293,40 @@ def test_bundled_skill_source_pins_and_activation_metadata(tmp_path):
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     skills = {item["id"]: item for item in manager.skills(str(tmp_path))}
 
-    assert skills["builtin:task-observer"]["provenance"]["commit"] == (
-        "281f13466cd3a73e9ebc9d210907748e1941a3dd"
-    )
-    assert skills["builtin:task-observer"]["activation"] == "startup"
+    assert "builtin:task-observer" not in skills
+    assert all(item["activation"] == "explicit" for item in skills.values() if item.get("builtin"))
+    assert all(item["allow_implicit_invocation"] is False for item in skills.values() if item.get("builtin"))
+    assert all(item["provenance"]["activation"] == "explicit" for item in skills.values() if item.get("builtin"))
     assert skills["builtin:using-superpowers"]["provenance"]["commit"] == (
         "b36e0829c6d0140e93cfef2ca599b1b07d4a7797"
     )
-    assert skills["builtin:using-superpowers"]["activation"] == "startup"
+    assert skills["builtin:using-superpowers"]["activation"] == "explicit"
     assert skills["builtin:grill-me"]["provenance"]["commit"] == (
         "068b6e0c62393147daf03530149cdce209c93da8"
     )
     assert skills["builtin:grill-me"]["activation"] == "explicit"
-    assert skills["builtin:grilling"]["activation"] == "automatic"
+    assert skills["builtin:grilling"]["activation"] == "explicit"
     for router in ("workflow", "project", "quality", "context", "manage", "ideate"):
         skill = skills[f"builtin:gsd-{router}"]
         assert skill["provenance"]["commit"] == (
             "bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815"
         )
-        assert skill["activation"] == "automatic"
+        assert skill["activation"] == "explicit"
+
+
+def test_stale_bundled_startup_metadata_cannot_restore_default_activation(tmp_path, monkeypatch):
+    bundled = tmp_path / "bundled"
+    legacy = _skill(bundled, "legacy-startup")
+    (legacy / "SOURCE.json").write_text(json.dumps({"activation": "startup", "startup_order": 1}))
+    monkeypatch.setattr("ollama_code.extensions.BUILTIN_SKILLS_ROOT", bundled)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    skill = next(item for item in manager.skills() if item.get("builtin"))
+    assert skill["activation"] == "explicit"
+    assert skill["allow_implicit_invocation"] is False
+    assert manager.startup_skills() == []
+    registry = ToolRegistry(manager)
+    registry.begin_turn("Work on this task", str(tmp_path))
+    assert registry.explicit_skill_context == ""
 
 
 def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monkeypatch):

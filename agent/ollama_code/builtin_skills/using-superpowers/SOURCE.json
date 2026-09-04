@@ -5,6 +5,5 @@
   "upstream_path": "skills/using-superpowers",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "startup",
-  "startup_order": 10
+  "activation": "explicit"
 }

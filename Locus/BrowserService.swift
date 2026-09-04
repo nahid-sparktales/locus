@@ -3372,7 +3372,11 @@ extension BrowserService: WKScriptMessageHandler {
                     origin: origin, networkID: tab.walletNetworkID, params: params
                 )]
             case "locus_solana_connect":
-                let networkID = WalletNetworkCatalog.solanaDevnet.id
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let networkID = input["networkID"] as? String,
+                      WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana else {
+                    return walletError(-32602, "An exact Solana network is required.")
+                }
                 guard await gateway.requestBrowserAccounts(
                     origin: origin, networkID: networkID
                 ) != nil else {
@@ -3384,7 +3388,8 @@ extension BrowserService: WKScriptMessageHandler {
             case "locus_solana_signAndSendTransaction":
                 guard params.count == 1, let input = params[0] as? [String: Any],
                       let transaction = input["transactionBase64"] as? String,
-                      let account = input["accountAddress"] as? String else {
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
                     return walletError(-32602, "A bounded Solana transaction and account are required.")
                 }
                 let minimumContextSlot: UInt64?
@@ -3398,17 +3403,19 @@ extension BrowserService: WKScriptMessageHandler {
                     minimumContextSlot = nil
                 }
                 return ["result": try await gateway.browserSendSolanaTransaction(
-                    origin: origin, transactionBase64: transaction,
+                    origin: origin, networkID: networkID, transactionBase64: transaction,
                     accountAddress: account, minimumContextSlot: minimumContextSlot
                 )]
             case "locus_solana_signIn":
                 guard params.count == 1, let input = params[0] as? [String: Any],
                       let message = input["message"] as? String,
-                      let account = input["accountAddress"] as? String else {
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
                     return walletError(-32602, "A canonical SIWS message and account are required.")
                 }
                 let signed = try await gateway.browserSignInWithSolana(
-                    origin: origin, message: message, accountAddress: account
+                    origin: origin, networkID: networkID,
+                    message: message, accountAddress: account
                 )
                 return ["result": [
                     "accountAddress": signed.request.address,
@@ -3417,7 +3424,11 @@ extension BrowserService: WKScriptMessageHandler {
                     "signatureEncoding": signed.signatureEncoding.rawValue,
                 ]]
             case "locus_sui_connect":
-                let networkID = WalletNetworkCatalog.suiTestnet.id
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let networkID = input["networkID"] as? String,
+                      WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui else {
+                    return walletError(-32602, "An exact Sui network is required.")
+                }
                 guard await gateway.requestBrowserAccounts(
                     origin: origin, networkID: networkID
                 ) != nil else {
@@ -3429,11 +3440,12 @@ extension BrowserService: WKScriptMessageHandler {
             case "locus_sui_signAndExecuteTransaction":
                 guard params.count == 1, let input = params[0] as? [String: Any],
                       let transaction = input["transactionBase64"] as? String,
-                      let account = input["accountAddress"] as? String else {
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
                     return walletError(-32602, "A bounded Sui transaction and account are required.")
                 }
                 return ["result": try await gateway.browserSendSuiTransaction(
-                    origin: origin, transactionBase64: transaction,
+                    origin: origin, networkID: networkID, transactionBase64: transaction,
                     accountAddress: account
                 )]
             case "locus_wallet_standard_disconnect":

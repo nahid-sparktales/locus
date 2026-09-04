@@ -587,28 +587,41 @@ struct WalletSolanaProviderConfiguration: Sendable {
 
     static func bundled(
         network: WalletNetworkDescriptor,
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        reviewRegistry: WalletReviewRegistry? = nil
     ) -> WalletSolanaProviderConfiguration? {
         guard network.chain == .solana else { return nil }
         let suffix = network.environment == .mainnet ? "SolanaMainnet" : "SolanaDevnet"
-        let alchemy = endpoint(
+        let reviewRegistry = reviewRegistry ?? WalletReviewRegistry.loadBundled(from: bundle)
+        let alchemy = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletAlchemy\(suffix)RPCURL") as? String,
             provider: .alchemy, network: network, priority: 0
-        )
-        let quickNode = endpoint(
+        ), network: network, reviewRegistry: reviewRegistry)
+        let quickNode = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletQuickNode\(suffix)RPCURL") as? String,
             provider: .quickNode, network: network, priority: 1
-        )
+        ), network: network, reviewRegistry: reviewRegistry)
         if let alchemy {
             return .init(primary: alchemy, fallback: quickNode)
         }
-        let defaultURL = network.environment == .mainnet
-            ? WalletSolanaRPCClient.mainnetDefaultEndpoint
-            : WalletSolanaRPCClient.devnetDefaultEndpoint
+        if let quickNode { return .init(primary: quickNode, fallback: nil) }
+        guard network.environment != .mainnet else { return nil }
+        let defaultURL = WalletSolanaRPCClient.devnetDefaultEndpoint
         guard let development = endpoint(
             defaultURL, provider: .userDefined, network: network, priority: 0
         ) else { return nil }
         return .init(primary: development, fallback: nil)
+    }
+
+    private static func reviewed(
+        _ endpoint: WalletProviderEndpoint?,
+        network: WalletNetworkDescriptor,
+        reviewRegistry: WalletReviewRegistry?
+    ) -> WalletProviderEndpoint? {
+        guard let endpoint else { return nil }
+        guard network.environment != .mainnet
+                || reviewRegistry?.containsProvider(endpoint) == true else { return nil }
+        return endpoint
     }
 
     private static func endpoint(

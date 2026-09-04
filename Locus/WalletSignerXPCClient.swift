@@ -103,6 +103,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
         return status
     }
 
+    func applyReleaseActivation(
+        _ envelope: WalletSignedReleaseActivationEnvelope
+    ) async throws -> WalletReleaseActivationStatus {
+        let data = try encoder.encode(envelope)
+        return try await call { proxy, reply in
+            proxy.applyReleaseActivation(data, reply: reply)
+        }
+    }
+
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
         let status: WalletSignerStatus = try await call { proxy, reply in
             proxy.deleteVault(confirmation, reply: reply)
@@ -472,11 +481,17 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     func execute(intentID: String) async throws -> [String: Any] {
+        let expectedSessionID = sessionID
         if let packet = preparationPackets[intentID] {
             let rpc = try rpcClient(for: packet.request.networkID)
             let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
             let request = try authorized(recheck, source: packet.request.source)
-            let signed: WalletEVMSignedTransaction = try await call { proxy, reply in
+            let signed: WalletEVMSignedTransaction = try await call(validating: {
+                guard self.sessionID == expectedSessionID,
+                      self.preparationPackets[intentID] == packet else {
+                    throw WalletGateway.Error.intentNotFound
+                }
+            }) { proxy, reply in
                 proxy.executeEVM(request, reply: reply)
             }
             preparationPackets[intentID] = nil
@@ -508,7 +523,12 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let rpc = try solanaRPCClient(for: packet.request.networkID)
             let recheck = try await rpc.recheck(intentID: intentID, packet: packet)
             let request = try authorized(recheck, source: packet.request.source)
-            let signed: WalletSolanaSignedTransaction = try await call { proxy, reply in
+            let signed: WalletSolanaSignedTransaction = try await call(validating: {
+                guard self.sessionID == expectedSessionID,
+                      self.solanaPreparationPackets[intentID] == packet else {
+                    throw WalletGateway.Error.intentNotFound
+                }
+            }) { proxy, reply in
                 proxy.executeSolana(request, reply: reply)
             }
             solanaPreparationPackets[intentID] = nil
@@ -626,7 +646,13 @@ final class XPCWalletSignerClient: WalletSignerClient {
             let request = try authorized(
                 recheck, source: intent.packet.request.source
             )
-            let signed: WalletSuiSignedTransaction = try await call { proxy, reply in
+            let signed: WalletSuiSignedTransaction = try await call(validating: {
+                guard self.sessionID == expectedSessionID,
+                      self.suiPreparationPackets[intentID]?.packet == intent.packet,
+                      self.suiPreparationPackets[intentID]?.unsigned == intent.unsigned else {
+                    throw WalletGateway.Error.intentNotFound
+                }
+            }) { proxy, reply in
                 proxy.executeSui(request, reply: reply)
             }
             suiPreparationPackets[intentID] = nil
@@ -1158,10 +1184,17 @@ final class XPCWalletSignerClient: WalletSignerClient {
         }
     }
 
+    func cancelPreparation(intentID: String) {
+        preparationPackets[intentID] = nil
+        solanaPreparationPackets[intentID] = nil
+        suiPreparationPackets[intentID] = nil
+    }
+
     private func call<T: Decodable>(
+        validating validation: (() throws -> Void)? = nil,
         _ body: @escaping (WalletSignerXPCProtocol, @escaping (Data) -> Void) -> Void
     ) async throws -> T {
-        let data = try await rawCall(body)
+        let data = try await rawCall(validating: validation, body)
         if let error = try? decoder.decode(WalletSignerErrorPayload.self, from: data) {
             throw NSError(domain: "WalletSigner", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: error.error])
@@ -1398,12 +1431,16 @@ final class XPCWalletSignerClient: WalletSignerClient {
     }
 
     private func rawCall(
+        validating validation: (() throws -> Void)? = nil,
         _ body: @escaping (WalletSignerXPCProtocol, @escaping (Data) -> Void) -> Void
     ) async throws -> Data {
         guard isAvailable else { throw WalletGateway.Error.signerUnavailable }
         let proxy = try await remoteProxy(errorHandler: { [weak self] _ in
             Task { @MainActor in self?.invalidate() }
         })
+        // The provider recheck and endpoint setup both suspend. Revalidate
+        // cancellation immediately before the irreversible signer handoff.
+        try validation?()
         return try await withCheckedThrowingContinuation { continuation in
             let gate = WalletXPCReplyGate()
             let replyError: (Error) -> Void = { error in

@@ -9,9 +9,9 @@ const MAX_COMMAND_BYTES = 256 * 1024;
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_STORAGE_KEY = "locus.wallet.connectionMetadata.v1";
 const CONNECTOR_NETWORKS = Object.freeze({
-  metamask: "eip155:11155111",
-  phantom: "solana:devnet",
-  slush: "sui:testnet",
+  metamask: Object.freeze({ "eip155:1": "0x1", "eip155:11155111": "0xaa36a7" }),
+  phantom: Object.freeze({ "solana:mainnet-beta": "mainnet", "solana:devnet": "devnet" }),
+  slush: Object.freeze({ "sui:mainnet": "sui:mainnet", "sui:testnet": "sui:testnet" }),
 });
 const CONNECTOR_METHODS = Object.freeze({
   metamask: new Set(["list_accounts", "switch_network", "send_transaction", "sign_in_with_ethereum"]),
@@ -126,10 +126,16 @@ function newAccount(connector, chain, address, networkID, existingID, publicKeyB
   };
 }
 
-function makeSession(connector, request, address, chain, peerName, peerURL, existing, publicKeyBase64) {
-  const networkID = CONNECTOR_NETWORKS[connector];
+function selectedNetwork(connector, request) {
   const requestedNetworks = uniqueStrings(request.requestedNetworkIDs, "requested networks");
-  if (!requestedNetworks.includes(networkID)) fail("The connector network was not approved.");
+  if (requestedNetworks.length !== 1 || !CONNECTOR_NETWORKS[connector]?.[requestedNetworks[0]]) {
+    fail("Select exactly one supported connector network.");
+  }
+  return requestedNetworks[0];
+}
+
+function makeSession(connector, request, address, chain, peerName, peerURL, existing, publicKeyBase64) {
+  const networkID = selectedNetwork(connector, request);
   const methods = uniqueStrings(request.requestedMethods, "requested methods")
     .filter((method) => CONNECTOR_METHODS[connector].has(method));
   if (methods.length === 0) fail("No supported connector methods were approved.");
@@ -150,10 +156,17 @@ function makeSession(connector, request, address, chain, peerName, peerURL, exis
 
 async function getMetaMask() {
   if (!metamaskClient) {
-    const rpcURL = assertString(configuration.metamaskSepoliaRPCURL, "MetaMask Sepolia provider URL", 2048);
+    const supportedNetworks = {};
+    for (const [networkID, chainID] of Object.entries(CONNECTOR_NETWORKS.metamask)) {
+      const rpcURL = configuration.metamaskRPCURLs[networkID];
+      if (typeof rpcURL === "string" && rpcURL.length > 0) {
+        supportedNetworks[chainID] = assertString(rpcURL, "MetaMask provider URL", 2048);
+      }
+    }
+    if (Object.keys(supportedNetworks).length === 0) fail("MetaMask provider configuration is unavailable.");
     metamaskClient = await createEVMClient({
       dapp: { name: "Locus", url: configuration.dappURL },
-      api: { supportedNetworks: { "0xaa36a7": rpcURL } },
+      api: { supportedNetworks },
       analytics: { enabled: false },
       skipAutoAnnounce: true,
     });
@@ -161,8 +174,9 @@ async function getMetaMask() {
     metamaskProvider.on?.("accountsChanged", () => disconnectEventsFor("metamask"));
     metamaskProvider.on?.("chainChanged", (chainID) => {
       for (const session of sessionsFor("metamask")) {
-        emit("metamask", "network_changed", session.connectionID,
-          chainID === "0xaa36a7" ? [CONNECTOR_NETWORKS.metamask] : []);
+        const networkID = Object.entries(CONNECTOR_NETWORKS.metamask)
+          .find(([, value]) => value === String(chainID).toLowerCase())?.[0];
+        emit("metamask", "network_changed", session.connectionID, networkID ? [networkID] : []);
       }
     });
     metamaskProvider.on?.("disconnect", () => disconnectEventsFor("metamask"));
@@ -223,21 +237,26 @@ async function connect(connector, payload) {
   setStatus(`Waiting for ${connector === "phantom" ? "Phantom" : connector}…`);
   let session;
   if (connector === "metamask") {
+    const networkID = selectedNetwork(connector, request);
+    const chainID = CONNECTOR_NETWORKS.metamask[networkID];
     const { client } = await getMetaMask();
-    const result = await client.connect({ chainIds: ["0xaa36a7"] });
-    if (String(result.chainId).toLowerCase() !== "0xaa36a7") fail("MetaMask selected an unapproved network.");
+    const result = await client.connect({ chainIds: [chainID] });
+    if (String(result.chainId).toLowerCase() !== chainID) fail("MetaMask selected an unapproved network.");
     session = makeSession(connector, request, assertString(result.accounts?.[0], "MetaMask account", 128),
       "evm", "MetaMask", "https://connect.metamask.io");
   } else if (connector === "phantom") {
+    const networkID = selectedNetwork(connector, request);
     const sdk = getPhantom();
     const result = await sdk.connect({ provider: "phantom" });
-    await sdk.solana.switchNetwork("devnet");
+    await sdk.solana.switchNetwork(CONNECTOR_NETWORKS.phantom[networkID]);
     session = makeSession(connector, request, solanaAddress(result.addresses || []),
       "solana", "Phantom-managed", "https://connect.phantom.app");
   } else if (connector === "slush") {
+    const networkID = selectedNetwork(connector, request);
     const wallet = getSlush();
     const result = await wallet.features["standard:connect"].connect();
     const account = result.accounts?.[0] || wallet.accounts?.[0];
+    if (!account?.chains?.includes(networkID)) fail("Slush did not expose the approved network.");
     const publicKey = account?.publicKey instanceof Uint8Array
       ? btoa(String.fromCharCode(...account.publicKey)) : null;
     session = makeSession(connector, request, assertString(account?.address, "Slush account", 128),
@@ -262,16 +281,16 @@ async function restoreOne(stored) {
     const { provider } = await getMetaMask();
     const accounts = await provider.request({ method: "eth_accounts" });
     const chainID = await provider.request({ method: "eth_chainId" });
-    if (String(chainID).toLowerCase() !== "0xaa36a7") return null;
+    if (String(chainID).toLowerCase() !== CONNECTOR_NETWORKS.metamask[stored.networkIDs[0]]) return null;
     address = accounts?.[0];
   } else if (stored.connector === "phantom") {
     const sdk = getPhantom();
     if (!sdk.isConnected()) return null;
-    await sdk.solana.switchNetwork("devnet");
+    await sdk.solana.switchNetwork(CONNECTOR_NETWORKS.phantom[stored.networkIDs[0]]);
     address = solanaAddress(await sdk.getAddresses());
   } else if (stored.connector === "slush") {
     const wallet = getSlush();
-    address = wallet.accounts?.[0]?.address;
+    address = wallet.accounts?.find((account) => account.chains?.includes(stored.networkIDs[0]))?.address;
   }
   if (!address || address.toLowerCase() !== stored.accounts[0].address.toLowerCase()) return null;
   const session = makeSession(stored.connector, request, address, stored.accounts[0].chain,
@@ -348,7 +367,7 @@ async function execute(connector, payload) {
     const sdk = getPhantom();
     const address = solanaAddress(await sdk.getAddresses());
     if (address !== session.accounts[0].address) fail("The Phantom account changed after review.");
-    await sdk.solana.switchNetwork("devnet");
+    await sdk.solana.switchNetwork(CONNECTOR_NETWORKS.phantom[binding.networkID]);
     const bytes = decodeBase64(transaction.transactionBase64);
     let decoded;
     try { decoded = VersionedTransaction.deserialize(bytes); }
@@ -364,7 +383,7 @@ async function execute(connector, payload) {
     if (!account) fail("The Slush account changed after review.");
     const result = await wallet.features["sui:signAndExecuteTransaction"].signAndExecuteTransaction({
       account,
-      chain: "sui:testnet",
+      chain: binding.networkID,
       transaction: SuiTransaction.from(decodeBase64(transaction.transactionBase64)),
     });
     transactionID = result.digest;
@@ -413,8 +432,7 @@ window.LocusWalletConnections = Object.freeze({
     const config = assertObject(value, "configuration");
     configuration = Object.freeze({
       dappURL: assertString(config.dappURL, "dapp URL", 2048),
-      metamaskSepoliaRPCURL: typeof config.metamaskSepoliaRPCURL === "string"
-        ? config.metamaskSepoliaRPCURL.slice(0, 2048) : "",
+      metamaskRPCURLs: Object.freeze(assertObject(config.metamaskRPCURLs, "MetaMask provider URLs")),
       phantomAppID: typeof config.phantomAppID === "string" ? config.phantomAppID : "",
       phantomRedirectURL: typeof config.phantomRedirectURL === "string" ? config.phantomRedirectURL : "",
     });

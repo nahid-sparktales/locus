@@ -656,8 +656,12 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     private static let maximumActivePolicies = 32
     private let queue = DispatchQueue(label: "io.sparktales.locus.wallet-signer")
     private let store = WalletVaultStore()
-    private let launchGate: WalletLaunchGate?
-    private let reviewRegistry: WalletReviewRegistry?
+    private var launchGate: WalletLaunchGate?
+    private var reviewRegistry: WalletReviewRegistry?
+    private let bundledReviewCeiling: WalletReviewRegistry?
+    private let activationPublicKey: Curve25519.Signing.PublicKey?
+    private var activeActivationDigest: String?
+    private var activationExpiryTimer: DispatchSourceTimer?
     private let regionCode: String
     private var pendingEntropy: Data?
     private var pendingWords: [String] = []
@@ -675,8 +679,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     private var recoveryCeremony: WalletRecoveryCeremonyContext?
 
     override init() {
-        launchGate = Self.loadLaunchGate()
-        reviewRegistry = Self.loadReviewRegistry()
+        let ceiling = Self.loadReviewRegistry()
+        launchGate = nil
+        reviewRegistry = ceiling
+        bundledReviewCeiling = ceiling
+        activationPublicKey = Self.loadActivationPublicKey()
         regionCode = (Locale.current.region?.identifier ?? "ZZ").uppercased()
         super.init()
     }
@@ -690,6 +697,68 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
 
     func status(reply: @escaping (Data) -> Void) {
         queue.async { reply(self.encoded(self.currentStatus())) }
+    }
+
+    func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            do {
+                guard request.count <= WalletReleaseActivationVerifier.maximumEnvelopeBytes,
+                      let publicKey = self.activationPublicKey,
+                      let ceiling = self.bundledReviewCeiling,
+                      let identity = WalletInstalledReleaseIdentity.current(
+                        signerBundle: .main
+                      ) else {
+                    throw WalletReleaseActivationError.identityMismatch
+                }
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let signed = try decoder.decode(
+                    WalletSignedReleaseActivationEnvelope.self, from: request
+                )
+                let accepted = try WalletSignerActivationRevisionStore.load()
+                let verified = try WalletReleaseActivationVerifier.verify(
+                    signed,
+                    publicKey: publicKey,
+                    bundledReviewCeiling: ceiling,
+                    installedIdentity: identity,
+                    minimumRevision: accepted?.revision ?? 0,
+                    acceptedEnvelopeSHA256: accepted?.envelopeSHA256
+                )
+                try WalletSignerActivationRevisionStore.store(
+                    .init(revision: verified.signedEnvelope.envelope.revision,
+                          envelopeSHA256: verified.envelopeSHA256)
+                )
+                self.launchGate = verified.launchGate
+                self.reviewRegistry = verified.reviewRegistry
+                if self.activeActivationDigest != verified.envelopeSHA256 {
+                    self.clearActivationBoundAuthority()
+                    self.activeActivationDigest = verified.envelopeSHA256
+                    self.activationExpiryTimer?.cancel()
+                    let timer = DispatchSource.makeTimerSource(queue: self.queue)
+                    timer.schedule(deadline: .now() + max(0, min(
+                        signed.envelope.capabilityManifest.manifest.expiresAt,
+                        verified.reviewRegistry.manifest.expiresAt
+                    ).timeIntervalSinceNow))
+                    timer.setEventHandler { [weak self] in
+                        guard self?.activeActivationDigest == verified.envelopeSHA256 else { return }
+                        self?.clearActivationBoundAuthority()
+                        self?.launchGate = nil
+                        self?.activeActivationDigest = nil
+                    }
+                    self.activationExpiryTimer = timer
+                    timer.resume()
+                }
+                reply(self.encoded(WalletReleaseActivationStatus(
+                    revision: verified.signedEnvelope.envelope.revision,
+                    envelopeSHA256: verified.envelopeSHA256,
+                    expiresAt: verified.signedEnvelope.envelope.expiresAt,
+                    enabledNetworkIDs: verified.launchGate.effectiveManifest?.enabledNetworkIDs
+                        ?? []
+                )))
+            } catch {
+                reply(self.error(error.localizedDescription))
+            }
+        }
     }
 
     func beginRecoveryCeremony(
@@ -858,6 +927,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                     case .success:
                         do {
                             let signedAt = Date()
+                            try self.authorizeStructuredSignIn(authorization)
                             try WalletStructuredAuthorization.validate(
                                 authorization, account: account, now: signedAt
                             )
@@ -1039,6 +1109,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 guard let intent = self.preparedIntents.removeValue(forKey: recheck.intentID) else {
                     return reply(self.error("The prepared transaction was already consumed."))
                 }
+                try self.reserveCanaryBudget(for: intent.prepared)
                 let signed = try self.rustSign(transaction: intent.transaction, entropy: entropy)
                 guard signed.digest.caseInsensitiveCompare(intent.prepared.digest) == .orderedSame,
                       signed.from.caseInsensitiveCompare(try self.evmAddress()) == .orderedSame else {
@@ -1270,6 +1341,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                         "The prepared Solana transaction was already consumed."
                     ))
                 }
+                try self.reserveCanaryBudget(for: intent.prepared)
                 let signed = try self.rustSignSolana(
                     packet: intent.packet, entropy: entropy
                 )
@@ -1460,6 +1532,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                         "The prepared Sui transaction was already consumed."
                     ))
                 }
+                try self.reserveCanaryBudget(for: intent.prepared)
                 let signed = try self.rustSignSui(
                     packet: intent.packet, entropy: entropy
                 )
@@ -3761,9 +3834,10 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
             throw signerError("That chain adapter is not compiled as reviewed authority in this build.")
         }
         guard descriptor.environment == .mainnet else { return }
+        try requireCurrentActivation()
         guard let launchGate else {
             throw signerError(
-                "Mainnet signing is disabled because no valid signed capability manifest is bundled."
+                "Mainnet signing requires a verified release activation for this build."
             )
         }
         do {
@@ -3807,6 +3881,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         }
         guard descriptor.environment == .mainnet else { return }
         do {
+            try requireCurrentActivation()
             guard let launchGate else {
                 throw WalletLaunchGateError.capabilityNotReviewed
             }
@@ -3888,6 +3963,16 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
             WalletSignedCapabilityManifest.self, from: manifestData
         ) else { return nil }
         return try? WalletLaunchGate(signedManifest: signed, publicKey: publicKey)
+    }
+
+    private static func loadActivationPublicKey(
+        bundle: Bundle = .main
+    ) -> Curve25519.Signing.PublicKey? {
+        guard let text = bundle.object(
+            forInfoDictionaryKey: "LocusWalletCapabilityPublicKey"
+        ) as? String,
+        let data = Data(base64Encoded: text) else { return nil }
+        return try? Curve25519.Signing.PublicKey(rawRepresentation: data)
     }
 
     private static func loadReviewRegistry(
@@ -4734,6 +4819,42 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         if var entropy = unlockedEntropy { entropy.resetBytes(in: 0..<entropy.count) }
         unlockedEntropy = nil
         activeSessionID = nil
+        preparedIntents.removeAll(keepingCapacity: false)
+        preparedSolanaIntents.removeAll(keepingCapacity: false)
+        preparedSuiIntents.removeAll(keepingCapacity: false)
+        activePolicies.removeAll(keepingCapacity: false)
+        pendingPresenceIntents.removeAll(keepingCapacity: false)
+        policyPresencePending = false
+    }
+
+    private func reserveCanaryBudget(for transaction: WalletPreparedTransaction) throws {
+        guard let network = WalletNetworkCatalog.descriptor(id: transaction.networkID)
+        else { throw WalletReleaseActivationError.malformed }
+        try authorizeNetwork(transaction.networkID, chain: network.chain,
+            capability: capability(for: transaction.action.type))
+        try WalletCanaryBudget.reserve(transaction: transaction, ownership: .locusVault,
+            connector: nil, manifest: launchGate?.effectiveManifest,
+            sourceRevision: Bundle.main.object(forInfoDictionaryKey: "LocusSourceRevision") as? String ?? "",
+            signerOwned: true)
+    }
+
+    private func requireCurrentActivation() throws {
+        guard let activeActivationDigest,
+              let accepted = try WalletSignerActivationRevisionStore.load(),
+              accepted.envelopeSHA256 == activeActivationDigest,
+              accepted.revision == launchGate?.effectiveManifest?.revision else {
+            clearActivationBoundAuthority()
+            launchGate = nil
+            throw WalletReleaseActivationError.rollback
+        }
+    }
+
+    private func clearActivationBoundAuthority() {
+        // Invalidate callbacks awaiting user presence before replacing grants.
+        // A callback may only resume the same authenticated signing session.
+        activeSessionID = nil
+        if var entropy = unlockedEntropy { entropy.resetBytes(in: 0..<entropy.count) }
+        unlockedEntropy = nil
         preparedIntents.removeAll(keepingCapacity: false)
         preparedSolanaIntents.removeAll(keepingCapacity: false)
         preparedSuiIntents.removeAll(keepingCapacity: false)

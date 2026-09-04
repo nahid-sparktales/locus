@@ -5,5 +5,5 @@
   "upstream_path": "skills/writing-plans",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic"
+  "activation": "explicit"
 }

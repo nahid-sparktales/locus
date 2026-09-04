@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Signs, seals, and zips a built Locus.app for release — in an order that
-# cannot ship a broken signature:
+# Canary/GA package an immutable Xcode Developer ID export with its receipt.
+# The legacy wallet-disabled path signs, seals, and zips a built Locus.app:
 #   1. sign every Mach-O in the bundled agent runtime, then the app
 #   2. verify the seal
 #   3. exercise the bundled runtime (import check, byte-code writing off)
@@ -23,6 +23,17 @@ sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
 wallet_recovery="${app}/Contents/Helpers/WalletRecovery.app"
 wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc"
+
+# Wallet candidates can only originate from Xcode's Developer ID export flow.
+# Route before this legacy packager can mutate a plist or replace a signature.
+if [[ "${LOCUS_WALLET_RELEASE_CHANNEL:-disabled}" != "disabled" \
+    || -n "${LOCUS_WALLET_EXPORT_PROVENANCE:-}" ]]; then
+    [[ -n "${LOCUS_WALLET_EXPORT_PROVENANCE:-}" ]] || {
+        echo "error: canary/GA require Tools/ArchiveWalletRelease.sh and its export provenance receipt" >&2
+        exit 1
+    }
+    exec "${repo_root}/Tools/PackageExportedWalletRelease.sh" "${app}" "${zip_out}"
+fi
 
 identity="${LOCUS_SIGN_IDENTITY:-}"
 if [[ -z "${identity}" ]]; then
@@ -70,10 +81,16 @@ if [[ "${wallet_release_channel}" != "disabled" ]]; then
         LocusWalletConnectRedirectURL LOCUS_WALLETCONNECT_REDIRECT_URL
         LocusPhantomAppID LOCUS_PHANTOM_APP_ID
         LocusPhantomRedirectURL LOCUS_PHANTOM_REDIRECT_URL
+        LocusWalletAlchemyEthereumMainnetRPCURL LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL
+        LocusWalletQuickNodeEthereumMainnetRPCURL LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL
         LocusWalletAlchemyEthereumSepoliaRPCURL LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL
         LocusWalletQuickNodeEthereumSepoliaRPCURL LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL
+        LocusWalletAlchemySolanaMainnetRPCURL LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL
+        LocusWalletQuickNodeSolanaMainnetRPCURL LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL
         LocusWalletAlchemySolanaDevnetRPCURL LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL
         LocusWalletQuickNodeSolanaDevnetRPCURL LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL
+        LocusWalletAlchemySuiMainnetGraphQLURL LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL
+        LocusWalletQuickNodeSuiMainnetGraphQLURL LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL
         LocusWalletAlchemySuiTestnetGraphQLURL LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL
         LocusWalletQuickNodeSuiTestnetGraphQLURL LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL
     )
@@ -109,10 +126,16 @@ if [[ "${wallet_release_channel}" != "disabled" ]]; then
     }
     for endpoint in \
         "${LOCUS_PHANTOM_REDIRECT_URL}" \
+        "${LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL}" \
+        "${LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL}" \
         "${LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL}" \
         "${LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL}" \
+        "${LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL}" \
+        "${LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL}" \
         "${LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL}" \
         "${LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL}" \
+        "${LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL}" \
+        "${LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL}" \
         "${LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL}" \
         "${LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL}"
     do
@@ -163,6 +186,17 @@ if ! /usr/bin/plutil -insert LocusSourceRevision -string "${revision_label}" "${
 then
     /usr/bin/plutil -replace LocusSourceRevision -string "${revision_label}" "${info_plist}"
 fi
+for signer_plist in \
+    "${wallet_signer}/Contents/Info.plist" \
+    "${wallet_recovery_signer}/Contents/Info.plist"
+do
+    if ! /usr/bin/plutil -insert LocusSourceRevision -string "${revision_label}" \
+        "${signer_plist}" 2>/dev/null
+    then
+        /usr/bin/plutil -replace LocusSourceRevision -string "${revision_label}" \
+            "${signer_plist}"
+    fi
+done
 /bin/mkdir -p "${resources}"
 {
     echo "source_revision=${revision_label}"
@@ -228,34 +262,8 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
             exit 1
         }
     else
-        [[ -n "${capability_key}" && -n "${capability_manifest}" && -n "${review_manifest}" ]] || {
-            echo "error: wallet ${wallet_release_channel} requires signed capability and review manifests" >&2
-            exit 1
-        }
-        manifest_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-manifest.XXXXXX")"
-        if ! /bin/echo -n "${capability_manifest}" | /usr/bin/base64 -D > "${manifest_file}"; then
-            /bin/rm -f "${manifest_file}"
-            echo "error: embedded wallet capability manifest is not valid base64" >&2
-            exit 1
-        fi
-        manifest_stage="$(/usr/bin/plutil -extract manifest.releaseStage raw -o - \
-            "${manifest_file}" 2>/dev/null || true)"
-        manifest_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
-            "${manifest_file}" 2>/dev/null || true)"
-        evidence_hash="$(/usr/bin/plutil -extract manifest.evidenceIndexSHA256 raw -o - \
-            "${manifest_file}" 2>/dev/null || true)"
-        enabled_networks="$(/usr/bin/plutil -extract manifest.networkGrants json -o - \
-            "${manifest_file}" 2>/dev/null || true)"
-        /bin/rm -f "${manifest_file}"
-        [[ "${manifest_schema}" == "3" && "${#evidence_hash}" == "64" \
-            && "${enabled_networks}" == \[*\] ]] || {
-            echo "error: wallet release requires a schema-v3 evidence-bound manifest" >&2
-            exit 1
-        }
-        expected_stage="invited_canary"
-        [[ "${wallet_release_channel}" == "ga" ]] && expected_stage="general_availability"
-        [[ "${manifest_stage}" == "${expected_stage}" ]] || {
-            echo "error: wallet ${wallet_release_channel} requires manifest stage ${expected_stage}" >&2
+        [[ -n "${capability_key}" && -z "${capability_manifest}" && -n "${review_manifest}" ]] || {
+            echo "error: wallet ${wallet_release_channel} must be dormant: embed the public key and signed review ceiling, but no capability manifest" >&2
             exit 1
         }
         review_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-review.XXXXXX")"
@@ -280,26 +288,20 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
             echo "error: wallet release review manifest failed signature or structure verification" >&2
             exit 1
         fi
+        /usr/bin/python3 "${repo_root}/Tools/VerifyWalletProviderBindings.py" \
+            "${review_file}" "${info_plist}"
         /bin/rm -f "${review_file}"
-        provider_keys=()
-        if [[ "${enabled_networks}" == *'"eip155:1"'* ]]; then
-            provider_keys+=(
-                LocusWalletAlchemyEthereumMainnetRPCURL
-                LocusWalletQuickNodeEthereumMainnetRPCURL
-            )
-        fi
-        if [[ "${enabled_networks}" == *'"solana:mainnet-beta"'* ]]; then
-            provider_keys+=(
-                LocusWalletAlchemySolanaMainnetRPCURL
-                LocusWalletQuickNodeSolanaMainnetRPCURL
-            )
-        fi
-        if [[ "${enabled_networks}" == *'"sui:mainnet"'* ]]; then
-            provider_keys+=(
-                LocusWalletAlchemySuiMainnetGraphQLURL
-                LocusWalletQuickNodeSuiMainnetGraphQLURL
-            )
-        fi
+        # The invited canary is intentionally all-chain. The dormant artifact
+        # carries every reviewed provider, while the post-notarization envelope
+        # decides which exact identities are activated.
+        provider_keys=(
+            LocusWalletAlchemyEthereumMainnetRPCURL
+            LocusWalletQuickNodeEthereumMainnetRPCURL
+            LocusWalletAlchemySolanaMainnetRPCURL
+            LocusWalletQuickNodeSolanaMainnetRPCURL
+            LocusWalletAlchemySuiMainnetGraphQLURL
+            LocusWalletQuickNodeSuiMainnetGraphQLURL
+        )
         for provider_key in "${provider_keys[@]}"
         do
             provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
@@ -309,6 +311,18 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
                 exit 1
             }
         done
+        activation_url="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReleaseActivationURL' \
+            "${info_plist}" 2>/dev/null || true)"
+        [[ "${activation_url}" == https://* && "${activation_url}" != *'@'* \
+            && "${activation_url}" != *'#'* ]] || {
+            echo "error: wallet release activation must use a credential-free HTTPS endpoint" >&2
+            exit 1
+        }
+        [[ ! -e "${resources}/wallet-activation.json" \
+            && ! -e "${resources}/WalletReleaseActivation.json" ]] || {
+            echo "error: the dormant artifact must not contain an activating envelope" >&2
+            exit 1
+        }
     fi
 fi
 # Sign the deepest privileged component first, then each containing boundary.

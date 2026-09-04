@@ -32,13 +32,40 @@ EXPECTED_DIRECT = {
     "@solana/web3.js": "1.98.4",
 }
 EXPECTED_BUNDLE_SHA256 = (
-    "99ed4b87f3fcd5e3e328c89a69a2cb66153f1f3382ac1e85b12e1232c350ee30"
+    "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf"
 )
 EXPECTED_REOWN_TARGETS = {
     "Commons", "Events", "HTTPClient", "JSONRPC", "WalletConnectJWT",
     "WalletConnectKMS", "WalletConnectNetworking", "WalletConnectPairing",
     "WalletConnectRelay", "WalletConnectSign", "WalletConnectSigner",
     "WalletConnectUtils", "WalletConnectVerify",
+}
+PHANTOM_LICENSE = {
+    "license": "MIT",
+    "path": "WalletConnectionsWeb/licenses/phantom-wallet-sdk-87ad8fac.LICENSE",
+    "sha256": "2f6200a1de42d6684738dce0b2d7b88f0728f948e39dc1a6861c79e8221adb6d",
+    "source": "https://github.com/phantom/wallet-sdk/blob/87ad8fac24721cbe00377e92f429a500b0da4139/LICENSE",
+}
+LICENSE_EVIDENCE = {
+    ("@phantom/api-key-stamper", "2.0.2", "sha512-TCjfFN7FrNuIQzHqgQOcBR/Vu32Jfr+y2/9VVwRDdPgRwrm0oNDQPIuCUhd7QAWmlotBtNnrZh9fDxc5DeCo7g=="): PHANTOM_LICENSE,
+    ("@phantom/browser-sdk", "2.0.2", "sha512-fGcSR5o355Sl8NHMni8+TAsBJ/nVcVxOtOFiEjjzZHtbriMAC925lLhVprgpg9oRj5qze3lj2jOnpl5plmhEug=="): PHANTOM_LICENSE,
+    ("@phantom/chain-interfaces", "2.0.2", "sha512-HgWDvODDulbLZZJYBtapUhUwE3CIqLuU6mwlLgu7E/w5dcGzQ+VZCN34bgtJTXc7ggl3f1HkC8JKRjPfPyOdSw=="): PHANTOM_LICENSE,
+    ("@phantom/client", "2.0.2", "sha512-jMdkxBEfPpja+6QaTwusqhlHg9/a7achn2mh/WptMe5rX1v3TCwPmPy9vfWIj5U9QygyKe75U/exPB8jggz0gQ=="): PHANTOM_LICENSE,
+    ("@phantom/indexed-db-stamper", "2.0.2", "sha512-5onsgIr9ylBLz3d2fTOFH0gYt4IG+ZcyebP4PamNqseLZjHp8ttpR7UVa1lxdA9T5plJB0BpWZQfV8kBkcOyEA=="): PHANTOM_LICENSE,
+    ("@phantom/sdk-types", "2.0.2", "sha512-2xvIZZrCDbj4lDcSh4YWf3ODISubym9lha/FiVyrKoyz7aEhvT4YF2qm4Z/K42uBvKyC0FcdBtjAMiQiylyuBQ=="): PHANTOM_LICENSE,
+    ("@phantom/utils", "2.0.2", "sha512-d0/cezg2Dd95lQe0RlZrAWK+jQ3t1KnE30oVmFkJZF3K/X05XIX9MO02wfVnXsPESX+bENuJIr12kRIQbSBA7g=="): PHANTOM_LICENSE,
+    ("eyes", "0.1.8", "sha512-GipyPsXO1anza0AOZdy69Im7hGFCNB7Y/NGjDlZGJ3GJJLtwNSb2vrzYrTYJRrRloVx7pl+bhUaTB8yiccPvFQ=="): {
+        "license": "MIT",
+        "path": "WalletConnectionsWeb/licenses/eyes-0.1.8.LICENSE",
+        "sha256": "e424cbb68485fe465f6e58959da4bf157e5a0e716c02cd8d9a2041a12520fb93",
+        "source": "npm-package:eyes@0.1.8/LICENSE",
+    },
+    ("text-encoding-utf-8", "1.0.2", "sha512-8bw4MY9WjdsD2aMtO0OzOCY3pXGYNx2d2FfHRVUKkiCPDWjKuOlhLVASS+pD7VkLTVjW268LYJHwsnPFlBpbAg=="): {
+        "license": "Unlicense",
+        "path": "WalletConnectionsWeb/licenses/text-encoding-utf-8-1.0.2.LICENSE",
+        "sha256": "caecf721eb8d6c1d74e57a798ef53d9cbeb58fc637af1877741a5572455206ec",
+        "source": "npm-package:text-encoding-utf-8@1.0.2/LICENSE.md",
+    },
 }
 EXCLUDED_REOWN_PRODUCTS = {
     "ReownWalletKit", "WalletConnectPay", "YttriumWrapper", "YttriumUtilsWrapper",
@@ -160,9 +187,17 @@ def verify_npm(root: Path) -> tuple[list[dict], dict]:
         if not isinstance(resolved, str) or not resolved.startswith("https://registry.npmjs.org/"):
             fail(f"npm component has an unreviewed source: {name}@{version}")
         license_value = record.get("license")
+        license_evidence = None
         if not isinstance(license_value, str) or not license_value.strip():
-            license_value = "NOASSERTION"
-            unresolved_licenses += 1
+            license_evidence = LICENSE_EVIDENCE.get((name, version, integrity))
+            if license_evidence:
+                evidence_path = root / license_evidence["path"]
+                if not evidence_path.is_file() or sha256(evidence_path) != license_evidence["sha256"]:
+                    fail(f"license evidence changed: {name}@{version}")
+                license_value = license_evidence["license"]
+            else:
+                license_value = "NOASSERTION"
+                unresolved_licenses += 1
         purl = f"pkg:npm/{name.replace('@', '%40')}@{version}"
         ref = "urn:locus:npm:" + hashlib.sha256(path.encode()).hexdigest()
         license_record = (
@@ -186,8 +221,14 @@ def verify_npm(root: Path) -> tuple[list[dict], dict]:
             "properties": [
                 {"name": "locus:npm-lock-path", "value": path},
                 {"name": "locus:bundling", "value": "esbuild-static-bundle"},
+                *([{
+                    "name": "locus:license-evidence",
+                    "value": f"{license_evidence['source']}#sha256:{license_evidence['sha256']}",
+                }] if license_evidence else []),
             ],
         })
+    if unresolved_licenses:
+        fail(f"{unresolved_licenses} npm license declarations remain unresolved")
     bundle = root / "WalletConnectionsRuntime/Resources/WalletConnections.bundle.js"
     if not bundle.is_file() or sha256(bundle) != EXPECTED_BUNDLE_SHA256:
         fail("the deterministic wallet connector bundle digest changed")

@@ -61,6 +61,15 @@ struct WalletRoutedRequest: Codable, Equatable, Sendable {
     let payload: WalletRoutedRequestPayload
 }
 
+/// A local-only preparation context, deliberately not Codable and never
+/// accepted by a dapp decoder. The gateway supplies these identities only
+/// after resolving the active swap against its signed review registry.
+struct WalletInternalSwapAllowanceRequest {
+    let preparation: WalletPrepareRequest
+    let reviewedContract: WalletContractRegistryEntry
+    let reviewedConfiguration: WalletReviewedUniswapConfiguration
+}
+
 enum WalletDappRequestRouterError: LocalizedError, Equatable {
     case duplicateRequest
     case methodPayloadMismatch
@@ -90,6 +99,8 @@ enum WalletDappRequestRouterError: LocalizedError, Equatable {
 final class WalletDappRequestRouter {
     private struct Pending {
         let request: WalletRoutedRequest
+        let account: WalletAccount
+        let internalAllowance: WalletInternalSwapAllowanceRequest?
     }
 
     private var pending: [String: Pending] = [:]
@@ -106,6 +117,43 @@ final class WalletDappRequestRouter {
         account: WalletAccount,
         now: Date = Date()
     ) throws {
+        try begin(
+            request, connection: connection, account: account,
+            internalAllowance: nil, now: now
+        )
+    }
+
+    /// Admits only finite setup derived inside Locus, while the ordinary
+    /// semantic/wire entry point continues to reject every approval action.
+    /// This is admission to the exact-review flow, never policy authority.
+    func beginInternalSwapAllowance(
+        _ allowance: WalletInternalSwapAllowanceRequest,
+        binding: WalletConnectionRequestBinding,
+        connection: WalletConnectionRecord,
+        account: WalletAccount,
+        now: Date = Date()
+    ) throws -> WalletRoutedRequest {
+        let request = WalletRoutedRequest(
+            binding: binding,
+            payload: .transaction(
+                action: allowance.preparation.action,
+                maximumFeeBaseUnits: allowance.preparation.maximumFeeBaseUnits
+            )
+        )
+        try begin(
+            request, connection: connection, account: account,
+            internalAllowance: allowance, now: now
+        )
+        return request
+    }
+
+    private func begin(
+        _ request: WalletRoutedRequest,
+        connection: WalletConnectionRecord,
+        account: WalletAccount,
+        internalAllowance: WalletInternalSwapAllowanceRequest?,
+        now: Date
+    ) throws {
         guard pending[request.binding.requestID] == nil,
               !completedRequestIDs.contains(request.binding.requestID) else {
             throw WalletDappRequestRouterError.duplicateRequest
@@ -115,8 +163,78 @@ final class WalletDappRequestRouter {
         )
         try validateEndpoint(request.binding)
         try validateOwnership(account, for: request.binding)
-        try validatePayload(request.payload, for: request.binding)
-        pending[request.binding.requestID] = Pending(request: request)
+        if let internalAllowance {
+            try validateInternalAllowance(
+                internalAllowance, for: request.binding, account: account, now: now
+            )
+        } else {
+            try validatePayload(request.payload, for: request.binding)
+        }
+        pending[request.binding.requestID] = Pending(
+            request: request, account: account, internalAllowance: internalAllowance
+        )
+    }
+
+    private func validateInternalAllowance(
+        _ allowance: WalletInternalSwapAllowanceRequest,
+        for binding: WalletConnectionRequestBinding,
+        account: WalletAccount,
+        now: Date
+    ) throws {
+        let preparation = allowance.preparation
+        let configuration = allowance.reviewedConfiguration
+        guard binding.direction == .externalAccountToLocus,
+              binding.connector == .metamask, account.chain == .evm,
+              binding.method == .sendTransaction,
+              binding.origin == nil, binding.peerID == nil,
+              preparation.source.kind == .humanUI || preparation.source.kind == .agent,
+              preparation.source.origin == nil, preparation.source.peerID == nil,
+              preparation.accountID == binding.accountID,
+              preparation.networkID == binding.networkID,
+              configuration.networkID == binding.networkID,
+              preparation.action.type == .swapAllowanceSetup,
+              preparation.action.contractID == allowance.reviewedContract.id,
+              Self.isCanonicalUnsignedInteger(preparation.maximumFeeBaseUnits),
+              preparation.maximumFeeBaseUnits.count <= 78,
+              let setup = preparation.action.swapAllowanceSetup,
+              setup.binding.networkID == binding.networkID,
+              preparation.action == .swapAllowanceSetup(
+                contractID: allowance.reviewedContract.id,
+                adapterID: allowance.reviewedContract.reviewedAdapterID ?? "",
+                setup: setup
+              ),
+              let quote = setup.binding.route.quoteEvidence,
+              quote.quotedAt <= now, quote.expiresAt > now,
+              quote.expiresAt.timeIntervalSince(quote.quotedAt) <= 60,
+              let deadline = UInt64(setup.binding.route.deadlineUnixSeconds),
+              Double(deadline) > now.timeIntervalSince1970,
+              Double(deadline) <= quote.quotedAt.timeIntervalSince1970 + 20 * 60,
+              setup.stage != .erc20Reset
+                || configuration.zeroFirstApprovalAssetIDs.contains(setup.binding.inputAssetID),
+              WalletSwapAllowanceAdapter.resolve(
+                action: preparation.action,
+                registryEntry: allowance.reviewedContract,
+                configuration: configuration, now: now
+              ) != nil else {
+            throw WalletDappRequestRouterError.actionUnavailable
+        }
+    }
+
+    func validatePending(binding: WalletConnectionRequestBinding, now: Date = Date()) throws {
+        if let reason = canceledRequestIDs[binding.requestID] {
+            throw WalletDappRequestRouterError.canceled(reason)
+        }
+        guard let stored = pending[binding.requestID] else {
+            throw WalletDappRequestRouterError.missingRequest
+        }
+        try WalletConnectionAuthority.validateCallback(
+            expected: stored.request.binding, received: binding, now: now
+        )
+        if let allowance = stored.internalAllowance {
+            try validateInternalAllowance(
+                allowance, for: binding, account: stored.account, now: now
+            )
+        }
     }
 
     func complete(

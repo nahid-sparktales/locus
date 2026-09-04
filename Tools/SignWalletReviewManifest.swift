@@ -13,13 +13,14 @@ struct ReviewManifest: Codable {
     let explorerTemplates: [String: String]
     let adapterIDs: Set<String>
     let connectors: [ReviewConnector]
+    let providerIdentities: [ReviewProviderIdentity]
     let signInAdapters: [ReviewSignInAdapter]
     let programIdentities: [ReviewProgramIdentity]
     let uniswapConfigurations: [ReviewUniswapConfiguration]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, revision, issuedAt, expiresAt, assets, evmContracts
-        case explorerTemplates, adapterIDs, connectors, signInAdapters
+        case explorerTemplates, adapterIDs, connectors, providerIdentities, signInAdapters
         case programIdentities, uniswapConfigurations
     }
 
@@ -38,6 +39,9 @@ struct ReviewManifest: Codable {
         connectors = try container.decodeIfPresent(
             [ReviewConnector].self, forKey: .connectors
         ) ?? []
+        providerIdentities = try container.decodeIfPresent(
+            [ReviewProviderIdentity].self, forKey: .providerIdentities
+        ) ?? []
         signInAdapters = try container.decodeIfPresent(
             [ReviewSignInAdapter].self, forKey: .signInAdapters
         ) ?? []
@@ -50,12 +54,61 @@ struct ReviewManifest: Codable {
     }
 }
 
+extension ReviewManifest {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(revision, forKey: .revision)
+        try values.encode(issuedAt, forKey: .issuedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(assets, forKey: .assets)
+        try values.encode(evmContracts, forKey: .evmContracts)
+        try values.encode(explorerTemplates, forKey: .explorerTemplates)
+        try values.encode(adapterIDs.sorted(), forKey: .adapterIDs)
+        try values.encode(connectors, forKey: .connectors)
+        try values.encode(providerIdentities, forKey: .providerIdentities)
+        try values.encode(signInAdapters, forKey: .signInAdapters)
+        try values.encode(programIdentities, forKey: .programIdentities)
+        try values.encode(uniswapConfigurations, forKey: .uniswapConfigurations)
+    }
+}
+
+
 struct ReviewConnector: Codable {
     let connector: String
+    let ownership: String
     let version: String
     let artifactSHA256: String
+    let configurationSHA256: String?
     let directions: Set<String>
     let methods: Set<String>
+}
+
+extension ReviewConnector {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(connector, forKey: .connector)
+        try values.encode(ownership, forKey: .ownership)
+        try values.encode(version, forKey: .version)
+        try values.encode(artifactSHA256, forKey: .artifactSHA256)
+        try values.encodeIfPresent(configurationSHA256, forKey: .configurationSHA256)
+        try values.encode(directions.sorted(), forKey: .directions)
+        try values.encode(methods.sorted(), forKey: .methods)
+    }
+}
+
+
+struct ReviewProviderIdentity: Codable {
+    let networkID: String
+    let provider: String
+    let configurationID: String
+    let endpointSHA256: String
+    let expectedIdentity: ReviewChainIdentity
+}
+
+struct ReviewChainIdentity: Codable {
+    let kind: String
+    let value: String
 }
 
 struct ReviewSignInAdapter: Codable {
@@ -64,6 +117,17 @@ struct ReviewSignInAdapter: Codable {
     let implementationSHA256: String
     let networkIDs: Set<String>
 }
+
+extension ReviewSignInAdapter {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(format, forKey: .format)
+        try values.encode(version, forKey: .version)
+        try values.encode(implementationSHA256, forKey: .implementationSHA256)
+        try values.encode(networkIDs.sorted(), forKey: .networkIDs)
+    }
+}
+
 
 struct ReviewProgramIdentity: Codable {
     let networkID: String
@@ -83,6 +147,22 @@ struct ReviewUniswapConfiguration: Codable {
     let maximumHops: Int
     let zeroFirstApprovalAssetIDs: Set<String>
 }
+
+extension ReviewUniswapConfiguration {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(networkID, forKey: .networkID)
+        try values.encode(universalRouterContractID, forKey: .universalRouterContractID)
+        try values.encode(permit2ContractID, forKey: .permit2ContractID)
+        try values.encode(contracts, forKey: .contracts)
+        try values.encode(pools, forKey: .pools)
+        try values.encode(allowedIntermediaryAssetIDs.sorted(), forKey: .allowedIntermediaryAssetIDs)
+        try values.encode(allowedFeeTiers.sorted(), forKey: .allowedFeeTiers)
+        try values.encode(maximumHops, forKey: .maximumHops)
+        try values.encode(zeroFirstApprovalAssetIDs.sorted(), forKey: .zeroFirstApprovalAssetIDs)
+    }
+}
+
 
 struct ReviewUniswapContract: Codable {
     let role: String
@@ -441,6 +521,31 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         "solana:mainnet-beta": "solana", "solana:devnet": "solana",
         "sui:mainnet": "sui", "sui:testnet": "sui",
     ]
+    let expectedIdentities: [String: ReviewChainIdentity] = [
+        "eip155:1": .init(kind: "eip155_chain_id", value: "1"),
+        "eip155:11155111": .init(kind: "eip155_chain_id", value: "11155111"),
+        "solana:mainnet-beta": .init(
+            kind: "solana_genesis_hash",
+            value: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2d"
+        ),
+        "solana:devnet": .init(
+            kind: "solana_genesis_hash", value: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+        ),
+        "sui:mainnet": .init(
+            kind: "sui_chain_identifier",
+            value: "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+        ),
+        "sui:testnet": .init(
+            kind: "sui_chain_identifier",
+            value: "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD"
+        ),
+    ]
+    let knownProviders: Set<String> = ["alchemy", "quicknode", "user_defined"]
+    let requiredOwnership: [String: String] = [
+        "metamask": "external", "phantom": "connector_managed",
+        "slush": "external", "embedded_browser": "locus_vault",
+        "wallet_connect": "locus_vault",
+    ]
     return manifest.schemaVersion == 2
         && manifest.revision > 0
         && manifest.issuedAt <= now
@@ -450,6 +555,7 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         && manifest.assets.count <= 10_000
         && manifest.evmContracts.count <= 2_000
         && manifest.connectors.count <= knownConnectors.count
+        && manifest.providerIdentities.count <= knownNetworks.count * 4
         && manifest.signInAdapters.count <= 8
         && manifest.programIdentities.count <= 256
         && manifest.uniswapConfigurations.count <= 8
@@ -458,6 +564,9 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         && Set(manifest.assets.map(\.canonicalID)).count == manifest.assets.count
         && Set(manifest.evmContracts.map(\.id)).count == manifest.evmContracts.count
         && Set(manifest.connectors.map(\.connector)).count == manifest.connectors.count
+        && Set(manifest.providerIdentities.map {
+            "\($0.networkID):\($0.configurationID)"
+        }).count == manifest.providerIdentities.count
         && Set(manifest.signInAdapters.map {
             "\($0.format):\($0.networkIDs.sorted().joined(separator: ","))"
         }).count == manifest.signInAdapters.count
@@ -492,8 +601,10 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         }
         && manifest.connectors.allSatisfy { connector in
             guard knownConnectors.contains(connector.connector),
+                  connector.ownership == requiredOwnership[connector.connector],
                   isValidVersion(connector.version),
                   isLowercaseSHA256(connector.artifactSHA256),
+                  connector.configurationSHA256.map(isLowercaseSHA256) == true,
                   !connector.directions.isEmpty,
                   connector.directions.isSubset(of: knownDirections),
                   !connector.methods.isEmpty,
@@ -521,6 +632,15 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
             default:
                 return connector.directions == ["locus_vault_to_dapp"]
             }
+        }
+        && manifest.providerIdentities.allSatisfy { identity in
+            guard knownNetworks[identity.networkID] != nil,
+                  knownProviders.contains(identity.provider),
+                  identity.configurationID == "\(identity.provider):\(identity.networkID)",
+                  isLowercaseSHA256(identity.endpointSHA256) else { return false }
+            guard let expected = expectedIdentities[identity.networkID] else { return false }
+            return identity.expectedIdentity.kind == expected.kind
+                && identity.expectedIdentity.value == expected.value
         }
         && manifest.signInAdapters.allSatisfy { adapter in
             ["siwe", "siws"].contains(adapter.format)

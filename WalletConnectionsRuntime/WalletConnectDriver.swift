@@ -55,17 +55,18 @@ final class WalletConnectDriver: WalletConnectorDriver {
             bindings = [:]
         }
 
-        let projectID = Self.configurationValue(
-            environment: environment, bundle: bundle,
-            environmentKey: "LOCUS_REOWN_PROJECT_ID",
-            infoKey: "LocusReownProjectID"
+        let configuration = WalletConnectorReleaseConfiguration.runtimeValues(
+            from: bundle, environment: environment
         )
-        let redirectValue = Self.configurationValue(
-            environment: environment, bundle: bundle,
-            environmentKey: "LOCUS_WALLETCONNECT_REDIRECT_URL",
-            infoKey: "LocusWalletConnectRedirectURL"
-        )
-        guard Self.validProjectID(projectID),
+        let projectID = configuration["LocusReownProjectID"] ?? ""
+        let redirectValue = configuration["LocusWalletConnectRedirectURL"] ?? ""
+        guard let registry = WalletReviewRegistry.loadBundled(from: bundle),
+              let entry = registry.manifest.connectors.first(where: { $0.connector == .walletConnect }),
+              let method = entry.methods.sorted(by: { $0.rawValue < $1.rawValue }).first,
+              registry.containsConnector(
+                  .walletConnect, direction: .locusVaultToDapp, method: method,
+                  configurationValues: configuration
+              ), Self.validProjectID(projectID),
               Self.validRedirectURL(redirectValue),
               let redirect = try? AppMetadata.Redirect(
                   native: redirectValue, universal: nil
@@ -240,6 +241,9 @@ final class WalletConnectDriver: WalletConnectorDriver {
             )
         }
         activeProposals.removeAll()
+        // An unconfigured driver is a valid dormant state. Reown's global
+        // accessor traps before configure(), even inside a try? expression.
+        guard client != nil else { return }
         try? Networking.instance.disconnect(closeCode: .goingAway)
     }
 
@@ -1026,17 +1030,6 @@ final class WalletConnectDriver: WalletConnectorDriver {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return fallback }
         return String(trimmed.prefix(128))
-    }
-
-    private static func configurationValue(
-        environment: [String: String],
-        bundle: Bundle,
-        environmentKey: String,
-        infoKey: String
-    ) -> String {
-        (environment[environmentKey]
-            ?? bundle.object(forInfoDictionaryKey: infoKey) as? String
-            ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func validProjectID(_ value: String) -> Bool {

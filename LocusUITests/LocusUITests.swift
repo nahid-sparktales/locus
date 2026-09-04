@@ -488,20 +488,9 @@ final class LocusUITests: XCTestCase {
                issue.element?.identifier == "settings.localContextDescription" {
                 return true
             }
-            // Xcode 16 audits native SwiftUI Form labels before AppKit has
-            // composited their dynamic semantic colors. It consequently
-            // reports a different system-owned label on every run even when
-            // it uses near-black ink. Keep every other accessibility audit on
-            // these surfaces; semantic text contrast is enforced for all
-            // light/dark Form backgrounds by the palette unit suite, and raw
-            // colors are rejected by the design-system source audit.
-            if issue.auditType == .contrast,
-               let surface = self.app.launchEnvironment[
-                   "LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"
-               ],
-               surface == "settings" || surface == "agent-editor" || surface == "wallet" {
-                return true
-            }
+            // Whole surfaces must not bypass contrast checks. Native drawing
+            // false positives continue through the rendered-pixel measurement
+            // below; named platform exceptions above remain individually scoped.
             // These compact combined elements include tested semantic text
             // plus small status/decorative content that XCTest samples as one
             // foreground. The palette suite verifies each actual text role.
@@ -1258,7 +1247,58 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
         relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        let window = app.windows.firstMatch.frame
+        let search = anyElement("settings.search").frame
+        let close = anyElement("settings.close").frame
+        let footer = anyElement("settings.cancel").frame
+        XCTAssertGreaterThanOrEqual(search.minX, window.minX)
+        XCTAssertLessThanOrEqual(close.maxX, window.maxX)
+        XCTAssertLessThanOrEqual(footer.maxY, window.maxY)
         try auditCurrentSurface()
+    }
+
+    func testWalletSendValidatesRecipientAndKeepsReviewDisabled() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        app.buttons["wallet.hub.send"].click()
+        let send = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "wallet.send.open.wallet-fixture-sui:"
+        )).firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        send.click()
+        let recipient = app.textFields["Recipient address"]
+        XCTAssertTrue(recipient.waitForExistence(timeout: 3))
+        recipient.click()
+        recipient.typeText("not-a-wallet-address")
+        XCTAssertTrue(anyElement("wallet.send.recipient-error").waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["wallet.send.review"].isEnabled)
+        XCTAssertEqual(recipient.value as? String, "not-a-wallet-address")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+    }
+
+    func testWalletReceiveConfirmsCopyAndExplainsNetwork() {
+        relaunchWalletFixture("locked", anchor: "settings.wallet.unlock")
+        app.buttons["Receive"].firstMatch.click()
+        let copy = app.buttons["wallet.receive.copy-address"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts[
+            "Use only Ethereum Sepolia when sending to this address."
+        ].exists)
+        copy.click()
+        XCTAssertTrue(waitUntil { copy.label == "Address Copied" })
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(anyElement("settings.wallet.unlock").waitForExistence(timeout: 3))
+    }
+
+    func testWalletConnectionsExplainUnavailableNetworks() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        app.buttons["wallet.hub.connections"].click()
+        let reason = anyElement("wallet.connection.unavailable.metamask")
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["wallet.connection.connect.metamask"].isEnabled)
+        XCTAssertTrue(app.staticTexts[
+            "Managed by Phantom · approve each action in Locus"
+        ].exists)
     }
 
     func testWalletHubActivityFixture() {
@@ -1287,6 +1327,41 @@ final class LocusUITests: XCTestCase {
         let confirm = app.buttons["Confirm and Send 0.01 ETH"]
         XCTAssertTrue(confirm.exists)
         XCTAssertTrue(confirm.isEnabled)
+    }
+
+    func testWalletExternalConfirmationExplainsWalletApprovalAndCancels() {
+        relaunchWalletFixture("transaction-external", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertEqual(confirm.label, "Continue to Wallet Approval")
+        let approval = anyElement("wallet.transaction.approval-model")
+        XCTAssertTrue((approval.label + " " + String(describing: approval.value))
+            .contains("Wallet approval comes next"))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !confirm.exists })
+    }
+
+    func testWalletPhantomConfirmationExplainsLocusApprovalAndCancels() {
+        relaunchWalletFixture("transaction-managed", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertEqual(confirm.label, "Approve and Send")
+        let approval = anyElement("wallet.transaction.approval-model")
+        XCTAssertTrue((approval.label + " " + String(describing: approval.value))
+            .contains("Approve in Locus"))
+        XCTAssertTrue(app.staticTexts["Solana Devnet"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !confirm.exists })
+    }
+
+    func testWalletConfirmationExpiresWhileReviewIsOpen() {
+        relaunchWalletFixture("transaction-expiring", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 8) { !confirm.isEnabled })
+        XCTAssertTrue(app.staticTexts[
+            "This prepared transaction has expired. Cancel and prepare a new review."
+        ].exists)
     }
 
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {

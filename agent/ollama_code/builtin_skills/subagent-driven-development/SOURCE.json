@@ -5,5 +5,5 @@
   "upstream_path": "skills/subagent-driven-development",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic"
+  "activation": "explicit"
 }
