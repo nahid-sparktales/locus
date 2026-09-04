@@ -3221,6 +3221,7 @@ private struct EmptyConversationView: View {
                 .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
                 .multilineTextAlignment(.center)
+                .accessibilityIdentifier("conversation.welcome.prompt")
 
             if activeRuntimePhase != .online {
                 Label(runtimeStatus, systemImage: "circle.fill")
@@ -3228,20 +3229,6 @@ private struct EmptyConversationView: View {
                     .foregroundStyle(runtimeColor)
                     .padding(.top, 3)
             }
-
-            VStack(spacing: 7) {
-                ForEach(RecommendationEngine.conversationStarters) { recommendation in
-                    LocusRecommendationCard(
-                        recommendation: recommendation,
-                        identifier: "conversation.recommendation.\(recommendation.id)",
-                        compact: true
-                    ) {
-                        model.activateRecommendation(recommendation)
-                    }
-                }
-            }
-            .frame(maxWidth: 540)
-            .padding(.top, 14)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 88)

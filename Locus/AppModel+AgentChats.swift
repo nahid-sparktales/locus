@@ -13,6 +13,24 @@ struct PendingEventTriggerEdit: Equatable {
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
+    /// The agent represented by the Agent inspector and footer picker. A
+    /// directly resumed agent chat supplies the initial selection for older
+    /// state and test fixtures that predate explicit agent selection.
+    var inspectedAgentID: String? {
+        selectedAgentID?.nilIfEmpty
+            ?? sessionCatalog.snapshot.sessionsByID[currentSessionID]?.agentTriggerID?.nilIfEmpty
+    }
+
+    /// Selects an agent as a parent object without changing the open chat.
+    /// Its complete overview is revealed in the inspector, while New Chat is
+    /// retargeted to this agent.
+    func selectAgent(_ agentID: String) {
+        guard let agentID = agentID.nilIfEmpty else { return }
+        selectedAgentID = agentID
+        sidebarDestination = .agents
+        selectInspectorTab(.agent)
+    }
+
     /// The sidebar's primary button and ⌘N share this. Both destinations start
     /// chats: Work starts a workspace chat, while Agent starts the next chat for
     /// the current (or most recently used) agent.
@@ -53,11 +71,12 @@ extension AppModel {
     }
 
     /// Starts a side conversation for an agent. Without an id it uses the
-    /// current chat's agent, then the most recent agent; with no agents at
-    /// all it opens Manage Agents, which is where one is made.
+    /// selected agent, then the current chat's agent, then the most recent
+    /// agent; with no agents at all it opens Manage Agents, where one is made.
     func newAgentChat(triggerID: String? = nil) {
         let snapshot = sessionCatalog.snapshot
-        guard let agent = agentSession(for: triggerID, in: snapshot) else {
+        let requestedAgentID = triggerID?.nilIfEmpty ?? inspectedAgentID
+        guard let agent = agentSession(for: requestedAgentID, in: snapshot) else {
             presentConfigureAgent(draftText: draftText)
             return
         }

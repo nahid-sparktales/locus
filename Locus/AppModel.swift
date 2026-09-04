@@ -169,6 +169,10 @@ final class AppModel: ObservableObject {
             syncInspectorWithSidebarDestination()
         }
     }
+    /// The agent selected as a whole in the sidebar. This is deliberately
+    /// independent of the open chat: selecting an agent changes its inspector
+    /// and New Chat target without replacing the conversation in the centre.
+    @Published var selectedAgentID: String?
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
     @Published var inspectorTab: InspectorTab = .plan  // internal(for: AppModel+UITestFixtures)

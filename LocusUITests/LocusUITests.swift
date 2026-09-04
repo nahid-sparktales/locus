@@ -1875,7 +1875,7 @@ final class LocusUITests: XCTestCase {
 
     // MARK: - Inspector
 
-    func testConversationWelcomeUsesLocusPromptStarters() {
+    func testConversationWelcomeUsesPlainCodexStylePrompt() {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_DOCUMENTATION_SURFACE"] = "workspace"
         app.launch()
@@ -1886,9 +1886,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(
             (title.label + " " + (title.value as? String ?? "")).contains("How can Locus help?")
         )
-        XCTAssertTrue(anyElement("conversation.recommendation.build-feature").exists)
-        XCTAssertTrue(anyElement("conversation.recommendation.fix-bug").exists)
-        XCTAssertTrue(anyElement("conversation.recommendation.explore-codebase").exists)
+        let prompt = anyElement("conversation.welcome.prompt")
+        XCTAssertTrue(prompt.exists)
+        XCTAssertTrue(
+            (prompt.label + " " + (prompt.value as? String ?? ""))
+                .contains("Ask a question or describe what you’d like Locus to do.")
+        )
+        XCTAssertFalse(anyElement("conversation.recommendation.build-feature").exists)
+        XCTAssertFalse(anyElement("conversation.recommendation.fix-bug").exists)
+        XCTAssertFalse(anyElement("conversation.recommendation.explore-codebase").exists)
     }
 
     func testSidebarPlacesAgentWorkAndCreationControlsBelowTheBrand() {
@@ -1959,6 +1965,12 @@ final class LocusUITests: XCTestCase {
         let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(newChat.exists)
         XCTAssertEqual(newChat.label, "New chat")
+        let agentMenu = anyElement("sidebar.agentMenu")
+        XCTAssertTrue(agentMenu.exists)
+        XCTAssertTrue(
+            ((agentMenu.value as? String) ?? "").contains("Inbox Triage"),
+            "the footer identifies the selected agent"
+        )
         XCTAssertFalse(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
@@ -1997,6 +2009,31 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agentOverview.chats.explainer").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
+
+        // The parent row is independently selectable from its disclosure
+        // control. It changes the complete Agent inspector without replacing
+        // the conversation in the centre.
+        anyElement("agent.seed-schedule").click()
+        XCTAssertTrue(waitUntil {
+            let selectedName = self.anyElement("agentOverview.name")
+            return (selectedName.label + " " + (selectedName.value as? String ?? ""))
+                .contains("Morning Review")
+        })
+        XCTAssertTrue(anyElement("agentOverview.chat.seed-schedule-chat").exists)
+        XCTAssertTrue(
+            ((agentMenu.value as? String) ?? "").contains("Morning Review"),
+            "the footer follows the selected agent"
+        )
+
+        agentMenu.click()
+        let inboxAgent = app.menuItems["Inbox Triage"]
+        XCTAssertTrue(inboxAgent.waitForExistence(timeout: 3))
+        inboxAgent.click()
+        XCTAssertTrue(waitUntil {
+            let selectedName = self.anyElement("agentOverview.name")
+            return (selectedName.label + " " + (selectedName.value as? String ?? ""))
+                .contains("Inbox Triage")
+        })
 
         // Leaving Agent takes the tab and its rail button away again;
         // coming back restores them onto the same chat.

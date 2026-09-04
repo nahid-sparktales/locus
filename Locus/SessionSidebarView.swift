@@ -866,12 +866,6 @@ struct SessionSidebarView: View {
         }
     }
 
-    /// Distinct agents, which is what the footer's label promises — several
-    /// chats can belong to one agent.
-    private func agentCount(snapshot: SessionCatalogSnapshot) -> Int {
-        Set(snapshot.agentSessions.compactMap { $0.agentTriggerID?.nilIfEmpty }).count
-    }
-
     private func agentGroups(snapshot: SessionCatalogSnapshot) -> [AgentSidebarGroupModel] {
         Dictionary(grouping: snapshot.agentSessions) { session in
             session.agentTriggerID ?? session.id
@@ -895,6 +889,7 @@ struct SessionSidebarView: View {
             agent: agent,
             automation: model.eventAutomations,
             expanded: !collapsedAgentIDs.contains(agent.id),
+            selected: model.inspectedAgentID == agent.id,
             toggle: {
                 withAnimation(LocusMotion.spatial) {
                     if collapsedAgentIDs.contains(agent.id) {
@@ -903,6 +898,12 @@ struct SessionSidebarView: View {
                         collapsedAgentIDs.insert(agent.id)
                     }
                 }
+            },
+            select: {
+                withAnimation(LocusMotion.spatial) {
+                    _ = collapsedAgentIDs.remove(agent.id)
+                }
+                model.selectAgent(agent.id)
             },
             confirmDelete: { agentToDelete = $0 }
         )
@@ -957,29 +958,7 @@ struct SessionSidebarView: View {
             if model.sidebarDestination == .ask {
                 workspaceMenu(snapshot: snapshot)
             } else {
-                HStack(spacing: SidebarMetrics.iconGap) {
-                    Image(locusSymbol: LocusSymbol.robot)
-                        .font(.locus(size: 11, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
-                        .frame(width: SidebarMetrics.iconColumn)
-                    Text("Agents")
-                        .font(.locus(size: 10, weight: .semibold))
-                    Spacer()
-                    Text("\(agentCount(snapshot: snapshot))")
-                        .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                .foregroundStyle(LocusTheme.inkSoft)
-                .padding(.horizontal, SidebarMetrics.rowInset)
-                .frame(height: 34)
-                .background(LocusTheme.white.opacity(0.56))
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Agents")
-                .accessibilityValue(
-                    "\(agentCount(snapshot: snapshot)) agents, "
-                        + "\(snapshot.agentSessions.count) chats"
-                )
+                AgentSelectionMenu(automation: model.eventAutomations)
             }
 
             HStack {
@@ -1116,6 +1095,126 @@ struct SessionSidebarView: View {
         .menuIndicator(.hidden)
         .accessibilityLabel("Workspace menu")
         .accessibilityIdentifier("sidebar.workspaceMenu")
+    }
+
+    /// Agent mode mirrors the workspace selector: the current parent object
+    /// remains visible at the bottom of the sidebar and the menu changes that
+    /// parent without replacing the open conversation.
+    private struct AgentSelectionMenu: View {
+        @EnvironmentObject private var model: AppModel
+        @EnvironmentObject private var schedule: ScheduleModel
+        @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+        @ObservedObject var automation: EventAutomationModel
+
+        private var entries: [AgentFleetEntry] {
+            AgentFleet.entries(
+                triggers: automation.triggers,
+                connections: automation.connections,
+                schedules: schedule.scheduledTasks,
+                sessions: sessionCatalog.snapshot.sessions,
+                runningSessionIDs: model.runningChatSessionIDs
+            )
+        }
+
+        private var selectedID: String? { model.inspectedAgentID }
+
+        private var selectedEntry: AgentFleetEntry? {
+            guard let selectedID else { return nil }
+            return entries.first { $0.id == selectedID }
+        }
+
+        private var selectedName: String {
+            if let selectedEntry { return selectedEntry.name }
+            guard let selectedID else { return "Choose Agent" }
+            return sessionCatalog.snapshot.agentSessions.first {
+                $0.agentTriggerID == selectedID
+            }?.agentName?.nilIfBlank ?? "Choose Agent"
+        }
+
+        private var iconColor: Color {
+            selectedEntry?.status.isWarning == true ? LocusTheme.warning : LocusTheme.signalDeep
+        }
+
+        var body: some View {
+            Menu {
+                if entries.isEmpty {
+                    Button("No Agents Configured") {}
+                        .disabled(true)
+                } else {
+                    Section("Agents") {
+                        ForEach(entries) { entry in
+                            Button {
+                                model.selectAgent(entry.id)
+                            } label: {
+                                Label(
+                                    entry.name,
+                                    systemImage: entry.id == selectedID
+                                        ? "checkmark.circle.fill"
+                                        : Self.statusSymbol(entry.status)
+                                )
+                            }
+                            .accessibilityIdentifier("agent.menu.\(entry.id)")
+                        }
+                    }
+                }
+                Divider()
+                Button("New Agent…") { model.presentNewAgent() }
+                    .accessibilityIdentifier("agent.menu.new")
+                Button("Manage Agents…") { model.presentConfigureAgent(draftText: "") }
+                    .accessibilityIdentifier("agent.menu.manage")
+            } label: {
+                HStack(spacing: SidebarMetrics.iconGap) {
+                    Image(locusSymbol: LocusSymbol.robot)
+                        .font(.locus(size: 11, weight: .semibold))
+                        .foregroundStyle(iconColor)
+                        .frame(width: SidebarMetrics.iconColumn)
+                        .accessibilityHidden(true)
+                        .accessibilityIdentifier("sidebar.agentIcon")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(selectedName)
+                            .font(.locus(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                            .lineLimit(1)
+                        Text("Agent")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.locus(size: 8, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .padding(.horizontal, SidebarMetrics.rowInset)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 40)
+                .background(LocusTheme.white.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(LocusTheme.line, lineWidth: 1)
+                }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.locus())
+            .menuIndicator(.hidden)
+            .help("Choose an agent")
+            .accessibilityLabel("Agent menu")
+            .accessibilityValue(
+                "\(selectedName), \(entries.count) configured, "
+                    + "\(sessionCatalog.snapshot.agentSessions.count) chats"
+            )
+            .accessibilityIdentifier("sidebar.agentMenu")
+        }
+
+        private static func statusSymbol(_ status: AgentOverview.Status) -> String {
+            switch status {
+            case .active: "circle"
+            case .paused: "pause.circle"
+            case .fired: "checkmark.circle"
+            case .stopped, .missingTrigger: "exclamationmark.triangle"
+            case .failing: "exclamationmark.circle"
+            }
+        }
     }
 
     private var agentStatus: some View {
@@ -1954,20 +2053,26 @@ private struct AgentGroupRow: View {
     @ObservedObject var automation: EventAutomationModel
     let agent: AgentSidebarGroupModel
     let expanded: Bool
+    let selected: Bool
     let toggle: () -> Void
+    let select: () -> Void
     let confirmDelete: (AgentDefinition) -> Void
 
     init(
         agent: AgentSidebarGroupModel,
         automation: EventAutomationModel,
         expanded: Bool,
+        selected: Bool,
         toggle: @escaping () -> Void,
+        select: @escaping () -> Void,
         confirmDelete: @escaping (AgentDefinition) -> Void
     ) {
         self.agent = agent
         self.automation = automation
         self.expanded = expanded
+        self.selected = selected
         self.toggle = toggle
+        self.select = select
         self.confirmDelete = confirmDelete
     }
 
@@ -1983,39 +2088,60 @@ private struct AgentGroupRow: View {
         let record = definition
         let status = AgentOverview.status(for: record)
         let words = record?.vocabulary ?? .events
-        return Button(action: toggle) {
-            HStack(spacing: 7) {
+        return HStack(spacing: 5) {
+            Button(action: toggle) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.locus(size: 7, weight: .bold))
+                    .font(.locus(size: 8, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 9)
-                Image(locusSymbol: LocusSymbol.robot)
-                    .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
-                    .frame(width: 21, height: 21)
-                    .accessibilityHidden(true)
-                Text(agent.name)
-                    .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
-                    .lineLimit(1)
-                if status != .active {
-                    Image(systemName: AgentGroupRow.statusSymbol(status))
-                        .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
-                        .help(status.detail(for: words))
-                        .accessibilityHidden(true)
-                }
-                Spacer(minLength: 4)
-                Text("\(agent.tasks.count)")
-                    .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 16, height: 28)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .frame(height: 32)
-            .background(LocusTheme.white.opacity(0.36))
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .buttonStyle(.locus())
+            .help(expanded ? "Collapse \(agent.name)" : "Expand \(agent.name)")
+            .accessibilityLabel(expanded ? "Collapse \(agent.name)" : "Expand \(agent.name)")
+            .accessibilityIdentifier("agent.\(agent.id).disclosure")
+
+            Button(action: select) {
+                HStack(spacing: 7) {
+                    Image(locusSymbol: LocusSymbol.robot)
+                        .font(.locus(size: 12, weight: .semibold))
+                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
+                        .frame(width: 21, height: 21)
+                        .accessibilityHidden(true)
+                    Text(agent.name)
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                        .lineLimit(1)
+                    if status != .active {
+                        Image(systemName: AgentGroupRow.statusSymbol(status))
+                            .font(.locus(size: 8, weight: .semibold))
+                            .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
+                            .help(status.detail(for: words))
+                            .accessibilityHidden(true)
+                    }
+                    Spacer(minLength: 4)
+                    Text("\(agent.tasks.count)")
+                        .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .help("Show all information for \(agent.name)")
+            .accessibilityLabel("\(agent.name) agent")
+            .accessibilityValue(
+                "\(status.title(for: words)), "
+                    + "\(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
+                    + (selected ? "selected" : "not selected")
+            )
+            .accessibilityIdentifier("agent.\(agent.id)")
         }
-        .buttonStyle(.locus())
+        .padding(.horizontal, 5)
+        .frame(height: 34)
+        .background(selected ? LocusTheme.paperDeep.opacity(0.62) : LocusTheme.white.opacity(0.36))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .contentShape(Rectangle())
         .contextMenu {
             Button("New Chat with \(agent.name)") {
                 model.newAgentChat(triggerID: agent.id)
@@ -2048,13 +2174,6 @@ private struct AgentGroupRow: View {
             }
         }
         .help(status.detail(for: words))
-        .accessibilityLabel("\(agent.name) agent")
-        .accessibilityValue(
-            "\(status.title(for: words)), "
-                + "\(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
-                + (expanded ? "expanded" : "collapsed")
-        )
-        .accessibilityIdentifier("agent.\(agent.id)")
     }
 
     private static func statusSymbol(_ status: AgentOverview.Status) -> String {

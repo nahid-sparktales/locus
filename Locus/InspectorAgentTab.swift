@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// The Agent tab. With an agent's chat selected it shows that agent — who it
-/// is, what wakes it, what it may do, the chats it owns, and the events that
-/// reached it — with the controls that matter day to day: a new chat, pause,
-/// re-arm, edit. With no agent chat selected it shows the fleet, so Agents
-/// mode always has something to say.
+/// The Agent tab. With an agent selected in the sidebar, footer, or through
+/// one of its chats, it shows that whole agent — who it is, what wakes it,
+/// what it may do, every chat it owns, and the events that reached it — with
+/// the controls that matter day to day: a new chat, pause, re-arm, edit. With
+/// no agent selected it shows the fleet, so Agent mode always has something
+/// to say.
 struct InspectorAgentTab: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
@@ -27,13 +28,11 @@ private struct AgentInspectorPanel: View {
     @ObservedObject var schedule: ScheduleModel
     @ObservedObject var sessionCatalog: SessionCatalogModel
 
-    private var currentAgentID: String? {
-        sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?.agentTriggerID?.nilIfEmpty
-    }
+    private var inspectedAgentID: String? { model.inspectedAgentID }
 
     var body: some View {
         Group {
-            if let agentID = currentAgentID {
+            if let agentID = inspectedAgentID {
                 AgentDetailView(overview: overview(for: agentID), automation: automation)
                     .id(agentID)
             } else {
@@ -66,6 +65,10 @@ private struct AgentInspectorPanel: View {
             guard !model.isUITesting else { return }
             Task { await refreshAll() }
         }
+        .onChange(of: model.selectedAgentID) {
+            guard !model.isUITesting else { return }
+            Task { await refreshAll() }
+        }
     }
 
     /// Both stores, and the current schedule agent's run history, which the
@@ -74,7 +77,7 @@ private struct AgentInspectorPanel: View {
         async let automations: Void = automation.refresh(announceFailure: false)
         async let schedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
         _ = await (automations, schedules)
-        if let task = model.agentDefinition(for: currentAgentID)?.schedule {
+        if let task = model.agentDefinition(for: inspectedAgentID)?.schedule {
             await schedule.refreshOccurrences(for: task, announceFailure: false)
         }
     }
@@ -747,12 +750,7 @@ private struct AgentFleetView: View {
     }
 
     private func open(_ entry: AgentFleetEntry) {
-        if let latest = entry.latestChat {
-            model.resume(latest)
-        } else {
-            // No chat yet: the editor is where the agent can be given one.
-            model.presentConfigureAgent(draftText: "")
-        }
+        model.selectAgent(entry.id)
     }
 }
 
@@ -1145,7 +1143,7 @@ private struct AgentFleetRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus(.card))
-        .help(entry.latestChat == nil ? "Open Manage Agents" : "Open the latest chat with \(entry.name)")
+        .help("View all information for \(entry.name)")
         .accessibilityLabel(
             "\(entry.name), \(entry.status.title(for: entry.definition.vocabulary)), \(detail)"
         )

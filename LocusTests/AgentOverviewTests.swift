@@ -818,6 +818,34 @@ final class AgentOverviewTests: XCTestCase {
     // MARK: Inspector sync
 
     @MainActor
+    func testSelectingAnAgentKeepsTheOpenChatAndRetargetsTheInspector() {
+        let model = AppModel(startImmediately: false)
+        let weatherChat = session("weather-chat", triggerID: "weather", name: "Weather", age: 60)
+        let inboxChat = session("inbox-chat", triggerID: "inbox", name: "Inbox", age: 120)
+        model.sessions = [weatherChat, inboxChat]
+        model.currentSessionID = weatherChat.id
+        model.openInspectorTabs = [.plan]
+        model.inspectorTab = .plan
+        model.inspectorCollapsed = false
+
+        XCTAssertEqual(model.inspectedAgentID, "weather")
+
+        model.selectAgent("inbox")
+
+        XCTAssertEqual(model.currentSessionID, weatherChat.id, "agent selection does not replace the chat")
+        XCTAssertEqual(model.selectedAgentID, "inbox")
+        XCTAssertEqual(model.inspectedAgentID, "inbox")
+        XCTAssertEqual(model.sidebarDestination, .agents)
+        XCTAssertEqual(model.inspectorTab, .agent)
+        XCTAssertTrue(model.openInspectorTabs.contains(.agent))
+        XCTAssertEqual(
+            model.agentSession(for: model.inspectedAgentID, in: model.sessionCatalog.snapshot)?.id,
+            inboxChat.id,
+            "New Chat resolves through the selected agent rather than the open chat"
+        )
+    }
+
+    @MainActor
     func testAgentsModeSwapsAnOpenOverviewForTheAgentTabAndAskTakesItBack() {
         let model = AppModel(startImmediately: false)
         model.openInspectorTabs = [.plan]
