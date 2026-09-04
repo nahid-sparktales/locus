@@ -311,6 +311,8 @@ final class AppModel: ObservableObject {
     @Published var clearChatConfirmationPresented = false
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
+    @Published var retryingRunIDs: Set<String> = []  // internal(for: AppModel extension files)
+    @Published var clearingChatWarningSessionIDs: Set<String> = []  // internal(for: sidebar actions)
     var showArchivedSessions: Bool {
         get { sessionCatalog.snapshot.showArchivedSessions }
         set { sessionCatalog.setShowArchivedSessions(newValue) }
@@ -957,6 +959,9 @@ final class AppModel: ObservableObject {
             showMessage: { [weak self] message in self?.showToast(message) },
             notifyPaused: { [weak self] body in
                 self?.notifyNeedsAttentionIfInactive(body: body)
+            },
+            onWarningResolved: { [weak self] runID in
+                self?.clearRunWarningPresentation(runID: runID)
             }
         )
         providerAccountsModel.configure(
@@ -1406,8 +1411,14 @@ final class AppModel: ObservableObject {
     }
 
     func teamRunState(for session: SessionSummary) -> TeamRunState? {
-        if let state = taskConversationStates[session.id]?.state { return state }
-        if session.id == currentSessionID, let orchestrationState { return orchestrationState }
+        if let snapshot = taskConversationStates[session.id] {
+            if activity.warningIsAcknowledged(snapshot.runID) { return nil }
+            return snapshot.state
+        }
+        if session.id == currentSessionID, let orchestrationState {
+            if activity.warningIsAcknowledged(orchestrationRunID) { return nil }
+            return orchestrationState
+        }
         return session.task?.state
     }
 

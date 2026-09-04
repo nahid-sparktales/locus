@@ -76,6 +76,7 @@ PATCH /api/schedules/{schedule_id}
 DELETE /api/schedules/{schedule_id}
 GET /api/schedules/{schedule_id}/occurrences
 POST /api/schedules/{schedule_id}/pause
+POST /api/schedules/{schedule_id}/acknowledge
 POST /api/schedules/{schedule_id}/dispatch
 POST /api/schedules/{schedule_id}/tasks
 GET /api/connectors
@@ -87,6 +88,7 @@ GET /api/event-triggers
 POST /api/event-triggers
 PATCH /api/event-triggers/{trigger_id}
 POST /api/event-triggers/{trigger_id}/pause
+POST /api/event-triggers/{trigger_id}/acknowledge
 POST /api/event-triggers/{trigger_id}/rearm
 POST /api/event-triggers/{trigger_id}/tasks
 DELETE /api/event-triggers/{trigger_id}
@@ -96,6 +98,7 @@ GET /api/event-deliveries
 GET /api/event-deliveries/pending
 POST /api/event-deliveries/{delivery_id}/dispatch
 POST /api/event-deliveries/{delivery_id}/retry
+POST /api/event-deliveries/{delivery_id}/acknowledge
 POST /api/event-deliveries/{delivery_id}/fail
 GET /api/connector-actions/receipts/{idempotency_key}
 POST /api/connector-actions/receipts

@@ -153,6 +153,19 @@ def test_pause_resume_and_persistence_across_restart(tmp_path) -> None:
     assert RunStore(path).schedule(created["id"])["name"] == "Morning review"
 
 
+def test_schedule_warning_can_be_cleared_without_resuming_the_agent(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    created = store.create_schedule(schedule_value(tmp_path), now=1_000)
+    paused = store.pause_schedule(created["id"], "worker stopped")
+    assert paused["enabled"] is False
+    assert paused["last_error"] == "worker stopped"
+
+    cleared = store.clear_schedule_warning(created["id"])
+
+    assert cleared["enabled"] is False
+    assert cleared["last_error"] is None
+
+
 def test_schema_eight_migrates_schedule_tables_without_losing_runs(tmp_path) -> None:
     path = tmp_path / "runs.sqlite3"
     store = RunStore(path)

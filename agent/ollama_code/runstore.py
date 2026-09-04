@@ -1474,6 +1474,20 @@ class RunStore:
                 raise RunStoreError("event trigger not found")
         return self.event_trigger(trigger_id) or {}
 
+    def clear_event_trigger_warning(self, trigger_id: str) -> dict[str, Any]:
+        """Acknowledge the current warning without changing pause state."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE event_triggers SET last_error=NULL, updated_at=?"
+                " WHERE id=? AND deleted=0",
+                (time.time(), trigger_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("event trigger not found")
+        return self.event_trigger(trigger_id) or {}
+
     def delete_event_trigger(self, trigger_id: str) -> None:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
@@ -1764,21 +1778,102 @@ class RunStore:
         return self.event_delivery(delivery_id) or {}
 
     def retry_event_delivery(self, delivery_id: str) -> dict[str, Any]:
+        """Atomically reset one failed event and the warning it caused.
+
+        The delivery state check used to happen before the write lock. Two
+        quick Retry presses could both approve the same old state and advance
+        the attempt twice. The trigger also stayed paused with ``last_error``
+        set, so the reset delivery could never be claimed and every warning UI
+        remained visible.
+        """
         if self.read_only:
             raise RunStoreError("the run database is read-only")
-        delivery = self.event_delivery(delivery_id)
-        if delivery is None:
-            raise RunStoreError("event delivery not found")
-        retryable = delivery["state"] in TERMINAL_STATES or delivery["state"] == "failed"
-        if not retryable:
-            raise RunStoreError("only stopped event deliveries can be retried")
+        current = time.time()
         with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT deliveries.state, deliveries.run_id, deliveries.trigger_id,
+                    runs.state AS run_state
+                FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers
+                    ON triggers.id=deliveries.trigger_id AND triggers.deleted=0
+                LEFT JOIN runs ON runs.id=deliveries.run_id
+                WHERE deliveries.id=?
+                """,
+                (delivery_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("event delivery or trigger not found")
+            effective_state = str(row["state"])
+            if effective_state == "queued" and row["run_state"] in TERMINAL_STATES:
+                effective_state = str(row["run_state"])
+            if effective_state not in {"failed", "interrupted", "cancelled"}:
+                raise RunStoreError("only stopped event deliveries can be retried")
+            cursor = connection.execute(
+                """
+                UPDATE event_deliveries
+                SET state='pending', attempt=attempt+1, run_id=NULL,
+                    session_id=NULL, error=NULL, updated_at=?
+                WHERE id=? AND state=? AND run_id IS ?
+                """,
+                (current, delivery_id, row["state"], row["run_id"]),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("event delivery changed before it could be retried")
+            # Reset only the warning produced by this delivery. A newer failed
+            # run must keep its own warning even if someone retries old history.
             connection.execute(
-                "UPDATE event_deliveries SET state='pending', attempt=attempt+1,"
-                " run_id=NULL, session_id=NULL, error=NULL, updated_at=? WHERE id=?",
-                (time.time(), delivery_id),
+                """
+                UPDATE event_triggers
+                SET enabled=1, last_error=NULL, updated_at=?
+                WHERE id=? AND last_run_id IS ?
+                """,
+                (current, row["trigger_id"], row["run_id"]),
             )
         return self.event_delivery(delivery_id) or {}
+
+    def acknowledge_event_delivery(
+        self, delivery_id: str, *, expected_run_id: str | None = None
+    ) -> dict[str, Any]:
+        """Clear the agent warning for a removed terminal event attempt."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        current = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT deliveries.state, deliveries.run_id, deliveries.trigger_id,
+                    runs.state AS run_state
+                FROM event_deliveries AS deliveries
+                JOIN event_triggers AS triggers
+                    ON triggers.id=deliveries.trigger_id AND triggers.deleted=0
+                LEFT JOIN runs ON runs.id=deliveries.run_id
+                WHERE deliveries.id=?
+                """,
+                (delivery_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("event delivery or trigger not found")
+            if expected_run_id is not None and row["run_id"] != expected_run_id:
+                raise RunStoreError("event delivery has a newer run")
+            effective_state = str(row["state"])
+            if effective_state == "queued" and row["run_state"] in TERMINAL_STATES:
+                effective_state = str(row["run_state"])
+            if effective_state not in TERMINAL_STATES:
+                raise RunStoreError("only finished event deliveries can be acknowledged")
+            connection.execute(
+                """
+                UPDATE event_triggers SET last_error=NULL, updated_at=?
+                WHERE id=? AND last_run_id IS ?
+                """,
+                (current, row["trigger_id"], row["run_id"]),
+            )
+        trigger = self.event_trigger(str(row["trigger_id"]))
+        if trigger is None:
+            raise RunStoreError("event trigger not found")
+        return trigger
 
     def connector_action_receipt(self, idempotency_key: str) -> dict[str, Any] | None:
         with self._lock, self._connect(readonly=True) as connection:
@@ -2006,6 +2101,19 @@ class RunStore:
             cursor = connection.execute(
                 "UPDATE schedules SET enabled=0, last_error=?, updated_at=? WHERE id=?",
                 (reason.strip()[:4_000] or "The schedule needs attention.", time.time(), schedule_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("schedule not found")
+        return self.schedule(schedule_id) or {}
+
+    def clear_schedule_warning(self, schedule_id: str) -> dict[str, Any]:
+        """Acknowledge the current warning without changing pause state."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE schedules SET last_error=NULL, updated_at=? WHERE id=?",
+                (time.time(), schedule_id),
             )
             if cursor.rowcount != 1:
                 raise RunStoreError("schedule not found")

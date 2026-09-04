@@ -54,17 +54,28 @@ extension AppModel {
     }
 
     func syncPreferredPermissionMode(to transport: BackendService) {
-        guard let mode = settings.preferredPermissionMode else { return }
         Task { [weak self] in
             guard let self else { return }
-            if let state = try? await transport.post(
-                "/api/permissions",
-                body: ["mode": mode.rawValue],
-                as: PermissionStateResponse.self
-            ), transport === self.conversationBackend {
-                self.applyPermissionState(state)
-            }
+            _ = await self.syncPreferredPermissionModeAndWait(to: transport)
         }
+    }
+
+    /// Finish restoring the saved permission mode before a newly attached
+    /// worker is exposed to the dispatcher. Starting this request in a loose
+    /// task races `/api/permissions`' state lock against the first chat turn,
+    /// which makes a healthy worker reject the event as busy.
+    @discardableResult
+    func syncPreferredPermissionModeAndWait(
+        to transport: BackendService
+    ) async -> Bool {  // internal(for: worker startup and regression tests)
+        guard let mode = settings.preferredPermissionMode else { return true }
+        guard let state = try? await transport.post(
+            "/api/permissions",
+            body: ["mode": mode.rawValue],
+            as: PermissionStateResponse.self
+        ) else { return false }
+        if transport === conversationBackend { applyPermissionState(state) }
+        return true
     }
 
     /// Clears the tools allowed for this session and returns to asking.

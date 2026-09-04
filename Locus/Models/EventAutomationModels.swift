@@ -428,6 +428,11 @@ struct EventDelivery: Identifiable, Codable, Hashable {
     var conversationSessionID: String? { sessionID ?? targetSessionID }
 }
 
+struct EventDeliveryRetryResponse: Codable {
+    let delivery: EventDelivery
+    let trigger: EventTrigger
+}
+
 struct EventTriggerEditorDraft: Identifiable, Hashable {
     static let dedicatedAgentChat = "__dedicated_agent_chat__"
 

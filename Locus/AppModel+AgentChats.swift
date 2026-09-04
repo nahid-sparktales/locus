@@ -14,7 +14,7 @@ struct PendingEventTriggerEdit: Equatable {
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
     /// The sidebar's primary button and ⌘N share this. Both destinations start
-    /// chats: Ask starts a workspace chat, while Agents starts the next chat for
+    /// chats: Work starts a workspace chat, while Agent starts the next chat for
     /// the current (or most recently used) agent.
     func newChatForSidebarDestination() {
         if sidebarDestination == .agents {
@@ -131,6 +131,24 @@ extension AppModel {
             eventAutomations.setTrigger(trigger, enabled: enabled)
         case .schedule(let task):
             schedule.setScheduleEnabled(task, enabled: enabled)
+        }
+    }
+
+    func clearAgentWarning(_ definition: AgentDefinition) {
+        switch definition {
+        case .trigger(let trigger):
+            eventAutomations.clearWarning(trigger)
+        case .schedule(let task):
+            schedule.clearWarning(task)
+        }
+    }
+
+    func isClearingAgentWarning(_ definition: AgentDefinition) -> Bool {
+        switch definition {
+        case .trigger(let trigger):
+            eventAutomations.clearingWarningIDs.contains(trigger.id)
+        case .schedule(let task):
+            schedule.clearingWarningIDs.contains(task.id)
         }
     }
 

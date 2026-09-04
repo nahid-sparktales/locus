@@ -684,6 +684,7 @@ extension AppModel {
                 durationMilliseconds: event["duration_ms"] as? Int
             )
             isBusy = false
+            var completedWorker: ChatWorkerRuntime?
             if let runtime = taskWorkers[currentSessionID] {
                 let finalState = runtime.dispatchedTeamRunID == nil
                     ? (reason == "complete" ? TeamRunState.completed : .failed)
@@ -693,10 +694,15 @@ extension AppModel {
                     state: finalState
                 )
                 flushPendingConnectorCapability(for: runtime)
+                completedWorker = runtime
             }
             flushPendingConnectorCapability()
-            eventAutomations.wakeDispatcher()
-            syncPreferredPermissionMode(to: conversationBackend)
+            if let completedWorker {
+                prepareChatWorkerForNextDispatch(completedWorker)
+            } else {
+                eventAutomations.wakeDispatcher()
+                syncPreferredPermissionMode(to: conversationBackend)
+            }
             pendingRetry = false
             steeringState = nil
             extensionsModel.mcpInputRequest = nil

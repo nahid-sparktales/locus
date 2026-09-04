@@ -53,6 +53,12 @@ final class ChatWorkerRuntime {
     let service: BackendService
     var isConnected = false
     var isAttaching = true
+    /// A connected worker is not dispatchable while Locus is restoring
+    /// settings through the backend's serialized state-mutation endpoint.
+    /// Without this barrier, the next queued event can reach `start_turn`
+    /// while `/api/permissions` still owns that lock and be rejected as busy.
+    var isPreparingForDispatch = false
+    var dispatchPreparationID: UUID?
     var sessionInfo: SessionInfo?
     var pendingForegroundEvent: [String: Any]?
     var executionState: TeamRunState = .queued
@@ -86,6 +92,24 @@ final class ChatWorkerRuntime {
         default:
             false
         }
+    }
+
+    var acceptsNewTurns: Bool {
+        Self.isDispatchReady(
+            processRunning: process.isRunning,
+            connected: isConnected,
+            attaching: isAttaching,
+            preparingConfiguration: isPreparingForDispatch
+        )
+    }
+
+    static func isDispatchReady(
+        processRunning: Bool,
+        connected: Bool,
+        attaching: Bool,
+        preparingConfiguration: Bool
+    ) -> Bool {
+        processRunning && connected && !attaching && !preparingConfiguration
     }
 
     init(

@@ -1906,8 +1906,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(destination.exists)
         XCTAssertTrue(ask.exists)
         XCTAssertTrue(agents.exists)
-        XCTAssertEqual(ask.label, "Agent")
-        XCTAssertEqual(agents.label, "Work")
+        XCTAssertEqual(ask.label, "Work")
+        XCTAssertEqual(agents.label, "Agent")
         XCTAssertTrue(ask.isSelected)
         XCTAssertTrue(newChat.exists)
         XCTAssertTrue(configureAgent.exists)
@@ -1943,7 +1943,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
     }
 
-    func testWorkDestinationKeepsNewChatAndShowsTheAgentOverview() {
+    func testAgentDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
 
         let identity = anyElement("agentOverview.identity")
@@ -1953,7 +1953,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
 
-        // Work keeps the Agent controls: New chat with its plus
+        // Agent keeps the Agent controls: New chat with its plus
         // glyph creates another chat for the selected agent, while Manage
         // Agents keeps the Configure Agent glyph.
         let newChat = anyElement("sidebar.newSession")
@@ -1998,7 +1998,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
         XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
 
-        // Leaving Work takes the tab and its rail button away again;
+        // Leaving Agent takes the tab and its rail button away again;
         // coming back restores them onto the same chat.
         anyElement("sidebar.mode.ask").click()
         XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
@@ -2100,7 +2100,7 @@ final class LocusUITests: XCTestCase {
         )
     }
 
-    func testAgentWorkDestinationKeepsConversationWorkControlsAvailable() {
+    func testAgentAndWorkDestinationsKeepConversationWorkControlsAvailable() {
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
         XCTAssertTrue(ask.waitForExistence(timeout: 3))

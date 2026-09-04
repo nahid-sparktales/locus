@@ -3810,6 +3810,13 @@ class AgentCore:
             run_id = str(m.get("run_id") or m.get("team_run_id") or "")[:128]
             if role == "user" and run_id:
                 item["run_id"] = run_id
+            event_trigger = m.get("event_trigger")
+            if role == "user" and isinstance(event_trigger, dict):
+                # Event prompts render as a compact, clearly trust-labelled
+                # card. Keep its persisted metadata in the sanitized resume
+                # payload so completing or reopening the chat does not replace
+                # that card with the raw instruction and JSON body.
+                item["event_trigger"] = event_trigger
             if role == "assistant":
                 phase = str(m.get("_phase") or "")[:32]
                 item_id = str(m.get("_item_id") or "")[:256]

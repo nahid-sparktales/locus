@@ -13,6 +13,7 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var isSavingSchedule = false
     @Published private(set) var isRefreshingSchedules = false
     @Published private(set) var occurrencesBySchedule: [String: [ScheduleOccurrence]] = [:]
+    @Published private(set) var clearingWarningIDs: Set<String> = []
     /// Whether the schedule list has ever loaded. Until it has, a schedule
     /// that is not in `scheduledTasks` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
@@ -181,6 +182,26 @@ final class ScheduleModel: ObservableObject {
                 toastHandler(enabled ? "Agent resumed" : "Agent paused")
             } catch {
                 toastHandler("Could not update this agent: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func clearWarning(_ task: ScheduledTask) {
+        guard let backend, clearingWarningIDs.insert(task.id).inserted else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { clearingWarningIDs.remove(task.id) }
+            do {
+                let updated: ScheduledTask = try await backend.post(
+                    "/api/schedules/\(task.id)/acknowledge", body: [:],
+                    as: ScheduledTask.self
+                )
+                replaceScheduledTask(updated)
+                toastHandler(updated.enabled
+                    ? "Agent warning cleared"
+                    : "Agent warning cleared; the agent remains paused")
+            } catch {
+                toastHandler("Could not clear this warning: \(error.localizedDescription)")
             }
         }
     }

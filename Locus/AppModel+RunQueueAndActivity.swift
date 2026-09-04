@@ -232,6 +232,15 @@ extension AppModel {
     func retryRun(_ run: OrchestrationRun) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            guard retryingRunIDs.insert(run.id).inserted else { return }
+            defer { retryingRunIDs.remove(run.id) }
+            if let deliveryID = run.manifest?["event_delivery_id"]?.string {
+                if await eventAutomations.retryDelivery(deliveryID, previousRunID: run.id) {
+                    activity.markActivitySeen(run)
+                    await activity.refreshActivityRuns(announceFailure: false)
+                }
+                return
+            }
             do {
                 let retry: OrchestrationRun = try await backend.post(
                     "/api/runs/\(run.id)/retry", body: [:], as: OrchestrationRun.self
@@ -325,8 +334,125 @@ extension AppModel {
                 }
                 showToast("Retry queued in \(session.displayTitle)")
                 await activity.refreshActivityRuns()
+                await refreshOrchestrationRuns(select: retry.id)
             } catch { showToast(error.localizedDescription) }
         }
+    }
+
+    func dismissActivityRun(_ run: OrchestrationRun) {
+        activity.dismissActivityRun(run)
+        clearRunWarningPresentation(runID: run.id)
+        guard let deliveryID = run.manifest?["event_delivery_id"]?.string else { return }
+        Task { @MainActor [weak self] in
+            _ = await self?.eventAutomations.acknowledgeFailure(
+                deliveryID: deliveryID,
+                runID: run.id
+            )
+        }
+    }
+
+    func clearFinishedActivityRuns() {
+        let eventRuns = activity.visibleActivityRuns.filter { run in
+            TeamRunState(rawValue: run.state)?.isTerminal == true
+                && run.manifest?["event_delivery_id"]?.string != nil
+        }
+        activity.clearFinishedActivityRuns()
+        for run in eventRuns { clearRunWarningPresentation(runID: run.id) }
+        guard !eventRuns.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for run in eventRuns {
+                guard let deliveryID = run.manifest?["event_delivery_id"]?.string else { continue }
+                _ = await eventAutomations.acknowledgeFailure(
+                    deliveryID: deliveryID,
+                    runID: run.id
+                )
+            }
+        }
+    }
+
+    func chatHasClearableWarning(_ session: SessionSummary) -> Bool {
+        guard let snapshot = taskConversationStates[session.id],
+              !activity.warningIsAcknowledged(snapshot.runID) else { return false }
+        return snapshot.state == .interrupted || snapshot.state == .failed
+    }
+
+    func isClearingChatWarning(_ session: SessionSummary) -> Bool {
+        clearingChatWarningSessionIDs.contains(session.id)
+    }
+
+    func clearChatWarning(_ session: SessionSummary) {
+        guard let snapshot = taskConversationStates[session.id],
+              snapshot.state == .interrupted || snapshot.state == .failed,
+              clearingChatWarningSessionIDs.insert(session.id).inserted else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { clearingChatWarningSessionIDs.remove(session.id) }
+            let runID = snapshot.runID
+            var clearedPersistentWarning = true
+            if let runID,
+               let deliveryID = eventDeliveryID(forRunID: runID) {
+                clearedPersistentWarning = await eventAutomations.acknowledgeFailure(
+                    deliveryID: deliveryID,
+                    runID: runID
+                )
+            } else if let runID,
+                      let trigger = eventAutomations.triggers.first(where: {
+                          $0.targetSessionID == session.id && $0.lastRunID == runID
+                      }) {
+                clearedPersistentWarning = await eventAutomations.acknowledgeWarning(trigger)
+            }
+            guard clearedPersistentWarning else {
+                showToast("Could not clear this warning")
+                return
+            }
+            clearRunWarningPresentation(runID: runID, sessionID: session.id)
+            showToast("Chat warning cleared")
+        }
+    }
+
+    /// Clear only the warning presentation for this historical run. The run
+    /// itself remains interrupted/failed in durable history.
+    func clearRunWarningPresentation(
+        runID: String?,
+        sessionID explicitSessionID: String? = nil
+    ) {  // internal(for: warning callbacks and regression tests)
+        guard let runID, !runID.isEmpty else {
+            guard let sessionID = explicitSessionID,
+                  let snapshot = taskConversationStates[sessionID],
+                  snapshot.runID == nil,
+                  snapshot.state == .interrupted || snapshot.state == .failed
+            else { return }
+            taskConversationStates.removeValue(forKey: sessionID)
+            paneState(containing: sessionID)?.runStatus = nil
+            return
+        }
+        activity.acknowledgeRunWarning(runID)
+        if let run = activity.activityRuns.first(where: { $0.id == runID }) {
+            activity.markActivitySeen(run)
+        }
+        let matchingSessionIDs = Set(
+            taskConversationStates.compactMap { sessionID, snapshot in
+                snapshot.runID == runID ? sessionID : nil
+            } + [explicitSessionID].compactMap { $0 }
+        )
+        for sessionID in matchingSessionIDs {
+            guard taskConversationStates[sessionID]?.runID == runID else { continue }
+            paneState(containing: sessionID)?.runStatus = nil
+        }
+        if orchestrationRunID == runID {
+            orchestrationRunID = nil
+            orchestrationState = nil
+        }
+    }
+
+    private func eventDeliveryID(forRunID runID: String) -> String? {
+        let allRuns = activity.activityRuns + orchestrationRuns
+        if let deliveryID = allRuns.first(where: { $0.id == runID })?
+            .manifest?["event_delivery_id"]?.string {
+            return deliveryID
+        }
+        return eventAutomations.deliveries.first(where: { $0.runID == runID })?.id
     }
 
     func restorePersistedQueuedRuns() {
@@ -558,6 +684,9 @@ extension AppModel {
         runtime.pendingForegroundEvent = nil
         runtime.executionState = .running
         updateBackgroundChatState(runtime)
+        if decision == "deny" {
+            activity.markActivitySeen(run)
+        }
         showToast(decision == "deny" ? "Permission denied" : "Permission granted")
         Task { await activity.refreshActivityRuns() }
     }

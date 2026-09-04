@@ -414,6 +414,7 @@ struct ConfigureAgentView: View {
                                 ForEach(filteredDeliveries, id: \.id) { delivery in
                                     EventDeliveryCard(
                                         delivery: delivery,
+                                        retrying: automation.retryingDeliveryIDs.contains(delivery.id),
                                         onRetry: { automation.retry(delivery) },
                                         onOpen: { openChat(delivery.conversationSessionID) }
                                     )
@@ -945,6 +946,7 @@ private struct EventTriggerRow: View {
 
 private struct EventDeliveryCard: View {
     let delivery: EventDelivery
+    let retrying: Bool
     let onRetry: () -> Void
     let onOpen: () -> Void
 
@@ -987,7 +989,8 @@ private struct EventDeliveryCard: View {
             }
             HStack {
                 if ["failed", "interrupted", "cancelled"].contains(delivery.state) {
-                    Button("Retry", action: onRetry)
+                    Button(retrying ? "Retrying…" : "Retry", action: onRetry)
+                        .disabled(retrying)
                 }
                 if delivery.conversationSessionID != nil { Button("Open Chat", action: onOpen) }
                 Spacer()

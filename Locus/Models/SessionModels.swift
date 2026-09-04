@@ -2,10 +2,19 @@ import Combine
 import Foundation
 
 enum SidebarDestination: String, CaseIterable, Identifiable {
+    /// The persisted `ask` value predates the Work label. Keep its wire value
+    /// stable while exposing the destination the user actually sees.
     case ask
     case agents
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ask: "Work"
+        case .agents: "Agent"
+        }
+    }
 }
 
 struct SessionSummary: Codable, Hashable, Identifiable {

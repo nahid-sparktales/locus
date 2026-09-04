@@ -997,6 +997,9 @@ final class AgentOverviewTests: XCTestCase {
         model.sessions = [session("plain", triggerID: nil, name: nil, age: 60)]
         model.currentSessionID = "plain"
 
+        XCTAssertEqual(SidebarDestination.agents.title, "Agent")
+        XCTAssertEqual(SidebarDestination.ask.title, "Work")
+
         // With no configured agent, New Chat takes the user to configuration
         // instead of creating an unrelated workspace chat.
         model.sidebarDestination = .agents

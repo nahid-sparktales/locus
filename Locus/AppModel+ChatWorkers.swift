@@ -16,12 +16,11 @@ extension AppModel {
         model: String? = nil
     ) async -> ChatWorkerRuntime? {
         if let existing = taskWorkers[requestedSessionID] {
-            for _ in 0..<60 where existing.isAttaching && existing.process.isRunning {
+            for _ in 0..<120 where !existing.acceptsNewTurns && existing.process.isRunning {
                 try? await Task.sleep(for: .milliseconds(100))
                 if Task.isCancelled { return nil }
             }
-            return existing.process.isRunning && existing.isConnected && !existing.isAttaching
-                ? existing : nil
+            return existing.acceptsNewTurns ? existing : nil
         }
         // Tests construct an offline model. Do not launch an unowned helper
         // process for a synthetic session; nil exercises recoverable sending.
@@ -135,6 +134,11 @@ extension AppModel {
                 self.cancelSimulatorActions(sessionID: runtime.sessionID)
                 return
             }
+            // Initial setup is completed explicitly below, after the worker
+            // has resumed its conversation. Sending setup from both paths made
+            // the permission restore race the first event turn. This callback
+            // is for a later reconnect only.
+            guard !runtime.isAttaching else { return }
             // A worker that reconnects has a fresh agent process behind it,
             // which knows nothing about the capability until it is told again.
             self.sendComputerControlCapability(
@@ -151,7 +155,7 @@ extension AppModel {
             runtime.needsConnectorCapabilitySync = !self.sendConnectorCapability(
                 to: runtime.service
             )
-            self.syncPreferredPermissionMode(to: runtime.service)
+            self.prepareChatWorkerForNextDispatch(runtime)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
             guard let self, let runtime else { return }
@@ -224,7 +228,6 @@ extension AppModel {
         }
         runtime.sessionID = response.sessionInfo.sessionID
         runtime.sessionInfo = response.sessionInfo
-        runtime.isAttaching = false
         if runtime.sessionID != requestedSessionID {
             if let routed = automaticModelRoutingTurns.removeValue(forKey: requestedSessionID) {
                 automaticModelRoutingTurns[runtime.sessionID] = routed
@@ -247,9 +250,32 @@ extension AppModel {
         runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
             to: runtime.service
         )
-        syncPreferredPermissionMode(to: runtime.service)
+        _ = await syncPreferredPermissionModeAndWait(to: runtime.service)
+        runtime.isAttaching = false
         syncBrowserProtectedSessions()
         return runtime
+    }
+
+    /// Keep a worker out of admission until serialized post-turn or reconnect
+    /// configuration has finished. A generation token prevents an older
+    /// overlapping restore from releasing a newer one early.
+    func prepareChatWorkerForNextDispatch(_ runtime: ChatWorkerRuntime) {
+        let preparationID = UUID()
+        runtime.dispatchPreparationID = preparationID
+        runtime.isPreparingForDispatch = true
+        Task { @MainActor [weak self, weak runtime] in
+            guard let self, let runtime else { return }
+            _ = await self.syncPreferredPermissionModeAndWait(to: runtime.service)
+            guard runtime.dispatchPreparationID == preparationID else { return }
+            runtime.dispatchPreparationID = nil
+            runtime.isPreparingForDispatch = false
+            guard self.taskWorkers[runtime.sessionID] === runtime,
+                  runtime.process.isRunning,
+                  runtime.isConnected,
+                  !self.isShuttingDown
+            else { return }
+            self.eventAutomations.wakeDispatcher()
+        }
     }
 
     /// Restores the active provider to a newly launched conversation worker.
@@ -559,7 +585,7 @@ extension AppModel {
         runtime.executionState = state
         if type == "turn_done" {
             flushPendingConnectorCapability(for: runtime)
-            eventAutomations.wakeDispatcher()
+            prepareChatWorkerForNextDispatch(runtime)
         }
         var taskID = runtime.sessionInfo?.task?.id ?? previous?.taskID
         if let raw = event["task"] as? [String: Any],

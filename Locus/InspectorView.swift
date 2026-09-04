@@ -1859,7 +1859,10 @@ struct InspectorRunsTab: View {
                 .accessibilityIdentifier("runs.stop")
         } else if run.runKind == "solo",
                   ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
-            Button("Retry") { model.retryRun(run) }
+            Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry") {
+                model.retryRun(run)
+            }
+                .disabled(model.retryingRunIDs.contains(run.id))
                 .buttonStyle(.locus())
                 .font(.locus(size: 8, weight: .semibold))
                 .accessibilityIdentifier("runs.retry")
@@ -1899,7 +1902,10 @@ struct InspectorRunsTab: View {
             }
             if run.runKind == "solo",
                ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
-                Button("Retry Run") { model.retryRun(run) }
+                Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry Run") {
+                    model.retryRun(run)
+                }
+                    .disabled(model.retryingRunIDs.contains(run.id))
             }
             if run.taskID != nil && !run.legacy {
                 Button("Replay Same Baseline") { model.replayOrchestration(run) }

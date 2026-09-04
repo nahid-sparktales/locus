@@ -81,23 +81,42 @@ final class ActivityCenterModelTests: XCTestCase {
         let seen = try JSONEncoder().encode(["run-9": 42.0])
         defaults.set(seen, forKey: "Locus.activitySeenUpdates")
         defaults.set(["run-8"], forKey: "Locus.dismissedActivityRunIDs")
+        defaults.set(["run-7"], forKey: "Locus.acknowledgedWarningRunIDs")
 
         let model = makeModel()
         XCTAssertEqual(model.activitySeenUpdates, ["run-9": 42.0])
         XCTAssertEqual(model.dismissedActivityRunIDs, ["run-8"])
+        XCTAssertTrue(model.warningIsAcknowledged("run-7"))
+    }
+
+    func testWarningAcknowledgementPersistsWithoutRemovingRunHistory() {
+        let model = makeModel()
+        let interrupted = run(id: "run-warning", state: "interrupted")
+        model.activityRuns = [interrupted]
+
+        model.acknowledgeRunWarning(interrupted.id)
+
+        XCTAssertTrue(model.warningIsAcknowledged(interrupted.id))
+        XCTAssertEqual(model.visibleActivityRuns.map(\.id), [interrupted.id])
+        XCTAssertEqual(
+            defaults.stringArray(forKey: "Locus.acknowledgedWarningRunIDs"),
+            [interrupted.id]
+        )
     }
 
     func testDismissOnlyAcceptsTerminalRunsAndHidesThem() {
         let model = makeModel()
         let live = run(id: "run-live", state: "running")
-        let done = run(id: "run-done", state: "completed")
+        let done = run(id: "run-done", state: "failed")
         model.activityRuns = [live, done]
+        XCTAssertEqual(model.activityNeedsAttentionCount, 1)
 
         model.dismissActivityRun(live)
         XCTAssertEqual(model.visibleActivityRuns.count, 2)
 
         model.dismissActivityRun(done)
         XCTAssertEqual(model.visibleActivityRuns.map(\.id), ["run-live"])
+        XCTAssertEqual(model.activityNeedsAttentionCount, 0)
         XCTAssertEqual(defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs"), ["run-done"])
     }
 

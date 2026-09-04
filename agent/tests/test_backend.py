@@ -786,10 +786,18 @@ def test_strip_prompt_decoration_passthrough():
 
 
 def test_sanitize_messages_drops_system_and_keeps_tools():
+    event_trigger = {
+        "trigger_id": "mail-agent",
+        "delivery_id": "delivery-1",
+        "source": "gmail",
+        "source_event_id": "message-1",
+        "instruction": "Summarize the email",
+        "event": {"subject": "Launch"},
+    }
     out = AgentCore.sanitize_messages([
         {"role": "system", "content": "hidden"},
         {"role": "user", "content": "[Locus mode: Ask]\nx\n\nUser request:\nhi",
-         "team_run_id": "run-42"},
+         "team_run_id": "run-42", "event_trigger": event_trigger},
         {"role": "user", "content": "canonical", "run_id": "run-43"},
         {"role": "tool", "name": "bash", "content": "output"},
     ])
@@ -797,6 +805,7 @@ def test_sanitize_messages_drops_system_and_keeps_tools():
     assert out[0]["content"] == "hi"
     assert out[0]["run_id"] == "run-42"
     assert "team_run_id" not in out[0]
+    assert out[0]["event_trigger"] == event_trigger
     assert out[1]["run_id"] == "run-43"
     assert out[2]["name"] == "bash"
 
@@ -5641,6 +5650,13 @@ def test_durable_run_queue_reorder_filter_cancel_and_retry(client):
     assert retried.json()["retry_parent_id"] == "queued-1"
     assert retried.json()["session_id"] == "chat-1"
     assert retried.json()["manifest"]["solo_swarm"] is True
+    duplicate = client.post("/api/runs/queued-1/retry")
+    assert duplicate.status_code == 409
+    retry_children = [
+        run for run in client.get("/api/runs").json()["runs"]
+        if run["retry_parent_id"] == "queued-1"
+    ]
+    assert len(retry_children) == 1
 
 
 def test_durable_run_queue_can_release_only_an_unstarted_dispatch(client):

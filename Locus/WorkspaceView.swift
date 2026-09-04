@@ -1146,7 +1146,7 @@ struct ActivityCenterView: View {
                 if activityCenter.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
-                    Button("Clear Finished") { activityCenter.clearFinishedActivityRuns() }
+                    Button("Clear Finished") { model.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
                 Button {
@@ -1311,10 +1311,13 @@ struct ActivityCenterView: View {
                 } else if ["paused", "interrupted"].contains(run.state), run.runKind == "team" {
                     Button("Resume") { model.resumeOrchestration(run) }
                 } else if ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
-                    Button("Retry") { model.retryRun(run) }
+                    Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry") {
+                        model.retryRun(run)
+                    }
+                    .disabled(model.retryingRunIDs.contains(run.id))
                 }
                 if TeamRunState(rawValue: run.state)?.isTerminal == true {
-                    Button("Remove") { activityCenter.dismissActivityRun(run) }
+                    Button("Remove") { model.dismissActivityRun(run) }
                         .help("Remove from Activity; the run timeline is preserved")
                         .accessibilityIdentifier("activity.remove.\(run.id)")
                 }
@@ -2175,19 +2178,19 @@ struct SidebarDestinationControl: View {
     var body: some View {
         HStack(spacing: 0) {
             segment(
-                title: "Agent",
-                selected: destination == .ask,
-                identifier: "sidebar.mode.ask"
-            ) {
-                select(.ask)
-            }
-
-            segment(
-                title: "Work",
+                title: SidebarDestination.agents.title,
                 selected: destination == .agents,
                 identifier: "sidebar.mode.agents"
             ) {
                 select(.agents)
+            }
+
+            segment(
+                title: SidebarDestination.ask.title,
+                selected: destination == .ask,
+                identifier: "sidebar.mode.ask"
+            ) {
+                select(.ask)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2201,10 +2204,10 @@ struct SidebarDestinationControl: View {
         .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
         .animation(LocusMotion.spatial, value: destination)
-        .help(destination == .agents ? "Show persistent work" : "Show agent conversations")
+        .help(destination == .agents ? "Showing agent conversations" : "Showing workspaces and chats")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent or Work")
-        .accessibilityValue(destination == .agents ? "Work" : "Agent")
+        .accessibilityValue(destination.title)
         .accessibilityIdentifier("sidebar.destination")
     }
 

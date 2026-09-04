@@ -86,6 +86,31 @@ final class EventAutomationTests: XCTestCase {
         ]
     }
 
+    private func triggerPayload(
+        id: String,
+        enabled: Bool,
+        lastError: String?
+    ) -> [String: Any] {
+        [
+            "id": id,
+            "name": "Inbox agent",
+            "connection_id": "gmail",
+            "target_session_id": "chat-a",
+            "instruction": "Handle the message",
+            "mode": "work",
+            "trigger_kind": "event",
+            "filters": [:],
+            "runtime_state": [:],
+            "action_connection_ids": [],
+            "enabled": enabled,
+            "created_at": 1,
+            "updated_at": 12,
+            "last_event_at": 10,
+            "last_run_id": "run-failed",
+            "last_error": lastError ?? NSNull(),
+        ]
+    }
+
     func testEventDeliveryDecodesQueueAndFanOutMetadataCompatibly() throws {
         let legacy = try JSONDecoder().decode(
             EventDelivery.self,
@@ -149,6 +174,169 @@ final class EventAutomationTests: XCTestCase {
         await model.refresh()
 
         XCTAssertEqual(announcementCount, 1)
+    }
+
+    @MainActor
+    func testRetryIsSingleFlightAndImmediatelyClearsTheMatchingAgentWarning() async {
+        BackendStub.reset()
+        var retried = deliveryPayload(
+            id: "failed", triggerID: "trigger-a", targetSessionID: "chat-a",
+            state: "pending"
+        )
+        retried["attempt"] = 2
+        retried["run_id"] = NSNull()
+        retried["session_id"] = NSNull()
+        BackendStub.respond(toPath: "/api/event-deliveries/failed/retry") { _ in
+            [
+                "delivery": retried,
+                "trigger": self.triggerPayload(
+                    id: "trigger-a", enabled: true, lastError: nil
+                ),
+            ]
+        }
+        let model = EventAutomationModel()
+        var resolvedRunIDs: [String?] = []
+        model.seedForUITesting(
+            connections: [],
+            triggers: [decode(EventTrigger.self, from: triggerPayload(
+                id: "trigger-a", enabled: false, lastError: "worker stopped"
+            ))!],
+            deliveries: []
+        )
+        model.configure(
+            backend: stubbedBackendService(),
+            onQueuedRun: { _ in },
+            canDispatchToSession: { _ in true },
+            onCapabilityChanged: {},
+            refreshSessions: {},
+            agentProviderRoute: { [:] },
+            openAgentSession: { _ in },
+            showMessage: { _ in },
+            onWarningResolved: { resolvedRunIDs.append($0) }
+        )
+
+        var failedPayload = deliveryPayload(
+            id: "failed", triggerID: "trigger-a", targetSessionID: "chat-a",
+            state: "failed"
+        )
+        failedPayload["run_id"] = "run-failed"
+        failedPayload["error"] = "worker stopped"
+        let failedDelivery = decode(EventDelivery.self, from: failedPayload)!
+        model.retry(failedDelivery)
+        model.retry(failedDelivery)
+        for _ in 0..<100 {
+            if model.deliveries.first?.state == "pending" { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(
+            BackendStub.requestPaths.filter { $0 == "/api/event-deliveries/failed/retry" }.count,
+            1
+        )
+        XCTAssertEqual(model.triggers.first?.enabled, true)
+        XCTAssertNil(model.triggers.first?.lastError)
+        XCTAssertEqual(model.deliveries.first?.state, "pending")
+        XCTAssertTrue(model.retryingDeliveryIDs.isEmpty)
+        XCTAssertEqual(resolvedRunIDs.compactMap { $0 }, ["run-failed"])
+    }
+
+    @MainActor
+    func testAcknowledgingRemovedEventImmediatelyClearsTheMatchingAgentWarning() async {
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/event-deliveries/failed/acknowledge") { _ in
+            self.triggerPayload(id: "trigger-a", enabled: false, lastError: nil)
+        }
+        let model = EventAutomationModel()
+        var resolvedRunIDs: [String?] = []
+        model.seedForUITesting(
+            connections: [],
+            triggers: [decode(EventTrigger.self, from: triggerPayload(
+                id: "trigger-a", enabled: false, lastError: "worker stopped"
+            ))!],
+            deliveries: []
+        )
+        model.configure(
+            backend: stubbedBackendService(),
+            onQueuedRun: { _ in },
+            canDispatchToSession: { _ in true },
+            onCapabilityChanged: {},
+            refreshSessions: {},
+            agentProviderRoute: { [:] },
+            openAgentSession: { _ in },
+            showMessage: { _ in },
+            onWarningResolved: { resolvedRunIDs.append($0) }
+        )
+
+        let acknowledged = await model.acknowledgeFailure(
+            deliveryID: "failed",
+            runID: "run-failed"
+        )
+
+        XCTAssertTrue(acknowledged)
+        XCTAssertEqual(model.triggers.first?.enabled, false)
+        XCTAssertNil(model.triggers.first?.lastError)
+        XCTAssertEqual(resolvedRunIDs.compactMap { $0 }, ["run-failed"])
+        let request = BackendStub.requests.first
+        var requestData = request?.httpBody ?? Data()
+        if requestData.isEmpty, let stream = request?.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                requestData.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let requestBody = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any]
+        XCTAssertEqual(requestBody?["run_id"] as? String, "run-failed")
+    }
+
+    @MainActor
+    func testClearWarningIsSingleFlightAndLeavesTheAgentPaused() async {
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/event-triggers/trigger-a/acknowledge") { _ in
+            self.triggerPayload(id: "trigger-a", enabled: false, lastError: nil)
+        }
+        let warningTrigger = decode(EventTrigger.self, from: triggerPayload(
+            id: "trigger-a", enabled: false, lastError: "worker stopped"
+        ))!
+        let model = EventAutomationModel()
+        var messages: [String] = []
+        var resolvedRunIDs: [String?] = []
+        model.seedForUITesting(
+            connections: [], triggers: [warningTrigger], deliveries: []
+        )
+        model.configure(
+            backend: stubbedBackendService(),
+            onQueuedRun: { _ in },
+            canDispatchToSession: { _ in true },
+            onCapabilityChanged: {},
+            refreshSessions: {},
+            agentProviderRoute: { [:] },
+            openAgentSession: { _ in },
+            showMessage: { messages.append($0) },
+            onWarningResolved: { resolvedRunIDs.append($0) }
+        )
+
+        model.clearWarning(warningTrigger)
+        model.clearWarning(warningTrigger)
+        for _ in 0..<100 {
+            if model.triggers.first?.lastError == nil { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(
+            BackendStub.requestPaths.filter {
+                $0 == "/api/event-triggers/trigger-a/acknowledge"
+            }.count,
+            1
+        )
+        XCTAssertEqual(model.triggers.first?.enabled, false)
+        XCTAssertNil(model.triggers.first?.lastError)
+        XCTAssertTrue(model.clearingWarningIDs.isEmpty)
+        XCTAssertEqual(messages, ["Agent warning cleared; the agent remains paused"])
+        XCTAssertEqual(resolvedRunIDs.compactMap { $0 }, ["run-failed"])
     }
 
     @MainActor

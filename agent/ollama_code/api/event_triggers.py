@@ -365,6 +365,14 @@ def trigger_pause(
         raise HTTPException(404, str(exc)) from exc
 
 
+def trigger_warning_clear(trigger_id: str, service: ServiceDependency) -> dict[str, Any]:
+    _require_capability()
+    try:
+        return service.run_store.clear_event_trigger_warning(trigger_id)
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 def trigger_rearm(trigger_id: str, service: ServiceDependency) -> dict[str, Any]:
     _require_capability()
     try:
@@ -499,9 +507,30 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
 def delivery_retry(delivery_id: str, service: ServiceDependency) -> dict[str, Any]:
     _require_capability()
     try:
-        return service.run_store.retry_event_delivery(delivery_id)
+        delivery = service.run_store.retry_event_delivery(delivery_id)
+        trigger = service.run_store.event_trigger(str(delivery["trigger_id"]))
+        if trigger is None:
+            raise RunStoreError("event trigger not found")
+        return {"delivery": delivery, "trigger": trigger}
     except RunStoreError as exc:
-        status = 404 if str(exc) == "event delivery not found" else 409
+        status = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status, str(exc)) from exc
+
+
+def delivery_acknowledge(
+    delivery_id: str,
+    service: ServiceDependency,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    _require_capability()
+    try:
+        run_id = body.get("run_id")
+        return service.run_store.acknowledge_event_delivery(
+            delivery_id,
+            expected_run_id=str(run_id) if run_id is not None else None,
+        )
+    except RunStoreError as exc:
+        status = 404 if "not found" in str(exc) else 409
         raise HTTPException(status, str(exc)) from exc
 
 
@@ -574,6 +603,11 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/event-triggers", trigger_create, methods=["POST"])
     router.add_api_route("/api/event-triggers/{trigger_id}", trigger_update, methods=["PATCH"])
     router.add_api_route("/api/event-triggers/{trigger_id}/pause", trigger_pause, methods=["POST"])
+    router.add_api_route(
+        "/api/event-triggers/{trigger_id}/acknowledge",
+        trigger_warning_clear,
+        methods=["POST"],
+    )
     router.add_api_route("/api/event-triggers/{trigger_id}/rearm", trigger_rearm, methods=["POST"])
     router.add_api_route("/api/event-triggers/{trigger_id}", trigger_delete, methods=["DELETE"])
     router.add_api_route("/api/event-triggers/ingest", event_ingest, methods=["POST"])
@@ -584,6 +618,11 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route(
         "/api/event-deliveries/{delivery_id}/retry", delivery_retry, methods=["POST"]
+    )
+    router.add_api_route(
+        "/api/event-deliveries/{delivery_id}/acknowledge",
+        delivery_acknowledge,
+        methods=["POST"],
     )
     router.add_api_route(
         "/api/event-deliveries/{delivery_id}/fail", delivery_fail, methods=["POST"]

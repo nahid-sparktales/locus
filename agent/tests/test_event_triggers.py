@@ -651,13 +651,25 @@ def test_failed_delivery_requires_explicit_retry_and_action_receipts_are_idempot
     _connection(store)
     _trigger(store)
     delivery = store.ingest_event("source", _event("message-1"))[0]
-    store.claim_event_delivery(delivery["id"])
-    failed = store.finish_event_dispatch(delivery["id"], state="failed", error="offline")
+    _, _, run_id = store.claim_event_delivery(delivery["id"])
+    store.queue_run(run_id, session_id="session")
+    store.set_state(run_id, "failed")
+    failed = store.finish_event_dispatch(
+        delivery["id"], state="failed", run_id=run_id, error="offline"
+    )
+    stopped = store.pause_event_trigger("trigger", "offline")
 
     assert failed["state"] == "failed"
+    assert stopped["enabled"] is False
+    assert stopped["last_error"] == "offline"
     retried = store.retry_event_delivery(delivery["id"])
     assert retried["state"] == "pending"
     assert retried["attempt"] == 1
+    reset_trigger = store.event_trigger("trigger")
+    assert reset_trigger["enabled"] is True
+    assert reset_trigger["last_error"] is None
+    with pytest.raises(RunStoreError, match="only stopped"):
+        store.retry_event_delivery(delivery["id"])
 
     first = store.record_connector_action_receipt(
         "tool-call-1",
@@ -675,6 +687,87 @@ def test_failed_delivery_requires_explicit_retry_and_action_receipts_are_idempot
     )
     assert repeated == first
     assert repeated["result"] == {"message_id": "sent-1"}
+
+
+def test_trigger_warning_can_be_cleared_without_resuming_the_agent(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _connection(store)
+    _trigger(store)
+    paused = store.pause_event_trigger("trigger", "worker stopped")
+    assert paused["enabled"] is False
+    assert paused["last_error"] == "worker stopped"
+
+    cleared = store.clear_event_trigger_warning("trigger")
+
+    assert cleared["enabled"] is False
+    assert cleared["last_error"] is None
+
+
+def test_acknowledging_a_removed_event_clears_only_its_matching_warning(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _connection(store)
+    _trigger(store)
+    delivery = store.ingest_event("source", _event("message-1"))[0]
+    _, _, run_id = store.claim_event_delivery(delivery["id"])
+    store.queue_run(run_id, session_id="session")
+    store.set_state(run_id, "failed")
+    failed = store.finish_event_dispatch(
+        delivery["id"], state="failed", run_id=run_id, error="offline"
+    )
+    store.pause_event_trigger("trigger", "offline")
+
+    acknowledged = store.acknowledge_event_delivery(delivery["id"])
+    assert acknowledged["enabled"] is False
+    assert acknowledged["last_error"] is None
+
+    # If a newer failure owns the trigger warning, removing old history must
+    # not erase the newer warning.
+    store.update_event_trigger("trigger", {"enabled": True})
+    newer = store.ingest_event("source", _event("message-2"))[0]
+    _, _, newer_run_id = store.claim_event_delivery(newer["id"])
+    store.queue_run(newer_run_id, session_id="session")
+    store.set_state(newer_run_id, "failed")
+    store.finish_event_dispatch(
+        newer["id"], state="failed", run_id=newer_run_id, error="new failure"
+    )
+    store.pause_event_trigger("trigger", "new failure")
+    unchanged = store.acknowledge_event_delivery(delivery["id"])
+    assert unchanged["last_run_id"] != failed["run_id"]
+    assert unchanged["last_error"] == "new failure"
+
+
+def test_removing_an_old_retry_attempt_cannot_clear_the_new_attempt_warning(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    _connection(store)
+    _trigger(store)
+    delivery = store.ingest_event("source", _event("message-1"))[0]
+    _, _, first_run_id = store.claim_event_delivery(delivery["id"])
+    store.queue_run(first_run_id, session_id="session")
+    store.set_state(first_run_id, "failed")
+    store.finish_event_dispatch(
+        delivery["id"], state="failed", run_id=first_run_id, error="first failure"
+    )
+    store.pause_event_trigger("trigger", "first failure")
+    store.retry_event_delivery(delivery["id"])
+
+    _, _, second_run_id = store.claim_event_delivery(delivery["id"])
+    store.queue_run(second_run_id, session_id="session")
+    store.set_state(second_run_id, "failed")
+    store.finish_event_dispatch(
+        delivery["id"], state="failed", run_id=second_run_id, error="new failure"
+    )
+    store.pause_event_trigger("trigger", "new failure")
+
+    with pytest.raises(RunStoreError, match="newer run"):
+        store.acknowledge_event_delivery(
+            delivery["id"], expected_run_id=first_run_id
+        )
+    assert store.event_trigger("trigger")["last_error"] == "new failure"
+
+    acknowledged = store.acknowledge_event_delivery(
+        delivery["id"], expected_run_id=second_run_id
+    )
+    assert acknowledged["last_error"] is None
 
 
 def test_queue_backpressure_is_per_trigger_and_history_survives_deletion(

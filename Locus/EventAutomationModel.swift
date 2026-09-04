@@ -18,6 +18,8 @@ final class EventAutomationModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var isSaving = false
     @Published private(set) var lastError: String?
+    @Published private(set) var retryingDeliveryIDs: Set<String> = []
+    @Published private(set) var clearingWarningIDs: Set<String> = []
     /// Whether the trigger list has ever loaded. Until it has, an agent that
     /// is not in `triggers` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
@@ -43,6 +45,7 @@ final class EventAutomationModel: ObservableObject {
     private var openAgentSession: ((SessionSummary) -> Void)?
     private var showMessage: ((String) -> Void)?
     private var notifyPaused: ((String) -> Void)?
+    private var onWarningResolved: ((String?) -> Void)?
 
     init(credentials: ConnectorCredentialStore = .shared) {
         self.credentials = credentials
@@ -65,7 +68,8 @@ final class EventAutomationModel: ObservableObject {
         agentProviderRoute: @escaping () -> [String: String],
         openAgentSession: @escaping (SessionSummary) -> Void,
         showMessage: @escaping (String) -> Void,
-        notifyPaused: @escaping (String) -> Void = { _ in }
+        notifyPaused: @escaping (String) -> Void = { _ in },
+        onWarningResolved: @escaping (String?) -> Void = { _ in }
     ) {
         self.backend = backend
         self.onQueuedRun = onQueuedRun
@@ -76,6 +80,7 @@ final class EventAutomationModel: ObservableObject {
         self.openAgentSession = openAgentSession
         self.showMessage = showMessage
         self.notifyPaused = notifyPaused
+        self.onWarningResolved = onWarningResolved
     }
 
     /// UI-test fixtures need agents without a backend. The stored arrays are
@@ -386,6 +391,33 @@ final class EventAutomationModel: ObservableObject {
         }
     }
 
+    func clearWarning(_ trigger: EventTrigger) {
+        Task { @MainActor [weak self] in
+            _ = await self?.acknowledgeWarning(trigger)
+        }
+    }
+
+    @discardableResult
+    func acknowledgeWarning(_ trigger: EventTrigger) async -> Bool {
+        guard let backend, clearingWarningIDs.insert(trigger.id).inserted else { return false }
+        defer { clearingWarningIDs.remove(trigger.id) }
+        do {
+            let updated: EventTrigger = try await backend.post(
+                "/api/event-triggers/\(trigger.id)/acknowledge", body: [:],
+                as: EventTrigger.self
+            )
+            replace(updated)
+            onWarningResolved?(trigger.lastRunID)
+            showMessage?(updated.enabled
+                ? "Agent warning cleared"
+                : "Agent warning cleared; the agent remains paused")
+            return true
+        } catch {
+            showMessage?("Could not clear this warning: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     func deleteTrigger(_ trigger: EventTrigger) {
         Task { [weak self] in
             guard let self, let backend else { return }
@@ -402,17 +434,62 @@ final class EventAutomationModel: ObservableObject {
     }
 
     func retry(_ delivery: EventDelivery) {
+        guard retryingDeliveryIDs.insert(delivery.id).inserted else { return }
         Task { [weak self] in
-            guard let self, let backend else { return }
-            do {
-                let retried: EventDelivery = try await backend.post(
-                    "/api/event-deliveries/\(delivery.id)/retry", body: [:],
-                    as: EventDelivery.self
-                )
-                replace(retried)
-            } catch {
-                showMessage?("Could not retry this event: \(error.localizedDescription)")
-            }
+            _ = await self?.performRetry(
+                delivery.id,
+                previousRunID: delivery.runID
+            )
+        }
+    }
+
+    @discardableResult
+    func retryDelivery(_ deliveryID: String, previousRunID: String? = nil) async -> Bool {
+        guard let backend, retryingDeliveryIDs.insert(deliveryID).inserted else { return false }
+        return await performRetry(deliveryID, previousRunID: previousRunID, backend: backend)
+    }
+
+    private func performRetry(
+        _ deliveryID: String,
+        previousRunID: String?,
+        backend suppliedBackend: BackendService? = nil
+    ) async -> Bool {
+        defer { retryingDeliveryIDs.remove(deliveryID) }
+        guard let backend = suppliedBackend ?? backend else { return false }
+        do {
+            let response: EventDeliveryRetryResponse = try await backend.post(
+                "/api/event-deliveries/\(deliveryID)/retry", body: [:],
+                as: EventDeliveryRetryResponse.self
+            )
+            replace(response.delivery)
+            replace(response.trigger)
+            onWarningResolved?(previousRunID)
+            wakeDispatcher()
+            return true
+        } catch {
+            showMessage?("Could not retry this event: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func acknowledgeFailure(deliveryID: String, runID: String?) async -> Bool {
+        guard let backend else { return false }
+        do {
+            var body: [String: Any] = [:]
+            if let runID { body["run_id"] = runID }
+            let trigger: EventTrigger = try await backend.post(
+                "/api/event-deliveries/\(deliveryID)/acknowledge", body: body,
+                as: EventTrigger.self
+            )
+            replace(trigger)
+            onWarningResolved?(runID)
+            return true
+        } catch {
+            // Removing an Activity item is local presentation state. A later
+            // refresh keeps the persistent warning honest if the backend did
+            // not accept the acknowledgement; avoid a noisy secondary toast.
+            return false
         }
     }
 

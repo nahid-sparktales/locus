@@ -2536,6 +2536,71 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPreferredPermissionRestoreCanBeAwaitedBeforeWorkerDispatch() async {
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/permissions") { _ in
+            ["mode": "bypass", "skip_all": true, "allowed": []]
+        }
+        let service = stubbedBackendService()
+        let model = AppModel(startImmediately: false, backendOverride: service)
+        model.settings.permissionModeRaw = PermissionMode.bypass.rawValue
+
+        let restored = await model.syncPreferredPermissionModeAndWait(to: service)
+
+        XCTAssertTrue(restored)
+        XCTAssertEqual(BackendStub.requestPaths, ["/api/permissions"])
+        XCTAssertEqual(model.permissionMode, .bypass)
+    }
+
+    @MainActor
+    func testClearingRunWarningRemovesOnlyItsChatPresentation() {
+        let model = AppModel(startImmediately: false)
+        let warning = TaskConversationState(
+            sessionID: "warning-chat",
+            taskID: nil,
+            teamID: nil,
+            workerID: nil,
+            runID: "warning-run",
+            state: .interrupted,
+            updatedAt: Date(),
+            errorMessage: "worker stopped"
+        )
+        let other = TaskConversationState(
+            sessionID: "other-chat",
+            taskID: nil,
+            teamID: nil,
+            workerID: nil,
+            runID: "other-run",
+            state: .failed,
+            updatedAt: Date(),
+            errorMessage: "different failure"
+        )
+        model.taskConversationStates = [warning.sessionID: warning, other.sessionID: other]
+        model.currentSessionID = warning.sessionID
+        model.orchestrationRunID = warning.runID
+        model.orchestrationState = .interrupted
+        model.primaryChatPaneState.sessionID = warning.sessionID
+        model.primaryChatPaneState.runStatus = .interrupted
+
+        model.clearRunWarningPresentation(runID: warning.runID)
+
+        XCTAssertEqual(model.taskConversationStates[warning.sessionID], warning)
+        let warningSession = SessionSummary(
+            id: warning.sessionID,
+            name: "Warning chat",
+            preview: "",
+            mtime: 1,
+            size: 0
+        )
+        XCTAssertNil(model.teamRunState(for: warningSession))
+        XCTAssertEqual(model.taskConversationStates[other.sessionID], other)
+        XCTAssertNil(model.orchestrationRunID)
+        XCTAssertNil(model.orchestrationState)
+        XCTAssertNil(model.primaryChatPaneState.runStatus)
+        XCTAssertTrue(model.activity.warningIsAcknowledged(warning.runID))
+    }
+
+    @MainActor
     func testRejectedConnectorCapabilityIsDeferredWithoutAChatError() {
         let model = AppModel(startImmediately: false)
         model.isBusy = true

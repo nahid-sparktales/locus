@@ -182,22 +182,28 @@ def run_retry(service: ServiceDependency, run_id: str) -> dict[str, Any]:
     if original["state"] not in {"failed", "interrupted", "cancelled", "paused"}:
         raise HTTPException(409, "only stopped runs can be retried")
     retry_id = uuid.uuid4().hex
-    return store.queue_run(
-        retry_id,
-        session_id=str(original.get("session_id") or ""),
-        team_id=str(original.get("team_id") or ""),
-        team_name=str(original.get("team_name") or ""),
-        workspace_root=str(original.get("workspace_root") or ""),
-        execution_path=str(original.get("execution_path") or ""),
-        request=str(original.get("request") or ""),
-        run_kind=str(original.get("run_kind") or "solo"),
-        execution_environment=str(original.get("execution_environment") or "local"),
-        retry_parent_id=run_id,
-        manifest=original.get("manifest") if isinstance(original.get("manifest"), dict) else None,
-        schedule_id=str(original.get("schedule_id") or ""),
-        occurrence_id=str(original.get("occurrence_id") or ""),
-        scheduled_for=original.get("scheduled_for"),
-    )
+    try:
+        return store.queue_run_if_idle(
+            retry_id,
+            session_id=str(original.get("session_id") or ""),
+            team_id=str(original.get("team_id") or ""),
+            team_name=str(original.get("team_name") or ""),
+            workspace_root=str(original.get("workspace_root") or ""),
+            execution_path=str(original.get("execution_path") or ""),
+            request=str(original.get("request") or ""),
+            run_kind=str(original.get("run_kind") or "solo"),
+            execution_environment=str(original.get("execution_environment") or "local"),
+            retry_parent_id=run_id,
+            manifest=(
+                original.get("manifest")
+                if isinstance(original.get("manifest"), dict) else None
+            ),
+            schedule_id=str(original.get("schedule_id") or ""),
+            occurrence_id=str(original.get("occurrence_id") or ""),
+            scheduled_for=original.get("scheduled_for"),
+        )
+    except RunStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 def orchestration_detail(service: ServiceDependency, run_id: str) -> dict[str, Any]:

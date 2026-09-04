@@ -10,6 +10,7 @@ final class ActivityCenterModel: ObservableObject {
     @Published var activityRuns: [OrchestrationRun] = []
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
+    @Published private(set) var acknowledgedWarningRunIDs: Set<String> = []
 
     private var backend: BackendService?
     private var persistenceEnabled = false
@@ -38,6 +39,9 @@ final class ActivityCenterModel: ObservableObject {
         }
         dismissedActivityRunIDs = Set(
             defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
+        )
+        acknowledgedWarningRunIDs = Set(
+            defaults.stringArray(forKey: "Locus.acknowledgedWarningRunIDs") ?? []
         )
     }
 
@@ -104,6 +108,15 @@ final class ActivityCenterModel: ObservableObject {
         if changed { persistActivityPresentationState() }
     }
 
+    func acknowledgeRunWarning(_ runID: String) {
+        guard !runID.isEmpty, acknowledgedWarningRunIDs.insert(runID).inserted else { return }
+        persistActivityPresentationState()
+    }
+
+    func warningIsAcknowledged(_ runID: String?) -> Bool {
+        runID.map(acknowledgedWarningRunIDs.contains) ?? false
+    }
+
     func dismissActivityRun(_ run: OrchestrationRun) {
         guard TeamRunState(rawValue: run.state)?.isTerminal == true else { return }
         dismissedActivityRunIDs.insert(run.id)
@@ -136,6 +149,10 @@ final class ActivityCenterModel: ObservableObject {
         defaults.set(
             Array(dismissedActivityRunIDs.prefix(1_000)),
             forKey: "Locus.dismissedActivityRunIDs"
+        )
+        defaults.set(
+            Array(acknowledgedWarningRunIDs.prefix(1_000)),
+            forKey: "Locus.acknowledgedWarningRunIDs"
         )
     }
 }

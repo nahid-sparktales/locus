@@ -781,6 +781,14 @@ struct SessionSidebarView: View {
             }
             .disabled(session.id == model.currentSessionID)
             .accessibilityIdentifier("session.\(session.id).openOtherPane")
+            if model.chatHasClearableWarning(session) {
+                Button(model.isClearingChatWarning(session)
+                    ? "Clearing Warning…" : "Clear Warning") {
+                    model.clearChatWarning(session)
+                }
+                .disabled(model.isClearingChatWarning(session))
+                .accessibilityIdentifier("session.\(session.id).clearWarning")
+            }
             if session.executionEnvironment == .worktree {
                 Button("Duplicate with Worktree") {
                     model.duplicateSession(session, withWorktree: true)
@@ -2020,6 +2028,14 @@ private struct AgentGroupRow: View {
                 }
                 Button("Edit Agent…") { model.editAgent(record) }
                     .accessibilityIdentifier("agent.\(agent.id).edit")
+                if record.lastError?.nilIfEmpty != nil {
+                    Button(model.isClearingAgentWarning(record)
+                        ? "Clearing Warning…" : "Clear Warning") {
+                        model.clearAgentWarning(record)
+                    }
+                    .disabled(model.isClearingAgentWarning(record))
+                    .accessibilityIdentifier("agent.\(agent.id).clearWarning")
+                }
                 Button(record.enabled ? "Pause Agent" : "Resume Agent") {
                     model.setAgentEnabled(record, enabled: !record.enabled)
                 }

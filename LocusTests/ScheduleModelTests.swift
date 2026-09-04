@@ -41,7 +41,8 @@ final class ScheduleModelTests: XCTestCase {
     private static func scheduleJSON(
         id: String,
         enabled: Bool = true,
-        nextRunAt: Double? = 1
+        nextRunAt: Double? = 1,
+        lastError: String? = nil
     ) -> [String: Any] {
         var json: [String: Any] = [
             "id": id,
@@ -58,6 +59,7 @@ final class ScheduleModelTests: XCTestCase {
             "enabled": enabled,
             "created_at": 1.0,
             "updated_at": 1.0,
+            "last_error": lastError ?? NSNull(),
         ]
         if let nextRunAt { json["next_run_at"] = nextRunAt }
         return json
@@ -111,6 +113,37 @@ final class ScheduleModelTests: XCTestCase {
             BackendStub.requestPaths.contains("/api/schedules/sched-2/pause"),
             "a misconfigured due schedule must be durably paused"
         )
+    }
+
+    func testClearWarningIsSingleFlightAndLeavesTheAgentPaused() async {
+        BackendStub.respond(toPath: "/api/schedules/sched-warning/acknowledge") { _ in
+            Self.scheduleJSON(
+                id: "sched-warning", enabled: false, lastError: nil
+            )
+        }
+        let task = decode(ScheduledTask.self, from: Self.scheduleJSON(
+            id: "sched-warning", enabled: false, lastError: "worker stopped"
+        ))!
+        let model = makeModel()
+        model.seedForUITesting(tasks: [task])
+
+        model.clearWarning(task)
+        model.clearWarning(task)
+        for _ in 0..<100 {
+            if model.scheduledTasks.first?.lastError == nil { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(
+            BackendStub.requestPaths.filter {
+                $0 == "/api/schedules/sched-warning/acknowledge"
+            }.count,
+            1
+        )
+        XCTAssertEqual(model.scheduledTasks.first?.enabled, false)
+        XCTAssertNil(model.scheduledTasks.first?.lastError)
+        XCTAssertTrue(model.clearingWarningIDs.isEmpty)
+        XCTAssertEqual(toasts, ["Agent warning cleared; the agent remains paused"])
     }
 
     func testProcessDueSchedulesIsInertWithoutPersistence() async {

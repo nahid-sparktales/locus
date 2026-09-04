@@ -251,6 +251,15 @@ private struct AgentDetailView: View {
             .accessibilityIdentifier("agentOverview.menu.manage")
             Button("New Agent…") { model.presentNewAgent() }
                 .accessibilityIdentifier("agentOverview.menu.newAgent")
+            if let definition = overview.definition,
+               definition.lastError?.nilIfEmpty != nil {
+                Button(model.isClearingAgentWarning(definition)
+                    ? "Clearing Warning…" : "Clear Warning") {
+                    model.clearAgentWarning(definition)
+                }
+                .disabled(model.isClearingAgentWarning(definition))
+                .accessibilityIdentifier("agentOverview.menu.clearWarning")
+            }
             if let path = overview.chats.compactMap(\.session.workspacePath).first {
                 Button("Reveal Workspace in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -601,6 +610,7 @@ private struct AgentDetailView: View {
                     ForEach(overview.events) { event in
                         AgentEventRow(
                             event: event,
+                            retrying: automation.retryingDeliveryIDs.contains(event.id),
                             onRetry: { if let delivery = event.delivery { automation.retry(delivery) } },
                             onOpenChat: openChat(for: event)
                         )
@@ -1001,6 +1011,7 @@ private struct AgentChatRow: View {
 
 private struct AgentEventRow: View {
     let event: AgentOverview.Event
+    let retrying: Bool
     let onRetry: () -> Void
     let onOpenChat: (() -> Void)?
 
@@ -1049,7 +1060,8 @@ private struct AgentEventRow: View {
                 }
                 Spacer(minLength: 0)
                 if event.canRetry {
-                    Button("Retry", action: onRetry)
+                    Button(retrying ? "Retrying…" : "Retry", action: onRetry)
+                        .disabled(retrying)
                         .buttonStyle(.locus())
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)

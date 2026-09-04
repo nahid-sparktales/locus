@@ -4696,6 +4696,45 @@ final class FeatureLogicTests: XCTestCase {
             .contains("run_id"))
     }
 
+    func testEventTranscriptMetadataSurvivesHistoryDecodeIntoTheBlueCardBlock() throws {
+        let history = try JSONDecoder().decode(
+            HistoryMessage.self,
+            from: Data(#"""
+            {
+              "role": "user",
+              "content": "raw event prompt",
+              "run_id": "event-run-1",
+              "event_trigger": {
+                "trigger_id": "trigger-1",
+                "delivery_id": "delivery-1",
+                "source": "gmail",
+                "source_event_id": "message-1",
+                "instruction": "Summarize this email",
+                "event": {
+                  "source": "gmail",
+                  "source_event_id": "message-1",
+                  "event_type": "message",
+                  "occurred_at": 1,
+                  "actor": {"email": "person@example.com"},
+                  "subject": "Launch",
+                  "text": "Ready",
+                  "recipients": ["team@example.com"],
+                  "labels": ["INBOX"],
+                  "attachments": [],
+                  "data": {}
+                }
+              }
+            }
+            """#.utf8)
+        )
+
+        let block = try XCTUnwrap(ChatTranscriptBuilder.blocks(from: [history]).first)
+
+        XCTAssertEqual(block.runID, "event-run-1")
+        XCTAssertEqual(block.eventTrigger?.deliveryID, "delivery-1")
+        XCTAssertEqual(block.eventTrigger?.event.subject, "Launch")
+    }
+
     func testStructuredTranscriptFieldsRoundTripAndLegacyReasoningStillDecodes() throws {
         let block = ChatBlock(
             kind: .assistant,
@@ -5463,6 +5502,28 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertFalse(queue.isFirstEligible("later-writer") { sessionID in
             sessionID != "blocked-writer"
         })
+    }
+
+    @MainActor
+    func testChatWorkerAdmissionWaitsForConnectionAndConfiguration() {
+        XCTAssertTrue(ChatWorkerRuntime.isDispatchReady(
+            processRunning: true,
+            connected: true,
+            attaching: false,
+            preparingConfiguration: false
+        ))
+        XCTAssertFalse(ChatWorkerRuntime.isDispatchReady(
+            processRunning: true,
+            connected: true,
+            attaching: false,
+            preparingConfiguration: true
+        ))
+        XCTAssertFalse(ChatWorkerRuntime.isDispatchReady(
+            processRunning: true,
+            connected: false,
+            attaching: false,
+            preparingConfiguration: false
+        ))
     }
 
     @MainActor

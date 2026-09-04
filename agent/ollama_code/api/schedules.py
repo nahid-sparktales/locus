@@ -813,6 +813,14 @@ def schedule_pause(
         raise HTTPException(404, str(exc)) from exc
 
 
+def schedule_warning_clear(schedule_id: str, service: ServiceDependency) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    try:
+        return service.run_store.clear_schedule_warning(schedule_id)
+    except RunStoreError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 def schedule_dispatch(
     schedule_id: str,
     service: ServiceDependency,
@@ -855,6 +863,11 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route(
         "/api/schedules/{schedule_id}/pause", schedule_pause, methods=["POST"]
+    )
+    router.add_api_route(
+        "/api/schedules/{schedule_id}/acknowledge",
+        schedule_warning_clear,
+        methods=["POST"],
     )
     router.add_api_route(
         "/api/schedules/{schedule_id}/dispatch", schedule_dispatch, methods=["POST"]
