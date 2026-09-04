@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0160AB5D0CEB9185E7B6F66A /* AppModel+ChatOrganization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */; };
+		0197B384B46762F08D231CBD /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		01DCA647E6FC8E205FEBA724 /* TaskWorkerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1616CD8FA01FCC15741F95EF /* TaskWorkerRuntime.swift */; };
 		02458331522F5E1FA06ADC29 /* WorkspaceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */; };
 		0267DE32A2FA09423C7B0B53 /* WalletSuiGraphQLClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */; };
@@ -198,8 +199,6 @@
 		6FF99DD158B1E68B8ED79912 /* AppModel+Workspaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */; };
 		7058A5FED667FEE26F0CDFAC /* ConnectorCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC319DECFC4BFE93E4E3AB5F /* ConnectorCredentialStore.swift */; };
 		709506A38AE20076DCF1FA06 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */; };
-		C1A002000000000000000001 /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A001000000000000000001 /* ArtifactThumbnailStore.swift */; };
-		C1A003000000000000000001 /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A001000000000000000001 /* ArtifactThumbnailStore.swift */; };
 		7161D1119A9B7183F6843C62 /* AgentTeamsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29912FD4FFA8E9056AD4FCA2 /* AgentTeamsSettingsView.swift */; };
 		721E997882A22C989DED3C01 /* AppModel+ActivityCenterFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16033E84DC973F0FD1BFA21 /* AppModel+ActivityCenterFacade.swift */; };
 		7432692999A8039E364E8475 /* TranscriptPresentationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0E76969AEB69AC1D510292 /* TranscriptPresentationModel.swift */; };
@@ -227,6 +226,7 @@
 		812B49657632395CE0781BC3 /* ExtensionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EFBBAE84F5B838F776CBF6 /* ExtensionsModel.swift */; };
 		8171A50278F07A2A61EC89AA /* AppModel+ModelRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45A9C26F8D798CFAC0AC1169 /* AppModel+ModelRouter.swift */; };
 		81859D894E60EF5508ECE7D0 /* AppUpdateControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F812F42D54F996DD9AE8F7D /* AppUpdateControllerTests.swift */; };
+		820E2789C18722112866EA38 /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		829CBDBAFECC3D4B8558E27A /* VoiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C05527F03B7D68A59343C4E /* VoiceModels.swift */; };
 		832B3EAC906F6E1C3A210D60 /* AppModel+SplitChatPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D16150F05480F3D9E417239 /* AppModel+SplitChatPanes.swift */; };
 		83AADDDF785F1C1B6E461820 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
@@ -711,6 +711,7 @@
 		A6D865DBE30EBEB947619172 /* GitWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorkflowTests.swift; sourceTree = "<group>"; };
 		A7444F14DD8EEB57AFF1D8A9 /* AppModelObservationBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelObservationBoundaryTests.swift; sourceTree = "<group>"; };
 		A7EC9F73687880887B6C9153 /* BrowserSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSettingsView.swift; sourceTree = "<group>"; };
+		A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactThumbnailStore.swift; sourceTree = "<group>"; };
 		AB6C801D489BBF80BE16EBD6 /* ChatAttachmentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAttachmentLoader.swift; sourceTree = "<group>"; };
 		AB6FDC689EAD2746CF542B95 /* AppModel+TeamOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+TeamOps.swift"; sourceTree = "<group>"; };
 		ABF8ADCB24225911BBCB143F /* InspectorNotesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorNotesTab.swift; sourceTree = "<group>"; };
@@ -722,7 +723,6 @@
 		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
 		B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
-		C1A001000000000000000001 /* ArtifactThumbnailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactThumbnailStore.swift; sourceTree = "<group>"; };
 		B2E919D274EF4890562BF10C /* WalletSignerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSignerService.swift; sourceTree = "<group>"; };
 		B2F29AE63F7A646BB5043E54 /* ProxyConfigurator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyConfigurator.swift; sourceTree = "<group>"; };
 		B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendProcess.swift; sourceTree = "<group>"; };
@@ -994,6 +994,7 @@
 				8CF7C32F369DF7295D8B8077 /* AppModel+WorkspaceProfiles.swift */,
 				EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */,
 				CEDE792B67295C1B0196FC71 /* AppUpdateController.swift */,
+				A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */,
 				DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */,
 				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
 				3793FC69B1D813ED07567A2E /* BackendService.swift */,
@@ -1057,7 +1058,6 @@
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
 				BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */,
 				DA3552806AFD1ADE60D80570 /* LocusSymbols.swift */,
-				C1A001000000000000000001 /* ArtifactThumbnailStore.swift */,
 				B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */,
 				374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */,
 				8FA164EE10426EF2AD4E606A /* MessageContent.swift */,
@@ -1687,6 +1687,7 @@
 				ADB5339D466EB316F9370689 /* AppUpdateController.swift in Sources */,
 				BB3B4FBD72B6DCBDACCBD36D /* ApplicationContextService.swift in Sources */,
 				1C60596E5A4E13265770012D /* ApplicationLifecycleCoordinator.swift in Sources */,
+				820E2789C18722112866EA38 /* ArtifactThumbnailStore.swift in Sources */,
 				0F93C3A166B1038C8682007E /* AutomationWorkflowEditorView.swift in Sources */,
 				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
 				2F30B3F6DF8AD2063BBAF9C9 /* BackendResponses.swift in Sources */,
@@ -1753,7 +1754,6 @@
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,
 				CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */,
 				37A90174A0194B6AF11CEF77 /* LocusSymbols.swift in Sources */,
-				C1A002000000000000000001 /* ArtifactThumbnailStore.swift in Sources */,
 				647CCF1ABDC75CDB8654F08D /* MarkdownRenderer.swift in Sources */,
 				E0C4DE034C58C7E3A4FB6ED6 /* MarkdownTextKit.swift in Sources */,
 				3EB73A207975893878E53D8B /* MessageContent.swift in Sources */,
@@ -1877,6 +1877,7 @@
 				382E5A2A04FD4523C5C185C1 /* AppUpdateController.swift in Sources */,
 				ADB25B720E359FF17C8EFCB6 /* ApplicationContextService.swift in Sources */,
 				7F9953DE0E3D298F11FC2E0E /* ApplicationLifecycleCoordinator.swift in Sources */,
+				0197B384B46762F08D231CBD /* ArtifactThumbnailStore.swift in Sources */,
 				39E06D90641080F2E20F7B5C /* AutomationWorkflowEditorView.swift in Sources */,
 				A5B2C39A822A7FEBDB129E2C /* BackendProcess.swift in Sources */,
 				8DF0CC82CB1CCC58D6EF0C05 /* BackendResponses.swift in Sources */,
@@ -1943,7 +1944,6 @@
 				0A965E4BA7E9E795E29F861E /* LocalRuntimeCoordinator.swift in Sources */,
 				974C1A68A4A333CDDECAC3A9 /* LocusApp.swift in Sources */,
 				9674D47802F5AF1FD4DDB13B /* LocusSymbols.swift in Sources */,
-				C1A003000000000000000001 /* ArtifactThumbnailStore.swift in Sources */,
 				709506A38AE20076DCF1FA06 /* MarkdownRenderer.swift in Sources */,
 				891E9369CEBCDB690DE2C507 /* MarkdownTextKit.swift in Sources */,
 				0FCA7915F1F08420BB34DDC0 /* MessageContent.swift in Sources */,
