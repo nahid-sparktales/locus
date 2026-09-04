@@ -9,6 +9,17 @@ let locusPerformanceSignposter = OSSignposter(
     category: "UI Performance"
 )
 
+enum WorkspaceLayoutMetrics {
+    static let toolbarHeight: CGFloat = 52
+
+    /// The shared snapshot describes the space below the workspace toolbar.
+    /// Keeping that contract explicit prevents the toolbar height from being
+    /// counted twice when a child uses the root window measurement.
+    static func contentHeight(forWindowHeight windowHeight: CGFloat) -> CGFloat {
+        max(windowHeight - toolbarHeight, 0)
+    }
+}
+
 struct WorkspaceGeometrySnapshot: Equatable {
     var windowSize: CGSize = .zero
     var sidebarWidth: CGFloat = 0

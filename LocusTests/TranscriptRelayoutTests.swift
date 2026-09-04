@@ -127,6 +127,23 @@ final class TranscriptRelayoutTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    func testSharedWorkspaceHeightExcludesTheToolbarWithoutGoingNegative() {
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(forWindowHeight: 760),
+            708
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(
+                forWindowHeight: WorkspaceLayoutMetrics.toolbarHeight
+            ),
+            0
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(forWindowHeight: 24),
+            0
+        )
+    }
+
     func testLiveResizePerformanceSummaryUsesNearestRankP95() async {
         let summary = await MainActor.run {
             LiveResizePerformanceMonitor.summarize(

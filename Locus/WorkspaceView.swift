@@ -239,7 +239,7 @@ struct WorkspaceView: View {
         // Keep its restore control beyond the native traffic-light cluster.
         .padding(.leading, sidebarVisible ? 20 : 76)
         .padding(.trailing, 18)
-        .frame(height: 52)
+        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)

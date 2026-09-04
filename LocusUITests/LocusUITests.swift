@@ -578,10 +578,26 @@ final class LocusUITests: XCTestCase {
             anyElement("sidebar.newSession"),
             anyElement("workspace.sessionTitle"),
             anyElement("composer.input"),
+            anyElement("composer.mode.plan"),
             anyElement("inspector.tabBar"),
+            anyElement("sidebar.agentStatus"),
+            anyElement("sidebar.more"),
         ] {
             XCTAssertTrue(element.waitForExistence(timeout: 3), file: file, line: line)
             XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(element.frame), file: file, line: line)
+        }
+        for element in [
+            anyElement("composer.mode.plan"),
+            anyElement("sidebar.agentStatus"),
+            anyElement("sidebar.more"),
+        ] {
+            XCTAssertLessThanOrEqual(
+                element.frame.maxY,
+                window.frame.maxY - 8,
+                "Bottom chrome should keep its designed inset instead of being clipped",
+                file: file,
+                line: line
+            )
         }
     }
 
@@ -2655,7 +2671,16 @@ final class LocusUITests: XCTestCase {
     }
 
     func testAcceptanceWindowSizesRemainUsableInLightAndDarkAppearances() {
-        let cases = [("1120", "700", "Light"), ("1250", "760", "Dark")]
+        let visibleSize = try! XCTUnwrap(NSScreen.main?.visibleFrame.size)
+        let cases = [
+            ("1120", "700", "Light"),
+            ("1250", "760", "Dark"),
+            (
+                String(Int(min(1_250, visibleSize.width))),
+                String(Int(visibleSize.height)),
+                "Dark"
+            ),
+        ]
         for (width, height, appearance) in cases {
             app.terminate()
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
@@ -2666,7 +2691,6 @@ final class LocusUITests: XCTestCase {
             ]
             app.launch()
             XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-            let visibleSize = try! XCTUnwrap(NSScreen.main?.visibleFrame.size)
             XCTAssertEqual(
                 app.windows.firstMatch.frame.width,
                 min(CGFloat(Double(width)!), visibleSize.width),
@@ -2757,6 +2781,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
         XCTAssertTrue(composer.isHittable)
         XCTAssertTrue(window.frame.intersects(composer.frame))
+        let planMode = anyElement("composer.mode.plan")
+        XCTAssertTrue(planMode.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(planMode.frame.maxY, window.frame.maxY - 8)
         XCTAssertGreaterThanOrEqual(
             restore.frame.minX - window.frame.minX,
             68,
@@ -2769,6 +2796,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(
             anyElement("sidebar.newSession").frame
         ))
+        let status = anyElement("sidebar.agentStatus")
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(status.frame.maxY, window.frame.maxY - 8)
         anyElement("sidebar.collapse").click()
         XCTAssertTrue(waitUntil { !self.anyElement("sidebar.newSession").exists })
 

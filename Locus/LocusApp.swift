@@ -703,7 +703,9 @@ struct RootView: View {
                 windowSize: proxy.size,
                 sidebarWidth: docksSidebar ? sidebarWidth : 0,
                 workspaceWidth: workspaceWidth,
-                workspaceHeight: proxy.size.height,
+                workspaceHeight: WorkspaceLayoutMetrics.contentHeight(
+                    forWindowHeight: proxy.size.height
+                ),
                 inspectorWidth: docksInspector ? dockedInspectorWidth : 0,
                 composerWidth: min(max(workspaceWidth - 48, 0), 740),
                 docksSidebar: docksSidebar,
