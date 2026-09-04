@@ -45,13 +45,21 @@ final class WorkspaceLayoutModel: ObservableObject {
 @MainActor
 final class LiveResizeCoordinator {
     private weak var layout: WorkspaceLayoutModel?
+    private let performanceMonitor: LiveResizePerformanceMonitor
 
-    init(layout: WorkspaceLayoutModel) {
+    init(
+        layout: WorkspaceLayoutModel,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.layout = layout
+        performanceMonitor = LiveResizePerformanceMonitor(
+            reportPath: environment["LOCUS_PERFORMANCE_REPORT_PATH"]
+        )
     }
 
     func beginLiveResize() {
         locusPerformanceSignposter.emitEvent("Begin Live Resize")
+        performanceMonitor.begin()
         layout?.setLiveResizing(true)
     }
 
@@ -70,6 +78,99 @@ final class LiveResizeCoordinator {
             "width=\(finalWidth, format: .fixed(precision: 1))"
         )
         layout?.setLiveResizing(false)
+        performanceMonitor.end(finalWidth: finalWidth)
+    }
+}
+
+/// Opt-in local acceptance instrumentation. A run-loop interval starts when
+/// AppKit wakes the main loop and ends immediately before it sleeps again,
+/// which captures the resize event, SwiftUI update, layout, and display work
+/// as one frame-work sample. Production launches pay no observer or storage
+/// cost unless a report path is explicitly supplied.
+@MainActor
+final class LiveResizePerformanceMonitor {
+    struct Summary: Codable, Equatable {
+        let sampleCount: Int
+        let p95MainThreadWorkMillis: Double
+        let maximumMainThreadWorkMillis: Double
+        let finalWidth: Double
+    }
+
+    private let reportURL: URL?
+    private var observer: CFRunLoopObserver?
+    private var frameStart: CFAbsoluteTime?
+    private var samples: [Double] = []
+
+    init(reportPath: String?) {
+        guard let reportPath, !reportPath.isEmpty else {
+            reportURL = nil
+            return
+        }
+        reportURL = URL(fileURLWithPath: reportPath)
+    }
+
+    func begin() {
+        guard reportURL != nil, observer == nil else { return }
+        frameStart = nil
+        samples.removeAll(keepingCapacity: true)
+        let activities = CFRunLoopActivity.afterWaiting.rawValue
+            | CFRunLoopActivity.beforeWaiting.rawValue
+            | CFRunLoopActivity.exit.rawValue
+        observer = CFRunLoopObserverCreateWithHandler(
+            kCFAllocatorDefault,
+            activities,
+            true,
+            0
+        ) { [weak self] _, activity in
+            MainActor.assumeIsolated {
+                self?.observe(activity)
+            }
+        }
+        if let observer {
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        }
+    }
+
+    func end(finalWidth: CGFloat) {
+        guard let reportURL else { return }
+        finishPendingFrame()
+        if let observer {
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
+            self.observer = nil
+        }
+        let summary = Self.summarize(samples: samples, finalWidth: finalWidth)
+        guard let data = try? JSONEncoder().encode(summary) else { return }
+        Task.detached(priority: .utility) {
+            try? data.write(to: reportURL, options: .atomic)
+        }
+    }
+
+    static func summarize(samples: [Double], finalWidth: CGFloat) -> Summary {
+        let sorted = samples.sorted()
+        let p95Index = max(0, Int(ceil(Double(sorted.count) * 0.95)) - 1)
+        return Summary(
+            sampleCount: sorted.count,
+            p95MainThreadWorkMillis: sorted.isEmpty ? 0 : sorted[p95Index],
+            maximumMainThreadWorkMillis: sorted.last ?? 0,
+            finalWidth: Double(finalWidth)
+        )
+    }
+
+    private func observe(_ activity: CFRunLoopActivity) {
+        switch activity {
+        case .afterWaiting:
+            frameStart = CFAbsoluteTimeGetCurrent()
+        case .beforeWaiting, .exit:
+            finishPendingFrame()
+        default:
+            break
+        }
+    }
+
+    private func finishPendingFrame() {
+        guard let frameStart else { return }
+        samples.append((CFAbsoluteTimeGetCurrent() - frameStart) * 1_000)
+        self.frameStart = nil
     }
 }
 

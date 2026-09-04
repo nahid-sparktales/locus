@@ -127,6 +127,20 @@ final class TranscriptRelayoutTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    func testLiveResizePerformanceSummaryUsesNearestRankP95() async {
+        let summary = await MainActor.run {
+            LiveResizePerformanceMonitor.summarize(
+                samples: Array(1...100).map(Double.init),
+                finalWidth: 1_184
+            )
+        }
+
+        XCTAssertEqual(summary.sampleCount, 100)
+        XCTAssertEqual(summary.p95MainThreadWorkMillis, 95)
+        XCTAssertEqual(summary.maximumMainThreadWorkMillis, 100)
+        XCTAssertEqual(summary.finalWidth, 1_184)
+    }
+
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
         let initial = MarkdownNativeText.plain(
             Self.longProse,

@@ -2681,6 +2681,59 @@ final class LocusUITests: XCTestCase {
         }
     }
 
+    func testPerformanceTranscriptLiveResizeProducesAnExactAcceptanceReport() throws {
+        let reportURL = URL(fileURLWithPath: "/tmp/locus-live-resize-performance.json")
+        try? FileManager.default.removeItem(at: reportURL)
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PERFORMANCE_TRANSCRIPT"] = "1"
+        app.launchEnvironment["LOCUS_PERFORMANCE_REPORT_PATH"] = reportURL.path
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
+
+        // Dragging the native resize border is important: setting a frame from
+        // code does not enter AppKit live-resize mode and would not exercise
+        // the bucketed provisional path customers actually use.
+        let resizeHandle = window.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.998, dy: 0.998)
+        )
+        let destination = window.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.80, dy: 0.88)
+        )
+        resizeHandle.press(
+            forDuration: 0.15,
+            thenDragTo: destination,
+            withVelocity: .slow,
+            thenHoldForDuration: 0.15
+        )
+
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            FileManager.default.fileExists(atPath: reportURL.path)
+        })
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: reportURL))
+                as? [String: Any]
+        )
+        let samples = try XCTUnwrap(object["sampleCount"] as? Int)
+        let p95 = try XCTUnwrap(object["p95MainThreadWorkMillis"] as? Double)
+        let maximum = try XCTUnwrap(object["maximumMainThreadWorkMillis"] as? Double)
+        let finalWidth = try XCTUnwrap(object["finalWidth"] as? Double)
+        XCTAssertGreaterThan(samples, 3)
+        XCTAssertGreaterThanOrEqual(maximum, p95)
+        XCTAssertEqual(finalWidth, window.frame.width, accuracy: 3)
+
+        if ProcessInfo.processInfo.environment["LOCUS_PERFORMANCE_ENFORCE_TIMING"] == "1" {
+            let model = ProcessInfo.processInfo.environment["LOCUS_PERFORMANCE_MACHINE"]
+            let p95Limit = model == "M2_MAX" ? 8.3 : 16.7
+            XCTAssertLessThanOrEqual(p95, p95Limit)
+            XCTAssertLessThan(maximum, 50)
+        }
+    }
+
     func testCompactWindowKeepsChromeClearAndUsesAnOverlaySidebar() {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
