@@ -12,6 +12,91 @@ struct ReviewManifest: Codable {
     let evmContracts: [ReviewContract]
     let explorerTemplates: [String: String]
     let adapterIDs: Set<String>
+    let connectors: [ReviewConnector]
+    let signInAdapters: [ReviewSignInAdapter]
+    let programIdentities: [ReviewProgramIdentity]
+    let uniswapConfigurations: [ReviewUniswapConfiguration]
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, revision, issuedAt, expiresAt, assets, evmContracts
+        case explorerTemplates, adapterIDs, connectors, signInAdapters
+        case programIdentities, uniswapConfigurations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        revision = try container.decode(Int.self, forKey: .revision)
+        issuedAt = try container.decode(Date.self, forKey: .issuedAt)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        assets = try container.decode([ReviewAsset].self, forKey: .assets)
+        evmContracts = try container.decode([ReviewContract].self, forKey: .evmContracts)
+        explorerTemplates = try container.decode(
+            [String: String].self, forKey: .explorerTemplates
+        )
+        adapterIDs = try container.decode(Set<String>.self, forKey: .adapterIDs)
+        connectors = try container.decodeIfPresent(
+            [ReviewConnector].self, forKey: .connectors
+        ) ?? []
+        signInAdapters = try container.decodeIfPresent(
+            [ReviewSignInAdapter].self, forKey: .signInAdapters
+        ) ?? []
+        programIdentities = try container.decodeIfPresent(
+            [ReviewProgramIdentity].self, forKey: .programIdentities
+        ) ?? []
+        uniswapConfigurations = try container.decodeIfPresent(
+            [ReviewUniswapConfiguration].self, forKey: .uniswapConfigurations
+        ) ?? []
+    }
+}
+
+struct ReviewConnector: Codable {
+    let connector: String
+    let version: String
+    let artifactSHA256: String
+    let directions: Set<String>
+    let methods: Set<String>
+}
+
+struct ReviewSignInAdapter: Codable {
+    let format: String
+    let version: String
+    let implementationSHA256: String
+    let networkIDs: Set<String>
+}
+
+struct ReviewProgramIdentity: Codable {
+    let networkID: String
+    let kind: String
+    let identifier: String
+    let codeSHA256: String
+}
+
+struct ReviewUniswapConfiguration: Codable {
+    let networkID: String
+    let universalRouterContractID: String
+    let permit2ContractID: String
+    let contracts: [ReviewUniswapContract]
+    let pools: [ReviewUniswapPool]
+    let allowedIntermediaryAssetIDs: Set<String>
+    let allowedFeeTiers: Set<UInt32>
+    let maximumHops: Int
+    let zeroFirstApprovalAssetIDs: Set<String>
+}
+
+struct ReviewUniswapContract: Codable {
+    let role: String
+    let address: String
+    let runtimeCodeHash: String
+}
+
+struct ReviewUniswapPool: Codable {
+    let protocolVersion: String
+    let address: String
+    let runtimeCodeHash: String
+    let token0AssetID: String
+    let token1AssetID: String
+    let feeTier: UInt32?
 }
 
 struct ReviewAsset: Codable {
@@ -61,6 +146,7 @@ let supportedAdapterIDs: Set<String> = [
     "erc1155-safe-transfer-v1",
     "uniswap-universal-router-v2-exact-in-v1",
     "uniswap-universal-router-v2-v3-exact-in-v2",
+    "uniswap-permit2-allowance-setup-v1",
 ]
 
 func canonicalEncoder() -> JSONEncoder {
@@ -73,6 +159,122 @@ func canonicalEncoder() -> JSONEncoder {
 func isHex(_ value: Substring) -> Bool {
     value.utf8.allSatisfy { byte in
         (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+    }
+}
+
+func isLowercaseSHA256(_ value: String) -> Bool {
+    value.count == 64 && value.utf8.allSatisfy {
+        (48...57).contains($0) || (97...102).contains($0)
+    }
+}
+
+func isValidVersion(_ value: String) -> Bool {
+    !value.isEmpty && value.utf8.count <= 64 && value.utf8.allSatisfy {
+        (48...57).contains($0) || (65...90).contains($0)
+            || (97...122).contains($0) || [45, 46, 95].contains($0)
+    }
+}
+
+func isValidEVMAddress(_ value: String) -> Bool {
+    value.count == 42 && value.hasPrefix("0x") && isHex(value.dropFirst(2))
+}
+
+func isValidRuntimeCodeHash(_ value: String) -> Bool {
+    value.count == 66 && value.hasPrefix("0x") && isHex(value.dropFirst(2))
+}
+
+func erc20Address(assetID: String, networkID: String) -> String? {
+    let prefix = "\(networkID)/erc20:"
+    guard assetID.hasPrefix(prefix) else { return nil }
+    let address = String(assetID.dropFirst(prefix.count)).lowercased()
+    return isValidEVMAddress(address) ? address : nil
+}
+
+func isValidUniswapConfiguration(
+    _ configuration: ReviewUniswapConfiguration,
+    manifest: ReviewManifest
+) -> Bool {
+    let roles: Set<String> = [
+        "v2_router", "v2_factory", "v3_factory", "v3_quoter_v2",
+        "universal_router", "permit2",
+    ]
+    guard ["eip155:1", "eip155:11155111"].contains(configuration.networkID),
+          (1...3).contains(configuration.maximumHops),
+          configuration.contracts.count == roles.count,
+          Set(configuration.contracts.map(\.role)) == roles,
+          !configuration.pools.isEmpty, configuration.pools.count <= 512,
+          Set(configuration.pools.map {
+              "\($0.protocolVersion):\($0.address.lowercased())"
+          }).count == configuration.pools.count,
+          configuration.allowedFeeTiers.count <= 16,
+          configuration.allowedFeeTiers.allSatisfy({ $0 > 0 && $0 <= 1_000_000 }),
+          let routerEntry = manifest.evmContracts.first(where: {
+              $0.id == configuration.universalRouterContractID
+                  && $0.networkID == configuration.networkID
+          }),
+          routerEntry.reviewedAdapterID
+            == "uniswap-universal-router-v2-v3-exact-in-v2",
+          let reviewedRouter = configuration.contracts.first(where: {
+              $0.role == "universal_router"
+          }),
+          reviewedRouter.address.caseInsensitiveCompare(routerEntry.checksumAddress)
+            == .orderedSame,
+          reviewedRouter.runtimeCodeHash.caseInsensitiveCompare(routerEntry.runtimeCodeHash)
+            == .orderedSame,
+          let permit2Entry = manifest.evmContracts.first(where: {
+              $0.id == configuration.permit2ContractID
+                  && $0.networkID == configuration.networkID
+          }),
+          permit2Entry.reviewedAdapterID == "uniswap-permit2-allowance-setup-v1",
+          let reviewedPermit2 = configuration.contracts.first(where: {
+              $0.role == "permit2"
+          }),
+          reviewedPermit2.address.caseInsensitiveCompare(permit2Entry.checksumAddress)
+            == .orderedSame,
+          reviewedPermit2.runtimeCodeHash.caseInsensitiveCompare(permit2Entry.runtimeCodeHash)
+            == .orderedSame,
+          configuration.contracts.allSatisfy({
+              roles.contains($0.role) && isValidEVMAddress($0.address)
+                  && isValidRuntimeCodeHash($0.runtimeCodeHash)
+          }),
+          Set(configuration.contracts.map { $0.address.lowercased() }).count
+            == configuration.contracts.count else { return false }
+
+    let assetIDs = Set(manifest.assets.filter {
+        $0.networkID == configuration.networkID && $0.chain == "evm"
+            && $0.kind == "fungible_token" && $0.trust == "curated"
+    }.map(\.canonicalID))
+    let poolAssetIDs = Set(configuration.pools.flatMap {
+        [$0.token0AssetID, $0.token1AssetID]
+    })
+    let reviewedTokenAssetIDs = Set(poolAssetIDs.compactMap { assetID -> String? in
+        guard assetIDs.contains(assetID),
+              let address = erc20Address(
+                assetID: assetID, networkID: configuration.networkID
+              ),
+              manifest.evmContracts.contains(where: {
+                  $0.networkID == configuration.networkID
+                      && $0.checksumAddress.caseInsensitiveCompare(address) == .orderedSame
+                      && $0.reviewedAdapterID == "erc20-v1"
+              }) else { return nil }
+        return assetID
+    })
+    guard manifest.adapterIDs.contains("erc20-v1"),
+          poolAssetIDs.isSubset(of: reviewedTokenAssetIDs),
+          configuration.allowedIntermediaryAssetIDs.isSubset(of: poolAssetIDs),
+          configuration.zeroFirstApprovalAssetIDs.isSubset(of: poolAssetIDs) else {
+        return false
+    }
+    return configuration.pools.allSatisfy { pool in
+        guard ["v2", "v3"].contains(pool.protocolVersion),
+              isValidEVMAddress(pool.address),
+              isValidRuntimeCodeHash(pool.runtimeCodeHash),
+              pool.token0AssetID != pool.token1AssetID,
+              poolAssetIDs.contains(pool.token0AssetID),
+              poolAssetIDs.contains(pool.token1AssetID) else { return false }
+        return pool.protocolVersion == "v2"
+            ? pool.feeTier == nil
+            : pool.feeTier.map(configuration.allowedFeeTiers.contains) == true
     }
 }
 
@@ -224,7 +426,22 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
     let contractLocations = manifest.evmContracts.map {
         "\($0.networkID):\($0.checksumAddress.lowercased())"
     }
-    return manifest.schemaVersion == 1
+    let knownConnectors: Set<String> = [
+        "metamask", "phantom", "slush", "embedded_browser", "wallet_connect",
+    ]
+    let knownDirections: Set<String> = [
+        "external_account_to_locus", "locus_vault_to_dapp",
+    ]
+    let knownMethods: Set<String> = [
+        "list_accounts", "switch_network", "send_transaction",
+        "sign_in_with_ethereum", "sign_in_with_solana",
+    ]
+    let knownNetworks: [String: String] = [
+        "eip155:1": "evm", "eip155:11155111": "evm",
+        "solana:mainnet-beta": "solana", "solana:devnet": "solana",
+        "sui:mainnet": "sui", "sui:testnet": "sui",
+    ]
+    return manifest.schemaVersion == 2
         && manifest.revision > 0
         && manifest.issuedAt <= now
         && manifest.expiresAt > now
@@ -232,10 +449,24 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
         && manifest.expiresAt.timeIntervalSince(manifest.issuedAt) <= 31 * 24 * 60 * 60
         && manifest.assets.count <= 10_000
         && manifest.evmContracts.count <= 2_000
+        && manifest.connectors.count <= knownConnectors.count
+        && manifest.signInAdapters.count <= 8
+        && manifest.programIdentities.count <= 256
+        && manifest.uniswapConfigurations.count <= 8
         && manifest.explorerTemplates.count <= 5
         && manifest.adapterIDs.isSubset(of: supportedAdapterIDs)
         && Set(manifest.assets.map(\.canonicalID)).count == manifest.assets.count
         && Set(manifest.evmContracts.map(\.id)).count == manifest.evmContracts.count
+        && Set(manifest.connectors.map(\.connector)).count == manifest.connectors.count
+        && Set(manifest.signInAdapters.map {
+            "\($0.format):\($0.networkIDs.sorted().joined(separator: ","))"
+        }).count == manifest.signInAdapters.count
+        && Set(manifest.programIdentities.map {
+            "\($0.networkID):\($0.kind):\($0.identifier)"
+        }).count == manifest.programIdentities.count
+        && Set(manifest.uniswapConfigurations.map {
+            "\($0.networkID):\($0.universalRouterContractID)"
+        }).count == manifest.uniswapConfigurations.count
         && Set(contractLocations).count == contractLocations.count
         && manifest.assets.allSatisfy {
             isValidReviewAsset($0, revision: manifest.revision)
@@ -258,6 +489,69 @@ func isValidReviewManifest(_ manifest: ReviewManifest, now: Date) -> Bool {
                 }
                 && $0.reviewedAdapterID.map(manifest.adapterIDs.contains) == true
                 && $0.verifiedAt <= manifest.issuedAt
+        }
+        && manifest.connectors.allSatisfy { connector in
+            guard knownConnectors.contains(connector.connector),
+                  isValidVersion(connector.version),
+                  isLowercaseSHA256(connector.artifactSHA256),
+                  !connector.directions.isEmpty,
+                  connector.directions.isSubset(of: knownDirections),
+                  !connector.methods.isEmpty,
+                  connector.methods.isSubset(of: knownMethods) else {
+                return false
+            }
+            switch connector.connector {
+            case "metamask":
+                return connector.directions == ["external_account_to_locus"]
+                    && connector.methods.isSubset(of: [
+                        "list_accounts", "switch_network", "send_transaction",
+                        "sign_in_with_ethereum",
+                    ])
+            case "phantom":
+                return connector.directions == ["external_account_to_locus"]
+                    && connector.methods.isSubset(of: [
+                        "list_accounts", "switch_network", "send_transaction",
+                        "sign_in_with_solana",
+                    ])
+            case "slush":
+                return connector.directions == ["external_account_to_locus"]
+                    && connector.methods.isSubset(of: [
+                        "list_accounts", "switch_network", "send_transaction",
+                    ])
+            default:
+                return connector.directions == ["locus_vault_to_dapp"]
+            }
+        }
+        && manifest.signInAdapters.allSatisfy { adapter in
+            ["siwe", "siws"].contains(adapter.format)
+                && isValidVersion(adapter.version)
+                && isLowercaseSHA256(adapter.implementationSHA256)
+                && !adapter.networkIDs.isEmpty
+                && adapter.networkIDs.allSatisfy { networkID in
+                    adapter.format == "siwe"
+                        ? knownNetworks[networkID] == "evm"
+                        : knownNetworks[networkID] == "solana"
+                }
+        }
+        && manifest.programIdentities.allSatisfy { identity in
+            guard let chain = knownNetworks[identity.networkID],
+                  !identity.identifier.isEmpty,
+                  identity.identifier.utf8.count <= 256,
+                  isLowercaseSHA256(identity.codeSHA256) else { return false }
+            return (identity.kind == "evm_runtime" && chain == "evm")
+                || (identity.kind == "solana_program" && chain == "solana")
+                || (identity.kind == "sui_package" && chain == "sui")
+        }
+        && manifest.uniswapConfigurations.allSatisfy {
+            isValidUniswapConfiguration($0, manifest: manifest)
+        }
+        && (!manifest.adapterIDs.contains(
+            "uniswap-universal-router-v2-v3-exact-in-v2"
+        ) || !manifest.uniswapConfigurations.isEmpty)
+        && manifest.uniswapConfigurations.allSatisfy { _ in
+            manifest.adapterIDs.contains(
+                "uniswap-universal-router-v2-v3-exact-in-v2"
+            )
         }
 }
 

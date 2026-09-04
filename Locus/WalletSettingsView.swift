@@ -110,6 +110,13 @@ struct WalletSettingsView: View {
     @State private var requestedBrowserAccess = false
     @State private var advancedExpanded = false
     @State private var selectedSection: WalletHubSection = .portfolio
+    @State private var walletConnectURI = ""
+    @State private var swapAccountID = ""
+    @State private var swapInputAssetID = ""
+    @State private var swapOutputAssetID = ""
+    @State private var swapAmount = ""
+    @State private var swapSlippageBPS = 50
+    @State private var swapMaximumFee = "10000000000000000"
 
     var body: some View {
         ScrollView {
@@ -180,6 +187,16 @@ struct WalletSettingsView: View {
             }
         )) { transaction in
             WalletTransactionConfirmationSheet(gateway: gateway, transaction: transaction)
+        }
+        .sheet(item: Binding(
+            get: { gateway.pendingConnectionProposal },
+            set: { value in
+                if value == nil, gateway.pendingConnectionProposal != nil {
+                    gateway.resolveConnectionProposal(approved: false)
+                }
+            }
+        )) { proposal in
+            WalletConnectionProposalSheet(gateway: gateway, proposal: proposal)
         }
         .alert(
             requestedBrowserAccess ? "Enable browser wallet access?" : "Disable browser wallet access?",
@@ -285,10 +302,7 @@ struct WalletSettingsView: View {
         case .receive:
             receiveCard
         case .swap:
-            gatedCapabilityCard(
-                title: "Swap", symbol: "arrow.left.arrow.right",
-                detail: "Exact-input swap adapters activate only after their reviewed route, slippage, fee, package or program, simulation, legal-region, and signed release gates pass."
-            )
+            swapCard
         case .collectibles:
             collectiblesCard
         case .connections:
@@ -322,7 +336,11 @@ struct WalletSettingsView: View {
                             Button("Send") { sendSnapshot = snapshot }
                                 .buttonStyle(.borderedProminent)
                                 .tint(LocusTheme.ink)
-                                .disabled(gateway.status != .unlocked)
+                                .disabled(
+                                    snapshot.ownership == .locusVault
+                                        ? gateway.status != .unlocked
+                                        : !gateway.connectionHelperAvailable
+                                )
                                 .accessibilityIdentifier(
                                     "wallet.send.open.\(snapshot.id)"
                                 )
@@ -335,6 +353,201 @@ struct WalletSettingsView: View {
                 }
             }
         }
+    }
+
+    private var swapCard: some View {
+        WalletSectionCard(title: "Swap", symbol: "arrow.left.arrow.right") {
+            let accounts = gateway.availableSwapAccounts
+            if accounts.isEmpty {
+                Label("Release gate locked", systemImage: "lock.shield.fill")
+                    .font(.headline)
+                    .foregroundStyle(LocusTheme.warning)
+                Text("A signed review manifest must name every router, factory, quoter, Permit2 contract, pool, token, code hash, intermediary, and fee tier before swaps appear here.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            } else {
+                Picker("Account", selection: $swapAccountID) {
+                    ForEach(accounts) { account in
+                        Text("\(account.label) · \(shortAddress(account.address))")
+                            .tag(account.id)
+                    }
+                }
+                .onAppear { initializeSwapSelection(accounts: accounts) }
+                .onChange(of: accounts.map(\.id)) { _, _ in
+                    initializeSwapSelection(accounts: accounts)
+                }
+                .onChange(of: swapAccountID) { _, _ in resetSwapAssets() }
+
+                if let networkID = gateway.swapNetworkID(accountID: swapAccountID) {
+                    let tokens = gateway.availableSwapAssets(networkID: networkID)
+                    HStack {
+                        Picker("From", selection: $swapInputAssetID) {
+                            ForEach(tokens) { Text($0.symbol).tag($0.id) }
+                        }
+                        Picker("To", selection: $swapOutputAssetID) {
+                            ForEach(tokens) { Text($0.symbol).tag($0.id) }
+                        }
+                    }
+                    HStack {
+                        TextField("Amount", text: $swapAmount)
+                            .textFieldStyle(.roundedBorder)
+                        Stepper(
+                            "Slippage \(swapSlippageBPS) bps",
+                            value: $swapSlippageBPS, in: 0...500, step: 10
+                        )
+                    }
+                    TextField("Maximum network fee (wei)", text: $swapMaximumFee)
+                        .textFieldStyle(.roundedBorder)
+
+                    if let quote = gateway.currentSwapQuote,
+                       let route = quote.action.swapRoute,
+                       let outputAsset = tokens.first(where: {
+                           $0.id == quote.action.outputAssetID
+                       }) {
+                        Divider()
+                        LabeledContent("Route") {
+                            Text(route.pathAssetIDs.compactMap { id in
+                                tokens.first(where: { $0.id == id })?.symbol
+                            }.joined(separator: " → "))
+                        }
+                        LabeledContent("Protocol") {
+                            Text("Uniswap \(route.protocolVersion.rawValue.uppercased()) · \(route.pathAssetIDs.count - 1) hop\(route.pathAssetIDs.count == 2 ? "" : "s")")
+                        }
+                        LabeledContent("Expected output") {
+                            Text(formatSwapAmount(
+                                route.quotedOutputBaseUnits, asset: outputAsset
+                            ))
+                        }
+                        LabeledContent("Minimum output") {
+                            Text(formatSwapAmount(
+                                quote.action.minimumOutputBaseUnits ?? "0",
+                                asset: outputAsset
+                            ))
+                        }
+                        LabeledContent("Quote block") {
+                            Text(route.quoteEvidence?.blockNumber ?? "Unavailable")
+                        }
+                        LabeledContent("Quote expires") {
+                            Text(quote.expiresAt, style: .relative)
+                        }
+                        allowanceDisclosure(gateway.currentSwapAllowance)
+                    }
+
+                    HStack {
+                        Button(gateway.currentSwapQuote == nil ? "Get Quote" : "Refresh Quote") {
+                            Task {
+                                guard let input = tokens.first(where: {
+                                    $0.id == swapInputAssetID
+                                }), let decimals = input.decimals,
+                                let baseUnits = WalletAmountFormatter.baseUnits(
+                                    from: swapAmount, decimals: decimals
+                                ) else { return }
+                                _ = await gateway.refreshUniswapQuote(
+                                    accountID: swapAccountID, networkID: networkID,
+                                    inputAssetID: swapInputAssetID,
+                                    outputAssetID: swapOutputAssetID,
+                                    amountInBaseUnits: baseUnits,
+                                    slippageBPS: swapSlippageBPS
+                                )
+                            }
+                        }
+                        .disabled(
+                            gateway.swapQuoteInProgress || swapAmount.isEmpty
+                                || swapInputAssetID.isEmpty
+                                || swapInputAssetID == swapOutputAssetID
+                        )
+                        if gateway.swapQuoteInProgress { ProgressView().controlSize(.small) }
+                        if gateway.currentSwapAllowance != .unchecked,
+                           gateway.currentSwapAllowance != .sufficient {
+                            Button("Review Allowance Setup") {
+                                Task {
+                                    _ = await gateway.prepareNextHumanSwapAllowance(
+                                        maximumFeeBaseUnits: swapMaximumFee
+                                    )
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(LocusTheme.warning)
+                        }
+                        Button("Review Swap") {
+                            Task {
+                                _ = await gateway.prepareHumanSwap(
+                                    maximumFeeBaseUnits: swapMaximumFee
+                                )
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LocusTheme.ink)
+                        .disabled(
+                            gateway.currentSwapQuote == nil
+                                || gateway.currentSwapAllowance != .sufficient
+                        )
+                    }
+                }
+            }
+            if let error = gateway.lastError, !error.isEmpty {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(LocusTheme.dangerForeground)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func allowanceDisclosure(_ state: WalletUniswapAllowanceState) -> some View {
+        switch state {
+        case .unchecked:
+            Label("Allowance not checked", systemImage: "questionmark.circle")
+                .foregroundStyle(LocusTheme.textSecondary)
+        case .sufficient:
+            Label("Finite allowances are sufficient", systemImage: "checkmark.shield")
+                .foregroundStyle(LocusTheme.success)
+        case .needsERC20Approval(_, _, let amount, let zeroFirst):
+            Label(
+                zeroFirst
+                    ? "Token requires a reviewed zero-first approval, then finite approval of \(amount)."
+                    : "Token requires a finite Permit2 approval of \(amount).",
+                systemImage: "exclamationmark.shield"
+            )
+            .foregroundStyle(LocusTheme.warning)
+        case .needsPermit2Approval(_, _, let amount, let expiration):
+            Label(
+                "Permit2 requires a finite router allowance of \(amount), expiring at \(expiration).",
+                systemImage: "exclamationmark.shield"
+            )
+            .foregroundStyle(LocusTheme.warning)
+        }
+    }
+
+    private func initializeSwapSelection(accounts: [WalletAccount]) {
+        if !accounts.contains(where: { $0.id == swapAccountID }) {
+            swapAccountID = accounts.first?.id ?? ""
+        }
+        resetSwapAssets()
+    }
+
+    private func resetSwapAssets() {
+        guard let networkID = gateway.swapNetworkID(accountID: swapAccountID) else {
+            swapInputAssetID = ""
+            swapOutputAssetID = ""
+            return
+        }
+        let tokens = gateway.availableSwapAssets(networkID: networkID)
+        if !tokens.contains(where: { $0.id == swapInputAssetID }) {
+            swapInputAssetID = tokens.first?.id ?? ""
+        }
+        if !tokens.contains(where: { $0.id == swapOutputAssetID })
+            || swapOutputAssetID == swapInputAssetID {
+            swapOutputAssetID = tokens.first(where: {
+                $0.id != swapInputAssetID
+            })?.id ?? ""
+        }
+    }
+
+    private func formatSwapAmount(_ baseUnits: String, asset: WalletAsset) -> String {
+        guard let decimals = asset.decimals else { return baseUnits }
+        return WalletAmountFormatter.asset(
+            baseUnits: baseUnits, decimals: decimals, symbol: asset.symbol
+        ) ?? "\(baseUnits) \(asset.symbol)"
     }
 
     private var receiveCard: some View {
@@ -551,6 +764,14 @@ struct WalletSettingsView: View {
                         Text(freshnessText(snapshot))
                             .font(.caption)
                             .foregroundStyle(LocusTheme.textTertiary)
+                        if let connector = snapshot.ownership.connectorID {
+                            Text(connector.rawValue.capitalized)
+                                .font(.caption.weight(.bold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(LocusTheme.warning.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
                     }
                 }
                 Spacer()
@@ -571,7 +792,12 @@ struct WalletSettingsView: View {
                 Button("Send") { sendSnapshot = snapshot }
                     .buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
-                    .disabled(gateway.status != .unlocked || !sendSupported(snapshot))
+                    .disabled(
+                        !sendSupported(snapshot)
+                            || (snapshot.ownership == .locusVault
+                                ? gateway.status != .unlocked
+                                : !gateway.connectionHelperAvailable)
+                    )
                 Button("Receive") { receiveSnapshot = snapshot }
                     .buttonStyle(.bordered)
                 Spacer()
@@ -754,6 +980,73 @@ struct WalletSettingsView: View {
                     .font(.callout)
                     .foregroundStyle(LocusTheme.textTertiary)
             }
+            Divider()
+            Text("External accounts").font(.headline)
+            Text("Locus never imports recovery phrases. MetaMask and Slush show their own approval. Phantom-managed accounts use an exact Locus review and never run automatically.")
+                .font(.callout)
+                .foregroundStyle(LocusTheme.textTertiary)
+            HStack {
+                ForEach(WalletExternalConnectorCatalog.connectors) { descriptor in
+                    Button("Connect \(descriptor.name)") {
+                        Task { _ = await gateway.beginExternalWalletConnection(descriptor.kind) }
+                    }
+                    .disabled(!gateway.connectionHelperAvailable)
+                }
+            }
+            Divider()
+            Text("Connect Locus Vault to a dapp").font(.headline)
+            Text("Paste a WalletConnect URI. Locus shows the dapp identity, networks, accounts, and methods before approving the session.")
+                .font(.callout)
+                .foregroundStyle(LocusTheme.textTertiary)
+            HStack {
+                TextField("wc:…", text: $walletConnectURI)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.callout, design: .monospaced))
+                    .accessibilityIdentifier("settings.wallet.wallet-connect-uri")
+                Button("Review Pairing") {
+                    let uri = walletConnectURI
+                    walletConnectURI = ""
+                    Task { _ = await gateway.beginWalletConnectPairing(uri: uri) }
+                }
+                .disabled(
+                    !gateway.connectionHelperAvailable
+                        || !walletConnectURI.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .hasPrefix("wc:")
+                )
+            }
+            ForEach(gateway.connections) { connection in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(connection.peerName).font(.body.weight(.medium))
+                        Text("\(connection.connector.rawValue) · \(connection.state.rawValue.replacingOccurrences(of: "_", with: " "))")
+                            .font(.caption)
+                            .foregroundStyle(LocusTheme.textTertiary)
+                        Text(connection.networkIDs.sorted().joined(separator: " · "))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(LocusTheme.textTertiary)
+                    }
+                    Spacer()
+                    if !connection.state.isTerminal {
+                        Button(
+                            connection.state == .connected ? "Disconnect" : "Cancel",
+                            role: .destructive
+                        ) {
+                            Task {
+                                if connection.state == .connected {
+                                    await gateway.disconnectWalletConnection(id: connection.id)
+                                } else {
+                                    await gateway.cancelConnectionPairing(id: connection.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !gateway.connectionHelperAvailable {
+                Text("The Direct wallet connector runtime is unavailable in this build.")
+                    .font(.caption)
+                    .foregroundStyle(LocusTheme.warning)
+            }
         }
     }
 
@@ -935,17 +1228,8 @@ struct WalletSettingsView: View {
 
     private var futureCapabilities: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Future Capabilities").font(.headline)
-            ForEach(WalletExternalConnectorCatalog.connectors) { descriptor in
-                HStack {
-                    Text(descriptor.name).font(.body.weight(.medium))
-                    Spacer()
-                    Text("Unavailable")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(LocusTheme.textTertiary)
-                }
-            }
-            Text("Connectors and chain adapters remain unavailable until their signed capability, legal-region, and release gates are bundled in a notarized build.")
+            Text("Deferred Capabilities").font(.headline)
+            Text("Token-2022 extensions, programmable or compressed NFTs, Sui batching/gRPC migration, Uniswap V4, Jupiter/Cetus swaps, arbitrary messages, broad typed data, and remote collectible media remain outside GA.")
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
         }
@@ -1045,6 +1329,57 @@ struct WalletSettingsView: View {
         }
     }
 
+}
+
+private struct WalletConnectionProposalSheet: View {
+    @ObservedObject var gateway: WalletGateway
+    let proposal: WalletConnectionProposalReview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Review WalletConnect pairing", systemImage: "network.badge.shield.half.filled")
+                .font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(proposal.peerName).font(.headline)
+                if let peerURL = proposal.peerURL {
+                    Text(peerURL)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                }
+            }
+            Text("Remote icons are not loaded. Confirm the dapp identity and every requested permission below.")
+                .font(.callout)
+                .foregroundStyle(LocusTheme.textSecondary)
+            ForEach(proposal.namespaces, id: \.namespace) { namespace in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(namespace.namespace.rawValue.uppercased())
+                        .font(.caption.weight(.semibold))
+                    Text(namespace.networkIDs.sorted().joined(separator: " · "))
+                        .font(.system(.caption, design: .monospaced))
+                    Text(namespace.methods.map(\.rawValue).sorted().joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(LocusTheme.textTertiary)
+                }
+                .padding(10)
+                .background(LocusTheme.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
+            }
+            Text("Session proposal expires (proposal.expiresAt.formatted(date: .abbreviated, time: .standard)). Each transaction or sign-in still receives its own exact review.")
+                .font(.caption)
+                .foregroundStyle(LocusTheme.textTertiary)
+            HStack {
+                Button("Reject", role: .cancel) {
+                    gateway.resolveConnectionProposal(approved: false)
+                }
+                Spacer()
+                Button("Approve Connection") {
+                    gateway.resolveConnectionProposal(approved: true)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+    }
 }
 
 private struct WalletSectionCard<Content: View>: View {
@@ -1285,28 +1620,54 @@ private struct WalletSendSheet: View {
                 from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
                 decimals: network?.nativeDecimals ?? 18
             ) {
-                ready = await gateway.prepareHumanNativeTransfer(
-                    networkID: snapshot.networkID, accountID: snapshot.accountID,
-                    recipient: destination, amountBaseUnits: baseUnits,
-                    maximumFeeBaseUnits: feeUnits
-                )
+                if snapshot.ownership == .locusVault {
+                    ready = await gateway.prepareHumanNativeTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        recipient: destination, amountBaseUnits: baseUnits,
+                        maximumFeeBaseUnits: feeUnits
+                    )
+                } else {
+                    ready = await gateway.executeExternalHumanTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        kind: .nativeTransfer, recipient: destination,
+                        amountBaseUnits: baseUnits, maximumFeeBaseUnits: feeUnits
+                    )
+                }
             } else if !isNFT, !isNative, asset?.kind == .fungibleToken,
                       let decimals = asset?.decimals,
                       let baseUnits = WalletAmountFormatter.baseUnits(
                           from: amount.trimmingCharacters(in: .whitespacesAndNewlines),
                           decimals: decimals
                       ) {
-                ready = await gateway.prepareHumanFungibleTransfer(
-                    networkID: snapshot.networkID, accountID: snapshot.accountID,
-                    assetID: snapshot.assetID, recipient: destination,
-                    amountBaseUnits: baseUnits, maximumFeeBaseUnits: feeUnits
-                )
+                if snapshot.ownership == .locusVault {
+                    ready = await gateway.prepareHumanFungibleTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        assetID: snapshot.assetID, recipient: destination,
+                        amountBaseUnits: baseUnits, maximumFeeBaseUnits: feeUnits
+                    )
+                } else {
+                    ready = await gateway.executeExternalHumanTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        kind: .fungibleTokenTransfer, assetID: snapshot.assetID,
+                        recipient: destination, amountBaseUnits: baseUnits,
+                        maximumFeeBaseUnits: feeUnits
+                    )
+                }
             } else if isNFT, let resolvedTokenID {
-                ready = await gateway.prepareHumanNFTTransfer(
-                    networkID: snapshot.networkID, accountID: snapshot.accountID,
-                    assetID: snapshot.assetID, tokenID: resolvedTokenID,
-                    recipient: destination, maximumFeeBaseUnits: feeUnits
-                )
+                if snapshot.ownership == .locusVault {
+                    ready = await gateway.prepareHumanNFTTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        assetID: snapshot.assetID, tokenID: resolvedTokenID,
+                        recipient: destination, maximumFeeBaseUnits: feeUnits
+                    )
+                } else {
+                    ready = await gateway.executeExternalHumanTransfer(
+                        networkID: snapshot.networkID, accountID: snapshot.accountID,
+                        kind: .nftTransfer, assetID: snapshot.assetID,
+                        tokenID: resolvedTokenID, recipient: destination,
+                        amountBaseUnits: "1", maximumFeeBaseUnits: feeUnits
+                    )
+                }
             } else {
                 ready = false
             }
@@ -1509,6 +1870,7 @@ private struct WalletNativePolicySheet: View {
         gateway.accounts.flatMap { account in
             account.networkIDs.compactMap { networkID in
                 guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+                      account.ownership == .locusVault,
                       network.chain == account.chain,
                       network.chain == .evm || network.chain == .solana,
                       network.staticallyReviewedCapabilities.contains(.autonomousPolicy)

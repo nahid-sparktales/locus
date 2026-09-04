@@ -65,6 +65,8 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     exactVersion: 1.18.0
+  ReownSwift:
+    path: Vendor/ReownSwift
 targetTemplates:
   LocusApplication:
     type: application
@@ -147,7 +149,10 @@ targets:
     sources:
       - path: WalletSignerService
       - path: Locus/WalletSignerProtocol.swift
+      - path: Locus/WalletConnectionProtocol.swift
+      - path: Locus/WalletDappRequestRouter.swift
       - path: Locus/WalletNetworkModels.swift
+      - path: Locus/WalletStructuredAuthorization.swift
       - path: Locus/WalletVaultKeychain.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
@@ -201,12 +206,24 @@ targets:
   Locus:
     templates:
       - LocusApplication
+    sources:
+      - path: WalletConnectionsRuntime
+        excludes:
+          - Resources
+      - path: WalletConnectionsRuntime/Resources
+        buildPhase: resources
+      - path: Vendor/ReownSwift/LICENSE
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
         CODE_SIGN_ENTITLEMENTS: Config/LocusDirect.entitlements
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+        LOCUS_REOWN_PROJECT_ID: ""
+        LOCUS_WALLETCONNECT_REDIRECT_URL: ""
+        LOCUS_PHANTOM_APP_ID: ""
+        LOCUS_PHANTOM_REDIRECT_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
@@ -234,6 +251,8 @@ targets:
       - package: SwiftTerm
       - package: SwiftMarkdown
         product: Markdown
+      - package: ReownSwift
+        product: WalletConnect
     scheme:
       testTargets:
         - LocusTests
@@ -316,6 +335,9 @@ schemes:
       environmentVariables:
         LOCUS_ANVIL_RPC_URL: "$(LOCUS_ANVIL_RPC_URL)"
         LOCUS_ANVIL_VERSION: "$(LOCUS_ANVIL_VERSION)"
+        LOCUS_SOLANA_VALIDATOR_RPC_URL: "$(LOCUS_SOLANA_VALIDATOR_RPC_URL)"
+        LOCUS_SOLANA_VALIDATOR_GENESIS_HASH: "$(LOCUS_SOLANA_VALIDATOR_GENESIS_HASH)"
+        LOCUS_SOLANA_VALIDATOR_VERSION: "$(LOCUS_SOLANA_VALIDATOR_VERSION)"
       targets:
         - LocusWalletChainTests
   LocusMAS:

@@ -1,0 +1,70 @@
+--- a/Sources/WalletConnectSign/Auth/Link/LinkEnvelopesDispatcher.swift
++++ b/Sources/WalletConnectSign/Auth/Link/LinkEnvelopesDispatcher.swift
+@@ -1,8 +1,11 @@
+ 
+ #if os(iOS)
+ import UIKit
++#elseif os(macOS)
++import AppKit
+ #endif
+ 
++import Foundation
+ import Combine
+ 
+ final class LinkEnvelopesDispatcher {
+@@ -75,13 +78,7 @@
+                 }
+                 DispatchQueue.main.async { [weak self] in
+                     self?.logger.debug("Will open universal link")
+-                    UIApplication.shared.open(envelopeUrl, options: [.universalLinksOnly: true]) { success in
+-                        if success {
+-                            continuation.resume(returning: ())
+-                        } else {
+-                            continuation.resume(throwing: Errors.failedToOpenUniversalLink(envelopeUrl.absoluteString))
+-                        }
+-                    }
++                    self?.open(envelopeUrl, continuation: continuation)
+                 }
+             }
+ 
+@@ -109,13 +106,7 @@
+             }
+             DispatchQueue.main.async { [unowned self] in
+                 logger.debug("Will open universal link")
+-                UIApplication.shared.open(envelopeUrl, options: [.universalLinksOnly: true]) { success in
+-                    if success {
+-                        continuation.resume(returning: ())
+-                    } else {
+-                        continuation.resume(throwing: Errors.failedToOpenUniversalLink(envelopeUrl.absoluteString))
+-                    }
+-                }
++                open(envelopeUrl, continuation: continuation)
+             }
+         }
+ 
+@@ -124,6 +115,27 @@
+         return envelopeUrl.absoluteString
+     }
+ 
++    private func open(
++        _ url: URL,
++        continuation: CheckedContinuation<Void, any Error>
++    ) {
++#if os(iOS)
++        UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { success in
++            success
++                ? continuation.resume(returning: ())
++                : continuation.resume(throwing: Errors.failedToOpenUniversalLink(url.absoluteString))
++        }
++#elseif os(macOS)
++        if NSWorkspace.shared.open(url) {
++            continuation.resume(returning: ())
++        } else {
++            continuation.resume(throwing: Errors.failedToOpenUniversalLink(url.absoluteString))
++        }
++#else
++        continuation.resume(throwing: Errors.failedToOpenUniversalLink(url.absoluteString))
++#endif
++    }
++
+     public func respondError(topic: String, requestId: RPCID, peerUniversalLink: String, reason: Reason, envelopeType: Envelope.EnvelopeType) async throws -> String {

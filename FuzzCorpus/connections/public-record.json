@@ -1,0 +1,15 @@
+{
+  "accountIDs": ["account-1"],
+  "accountOwnership": {"kind": "locus_vault"},
+  "approvedMethods": ["list_accounts", "send_transaction"],
+  "connector": "embedded_browser",
+  "createdAt": "2033-05-18T03:32:20Z",
+  "direction": "locus_vault_to_dapp",
+  "expiresAt": "2033-05-18T03:42:20Z",
+  "id": "browser-1",
+  "networkIDs": ["eip155:11155111"],
+  "peerName": "Example dapp",
+  "peerURL": "https://app.example",
+  "state": "connected",
+  "updatedAt": "2033-05-18T03:32:20Z"
+}

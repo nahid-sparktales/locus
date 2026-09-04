@@ -134,6 +134,38 @@ final class XPCWalletSignerClient: WalletSignerClient {
         try await call { proxy, reply in proxy.listAccounts(reply: reply) }
     }
 
+    func signStructuredAuthorization(
+        _ request: WalletStructuredAuthorizationRequest,
+        source: WalletRequestSource
+    ) async throws -> WalletStructuredAuthorizationResult {
+        let accounts = try await listAccounts()
+        guard let account = accounts.first(where: {
+            $0.id == request.accountID && $0.ownership == .locusVault
+                && $0.networkIDs.contains(request.networkID)
+        }) else {
+            throw WalletGateway.Error.invalidArguments(
+                "The structured authorization account does not exist in Locus Vault."
+            )
+        }
+        let canonical = try WalletStructuredAuthorization.canonicalMessage(
+            request, account: account
+        )
+        let data = try authorized(request, source: source)
+        let result: WalletStructuredAuthorizationResult = try await call { proxy, reply in
+            proxy.signStructuredAuthorization(data, reply: reply)
+        }
+        guard result.request == request,
+              result.canonicalMessage == canonical,
+              result.signedAt <= Date(),
+              result.signedAt >= request.issuedAt,
+              result.signedAt < request.expirationTime else {
+            throw WalletGateway.Error.invalidArguments(
+                "The signer returned a different structured authorization."
+            )
+        }
+        return result
+    }
+
     func prepare(
         _ request: WalletPrepareRequest,
         contract: WalletContractRegistryEntry?
@@ -666,6 +698,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 "The reviewed Sui provider is not active."
             )
         }
+    }
+
+    func quoteUniswap(
+        request: WalletUniswapQuoteRequest,
+        configuration: WalletReviewedUniswapConfiguration
+    ) async throws -> WalletUniswapQuote {
+        try await rpcClient(for: request.networkID).uniswapQuote(
+            request: request, configuration: configuration
+        )
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {

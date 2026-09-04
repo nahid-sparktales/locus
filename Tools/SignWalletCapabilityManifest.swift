@@ -10,10 +10,21 @@ struct CapabilityManifest: Codable {
     let evidenceIndexSHA256: String
     let issuedAt: Date
     let expiresAt: Date
-    let enabledNetworkIDs: Set<String>
-    let enabledCapabilities: Set<String>
+    let networkGrants: [NetworkGrant]
     let approvedRegions: Set<String>
     let completedApprovals: Set<String>
+}
+
+struct NetworkGrant: Codable {
+    let networkID: String
+    let capabilities: Set<String>
+    let connectors: [ConnectorGrant]
+}
+
+struct ConnectorGrant: Codable {
+    let connector: String
+    let directions: Set<String>
+    let methods: Set<String>
 }
 
 struct LaunchEvidenceIndex: Codable {
@@ -70,8 +81,8 @@ do {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let manifest = try decoder.decode(CapabilityManifest.self, from: Data(contentsOf: inputURL))
-    guard manifest.schemaVersion == 2, manifest.revision > 0 else {
-        fail("schemaVersion must be 2 and revision must be positive")
+    guard manifest.schemaVersion == 3, manifest.revision > 0 else {
+        fail("schemaVersion must be 3 and revision must be positive")
     }
     guard ["invited_canary", "general_availability"].contains(manifest.releaseStage) else {
         fail("releaseStage must be invited_canary or general_availability")
@@ -88,6 +99,90 @@ do {
     }
     guard manifest.completedApprovals.isSubset(of: gaApprovals) else {
         fail("completedApprovals contains an unknown approval")
+    }
+    let knownNetworks: Set<String> = [
+        "eip155:1", "eip155:11155111", "solana:mainnet-beta",
+        "solana:devnet", "sui:mainnet", "sui:testnet",
+    ]
+    let knownCapabilities: Set<String> = [
+        "native_transfer", "fungible_token_transfer", "nft_transfer",
+        "exact_input_swap", "reviewed_call", "embedded_browser",
+        "external_wallet", "wallet_connect", "autonomous_policy",
+        "standardized_sign_in",
+    ]
+    let knownConnectors: Set<String> = [
+        "metamask", "phantom", "slush", "embedded_browser", "wallet_connect",
+    ]
+    let knownDirections: Set<String> = [
+        "external_account_to_locus", "locus_vault_to_dapp",
+    ]
+    let knownMethods: Set<String> = [
+        "list_accounts", "switch_network", "send_transaction",
+        "sign_in_with_ethereum", "sign_in_with_solana",
+    ]
+    let networkChains: [String: String] = [
+        "eip155:1": "evm", "eip155:11155111": "evm",
+        "solana:mainnet-beta": "solana", "solana:devnet": "solana",
+        "sui:mainnet": "sui", "sui:testnet": "sui",
+    ]
+    guard !manifest.networkGrants.isEmpty,
+          Set(manifest.networkGrants.map(\.networkID)).count
+            == manifest.networkGrants.count else {
+        fail("networkGrants must contain unique per-network entries")
+    }
+    for grant in manifest.networkGrants {
+        guard knownNetworks.contains(grant.networkID), !grant.capabilities.isEmpty,
+              grant.capabilities.isSubset(of: knownCapabilities),
+              Set(grant.connectors.map(\.connector)).count == grant.connectors.count else {
+            fail("network grant \(grant.networkID) is malformed")
+        }
+        for connector in grant.connectors {
+            guard knownConnectors.contains(connector.connector),
+                  !connector.directions.isEmpty,
+                  connector.directions.isSubset(of: knownDirections),
+                  !connector.methods.isEmpty,
+                  connector.methods.isSubset(of: knownMethods) else {
+                fail("connector grant \(connector.connector) is malformed")
+            }
+            let requiredDirection = ["metamask", "phantom", "slush"].contains(
+                connector.connector
+            ) ? "external_account_to_locus" : "locus_vault_to_dapp"
+            guard connector.directions == [requiredDirection] else {
+                fail("connector grant \(connector.connector) has the wrong direction")
+            }
+            let requiredCapability = switch connector.connector {
+            case "metamask", "phantom", "slush": "external_wallet"
+            case "embedded_browser": "embedded_browser"
+            default: "wallet_connect"
+            }
+            guard grant.capabilities.contains(requiredCapability),
+                  let chain = networkChains[grant.networkID] else {
+                fail("connector grant \(connector.connector) lacks its network capability")
+            }
+            let chainMethods: Set<String> = switch chain {
+            case "evm": [
+                "list_accounts", "switch_network", "send_transaction",
+                "sign_in_with_ethereum",
+            ]
+            case "solana": [
+                "list_accounts", "switch_network", "send_transaction",
+                "sign_in_with_solana",
+            ]
+            default: ["list_accounts", "switch_network", "send_transaction"]
+            }
+            guard connector.methods.isSubset(of: chainMethods) else {
+                fail("connector grant \(connector.connector) contains a cross-chain method")
+            }
+            if connector.connector == "metamask", chain != "evm" {
+                fail("MetaMask is enabled only for reviewed EVM networks")
+            }
+            if connector.connector == "slush", chain != "sui" {
+                fail("Slush is enabled only for reviewed Sui networks")
+            }
+            if connector.connector == "phantom", chain != "solana" {
+                fail("Phantom embedded user wallets are enabled only for reviewed Solana networks")
+            }
+        }
     }
 
     let evidenceData = try Data(contentsOf: evidenceURL)

@@ -40,6 +40,12 @@ private func rustSignEVMTransaction(
     _ transactionJSON: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("locus_wallet_sign_structured_authorization_json")
+private func rustSignStructuredAuthorization(
+    _ entropyHex: UnsafePointer<CChar>,
+    _ requestJSON: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("locus_wallet_prepare_solana_native_transfer_json")
 private func rustPrepareSolanaNativeTransfer(
     _ entropyHex: UnsafePointer<CChar>,
@@ -138,6 +144,19 @@ private struct RustSignedEVM: Decodable {
     let digest: String
     let rawTransaction: String
     let transactionHash: String
+}
+
+private struct RustStructuredAuthorizationRequest: Encodable {
+    let format: String
+    let canonicalMessage: String
+    let expectedAddress: String
+}
+
+private struct RustSignedStructuredAuthorization: Decodable {
+    let address: String
+    let messageDigest: String
+    let signature: String
+    let signatureEncoding: WalletStructuredAuthorizationSignatureEncoding
 }
 
 private struct RustPreparedSolana: Decodable {
@@ -632,7 +651,7 @@ private final class WalletVaultStore {
 }
 
 final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecoverySignerXPCProtocol {
-    private static let protocolVersion = 2
+    private static let protocolVersion = 3
     private static let maximumPreparedIntents = 32
     private static let maximumActivePolicies = 32
     private let queue = DispatchQueue(label: "io.sparktales.locus.wallet-signer")
@@ -651,6 +670,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     private var preparedSuiIntents: [String: StoredSuiIntent] = [:]
     private var activePolicies: [String: SignerActivePolicy] = [:]
     private var pendingPresenceIntents: Set<String> = []
+    private var consumedAuthorizationKeys: [String: Date] = [:]
     private var policyPresencePending = false
     private var recoveryCeremony: WalletRecoveryCeremonyContext?
 
@@ -773,6 +793,119 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         }
     }
 
+    func signStructuredAuthorization(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            do {
+                let authorized: WalletAuthorizedRequest<WalletStructuredAuthorizationRequest> =
+                    try self.authorized(request)
+                let authorization = authorized.payload
+                guard self.unlockedEntropy != nil,
+                      let account = try self.store.accounts().first(where: {
+                          $0.id == authorization.accountID
+                              && $0.ownership == .locusVault
+                      }) else {
+                    throw self.signerError("The Locus Vault account is unavailable.")
+                }
+                switch authorized.source.kind {
+                case .browser, .embeddedBrowser:
+                    guard authorized.source.origin == authorization.origin else {
+                        throw self.signerError(
+                            "The sign-in origin changed before signer authorization."
+                        )
+                    }
+                case .walletConnectPeer:
+                    guard authorized.source.peerID?.isEmpty == false,
+                          authorized.source.origin == nil
+                            || authorized.source.origin == authorization.origin else {
+                        throw self.signerError(
+                            "The WalletConnect peer binding changed before signer authorization."
+                        )
+                    }
+                case .agent, .humanUI:
+                    break
+                }
+                try self.authorizeStructuredSignIn(authorization)
+                let canonical = try WalletStructuredAuthorization.canonicalMessage(
+                    authorization, account: account
+                )
+                let key = self.authorizationReplayKey(authorization)
+                let now = Date()
+                self.consumedAuthorizationKeys = self.consumedAuthorizationKeys.filter {
+                    $0.value > now
+                }
+                guard self.consumedAuthorizationKeys[key] == nil,
+                      self.pendingPresenceIntents.insert("authorization:\(key)").inserted else {
+                    throw self.signerError(
+                        "This structured authorization was already used or is awaiting approval."
+                    )
+                }
+                let sessionID = authorized.sessionID
+                self.requireUserPresence(
+                    reason: "Approve \(authorization.format == .siwe ? "Ethereum" : "Solana") sign-in for \(authorization.domain)"
+                ) { result in
+                    self.pendingPresenceIntents.remove("authorization:\(key)")
+                    guard self.activeSessionID == sessionID,
+                          let entropy = self.unlockedEntropy else {
+                        return reply(self.error(
+                            "Structured authorization failed: Locus Vault locked while approval was pending."
+                        ))
+                    }
+                    switch result {
+                    case .failure(let error):
+                        reply(self.error(
+                            "Structured authorization failed: \(error.localizedDescription)"
+                        ))
+                    case .success:
+                        do {
+                            let signedAt = Date()
+                            try WalletStructuredAuthorization.validate(
+                                authorization, account: account, now: signedAt
+                            )
+                            guard self.consumedAuthorizationKeys[key] == nil else {
+                                throw self.signerError(
+                                    "This structured authorization was already consumed."
+                                )
+                            }
+                            // Consume before signing. A failed response cannot
+                            // be retried into a second authorization prompt.
+                            self.consumedAuthorizationKeys[key] = authorization.expirationTime
+                            let signed = try self.rustStructuredAuthorization(
+                                format: authorization.format,
+                                canonicalMessage: canonical,
+                                expectedAddress: account.address,
+                                entropy: entropy
+                            )
+                            let addressMatches = account.chain == .evm
+                                ? signed.address.caseInsensitiveCompare(account.address) == .orderedSame
+                                : signed.address == account.address
+                            guard addressMatches else {
+                                throw self.signerError(
+                                    "The signing core used a different account."
+                                )
+                            }
+                            reply(self.encoded(WalletStructuredAuthorizationResult(
+                                request: authorization,
+                                canonicalMessage: canonical,
+                                messageDigest: signed.messageDigest,
+                                signature: signed.signature,
+                                signatureEncoding: signed.signatureEncoding,
+                                signedAt: signedAt
+                            )))
+                        } catch {
+                            reply(self.error(
+                                "Structured authorization failed: \(error.localizedDescription)"
+                            ))
+                        }
+                    }
+                }
+            } catch {
+                reply(self.error(
+                    "Structured authorization failed: \(error.localizedDescription)"
+                ))
+            }
+        }
+    }
+
     func prepareEVM(_ request: Data, reply: @escaping (Data) -> Void) {
         queue.async {
             do {
@@ -794,7 +927,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 case .nativeTransfer:
                     intent = try self.prepareNativeTransfer(packet: packet, entropy: entropy)
                 case .contractCall, .fungibleTokenTransfer, .nftTransfer,
-                     .exactInputSwap:
+                     .exactInputSwap, .swapAllowanceSetup:
                     intent = try self.prepareContractCall(packet: packet, entropy: entropy)
                 case .reviewedCall, .standardizedSignIn,
                      .reviewedTypedAuthorization:
@@ -2753,6 +2886,26 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 )
             }
             nativeValue = "0"
+        case .swapAllowanceSetup:
+            guard let setup = action.swapAllowanceSetup,
+                  let configuration = reviewRegistry?.uniswapConfiguration(
+                    networkID: entry.networkID,
+                    universalRouterContractID:
+                        setup.binding.universalRouterContractID
+                  ),
+                  reviewedSwapRouteIsSigned(
+                    setup.binding.exactInputSwapAction(),
+                    networkID: entry.networkID
+                  ),
+                  WalletSwapAllowanceAdapter.resolve(
+                    action: action, registryEntry: entry,
+                    configuration: configuration
+                  ) != nil else {
+                throw signerError(
+                    "The allowance is not a finite setup derived from an active reviewed swap."
+                )
+            }
+            nativeValue = "0"
         default:
             throw signerError("This registered transaction kind is not implemented.")
         }
@@ -2762,7 +2915,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         let capability: WalletNetworkCapability = switch action.type {
         case .fungibleTokenTransfer: .fungibleTokenTransfer
         case .nftTransfer: .nftTransfer
-        case .exactInputSwap: .exactInputSwap
+        case .exactInputSwap, .swapAllowanceSetup: .exactInputSwap
         default:
             switch WalletReviewedAdapters.validatedID(for: entry) {
             case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
@@ -2804,9 +2957,20 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         let semanticCall = WalletEVMAssetAdapter.resolve(
             action: action, registryEntry: entry, accountAddress: account.address
         )
+        let allowanceCall = action.swapAllowanceSetup.flatMap { setup in
+            reviewRegistry?.uniswapConfiguration(
+                networkID: entry.networkID,
+                universalRouterContractID: setup.binding.universalRouterContractID
+            ).flatMap {
+                WalletSwapAllowanceAdapter.resolve(
+                    action: action, registryEntry: entry, configuration: $0
+                )
+            }
+        }
         let function = action.type == .exactInputSwap
             ? "execute(bytes,bytes[],uint256)"
-            : action.function ?? semanticCall?.function ?? ""
+            : action.function ?? semanticCall?.function
+                ?? allowanceCall?.function ?? ""
         let identity = WalletContractIdentity(
             registryID: entry.id, address: entry.checksumAddress, label: entry.label,
             function: function, abiDigest: entry.abiDigest,
@@ -2822,6 +2986,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                     ? "Transfer reviewed \(entry.label) collectible on \(packet.request.networkID)"
                     : action.type == .exactInputSwap
                         ? "Swap exact input through reviewed \(entry.label) on \(packet.request.networkID)"
+                    : action.type == .swapAllowanceSetup
+                        ? "Set up an exact finite swap allowance through reviewed \(entry.label) on \(packet.request.networkID)"
                         : "Call \(entry.label).\(function) on \(packet.request.networkID)",
             effects: decoded.effects, riskFlags: decoded.riskFlags, contract: identity,
             adapterID: decoded.adapterID, budgetAssetID: decoded.budgetAssetID,
@@ -2832,7 +2998,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
             createdAt: now, expiresAt: now.addingTimeInterval(120),
             policyDecision: "exact_confirmation_required", policyID: nil
         )
-        if packet.request.source.kind == .agent,
+        if action.type != .swapAllowanceSetup,
+           packet.request.source.kind == .agent,
            let policyID = try? validAutomaticPolicyID(for: prepared) {
             prepared.policyDecision = "allowed_by_session_policy"
             prepared.policyID = policyID
@@ -2901,6 +3068,27 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
             }
             function = materialized.function ?? ""
             arguments = materialized.arguments
+        case .swapAllowanceSetup:
+            guard let setup = action.swapAllowanceSetup,
+                  let configuration = reviewRegistry?.uniswapConfiguration(
+                    networkID: entry.networkID,
+                    universalRouterContractID:
+                        setup.binding.universalRouterContractID
+                  ),
+                  reviewedSwapRouteIsSigned(
+                    setup.binding.exactInputSwapAction(),
+                    networkID: entry.networkID
+                  ),
+                  let materialized = WalletSwapAllowanceAdapter.resolve(
+                    action: action, registryEntry: entry,
+                    configuration: configuration
+                  ) else {
+                throw signerError(
+                    "The allowance setup is outside the signed Uniswap configuration."
+                )
+            }
+            function = materialized.function
+            arguments = materialized.arguments
         default:
             throw signerError("The semantic call has no reviewed EVM adapter.")
         }
@@ -2954,7 +3142,31 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         var adapterID: String?
         var budgetAssetID = "\(entry.networkID)/contract:\(entry.checksumAddress.lowercased())"
         var spendBaseUnits = "0"
-        if let semantic = WalletEVMAssetAdapter.resolve(
+        if let setup = action.swapAllowanceSetup,
+           let configuration = reviewRegistry?.uniswapConfiguration(
+                networkID: entry.networkID,
+                universalRouterContractID: setup.binding.universalRouterContractID
+           ),
+           let semantic = WalletSwapAllowanceAdapter.resolve(
+                action: action, registryEntry: entry,
+                configuration: configuration
+           ) {
+            let spender = setup.stage == .permit2ToUniversalRouter
+                ? setup.binding.universalRouterAddress
+                : setup.binding.permit2Address
+            effects = [WalletDecodedEffect(
+                id: "\(intentID):swap-allowance",
+                kind: setup.approvalAmountBaseUnits == "0"
+                    ? "approval_revoke" : "approval",
+                assetID: semantic.assetID,
+                amountBaseUnits: setup.approvalAmountBaseUnits,
+                from: account.address, to: nil, spender: spender
+            )]
+            riskFlags = []
+            adapterID = semantic.adapterID
+            budgetAssetID = semantic.assetID
+            spendBaseUnits = setup.approvalAmountBaseUnits
+        } else if let semantic = WalletEVMAssetAdapter.resolve(
             action: action, registryEntry: entry, accountAddress: account.address
         ), action.type == .fungibleTokenTransfer,
            let amount = SignerUnsignedInteger.normalize(action.amountBaseUnits ?? "") {
@@ -3082,10 +3294,67 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
 
     private func reviewedSwapRouteIsSigned(
         _ action: WalletSemanticAction,
-        networkID: String
+        networkID: String,
+        now: Date = Date()
     ) -> Bool {
-        guard let route = action.swapRoute, let reviewRegistry else {
+        guard let route = action.swapRoute,
+              let evidence = route.quoteEvidence,
+              let contractID = action.contractID,
+              let reviewRegistry,
+              let configuration = reviewRegistry.uniswapConfiguration(
+                networkID: networkID,
+                universalRouterContractID: contractID
+              ),
+              evidence.quotedAt <= now.addingTimeInterval(5),
+              evidence.expiresAt > now,
+              evidence.expiresAt.timeIntervalSince(evidence.quotedAt) <= 60.5,
+              let deadline = UInt64(route.deadlineUnixSeconds),
+              deadline <= UInt64(max(0, evidence.quotedAt.timeIntervalSince1970)) + 600,
+              route.slippageBPS <= 500,
+              evidence.perHopOutputBaseUnits.count == route.pathAssetIDs.count - 1,
+              evidence.perHopOutputBaseUnits.last == route.quotedOutputBaseUnits,
+              evidence.gasEstimate != "0",
+              evidence.blockHash.count == 66,
+              evidence.blockHash.hasPrefix("0x"),
+              evidence.blockHash.dropFirst(2).allSatisfy(\.isHexDigit) else {
             return false
+        }
+        #if DEBUG
+        guard evidence.agreeingProviderCount >= 1 else { return false }
+        #else
+        guard evidence.agreeingProviderCount >= 2 else { return false }
+        #endif
+        let quoteRole: WalletReviewedUniswapContractRole =
+            route.protocolVersion == .v2 ? .v2Router : .v3QuoterV2
+        guard let quoteContract = configuration.contract(quoteRole),
+              quoteContract.address.caseInsensitiveCompare(
+                evidence.quoteContractAddress
+              ) == .orderedSame,
+              quoteContract.runtimeCodeHash.caseInsensitiveCompare(
+                evidence.quoteContractRuntimeCodeHash
+              ) == .orderedSame,
+              Set(route.pathAssetIDs).count == route.pathAssetIDs.count else {
+            return false
+        }
+        let hopCount = route.pathAssetIDs.count - 1
+        guard (route.protocolVersion == .v2 && route.feeTiers.isEmpty)
+                || (route.protocolVersion == .v3
+                    && route.feeTiers.count == hopCount) else { return false }
+        for index in 0..<hopCount {
+            let lhs = route.pathAssetIDs[index]
+            let rhs = route.pathAssetIDs[index + 1]
+            let expectedFee = route.protocolVersion == .v3
+                ? route.feeTiers[index] : nil
+            guard configuration.pools.contains(where: { pool in
+                pool.protocolVersion == route.protocolVersion
+                    && pool.feeTier == expectedFee
+                    && ((pool.token0AssetID == lhs && pool.token1AssetID == rhs)
+                        || (pool.token0AssetID == rhs && pool.token1AssetID == lhs))
+            }) else { return false }
+            if index + 1 < hopCount,
+               !configuration.allowedIntermediaryAssetIDs.contains(rhs) {
+                return false
+            }
         }
         return route.pathAssetIDs.allSatisfy { assetID in
             guard let identity = WalletEVMAssetIdentity.parse(assetID),
@@ -3197,6 +3466,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     private func validAutomaticPolicyID(for transaction: WalletPreparedTransaction) throws -> String {
         expirePolicies()
         guard transaction.source.kind == .agent,
+              transaction.action.type != .swapAllowanceSetup,
               let adapterID = transaction.adapterID,
               [WalletReviewedAdapters.ethereumNativeTransfer,
                WalletReviewedAdapters.solanaNativeTransfer,
@@ -3472,7 +3742,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         case .nativeTransfer: .nativeTransfer
         case .fungibleTokenTransfer: .fungibleTokenTransfer
         case .nftTransfer: .nftTransfer
-        case .exactInputSwap: .exactInputSwap
+        case .exactInputSwap, .swapAllowanceSetup: .exactInputSwap
         case .contractCall, .reviewedCall: .reviewedCall
         case .standardizedSignIn, .reviewedTypedAuthorization: .externalWallet
         }
@@ -3520,6 +3790,64 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 "Mainnet signing is disabled because the adapter is absent from the signed review manifest."
             )
         }
+    }
+
+    private func authorizeStructuredSignIn(
+        _ request: WalletStructuredAuthorizationRequest
+    ) throws {
+        guard let descriptor = WalletNetworkCatalog.descriptor(id: request.networkID),
+              (request.format == .siwe && descriptor.chain == .evm)
+                || (request.format == .siws && descriptor.chain == .solana),
+              reviewRegistry?.containsSignInAdapter(
+                  format: request.format, networkID: request.networkID
+              ) == true else {
+            throw signerError(
+                "This standardized sign-in adapter is absent from the signed review manifest."
+            )
+        }
+        guard descriptor.environment == .mainnet else { return }
+        do {
+            guard let launchGate else {
+                throw WalletLaunchGateError.capabilityNotReviewed
+            }
+            try launchGate.authorize(
+                networkID: request.networkID,
+                capability: .standardizedSignIn,
+                regionCode: regionCode
+            )
+        } catch {
+            throw signerError(error.localizedDescription)
+        }
+    }
+
+    private func authorizationReplayKey(
+        _ request: WalletStructuredAuthorizationRequest
+    ) -> String {
+        [
+            request.format.rawValue,
+            request.networkID,
+            request.accountID,
+            request.domain.lowercased(),
+            request.nonce,
+        ].joined(separator: "|")
+    }
+
+    private func rustStructuredAuthorization(
+        format: WalletStructuredAuthorizationFormat,
+        canonicalMessage: String,
+        expectedAddress: String,
+        entropy: Data
+    ) throws -> RustSignedStructuredAuthorization {
+        let request = RustStructuredAuthorizationRequest(
+            format: format.coreIdentifier,
+            canonicalMessage: canonicalMessage,
+            expectedAddress: expectedAddress
+        )
+        return try rustSolanaCall(
+            request: request,
+            entropy: entropy,
+            function: rustSignStructuredAuthorization
+        )
     }
 
     private func requireUserPresence(

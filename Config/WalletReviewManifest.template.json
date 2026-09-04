@@ -1,10 +1,14 @@
 {
   "adapterIDs": [],
   "assets": [],
+  "connectors": [],
   "evmContracts": [],
   "expiresAt": "2026-09-30T00:00:00Z",
   "explorerTemplates": {},
   "issuedAt": "2026-08-31T00:00:00Z",
+  "programIdentities": [],
   "revision": 1,
-  "schemaVersion": 1
+  "schemaVersion": 2,
+  "signInAdapters": [],
+  "uniswapConfigurations": []
 }

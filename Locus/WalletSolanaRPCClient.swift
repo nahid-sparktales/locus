@@ -1,6 +1,16 @@
 import CryptoKit
 import Foundation
 
+struct WalletSolanaExternalRecheckMaterial: Equatable, Sendable {
+    let evidence: WalletSolanaRecheckPacket
+    let unsignedTransaction: Data
+}
+
+struct WalletSolanaExternalPreparation: Equatable, Sendable {
+    let packet: WalletSolanaPreparationPacket
+    let material: WalletSolanaExternalRecheckMaterial
+}
+
 private enum WalletSolanaComputeBudget {
     static let programID = "ComputeBudget111111111111111111111111111111"
     static let maximumUnits: UInt32 = 1_400_000
@@ -681,6 +691,45 @@ actor WalletSolanaRPCClient {
         self.session = session
     }
 
+    #if DEBUG
+    /// The only plain-HTTP construction path is compiled solely into Debug
+    /// products for the isolated `solana-test-validator` integration target.
+    /// The local genesis hash is supplied by the runner and remains an exact
+    /// chain-identity check; production and Release builds retain HTTPS-only
+    /// endpoint validation and the canonical devnet genesis hash.
+    init(
+        testLoopbackEndpoint value: String,
+        expectedGenesisHash: String,
+        session: URLSession = .shared
+    ) throws {
+        guard let url = URL(string: value), url.scheme?.lowercased() == "http",
+              let host = url.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1",
+              WalletSolanaBase58.decode(
+                  expectedGenesisHash, exactLength: 32
+              ) != nil else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        network = WalletNetworkDescriptor(
+            canonicalID: WalletNetworkCatalog.solanaDevnet.canonicalID,
+            chain: .solana, environment: .testnet,
+            displayName: "Solana local validator",
+            identity: WalletChainIdentity(
+                kind: .solanaGenesisHash, value: expectedGenesisHash
+            ),
+            nativeAssetID: WalletNetworkCatalog.solanaDevnet.nativeAssetID,
+            nativeSymbol: WalletNetworkCatalog.solanaDevnet.nativeSymbol,
+            nativeDecimals: WalletNetworkCatalog.solanaDevnet.nativeDecimals,
+            explorerTransactionURLTemplate:
+                WalletNetworkCatalog.solanaDevnet.explorerTransactionURLTemplate,
+            staticallyReviewedCapabilities:
+                WalletNetworkCatalog.solanaDevnet.staticallyReviewedCapabilities
+        )
+        endpoint = url
+        self.session = session
+    }
+    #endif
+
     func configure(endpoint value: String) throws {
         guard let url = URL(string: value), url.scheme?.lowercased() == "https",
               url.host != nil else { throw WalletRPCError.invalidEndpoint }
@@ -1156,10 +1205,10 @@ actor WalletSolanaRPCClient {
         )
     }
 
-    func recheck(
+    func externalRecheck(
         intentID: String,
         packet: WalletSolanaPreparationPacket
-    ) async throws -> WalletSolanaRecheckPacket {
+    ) async throws -> WalletSolanaExternalRecheckMaterial {
         let genesisHash = try await verifiedGenesisHash()
         guard genesisHash == packet.genesisHash else {
             throw WalletRPCError.wrongChain(genesisHash)
@@ -1492,13 +1541,23 @@ actor WalletSolanaRPCClient {
             }
             simulation = evidence.summary
         }
-        return WalletSolanaRecheckPacket(
-            intentID: intentID, genesisHash: genesisHash,
-            currentBlockHeight: currentBlockHeight,
-            resolvedAccountsDigest: resolvedDigest,
-            feeQuoteBaseUnits: fee, simulation: simulation,
-            simulationSucceeded: true, observedAt: Date()
+        return WalletSolanaExternalRecheckMaterial(
+            evidence: WalletSolanaRecheckPacket(
+                intentID: intentID, genesisHash: genesisHash,
+                currentBlockHeight: currentBlockHeight,
+                resolvedAccountsDigest: resolvedDigest,
+                feeQuoteBaseUnits: fee, simulation: simulation,
+                simulationSucceeded: true, observedAt: Date()
+            ),
+            unsignedTransaction: unsignedTransaction
         )
+    }
+
+    func recheck(
+        intentID: String,
+        packet: WalletSolanaPreparationPacket
+    ) async throws -> WalletSolanaRecheckPacket {
+        try await externalRecheck(intentID: intentID, packet: packet).evidence
     }
 
     func broadcast(
@@ -2864,7 +2923,7 @@ actor WalletSolanaRPCClient {
     func publicRead(method: String, params: [Any]) async throws -> Any {
         let allowed = Set([
             "getBalance", "getBlockHeight", "getGenesisHash", "getLatestBlockhash",
-            "getSignatureStatuses", "getTransaction",
+            "getAccountInfo", "getSignatureStatuses", "getTransaction",
         ])
         guard allowed.contains(method) else {
             throw WalletGateway.Error.invalidArguments(
@@ -3324,6 +3383,29 @@ actor WalletSolanaProviderCoordinator {
         return packet
     }
 
+    func prepareExternal(
+        request: WalletPrepareRequest,
+        feePayer: String,
+        recipientAssociatedTokenAddress: String?
+    ) async throws -> WalletSolanaExternalPreparation {
+        let packet = try await prepare(
+            request: request, feePayer: feePayer,
+            recipientAssociatedTokenAddress: recipientAssociatedTokenAddress
+        )
+        let material: WalletSolanaExternalRecheckMaterial
+        do {
+            material = try await primary.externalRecheck(
+                intentID: "external-preparation", packet: packet
+            )
+        } catch {
+            guard let fallback else { throw error }
+            material = try await fallback.externalRecheck(
+                intentID: "external-preparation", packet: packet
+            )
+        }
+        return WalletSolanaExternalPreparation(packet: packet, material: material)
+    }
+
     func recheck(
         intentID: String,
         packet: WalletSolanaPreparationPacket
@@ -3338,6 +3420,31 @@ actor WalletSolanaProviderCoordinator {
             throw WalletProviderCoordinatorError.preparationDisagreement
         }
         return primaryEvidence
+    }
+
+    func recheckExternal(
+        intentID: String,
+        packet: WalletSolanaPreparationPacket
+    ) async throws -> WalletSolanaExternalRecheckMaterial {
+        let primaryMaterial = try await primary.externalRecheck(
+            intentID: intentID, packet: packet
+        )
+        if let fallback,
+           let secondary = try? await fallback.externalRecheck(
+               intentID: intentID, packet: packet
+           ),
+           (secondary.evidence.genesisHash
+                != primaryMaterial.evidence.genesisHash
+                || secondary.evidence.resolvedAccountsDigest
+                    != primaryMaterial.evidence.resolvedAccountsDigest
+                || secondary.evidence.feeQuoteBaseUnits
+                    != primaryMaterial.evidence.feeQuoteBaseUnits
+                || secondary.unsignedTransaction
+                    != primaryMaterial.unsignedTransaction
+                || !secondary.evidence.simulationSucceeded) {
+            throw WalletProviderCoordinatorError.preparationDisagreement
+        }
+        return primaryMaterial
     }
 
     func broadcast(

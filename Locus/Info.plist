@@ -40,6 +40,16 @@
 				<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.sparktales.locus.wallet-connections</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>locus-wallet</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -81,6 +91,23 @@
 	<string>$(LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL)</string>
 	<key>LocusWalletQuickNodeSuiTestnetGraphQLURL</key>
 	<string>$(LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL)</string>
+	<key>LocusReownProjectID</key>
+	<string>$(LOCUS_REOWN_PROJECT_ID)</string>
+	<key>LocusWalletConnectRedirectURL</key>
+	<string>$(LOCUS_WALLETCONNECT_REDIRECT_URL)</string>
+	<key>LocusPhantomAppID</key>
+	<string>$(LOCUS_PHANTOM_APP_ID)</string>
+	<key>LocusPhantomRedirectURL</key>
+	<string>$(LOCUS_PHANTOM_REDIRECT_URL)</string>
+	<key>LocusWalletConnectorAllowedHosts</key>
+	<array>
+		<string>connect.metamask.io</string>
+		<string>metamask.app.link</string>
+		<string>connect.phantom.app</string>
+		<string>auth.phantom.app</string>
+		<string>wallet.slush.app</string>
+		<string>my.slush.app</string>
+	</array>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

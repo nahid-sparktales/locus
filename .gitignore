@@ -9,6 +9,7 @@ DerivedData/
 # `-derivedDataPath DD` is the documented way to run the tests without
 # LaunchServices; it drops 1.3GB of build output here.
 DD/
+.derived/
 .derivedData*/
 .release-tools/
 xcuserdata/
@@ -20,6 +21,9 @@ xcuserdata/
 .release-*/
 .releasebuild-*/
 artifacts/
+WalletConnectionsWeb/node_modules/
+.derived-wallet-*/
+.source-packages-wallet/
 
 # Rust build cache
 WalletSignerCore/target/

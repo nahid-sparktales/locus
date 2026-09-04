@@ -30,6 +30,8 @@ struct WalletSuiIndexedActivity: Equatable, Sendable {
     let objectHasPublicTransfer: Bool?
     let amountBaseUnits: String?
     let isInbound: Bool?
+    var counterpartyAddress: String? = nil
+    var counterpartyAmountBaseUnits: String? = nil
 }
 
 struct WalletSuiGasCoin: Equatable, Sendable {
@@ -1894,9 +1896,9 @@ actor WalletSuiGraphQLClient {
                 amountBaseUnits: nil, isInbound: nil
             )]
         }
-        var seenTypes: Set<String> = []
-        var records: [WalletSuiIndexedActivity] = []
-        for node in nodes {
+        let balanceChanges = try nodes.map { node -> (
+            owner: String, representation: String, signed: String
+        ) in
             guard let changeOwner = node["owner"] as? [String: Any],
                   let ownerAddress = changeOwner["address"] as? String,
                   WalletSuiAddress.isCanonical(ownerAddress),
@@ -1908,7 +1910,14 @@ actor WalletSuiGraphQLClient {
                     "Sui returned a malformed activity balance change"
                 )
             }
-            guard ownerAddress == owner, signed != "0" else { continue }
+            return (ownerAddress, representation, signed)
+        }
+        var seenTypes: Set<String> = []
+        var records: [WalletSuiIndexedActivity] = []
+        for change in balanceChanges {
+            guard change.owner == owner, change.signed != "0" else { continue }
+            let representation = change.representation
+            let signed = change.signed
             guard seenTypes.insert(representation).inserted else {
                 throw WalletRPCError.invalidResponse(
                     "Sui repeated one Coin type in transaction balance changes"
@@ -1919,13 +1928,23 @@ actor WalletSuiGraphQLClient {
             let identity = WalletSuiAssetIdentity(
                 networkID: networkID, coinType: representation
             )
+            let counterparties = balanceChanges.filter {
+                $0.owner != owner && $0.representation == representation
+                    && $0.signed != "0" && $0.signed.hasPrefix("-") != signed.hasPrefix("-")
+            }
+            let counterparty = counterparties.count == 1 ? counterparties[0] : nil
+            let counterpartyAmount = counterparty.map {
+                $0.signed.hasPrefix("-") ? String($0.signed.dropFirst()) : $0.signed
+            }
             records.append(WalletSuiIndexedActivity(
                 id: "\(digest):\(identity.canonicalID)",
                 transactionDigest: digest, checkpointSequence: sequence,
                 occurredAt: timestamp, sender: sender, successful: true,
                 identity: identity, objectIdentity: nil, objectType: nil,
                 objectHasPublicTransfer: nil, amountBaseUnits: amount,
-                isInbound: inbound
+                isInbound: inbound,
+                counterpartyAddress: counterparty?.owner,
+                counterpartyAmountBaseUnits: counterpartyAmount
             ))
         }
         var seenObjectIDs: Set<String> = []
@@ -2059,7 +2078,8 @@ actor WalletSuiGraphQLClient {
                 identity: nil, objectIdentity: identity,
                 objectType: input.reference.type,
                 objectHasPublicTransfer: input.hasPublicTransfer,
-                amountBaseUnits: "1", isInbound: inbound
+                amountBaseUnits: "1", isInbound: inbound,
+                counterpartyAddress: inbound ? input.owner : output.owner
             ))
         }
         if records.isEmpty {

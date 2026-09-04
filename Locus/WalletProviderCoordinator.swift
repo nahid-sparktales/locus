@@ -74,8 +74,8 @@ actor WalletEVMProviderCoordinator {
     let primaryEndpoint: WalletProviderEndpoint
     let fallbackEndpoint: WalletProviderEndpoint?
 
-    private let primary: WalletSepoliaRPCClient
-    private let fallback: WalletSepoliaRPCClient?
+    let primary: WalletSepoliaRPCClient
+    let fallback: WalletSepoliaRPCClient?
 
     init(
         network: WalletNetworkDescriptor,
@@ -102,6 +102,40 @@ actor WalletEVMProviderCoordinator {
             )
         }
     }
+
+    #if DEBUG
+    /// Dual loopback construction exists only for the pinned Anvil quote
+    /// integration suite. Both providers remain independent clients and must
+    /// reproduce byte-identical quote evidence at the same block. Release
+    /// products retain the HTTPS-only initializer above.
+    init(
+        testLoopbackPrimary primaryValue: String,
+        fallback fallbackValue: String,
+        session: URLSession = .shared
+    ) throws {
+        guard let primaryURL = URL(string: primaryValue),
+              let fallbackURL = URL(string: fallbackValue) else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        network = WalletNetworkCatalog.ethereumSepolia
+        primaryEndpoint = WalletProviderEndpoint(
+            id: "local-primary", provider: .local,
+            networkID: network.id, url: primaryURL, priority: 0,
+            expectedIdentity: network.identity
+        )
+        fallbackEndpoint = WalletProviderEndpoint(
+            id: "local-fallback", provider: .local,
+            networkID: network.id, url: fallbackURL, priority: 1,
+            expectedIdentity: network.identity
+        )
+        primary = try WalletSepoliaRPCClient(
+            testLoopbackEndpoint: primaryValue, session: session
+        )
+        fallback = try WalletSepoliaRPCClient(
+            testLoopbackEndpoint: fallbackValue, session: session
+        )
+    }
+    #endif
 
     func configurePrimary(endpoint: String) async throws {
         try await primary.configure(endpoint: endpoint)
