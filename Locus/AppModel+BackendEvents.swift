@@ -652,6 +652,7 @@ extension AppModel {
             backgroundServicesModel.refreshBackgroundServices(recordingOutputs: (event["action"] as? String) == "start")
 
         case "turn_done":
+            completeAutomationWorkflowStep(from: event)
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()

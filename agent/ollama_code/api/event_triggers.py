@@ -11,6 +11,7 @@ from ..chat_service import ChatService
 from ..event_triggers import EventTriggerValidationError, valid_identifier
 from ..runstore import TERMINAL_STATES, RunStoreError
 from ..sessions import ChatOrganizationStore, SessionMeta, SessionStore
+from .automation_workflows import start_execution
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -328,6 +329,11 @@ def trigger_create(
     service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)
 ) -> dict[str, Any]:
     _require_capability()
+    if (
+        not capability_enabled("automation_workflows_v1")
+        and {"workflow", "runner", "team_id", "team_name"} & set(body)
+    ):
+        raise HTTPException(422, "capability is disabled: automation_workflows_v1")
     _validate_trigger_target(body)
     try:
         return service.run_store.create_event_trigger(body)
@@ -341,6 +347,11 @@ def trigger_update(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     _require_capability()
+    if (
+        not capability_enabled("automation_workflows_v1")
+        and {"workflow", "runner", "team_id", "team_name"} & set(body)
+    ):
+        raise HTTPException(422, "capability is disabled: automation_workflows_v1")
     existing = service.run_store.event_trigger(trigger_id)
     if existing is None:
         raise HTTPException(404, "event trigger not found")
@@ -460,6 +471,44 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
             if str((metadata.get("environment") or {}).get("type")) == "worktree"
             else "local"
         )
+        if (capability_enabled("automation_workflows_v1")
+                and trigger.get("workflow_persisted")):
+            action = start_execution(
+                service,
+                automation_kind="event",
+                automation_id=str(trigger["id"]),
+                occurrence_id=str(delivery["id"]),
+                session_id=session_id,
+                workflow=trigger["workflow"],
+                trigger=delivery["event"],
+                settings={
+                    "workspace_root": workspace_root,
+                    "execution_path": execution_path,
+                    "execution_environment": environment,
+                    "runner": trigger.get("runner") or "solo",
+                    "team_id": trigger.get("team_id") or "",
+                    "team_name": trigger.get("team_name") or "",
+                    "action_connection_ids": trigger["action_connection_ids"],
+                    "provider": provider,
+                    "provider_account_id": account,
+                    "model": model,
+                },
+            )
+            execution = action.get("execution") if isinstance(action, dict) else {}
+            execution = execution if isinstance(execution, dict) else {}
+            run = action.get("run") if isinstance(action, dict) else None
+            run_id = str(run.get("id") or "") if isinstance(run, dict) else ""
+            delivery_state = (
+                "completed" if execution.get("state") == "completed" else
+                "cancelled" if execution.get("state") == "cancelled" else "queued"
+            )
+            updated = store.finish_event_dispatch(
+                delivery_id, state=delivery_state, run_id=run_id
+            )
+            return {
+                "ok": True, "delivery": updated, "run": run,
+                "workflow_execution": execution,
+            }
         manifest = {
             "event_triggered": True,
             "event_trigger_id": trigger["id"],

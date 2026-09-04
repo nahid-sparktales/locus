@@ -68,6 +68,7 @@ extension AppModel {
         }
         var draft = ScheduleEditorDraft()
         draft.prompt = prompt ?? draftText
+        draft.workflow = .singleAgent(instruction: draft.prompt, mode: selectedMode)
         draft.workspaceRoot = sessionInfo?.workspaceRoot ?? workspacePath
         draft.mode = selectedMode
         draft.executionEnvironment = sessionInfo?.environment?["type"] == "worktree"
@@ -139,7 +140,8 @@ extension AppModel {
 
     func scheduleConfigurationIssue(for draft: ScheduleEditorDraft) -> String? {
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = (draft.workflow.firstAgent?.instructionTemplate ?? draft.prompt)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return "Add a schedule name" }
         guard !prompt.isEmpty else { return "Add a prompt" }
         guard FileManager.default.fileExists(atPath: draft.workspaceRoot),
@@ -296,6 +298,10 @@ extension AppModel {
                 ]
                 if let config = encodedJSONObject(primaryAgentBehavior) {
                     request["agent_config"] = config
+                }
+                if let outputs = retry.manifest?["workflow_outputs"],
+                   let encoded = encodedJSONValue(outputs) {
+                    request["workflow_outputs"] = encoded
                 }
                 if retry.runKind == "team",
                    let teamID = retry.teamID.flatMap(UUID.init(uuidString:)),
@@ -533,6 +539,10 @@ extension AppModel {
             if let config = encodedJSONObject(primaryAgentBehavior) {
                 request["agent_config"] = config
             }
+            if let outputs = run.manifest?["workflow_outputs"],
+               let encoded = encodedJSONValue(outputs) {
+                request["workflow_outputs"] = encoded
+            }
             if run.runKind == "team" {
                 guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
                       var manifest = teamManifest(for: run.request, teamID: teamID) else {
@@ -689,6 +699,251 @@ extension AppModel {
         }
         showToast(decision == "deny" ? "Permission denied" : "Permission granted")
         Task { await activity.refreshActivityRuns() }
+    }
+
+    func completeAutomationWorkflowStep(from event: [String: Any]) {
+        guard automationWorkflowsEnabled,
+              let executionID = event["workflow_execution_id"] as? String,
+              !executionID.isEmpty,
+              let runID = event["run_id"] as? String,
+              !runID.isEmpty
+        else { return }
+        let reason = event["reason"] as? String ?? "error"
+        var body: [String: Any] = ["run_id": runID]
+        if reason == "complete" {
+            body["result"] = event["workflow_result"] as? [String: Any] ?? [:]
+        } else {
+            body["error"] = "The Agent step ended with \(reason.replacingOccurrences(of: "_", with: " "))."
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response: AutomationWorkflowActionResponse = try await backend.post(
+                    "/api/automation-executions/\(executionID)/complete-step",
+                    body: body,
+                    as: AutomationWorkflowActionResponse.self
+                )
+                await activity.refreshActivityRuns(announceFailure: false)
+                await schedule.refreshScheduledTasks(announceFailure: false)
+                await eventAutomations.refresh(announceFailure: false)
+                if let nextRun = response.run {
+                    await dispatchPersistedQueuedRun(nextRun)
+                }
+                let sessionID = response.execution.sessionID
+                let notificationRunID = response.run?.id ?? runID
+                if response.action == "wait_for_approval" {
+                    notifyNeedsAttentionIfInactive(
+                        body: "An automation is waiting for your approval.",
+                        sessionID: sessionID, runID: notificationRunID
+                    )
+                } else if response.action == "failed" {
+                    notifyNeedsAttentionIfInactive(
+                        body: "An automation step failed and is ready to retry.",
+                        sessionID: sessionID, runID: notificationRunID
+                    )
+                } else if response.action == "finished",
+                          response.execution.state == "completed" {
+                    notifyTurnCompleteIfInactive(
+                        sessionID: sessionID, runID: notificationRunID
+                    )
+                }
+            } catch {
+                await activity.refreshActivityRuns(announceFailure: false)
+                showToast("This workflow needs attention: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func liveAttentionItems() -> [AttentionItem] {
+        var items: [AttentionItem] = []
+        var seen: Set<String> = []
+        func append(
+            sessionID: String, runID: String?, blocking: AgentQuestionRequest? = nil,
+            completed: UserQuestion? = nil
+        ) {
+            if let blocking, seen.insert("blocking:\(blocking.id)").inserted {
+                let first = blocking.questions.first
+                items.append(AttentionItem(
+                    id: "question:\(sessionID):\(blocking.id)",
+                    kind: "structured_question", group: .decisions,
+                    sessionID: sessionID, runID: runID,
+                    title: first?.header.nilIfEmpty ?? "Agent question",
+                    detail: first?.question ?? "An answer is required.",
+                    actions: ["answer", "open_chat"],
+                    request: jsonValueObject(blocking)
+                ))
+            }
+            if let completed, seen.insert("completed:\(completed.id)").inserted {
+                items.append(AttentionItem(
+                    id: "completed-question:\(sessionID):\(completed.id)",
+                    kind: "completed_question", group: .decisions,
+                    sessionID: sessionID, runID: runID,
+                    title: completed.title,
+                    detail: completed.question,
+                    actions: ["answer", "open_chat"]
+                ))
+            }
+        }
+        for (sessionID, runtime) in taskWorkers {
+            append(
+                sessionID: sessionID,
+                runID: taskConversationStates[sessionID]?.runID,
+                blocking: runtime.pendingBlockingQuestion,
+                completed: runtime.pendingQuestion
+            )
+        }
+        append(
+            sessionID: currentSessionID,
+            runID: taskConversationStates[currentSessionID]?.runID,
+            blocking: pendingBlockingQuestion,
+            completed: pendingUserQuestion
+        )
+        // Project recoverable run state immediately from the same run model
+        // that drives Activity. The backend projection will replace this row
+        // by stable run ID when it arrives; this keeps the badge and cold-open
+        // behavior correct while refreshing or when an older backend lacks the
+        // Attention endpoint.
+        let detailedRunIDs = Set(items.compactMap(\.runID))
+        for run in activity.activityRuns where !detailedRunIDs.contains(run.id) {
+            guard ["failed", "interrupted", "paused"].contains(run.state) else { continue }
+            let canResume = run.state == "paused" && run.runKind == "team"
+            items.append(AttentionItem(
+                id: "run:\(run.id)", kind: "recoverable_run", group: .recoveries,
+                sessionID: run.sessionID, runID: run.id,
+                title: "Work needs recovery",
+                detail: run.recoveryReason ?? "The run is \(run.state).",
+                timestamp: run.updatedAt,
+                actions: [canResume ? "resume" : "retry", "open_chat"]
+            ))
+        }
+        return items
+    }
+
+    func blockingQuestion(for item: AttentionItem) -> AgentQuestionRequest? {
+        guard let request = item.request,
+              let data = try? JSONEncoder().encode(request)
+        else { return nil }
+        return try? JSONDecoder().decode(AgentQuestionRequest.self, from: data)
+    }
+
+    func completedQuestion(for item: AttentionItem) -> UserQuestion? {
+        guard let sessionID = item.sessionID else { return nil }
+        let suffix = item.id.split(separator: ":").last.map(String.init)
+        let question = sessionID == currentSessionID
+            ? pendingUserQuestion : taskWorkers[sessionID]?.pendingQuestion
+        if let question, suffix == nil || question.id == suffix { return question }
+        guard let request = item.request,
+              let data = try? JSONEncoder().encode(request),
+              let persisted = try? JSONDecoder().decode(UserQuestion.self, from: data),
+              suffix == nil || persisted.id == suffix
+        else { return nil }
+        return persisted
+    }
+
+    func resolveAttentionQuestion(
+        _ item: AttentionItem, answers: [AgentQuestionAnswer], action: String
+    ) {
+        guard let sessionID = item.sessionID else { return }
+        if sessionID == currentSessionID,
+           pendingBlockingQuestion?.id == blockingQuestion(for: item)?.id {
+            resolveBlockingQuestion(answers, action: action)
+            Task { await activity.refreshActivityRuns(announceFailure: false) }
+            return
+        }
+        guard let runtime = taskWorkers[sessionID],
+              let request = blockingQuestion(for: item),
+              runtime.pendingBlockingQuestion?.id == request.id,
+              runtime.service.send([
+                "type": "question_response", "request_id": request.id,
+                "action": action, "answers": answers.compactMap(encodedJSONObject),
+              ])
+        else {
+            showToast("That question is no longer waiting")
+            Task { await activity.refreshActivityRuns(announceFailure: false) }
+            return
+        }
+        runtime.pendingBlockingQuestion = nil
+        runtime.pendingForegroundEvent = nil
+        runtime.executionState = .running
+        updateBackgroundChatState(runtime)
+        Task { await activity.refreshActivityRuns(announceFailure: false) }
+    }
+
+    func resolveAttentionCompletedQuestion(
+        _ item: AttentionItem, option: UserQuestionOption?, freeText: String
+    ) {
+        guard let sessionID = item.sessionID,
+              let question = completedQuestion(for: item),
+              let answer = Self.composedQuestionAnswer(option: option, freeText: freeText)
+        else { return }
+        if sessionID == currentSessionID, pendingUserQuestion?.id == question.id {
+            resolveUserQuestion(option: option, freeText: freeText)
+            return
+        }
+        guard let session = sessions.first(where: { $0.id == sessionID }) else {
+            showToast("That chat is no longer available")
+            return
+        }
+        taskWorkers[sessionID]?.pendingQuestion = nil
+        resume(session)
+        pendingUserQuestion = nil
+        send(answer, preservingDraftOnFailure: false, requeueingOnFailure: true)
+    }
+
+    func performAttentionAction(_ item: AttentionItem, action: String) {
+        if ["approve", "reject", "retry", "cancel"].contains(action),
+           let executionID = item.workflowExecutionID {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let response: AutomationWorkflowActionResponse = try await backend.post(
+                        "/api/automation-executions/\(executionID)/\(action)", body: [:],
+                        as: AutomationWorkflowActionResponse.self
+                    )
+                    if let run = response.run { await dispatchPersistedQueuedRun(run) }
+                    await activity.refreshActivityRuns(announceFailure: false)
+                    await schedule.refreshScheduledTasks(announceFailure: false)
+                    await eventAutomations.refresh(announceFailure: false)
+                    if let warning = response.warning { showToast(warning) }
+                } catch {
+                    await activity.refreshActivityRuns(announceFailure: false)
+                    showToast("That action is stale or unavailable: \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+        if let runID = item.runID,
+           let run = activity.activityRuns.first(where: { $0.id == runID }) {
+            switch action {
+            case "allow_once": answerActivityPermission(run, decision: "once")
+            case "always_allow": answerActivityPermission(run, decision: "always")
+            case "deny": answerActivityPermission(run, decision: "deny")
+            case "resume": resumeOrchestration(run)
+            case "retry": retryRun(run)
+            case "open_chat": openActivityRun(run)
+            default: break
+            }
+            return
+        }
+        if action == "clear_warning", item.automationKind == "schedule",
+           let task = schedule.scheduledTasks.first(where: { $0.id == item.automationID }) {
+            schedule.clearWarning(task)
+        } else if action == "clear_warning", item.automationKind == "event",
+                  let trigger = eventAutomations.triggers.first(where: { $0.id == item.automationID }) {
+            eventAutomations.clearWarning(trigger)
+        } else if action == "open_configuration" {
+            presentConfigureAgent(draftText: "")
+            configureAgentFocusConfigurationID = item.automationID
+        } else if action == "open_chat", let sessionID = item.sessionID,
+                  let session = sessions.first(where: { $0.id == sessionID }) {
+            activity.activityCenterPresented = false
+            resume(session)
+        }
+    }
+
+    private func jsonValueObject<T: Encodable>(_ value: T) -> [String: JSONValue]? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode([String: JSONValue].self, from: data)
     }
 
     func publishLandedWorktree() {

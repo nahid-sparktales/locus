@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -309,6 +310,10 @@ class ChatService:
                 "worker_model_calls": worker_usage["model_calls"],
             }
         if event_type == "turn_done":
+            if self.core.tool_ctx.workflow_result is not None:
+                event = dict(event)
+                event["workflow_result"] = dict(self.core.tool_ctx.workflow_result)
+            self.core.tool_ctx.workflow_result = None
             self._terminal_events += 1
             self._record_turn_usage(event)
         if event_type == "session_info":
@@ -335,9 +340,30 @@ class ChatService:
             record = self.run_store.run(run_id)
             if record is not None and record.get("trace_id") and record.get("root_span_id"):
                 event.setdefault("traceparent", traceparent_for_run(record))
+            manifest = record.get("manifest") if isinstance(record, dict) else None
+            if isinstance(manifest, dict):
+                for key in ("workflow_execution_id", "workflow_step_id"):
+                    if manifest.get(key):
+                        event.setdefault(key, manifest[key])
+            waiting_state = {
+                "permission_request": "waiting_permission",
+                "question_required": "waiting_permission",
+                "computer_action_request": "waiting_computer",
+            }.get(event_type)
+            resumed_state = event_type in {
+                "permission_resolved", "question_resolved", "computer_action_resolved",
+            }
+            if waiting_state or resumed_state:
+                try:
+                    self.run_store.set_state(
+                        run_id, waiting_state or "running", recoverable=False
+                    )
+                except (RunStoreError, sqlite3.DatabaseError, OSError):
+                    pass
         persisted_types = {
             "message_start", "message_end", "tool_call_proposed", "permission_request",
-            "question_required",
+            "question_required", "question_resolved", "question_ready",
+            "permission_resolved", "computer_action_resolved",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "simulator_action_request",
             "browser_action_request", "notes_action_request", "wallet_action_request",
@@ -449,6 +475,10 @@ class ChatService:
             if fut is None or fut.done():
                 return False
             fut.set_result(decision if decision in ("once", "always", "deny") else "deny")
+            self.emit({
+                "type": "permission_resolved", "request_id": request_id,
+                "decision": decision if decision in ("once", "always", "deny") else "deny",
+            })
             return True
 
     def deny_all_pending(self) -> None:
@@ -770,11 +800,24 @@ class ChatService:
         run = self.run_store.run(self.active_run_id) if self.active_run_id else None
         manifest = run.get("manifest") if isinstance(run, dict) else {}
         manifest = manifest if isinstance(manifest, dict) else {}
-        if manifest.get("event_triggered"):
+        if manifest.get("event_triggered") or manifest.get("automation_workflow"):
             allowed = {str(value) for value in manifest.get("action_connection_ids") or []}
             if connection_id not in allowed:
+                if manifest.get("automation_workflow"):
+                    return "Error: this connection is not allowed for this workflow step."
                 return "Error: this connection is not in the event trigger's action allowlist."
-        receipt = self.run_store.connector_action_receipt(request_id)
+        execution_id = str(manifest.get("workflow_execution_id") or "")
+        step_id = str(manifest.get("workflow_step_id") or "")
+        arguments_json = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
+        arguments_hash = hashlib.sha256(arguments_json.encode("utf-8")).hexdigest()
+        idempotency_key = (
+            "workflow:" + uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"locus:{execution_id}:{step_id}:{tool}:{arguments_hash}",
+            ).hex
+            if execution_id and step_id else request_id
+        )
+        receipt = self.run_store.connector_action_receipt(idempotency_key)
         if receipt is not None:
             recorded = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
             error = str(recorded.get("error") or "").strip()
@@ -788,6 +831,7 @@ class ChatService:
         self.emit({
             "type": "connector_action_request",
             "request_id": request_id,
+            "idempotency_key": idempotency_key,
             "tool": tool,
             "arguments": arguments,
             "timeout_ms": 60_000,
@@ -802,10 +846,14 @@ class ChatService:
             self.pending_connector_actions.pop(request_id, None)
         try:
             self.run_store.record_connector_action_receipt(
-                request_id,
+                idempotency_key,
                 event_delivery_id=str(manifest.get("event_delivery_id") or ""),
                 tool_name=tool,
                 result=result,
+                automation_execution_id=execution_id,
+                workflow_step_id=step_id,
+                tool_call_id=request_id,
+                arguments_hash=arguments_hash,
             )
         except RunStoreError:
             # The action result has already been produced. Do not repeat an
@@ -996,6 +1044,7 @@ class ChatService:
         if future is None or future.done():
             return False
         future.set_result(result)
+        self.emit({"type": "computer_action_resolved", "request_id": request_id})
         return True
 
     def answer_simulator(self, request_id: str, result: dict[str, Any]) -> bool:

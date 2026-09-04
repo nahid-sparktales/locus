@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from . import (
+    automation_workflows,
     chat_transport,
     continuity,
     evaluations,
@@ -26,6 +27,7 @@ _ROUTE_MODULES = (
     sessions,
     schedules,
     event_triggers,
+    automation_workflows,
     runs,
     workspace,
     extensions,

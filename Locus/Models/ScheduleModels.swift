@@ -59,6 +59,163 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum AutomationWorkflowStepType: String, CaseIterable, Codable, Identifiable {
+    case agent
+    case condition
+    case approval
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum AutomationWorkflowOutputType: String, CaseIterable, Codable, Identifiable {
+    case string
+    case number
+    case boolean
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+struct AutomationWorkflowOutput: Identifiable, Codable, Hashable {
+    var name: String
+    var type: AutomationWorkflowOutputType
+    var id: String { name }
+}
+
+/// One flat, forward-only step. Optional fields keep the wire format additive
+/// and make legacy/new backend combinations decode safely.
+struct AutomationWorkflowStep: Identifiable, Codable, Hashable {
+    var id: String
+    var type: AutomationWorkflowStepType
+    var title: String
+    var instructionTemplate: String? = nil
+    var mode: WorkMode? = nil
+    var outputs: [AutomationWorkflowOutput]? = nil
+    var allowedConnectionIDs: [String]? = nil
+    var nextStepID: String? = nil
+    var reference: String? = nil
+    var conditionOperator: String? = nil
+    var compareValue: JSONValue? = nil
+    var trueStepID: String? = nil
+    var falseStepID: String? = nil
+    var explanationTemplate: String? = nil
+    var approveStepID: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, title, outputs, reference
+        case instructionTemplate = "instruction_template"
+        case mode
+        case allowedConnectionIDs = "allowed_connection_ids"
+        case nextStepID = "next_step_id"
+        case conditionOperator = "operator"
+        case compareValue = "compare_value"
+        case trueStepID = "true_step_id"
+        case falseStepID = "false_step_id"
+        case explanationTemplate = "explanation_template"
+        case approveStepID = "approve_step_id"
+    }
+
+    static func stableID(prefix: String = "step") -> String {
+        prefix + "_" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+    }
+
+    static func agent(instruction: String = "", mode: WorkMode = .work) -> Self {
+        Self(
+            id: stableID(prefix: "agent"), type: .agent, title: "Run agent",
+            instructionTemplate: instruction, mode: mode, outputs: [],
+            allowedConnectionIDs: nil, nextStepID: "finish"
+        )
+    }
+
+    static func condition() -> Self {
+        Self(
+            id: stableID(prefix: "condition"), type: .condition, title: "Check condition",
+            reference: "trigger.subject", conditionOperator: "equals",
+            compareValue: .string(""), trueStepID: "finish", falseStepID: "finish"
+        )
+    }
+
+    static func approval() -> Self {
+        Self(
+            id: stableID(prefix: "approval"), type: .approval, title: "Approve next step",
+            explanationTemplate: "Review this workflow before it continues.",
+            approveStepID: "finish"
+        )
+    }
+}
+
+struct AutomationWorkflow: Codable, Hashable {
+    var version = 1
+    var entryStepID: String
+    var steps: [AutomationWorkflowStep]
+
+    enum CodingKeys: String, CodingKey {
+        case version, steps
+        case entryStepID = "entry_step_id"
+    }
+
+    init(version: Int = 1, entryStepID: String, steps: [AutomationWorkflowStep]) {
+        self.version = version
+        self.entryStepID = entryStepID
+        self.steps = steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        entryStepID = try container.decode(String.self, forKey: .entryStepID)
+        steps = try container.decode([AutomationWorkflowStep].self, forKey: .steps)
+        // The backend canonicalizes an explicit Finish edge as JSON null.
+        // Preserve that intent through a later edit instead of omitting the
+        // edge and letting it silently become the next vertical step.
+        for index in steps.indices {
+            switch steps[index].type {
+            case .agent:
+                if steps[index].nextStepID == nil { steps[index].nextStepID = "finish" }
+            case .condition:
+                if steps[index].trueStepID == nil { steps[index].trueStepID = "finish" }
+                if steps[index].falseStepID == nil { steps[index].falseStepID = "finish" }
+            case .approval:
+                if steps[index].approveStepID == nil { steps[index].approveStepID = "finish" }
+            }
+        }
+    }
+
+    static func singleAgent(instruction: String = "", mode: WorkMode = .work) -> Self {
+        let step = AutomationWorkflowStep.agent(instruction: instruction, mode: mode)
+        return Self(entryStepID: step.id, steps: [step])
+    }
+
+    var firstAgent: AutomationWorkflowStep? { steps.first { $0.type == .agent } }
+
+    mutating func repairForwardEdges() -> [String] {
+        entryStepID = steps.first?.id ?? ""
+        let indexes = Dictionary(uniqueKeysWithValues: steps.enumerated().map { ($0.element.id, $0.offset) })
+        var repaired: [String] = []
+        for index in steps.indices {
+            let natural = index + 1 < steps.count ? steps[index + 1].id : "finish"
+            func valid(_ target: String?, default defaultTarget: String) -> String? {
+                guard let target else { return defaultTarget }
+                if target == "finish" { return target }
+                guard let targetIndex = indexes[target], targetIndex > index else {
+                    repaired.append(steps[index].id)
+                    return "finish"
+                }
+                return target
+            }
+            switch steps[index].type {
+            case .agent:
+                steps[index].nextStepID = valid(steps[index].nextStepID, default: natural)
+            case .condition:
+                steps[index].trueStepID = valid(steps[index].trueStepID, default: natural)
+                steps[index].falseStepID = valid(steps[index].falseStepID, default: "finish")
+            case .approval:
+                steps[index].approveStepID = valid(steps[index].approveStepID, default: natural)
+            }
+        }
+        return repaired
+    }
+}
+
 enum ChatExecutionEnvironment: String, CaseIterable, Codable, Identifiable {
     case local
     case worktree
@@ -190,6 +347,8 @@ struct ScheduledTask: Identifiable, Codable, Hashable {
     var lastRunAt: Double?
     var lastRunID: String?
     var lastError: String?
+    var workflow: AutomationWorkflow? = nil
+    var workflowPersisted: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, name, prompt, mode, runner, provider, model, timezone, rule, enabled
@@ -204,6 +363,8 @@ struct ScheduledTask: Identifiable, Codable, Hashable {
         case lastRunAt = "last_run_at"
         case lastRunID = "last_run_id"
         case lastError = "last_error"
+        case workflow
+        case workflowPersisted = "workflow_persisted"
     }
 
     var nextRunDate: Date? { nextRunAt.map(Date.init(timeIntervalSince1970:)) }
@@ -255,6 +416,7 @@ struct ScheduleEditorDraft: Identifiable, Hashable {
     var weekday = Calendar.current.component(.weekday, from: Date()).mondayBasedWeekday
     var intervalEvery = 1
     var intervalUnit: ScheduleIntervalUnit = .hours
+    var workflow = AutomationWorkflow.singleAgent()
 
     init() {}
 
@@ -264,6 +426,7 @@ struct ScheduleEditorDraft: Identifiable, Hashable {
         prompt = task.prompt
         workspaceRoot = task.workspaceRoot
         mode = task.mode
+        workflow = task.workflow ?? .singleAgent(instruction: task.prompt, mode: task.mode)
         executionEnvironment = task.executionEnvironment
         runner = task.runner == .soloSwarm ? .solo : task.runner
         teamID = task.teamID

@@ -110,11 +110,112 @@ struct ScheduleDispatchResponse: Codable {
     let claimed: Bool
     let schedule: ScheduledTask?
     let occurrence: ScheduleOccurrence
-    let run: OrchestrationRun
+    let run: OrchestrationRun?
 }
 
 struct ScheduleOccurrencesResponse: Codable {
     let occurrences: [ScheduleOccurrence]
+}
+
+struct AutomationExecutionSummary: Codable, Identifiable {
+    let id: String
+    let state: String
+    let automationKind: String?
+    let automationID: String?
+    let occurrenceID: String?
+    let sessionID: String?
+    let currentStepID: String?
+    let currentRunID: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, state, error
+        case automationKind = "automation_kind"
+        case automationID = "automation_id"
+        case occurrenceID = "occurrence_id"
+        case sessionID = "session_id"
+        case currentStepID = "current_step_id"
+        case currentRunID = "current_run_id"
+    }
+}
+
+struct AutomationWorkflowActionResponse: Codable {
+    let action: String
+    let execution: AutomationExecutionSummary
+    let run: OrchestrationRun?
+    let warning: String?
+}
+
+enum AttentionGroup: String, Codable, CaseIterable, Identifiable {
+    case decisions
+    case recoveries
+    case configuration
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+struct AttentionItem: Codable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let group: AttentionGroup
+    let sessionID: String?
+    let runID: String?
+    let workflowExecutionID: String?
+    let workflowStepID: String?
+    let automationKind: String?
+    let automationID: String?
+    let title: String
+    let detail: String
+    let timestamp: Double
+    let actions: [String]
+    let request: [String: JSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, group, title, detail, timestamp, actions, request
+        case sessionID = "session_id"
+        case runID = "run_id"
+        case workflowExecutionID = "workflow_execution_id"
+        case workflowStepID = "workflow_step_id"
+        case automationKind = "automation_kind"
+        case automationID = "automation_id"
+    }
+
+    init(
+        id: String, kind: String, group: AttentionGroup,
+        sessionID: String? = nil, runID: String? = nil,
+        workflowExecutionID: String? = nil, workflowStepID: String? = nil,
+        automationKind: String? = nil, automationID: String? = nil,
+        title: String, detail: String, timestamp: Double = Date().timeIntervalSince1970,
+        actions: [String], request: [String: JSONValue]? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.group = group
+        self.sessionID = sessionID
+        self.runID = runID
+        self.workflowExecutionID = workflowExecutionID
+        self.workflowStepID = workflowStepID
+        self.automationKind = automationKind
+        self.automationID = automationID
+        self.title = title
+        self.detail = detail
+        self.timestamp = timestamp
+        self.actions = actions
+        self.request = request
+    }
+}
+
+struct AttentionResponse: Codable {
+    let items: [AttentionItem]
+    let unresolvedCount: Int
+    let readOnly: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case unresolvedCount = "unresolved_count"
+        case readOnly = "read_only"
+    }
 }
 
 struct CompanionChatDispatchResponse: Codable {

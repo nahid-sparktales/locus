@@ -253,6 +253,9 @@ struct EventTrigger: Identifiable, Codable, Hashable {
     var targetSessionID: String
     var instruction: String
     var mode: WorkMode
+    var runner: ScheduleRunner = .solo
+    var teamID: String? = nil
+    var teamName: String? = nil
     var triggerKind: EventTriggerKind
     var filters: EventTriggerFilters
     var runtimeState: PriceTriggerState
@@ -263,9 +266,13 @@ struct EventTrigger: Identifiable, Codable, Hashable {
     var lastEventAt: Double?
     var lastRunID: String?
     var lastError: String?
+    var workflow: AutomationWorkflow? = nil
+    var workflowPersisted: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, instruction, mode, filters, enabled
+        case id, name, instruction, mode, runner, filters, enabled
+        case teamID = "team_id"
+        case teamName = "team_name"
         case triggerKind = "trigger_kind"
         case runtimeState = "runtime_state"
         case connectionID = "connection_id"
@@ -276,6 +283,39 @@ struct EventTrigger: Identifiable, Codable, Hashable {
         case lastEventAt = "last_event_at"
         case lastRunID = "last_run_id"
         case lastError = "last_error"
+        case workflow
+        case workflowPersisted = "workflow_persisted"
+    }
+}
+
+extension EventTrigger {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        connectionID = try container.decode(String.self, forKey: .connectionID)
+        targetSessionID = try container.decode(String.self, forKey: .targetSessionID)
+        instruction = try container.decode(String.self, forKey: .instruction)
+        mode = try container.decode(WorkMode.self, forKey: .mode)
+        runner = try container.decodeIfPresent(ScheduleRunner.self, forKey: .runner) ?? .solo
+        teamID = try container.decodeIfPresent(String.self, forKey: .teamID)
+        teamName = try container.decodeIfPresent(String.self, forKey: .teamName)
+        triggerKind = try container.decode(EventTriggerKind.self, forKey: .triggerKind)
+        filters = try container.decode(EventTriggerFilters.self, forKey: .filters)
+        runtimeState = try container.decode(PriceTriggerState.self, forKey: .runtimeState)
+        actionConnectionIDs = try container.decode(
+            [String].self, forKey: .actionConnectionIDs
+        )
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        createdAt = try container.decode(Double.self, forKey: .createdAt)
+        updatedAt = try container.decode(Double.self, forKey: .updatedAt)
+        lastEventAt = try container.decodeIfPresent(Double.self, forKey: .lastEventAt)
+        lastRunID = try container.decodeIfPresent(String.self, forKey: .lastRunID)
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        workflow = try container.decodeIfPresent(AutomationWorkflow.self, forKey: .workflow)
+        workflowPersisted = try container.decodeIfPresent(
+            Bool.self, forKey: .workflowPersisted
+        )
     }
 }
 
@@ -444,10 +484,14 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
     var templateSessionID = ""
     var instruction = ""
     var mode: WorkMode = .work
+    var runner: ScheduleRunner = .solo
+    var teamID: String?
+    var teamName = ""
     var triggerKind: EventTriggerKind = .event
     var filters = EventTriggerFilters()
     var actionConnectionIDs: [String] = []
     var enabled = true
+    var workflow = AutomationWorkflow.singleAgent()
     /// Set when the person asks an existing agent to move to the model the app
     /// is on now. Off by default: an ordinary edit keeps the agent's route.
     var adoptCurrentRoute = false
@@ -463,10 +507,16 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
         templateSessionID = trigger.targetSessionID
         instruction = trigger.instruction
         mode = trigger.mode
+        runner = trigger.runner
+        teamID = trigger.teamID
+        teamName = trigger.teamName ?? ""
         triggerKind = trigger.triggerKind
         filters = trigger.filters
         actionConnectionIDs = trigger.actionConnectionIDs
         enabled = trigger.enabled
+        workflow = trigger.workflow ?? .singleAgent(
+            instruction: trigger.instruction, mode: trigger.mode
+        )
     }
 }
 
@@ -495,7 +545,7 @@ struct EventIngestResponse: Codable { let ok: Bool; let deliveries: [EventDelive
 struct EventDispatchResponse: Codable {
     let ok: Bool
     let delivery: EventDelivery
-    let run: OrchestrationRun
+    let run: OrchestrationRun?
 }
 
 struct ConnectorActionReceipt: Codable {

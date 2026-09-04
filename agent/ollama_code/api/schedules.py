@@ -21,6 +21,7 @@ from ..worktrees import (
     WorktreeError,
     is_git_workspace,
 )
+from .automation_workflows import start_execution
 from .dependencies import get_service
 from .event_triggers import _detach_agent_session
 
@@ -543,6 +544,53 @@ def _dispatch_claimed_schedule(
         if not Path(execution_path).is_dir():
             raise HTTPException(409, "the agent's checkout is unavailable")
 
+        if (capability_enabled("automation_workflows_v1")
+                and schedule.get("workflow_persisted")):
+            action = start_execution(
+                service,
+                automation_kind="schedule",
+                automation_id=schedule_id,
+                occurrence_id=str(occurrence["id"]),
+                session_id=session_id,
+                workflow=schedule["workflow"],
+                trigger={
+                    "source": "schedule",
+                    "scheduled_at": float(occurrence["scheduled_for"]),
+                },
+                settings={
+                    "workspace_root": str(metadata.get("workspace_root") or workspace_root),
+                    "execution_path": execution_path,
+                    "execution_environment": environment,
+                    "runner": schedule["runner"],
+                    "team_id": schedule.get("team_id") or "",
+                    "team_name": schedule.get("team_name") or "",
+                    "provider": schedule["provider"],
+                    "provider_account_id": schedule.get("provider_account_id") or "",
+                    "model": schedule["model"],
+                    "timezone": schedule["timezone"],
+                    "scheduled_for": float(occurrence["scheduled_for"]),
+                },
+            )
+            execution = action.get("execution") if isinstance(action, dict) else {}
+            execution = execution if isinstance(execution, dict) else {}
+            run = action.get("run") if isinstance(action, dict) else None
+            first_run_id = str(run.get("id") or "") if isinstance(run, dict) else ""
+            occurrence = store.finish_schedule_occurrence(
+                str(occurrence["id"]),
+                state=(
+                    "completed" if execution.get("state") == "completed" else
+                    "cancelled" if execution.get("state") == "cancelled" else "queued"
+                ),
+                session_id=session_id,
+                run_id=first_run_id,
+            )
+            return {
+                "ok": True, "claimed": True,
+                "schedule": store.schedule(schedule_id),
+                "occurrence": occurrence, "run": run,
+                "workflow_execution": execution,
+            }
+
         manifest = {
             "scheduled": True,
             "schedule_id": schedule_id,
@@ -676,6 +724,8 @@ def schedule_create(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     _require_capability("durable_runs")
+    if "workflow" in body and not capability_enabled("automation_workflows_v1"):
+        raise HTTPException(422, "capability is disabled: automation_workflows_v1")
     store = service.run_store
     try:
         schedule = store.create_schedule(_validate_schedule_payload(body))
@@ -700,6 +750,8 @@ def schedule_update(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     _require_capability("durable_runs")
+    if "workflow" in body and not capability_enabled("automation_workflows_v1"):
+        raise HTTPException(422, "capability is disabled: automation_workflows_v1")
     store = service.run_store
     existing = store.schedule(schedule_id)
     if existing is None:

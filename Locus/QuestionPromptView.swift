@@ -8,6 +8,8 @@ struct QuestionPromptView: View {
     @EnvironmentObject private var model: AppModel
 
     let question: UserQuestion
+    var onResolve: ((UserQuestionOption?, String) -> Void)? = nil
+    var onDismiss: ((String) -> Void)? = nil
 
     @State private var selection = 0
     @State private var answerText = ""
@@ -70,7 +72,8 @@ struct QuestionPromptView: View {
             return .handled
         }
         .onKeyPress(.escape) {
-            model.dismissUserQuestion(keepingDraft: answerText)
+            if let onDismiss { onDismiss(answerText) }
+            else { model.dismissUserQuestion(keepingDraft: answerText) }
             return .handled
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "123456789")) { press in
@@ -293,22 +296,21 @@ struct QuestionPromptView: View {
     private func confirm(_ row: Row) {
         switch row {
         case .option(let optionIndex):
-            model.resolveUserQuestion(
-                option: question.options[optionIndex],
-                freeText: answerText
-            )
+            resolve(option: question.options[optionIndex], text: answerText)
         case .recommendation:
-            model.resolveUserQuestion(
-                option: UserQuestionOption(label: question.recommended),
-                freeText: answerText
-            )
+            resolve(option: UserQuestionOption(label: question.recommended), text: answerText)
         case .freeText:
             let typed = answerText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !typed.isEmpty else {
                 textFocused = true
                 return
             }
-            model.resolveUserQuestion(option: nil, freeText: typed)
+            resolve(option: nil, text: typed)
         }
+    }
+
+    private func resolve(option: UserQuestionOption?, text: String) {
+        if let onResolve { onResolve(option, text) }
+        else { model.resolveUserQuestion(option: option, freeText: text) }
     }
 }

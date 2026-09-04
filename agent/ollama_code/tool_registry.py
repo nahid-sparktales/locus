@@ -924,6 +924,8 @@ class ToolRegistry:
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
         self._ask_question_enabled = False
+        self._workflow_outputs: list[dict[str, str]] = []
+        self._workflow_result_only = False
         self.computer_enabled = False
         self.simulator_enabled = False
         #: Off until the app announces a live native broker, exactly like
@@ -1055,6 +1057,47 @@ class ToolRegistry:
         """Advertise the question tool only where a user can actually answer."""
         self._ask_question_enabled = bool(enabled)
 
+    def set_workflow_outputs(self, outputs: Any) -> list[dict[str, str]]:
+        """Expose a result tool narrowed to the active workflow step."""
+        clean: list[dict[str, str]] = []
+        if isinstance(outputs, list):
+            for item in outputs:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "")
+                kind = str(item.get("type") or "")
+                if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name) \
+                        and kind in {"string", "number", "boolean"}:
+                    clean.append({"name": name, "type": kind})
+        self._workflow_outputs = clean
+        return list(clean)
+
+    def set_workflow_result_only(self, enabled: bool) -> None:
+        """Restrict an Ask-mode workflow turn to its internal result tool."""
+        self._workflow_result_only = bool(enabled)
+
+    def _workflow_result_schema(self) -> dict[str, Any] | None:
+        if not self._workflow_outputs:
+            return None
+        properties = {
+            item["name"]: {"type": item["type"]}
+            for item in self._workflow_outputs
+        }
+        return _schema(
+            "submit_workflow_result",
+            "Submit every typed output declared by this automation step exactly once, "
+            "then end the step.",
+            {
+                "result": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(properties),
+                    "additionalProperties": False,
+                }
+            },
+            ["result"],
+        )
+
     def _offers_ask_question(self) -> bool:
         # A read-only specialist or reviewer does not own the conversation.
         return self._ask_question_enabled and self._agent_access_ceiling != "read_only"
@@ -1107,10 +1150,16 @@ class ToolRegistry:
         return self.extensions.skill_index(context_window, self._workspace)
 
     def schemas(self) -> list[dict[str, Any]]:
+        if self._workflow_result_only:
+            workflow_schema = self._workflow_result_schema()
+            return [workflow_schema] if workflow_schema is not None else []
         schemas = [
             schema for schema in _base_schemas(self._agent_access_ceiling)
+            if schema["function"]["name"] != "submit_workflow_result"
             if self._user_allows(schema["function"]["name"])
         ]
+        if (workflow_schema := self._workflow_result_schema()) is not None:
+            schemas.append(workflow_schema)
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
             schemas.extend(
                 schema for schema in COMPUTER_TOOL_SCHEMAS
@@ -1175,10 +1224,15 @@ class ToolRegistry:
         depends on it; `ask_user_question` joins every parity turn, so the
         question popup works in Work and Grill as well.
         """
+        if self._workflow_result_only:
+            workflow_schema = self._workflow_result_schema()
+            return [workflow_schema] if workflow_schema is not None else []
         schemas = [
             schema for schema in PARITY_TOOL_SCHEMAS
             if self._user_allows(_PARITY_CANONICAL[schema["function"]["name"]])
         ]
+        if (workflow_schema := self._workflow_result_schema()) is not None:
+            schemas.append(workflow_schema)
         if (
             self._solo_swarm_enabled
             and self._agent_access_ceiling != "read_only"
@@ -1698,6 +1752,8 @@ class ToolRegistry:
         return True
 
     def tool_info(self, name: str) -> dict[str, Any] | None:
+        if name == "submit_workflow_result" and self._workflow_outputs:
+            return {"origin": "builtin", "annotations": {"readOnlyHint": True}}
         if self.computer_enabled and name in _COMPUTER_TOOL_NAMES:
             return {
                 "origin": "native",

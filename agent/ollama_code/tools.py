@@ -10,6 +10,7 @@ import fnmatch
 import glob as globmod
 import html as html_module
 import json
+import math
 import os
 import re
 import secrets
@@ -48,6 +49,7 @@ SAFE_TOOLS = {
     "ask_user_question",
     # Asking the user a question mutates nothing, so it never prompts.
     "ask_question",
+    "submit_workflow_result",
     "search_workspace_knowledge", "search_memory", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
@@ -77,6 +79,12 @@ class ToolContext:
     plan_document: dict[str, Any] | None = None
     #: The question this turn asked the user, surfaced as a popup by the app.
     user_question: dict[str, Any] | None = None
+    #: Structured output from the current automation Agent step. The service
+    #: attaches it to turn_done, then clears it before the next turn.
+    workflow_result: dict[str, Any] | None = None
+    #: Exact output contract for the active workflow step. Empty means the
+    #: internal result tool is unavailable even if a model guesses its name.
+    workflow_outputs: list[dict[str, str]] = field(default_factory=list)
     cwd: str = ""
     #: Files read this turn, so edit_file can warn about blind edits.
     read_files: set[str] = field(default_factory=set)
@@ -905,6 +913,44 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     return f"Plan submitted for approval ({len(steps)} steps)."
 
 
+def _impl_submit_workflow_result(args: dict[str, Any], ctx: ToolContext) -> str:
+    declared = {
+        str(item.get("name") or ""): str(item.get("type") or "")
+        for item in ctx.workflow_outputs
+        if isinstance(item, dict) and item.get("name")
+    }
+    if not declared:
+        return "Error: no workflow outputs are declared for this step."
+    if ctx.workflow_result is not None:
+        return "Error: the workflow result was already submitted for this step."
+    result = args.get("result")
+    if not isinstance(result, dict):
+        return "Error: 'result' must be an object containing every declared output."
+    unknown = set(result) - set(declared)
+    missing = set(declared) - set(result)
+    if unknown:
+        return f"Error: unknown workflow output '{sorted(unknown)[0]}'."
+    if missing:
+        return f"Error: missing workflow output '{sorted(missing)[0]}'."
+    for name, kind in declared.items():
+        value = result[name]
+        valid = (
+            (kind == "string" and isinstance(value, str))
+            or (kind == "boolean" and isinstance(value, bool))
+            or (
+                kind == "number"
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            )
+        )
+        if not valid:
+            return f"Error: workflow output '{name}' must be {kind}."
+        if kind == "number" and not math.isfinite(float(value)):
+            return f"Error: workflow output '{name}' must be finite."
+    ctx.workflow_result = dict(result)
+    return "Workflow result submitted. End this step now."
+
+
 def _impl_ask_user_question(args: dict[str, Any], ctx: ToolContext) -> str:
     question = str(args.get("question") or "").strip()[:4_000]
     if not question:
@@ -1208,6 +1254,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_status": _impl_git_status,
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
+    "submit_workflow_result": _impl_submit_workflow_result,
     "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
@@ -1457,6 +1504,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
         ["title", "summary", "steps", "tests"],
+    ),
+    _schema(
+        "submit_workflow_result",
+        "Submit the typed outputs declared by the active automation workflow step. "
+        "Call exactly once before ending that step.",
+        {
+            "result": {
+                "type": "object",
+                "description": "Every output field declared by the active workflow step.",
+            },
+        },
+        ["result"],
     ),
     _schema(
         "ask_user_question",

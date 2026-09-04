@@ -10,6 +10,7 @@ import SwiftUI
 struct BlockingQuestionPromptView: View {
     @EnvironmentObject private var model: AppModel
     let request: AgentQuestionRequest
+    var onResolve: (([AgentQuestionAnswer], String) -> Void)? = nil
 
     /// Two focus targets, not one: a `TextField` swallows 1–4, ↑/↓ and ↵, so
     /// the panel keeps its own focus while the entry field is idle.
@@ -299,7 +300,11 @@ struct BlockingQuestionPromptView: View {
         } else {
             let completedAnswers = answers
             Task { @MainActor in
-                model.resolveBlockingQuestion(completedAnswers)
+                if let onResolve {
+                    onResolve(completedAnswers, "answer")
+                } else {
+                    model.resolveBlockingQuestion(completedAnswers)
+                }
             }
         }
     }
@@ -309,7 +314,11 @@ struct BlockingQuestionPromptView: View {
     private func skip() {
         let partialAnswers = answers
         Task { @MainActor in
-            model.resolveBlockingQuestion(partialAnswers, action: "cancel")
+            if let onResolve {
+                onResolve(partialAnswers, "cancel")
+            } else {
+                model.resolveBlockingQuestion(partialAnswers, action: "cancel")
+            }
         }
     }
 

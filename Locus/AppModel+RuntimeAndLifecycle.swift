@@ -479,6 +479,7 @@ extension AppModel {
         guard !isUITesting else { return }
         do {
             let health = try await backend.get("/api/health", as: HealthResponse.self)
+            backendCapabilities = health.capabilities ?? [:]
             if activeAccount == nil, let host = health.host, !host.isEmpty {
                 lastOllamaHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             }

@@ -1127,6 +1127,7 @@ struct ActivityCenterView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
+    @State private var workflowRetryConfirmation: AttentionItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1134,16 +1135,20 @@ struct ActivityCenterView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Activity Center")
                         .font(.locus(size: 15, weight: .bold))
-                    Text("Work keeps running when you move between chats.")
+                    Text(activityCenter.selectedTab == .attention
+                        ? "Unresolved decisions and recoverable work only."
+                        : "Work keeps running when you move between chats.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                if activityCenter.visibleActivityRuns.contains(where: { activityCenter.activityIsUnseen($0) }) {
+                if activityCenter.selectedTab == .activity,
+                   activityCenter.visibleActivityRuns.contains(where: { activityCenter.activityIsUnseen($0) }) {
                     Button("Mark All Seen") { activityCenter.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if activityCenter.visibleActivityRuns.contains(where: {
+                if activityCenter.selectedTab == .activity,
+                   activityCenter.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
                     Button("Clear Finished") { model.clearFinishedActivityRuns() }
@@ -1172,7 +1177,22 @@ struct ActivityCenterView: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paperDeep.opacity(0.55))
 
-            if activityCenter.visibleActivityRuns.isEmpty {
+            Picker("Inbox view", selection: Binding(
+                get: { activityCenter.selectedTab },
+                set: { activityCenter.selectTab($0) }
+            )) {
+                Text("Attention \(activityCenter.activityNeedsAttentionCount)")
+                    .tag(ActivityCenterModel.Tab.attention)
+                Text("Activity").tag(ActivityCenterModel.Tab.activity)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .accessibilityIdentifier("activity.tabSwitcher")
+
+            if activityCenter.selectedTab == .attention {
+                attentionContent
+            } else if activityCenter.visibleActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -1216,7 +1236,177 @@ struct ActivityCenterView: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        .confirmationDialog(
+            "Retry this workflow step?",
+            isPresented: Binding(
+                get: { workflowRetryConfirmation != nil },
+                set: { if !$0 { workflowRetryConfirmation = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let item = workflowRetryConfirmation {
+                Button("Retry Step") {
+                    workflowRetryConfirmation = nil
+                    model.performAttentionAction(item, action: "retry")
+                }
+            }
+            Button("Cancel", role: .cancel) { workflowRetryConfirmation = nil }
+        } message: {
+            Text(
+                "Connector actions already recorded will not repeat. Files or commands from "
+                + "the failed attempt may still be present in the workspace."
+            )
+        }
         .accessibilityIdentifier("activity.center")
+    }
+
+    private var attentionContent: some View {
+        Group {
+            if activityCenter.attentionItems.isEmpty {
+                ContentUnavailableView(
+                    "Nothing Needs Attention",
+                    systemImage: "checkmark.circle",
+                    description: Text("Approvals, questions, recoveries, and configuration warnings appear here.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("attention.empty")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(AttentionGroup.allCases) { group in
+                            let items = activityCenter.attentionItems.filter { $0.group == group }
+                            if !items.isEmpty {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    HStack {
+                                        Text(group.title.uppercased())
+                                            .font(.locus(size: 8, weight: .bold))
+                                            .tracking(0.8)
+                                            .foregroundStyle(group == .decisions
+                                                ? LocusTheme.warning : LocusTheme.muted)
+                                        Text("\(items.count)")
+                                            .font(.locus(size: 8, design: .monospaced))
+                                            .foregroundStyle(LocusTheme.muted)
+                                    }
+                                    ForEach(items) { attentionRow($0) }
+                                }
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+        }
+    }
+
+    private func attentionRow(_ item: AttentionItem) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: attentionSymbol(item))
+                    .font(.locus(size: 13, weight: .semibold))
+                    .foregroundStyle(item.group == .decisions
+                        ? LocusTheme.warning : LocusTheme.signalDeep)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title)
+                        .font(.locus(size: 11, weight: .bold))
+                    Text(item.detail)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .textSelection(.enabled)
+                    if let runID = item.runID {
+                        Text("Run \(runID.prefix(8))")
+                            .font(.locus(size: 8, design: .monospaced))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            if item.kind == "structured_question",
+               let request = model.blockingQuestion(for: item) {
+                BlockingQuestionPromptView(
+                    request: request,
+                    onResolve: { answers, action in
+                        model.resolveAttentionQuestion(item, answers: answers, action: action)
+                    }
+                )
+            } else if item.kind == "completed_question",
+                      let question = model.completedQuestion(for: item) {
+                QuestionPromptView(
+                    question: question,
+                    onResolve: { option, text in
+                        model.resolveAttentionCompletedQuestion(
+                            item, option: option, freeText: text
+                        )
+                    },
+                    onDismiss: { _ in }
+                )
+            } else {
+                attentionActions(item)
+            }
+        }
+        .padding(12)
+        .background(LocusTheme.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("attention.item.\(item.id)")
+    }
+
+    @ViewBuilder
+    private func attentionActions(_ item: AttentionItem) -> some View {
+        HStack(spacing: 8) {
+            ForEach(item.actions, id: \.self) { action in
+                if action != "answer" {
+                    if ["reject", "deny", "cancel"].contains(action) {
+                        Button(attentionActionTitle(action), role: .destructive) {
+                            model.performAttentionAction(item, action: action)
+                        }
+                    } else {
+                        Button(attentionActionTitle(action)) {
+                            if action == "retry", item.kind == "workflow_failure" {
+                                workflowRetryConfirmation = item
+                            } else {
+                                model.performAttentionAction(item, action: action)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .font(.locus(size: 8, weight: .semibold))
+        .buttonStyle(ActivityActionButtonStyle())
+    }
+
+    private func attentionActionTitle(_ action: String) -> String {
+        switch action {
+        case "approve": "Approve"
+        case "reject": "Reject"
+        case "retry": "Retry"
+        case "resume": "Resume"
+        case "cancel": "Cancel"
+        case "allow_once": "Allow Once"
+        case "always_allow": "Always Allow"
+        case "deny": "Deny"
+        case "clear_warning": "Clear Warning"
+        case "open_configuration": "Open Configuration"
+        case "open_chat": "Open Chat"
+        default: action.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func attentionSymbol(_ item: AttentionItem) -> String {
+        switch item.kind {
+        case "workflow_approval": "hand.raised.fill"
+        case "permission_request": "lock.shield.fill"
+        case "structured_question", "completed_question": "questionmark.circle.fill"
+        case "computer_control": "macwindow"
+        case "team_plan": "person.3.sequence.fill"
+        case "schedule_warning", "event_warning": "gearshape.fill"
+        default: "arrow.clockwise.circle.fill"
+        }
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
@@ -1516,7 +1706,7 @@ struct ScheduleEditorView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(draft.id == nil ? "New Scheduled Task" : "Edit Scheduled Task")
                         .font(.locus(size: 16, weight: .bold))
-                    Text("Each run starts in a fresh background chat.")
+                    Text("Every occurrence continues this agent’s dedicated chat.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -1536,21 +1726,25 @@ struct ScheduleEditorView: View {
                 Section("Task") {
                     TextField("Name", text: $draft.name)
                         .accessibilityIdentifier("scheduleEditor.name")
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Prompt")
-                            .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
-                        TextEditor(text: $draft.prompt)
-                            .font(.locus(size: 11))
-                            .frame(minHeight: 100)
-                            .padding(5)
-                            .background(LocusTheme.white.opacity(0.72))
-                            .clipShape(RoundedRectangle(cornerRadius: 7))
-                            .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
-                            .accessibilityIdentifier("scheduleEditor.prompt")
-                        Text("Attachments and temporary context chips are not included.")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                    if model.automationWorkflowsEnabled {
+                        AutomationWorkflowEditorView(workflow: $draft.workflow)
+                    } else {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Prompt")
+                                .font(.locus(size: 9, weight: .semibold))
+                                .foregroundStyle(LocusTheme.muted)
+                            TextEditor(text: $draft.prompt)
+                                .font(.locus(size: 11))
+                                .frame(minHeight: 100)
+                                .padding(5)
+                                .background(LocusTheme.white.opacity(0.72))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                                .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
+                                .accessibilityIdentifier("scheduleEditor.prompt")
+                            Text("Attachments and temporary context chips are not included.")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
                     }
                 }
 
@@ -1559,9 +1753,11 @@ struct ScheduleEditorView: View {
                         TextField("Workspace", text: $draft.workspaceRoot)
                         Button("Choose…") { chooseWorkspace() }
                     }
-                    Picker("Mode", selection: $draft.mode) {
-                        ForEach(WorkMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                    if !model.automationWorkflowsEnabled {
+                        Picker("Mode", selection: $draft.mode) {
+                            ForEach(WorkMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
                         }
                     }
                     Picker("Environment", selection: $draft.executionEnvironment) {

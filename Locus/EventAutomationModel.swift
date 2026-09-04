@@ -46,6 +46,7 @@ final class EventAutomationModel: ObservableObject {
     private var showMessage: ((String) -> Void)?
     private var notifyPaused: ((String) -> Void)?
     private var onWarningResolved: ((String?) -> Void)?
+    private var supportsWorkflows: () -> Bool = { false }
 
     init(credentials: ConnectorCredentialStore = .shared) {
         self.credentials = credentials
@@ -69,7 +70,8 @@ final class EventAutomationModel: ObservableObject {
         openAgentSession: @escaping (SessionSummary) -> Void,
         showMessage: @escaping (String) -> Void,
         notifyPaused: @escaping (String) -> Void = { _ in },
-        onWarningResolved: @escaping (String?) -> Void = { _ in }
+        onWarningResolved: @escaping (String?) -> Void = { _ in },
+        supportsWorkflows: @escaping () -> Bool = { false }
     ) {
         self.backend = backend
         self.onQueuedRun = onQueuedRun
@@ -81,6 +83,7 @@ final class EventAutomationModel: ObservableObject {
         self.showMessage = showMessage
         self.notifyPaused = notifyPaused
         self.onWarningResolved = onWarningResolved
+        self.supportsWorkflows = supportsWorkflows
     }
 
     /// UI-test fixtures need agents without a backend. The stored arrays are
@@ -206,6 +209,7 @@ final class EventAutomationModel: ObservableObject {
         draft.targetSessionID = EventTriggerEditorDraft.dedicatedAgentChat
         draft.templateSessionID = targetSessionID
         draft.instruction = naturalLanguageRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.workflow = .singleAgent(instruction: draft.instruction, mode: draft.mode)
         draft.name = Self.suggestedName(from: naturalLanguageRequest)
         let priceSuggestion = Self.suggestedPriceCondition(from: naturalLanguageRequest)
         draft.triggerKind = requestedKind ?? (priceSuggestion == nil ? .event : .price)
@@ -236,7 +240,16 @@ final class EventAutomationModel: ObservableObject {
     func saveTrigger(_ draft: EventTriggerEditorDraft) async -> Bool {
         guard let backend else { return false }
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let instruction = draft.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        var workflow = draft.workflow
+        if workflow.steps.count == 1,
+           workflow.steps[0].type == .agent,
+           workflow.steps[0].instructionTemplate?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+           !draft.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workflow.steps[0].instructionTemplate = draft.instruction
+            workflow.steps[0].mode = draft.mode
+        }
+        let instruction = (workflow.firstAgent?.instructionTemplate ?? draft.instruction)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !instruction.isEmpty, !draft.connectionID.isEmpty,
               !draft.targetSessionID.isEmpty else {
             showMessage?("Add a name, connection, destination, and instruction.")
@@ -320,6 +333,12 @@ final class EventAutomationModel: ObservableObject {
             "action_connection_ids": actions,
             "enabled": draft.enabled,
         ]
+        if supportsWorkflows(), let encodedWorkflow = encodedJSONObject(workflow) {
+            body["workflow"] = encodedWorkflow
+            body["runner"] = draft.runner.rawValue
+            body["team_id"] = draft.teamID ?? ""
+            body["team_name"] = draft.teamName
+        }
         if draft.id == nil { body["id"] = draft.creationID }
         do {
             let saved: EventTrigger
@@ -728,7 +747,7 @@ final class EventAutomationModel: ObservableObject {
                 let _: ConnectorActionReceipt? = try? await service.post(
                     "/api/connector-actions/receipts",
                     body: [
-                        "idempotency_key": requestID,
+                        "idempotency_key": event["idempotency_key"] as? String ?? requestID,
                         "event_delivery_id": event["event_delivery_id"] as? String ?? "",
                         "tool_name": tool,
                         "result": encodedResult,
@@ -946,7 +965,9 @@ final class EventAutomationModel: ObservableObject {
                             timeout: 30, as: EventDispatchResponse.self
                         )
                         self.replace(dispatched.delivery)
-                        await self.onQueuedRun?(dispatched.run)
+                        if let run = dispatched.run {
+                            await self.onQueuedRun?(run)
+                        }
                     } catch let error as NSError where error.domain == "Locus.Backend"
                         && error.code == 409 {
                         // Another process or the previous turn won the durable

@@ -10,6 +10,10 @@ import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var backendCapabilities: [String: Bool] = [:]
+    var automationWorkflowsEnabled: Bool {
+        backendCapabilities["automation_workflows_v1"] == true
+    }
     enum ProviderConnectionTestFollowUp: Equatable {
         case notNeeded
         case saveRequired
@@ -882,6 +886,9 @@ final class AppModel: ObservableObject {
         )
         activity.configure(
             backend: backend,
+            liveAttentionProvider: { [weak self] in
+                self?.liveAttentionItems() ?? []
+            },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         toastCenter.onToastReplaced = { [weak self] in self?.pendingDeletedChat = nil }
@@ -913,7 +920,10 @@ final class AppModel: ObservableObject {
             notifyPaused: { [weak self] body in
                 self?.notifyNeedsAttentionIfInactive(body: body)
             },
-            toastHandler: { [weak self] message in self?.showToast(message) }
+            toastHandler: { [weak self] message in self?.showToast(message) },
+            supportsWorkflows: { [weak self] in
+                self?.automationWorkflowsEnabled ?? false
+            }
         )
         eventAutomations.configure(
             backend: backend,
@@ -966,6 +976,9 @@ final class AppModel: ObservableObject {
             },
             onWarningResolved: { [weak self] runID in
                 self?.clearRunWarningPresentation(runID: runID)
+            },
+            supportsWorkflows: { [weak self] in
+                self?.automationWorkflowsEnabled ?? false
             }
         )
         providerAccountsModel.configure(

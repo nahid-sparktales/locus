@@ -264,6 +264,32 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(task.nextRunDate?.timeIntervalSince1970, 1_787_322_600)
     }
 
+    func testWorkflowPreservesExplicitFinishAndRepairsBackwardEdges() throws {
+        let json = #"""
+        {
+          "version":1,"entry_step_id":"first",
+          "steps":[
+            {"id":"first","type":"agent","title":"First","instruction_template":"Run","mode":"work","outputs":[],"next_step_id":null},
+            {"id":"second","type":"agent","title":"Second","instruction_template":"Never reached","mode":"work","outputs":[],"next_step_id":null}
+          ]
+        }
+        """#
+        var workflow = try JSONDecoder().decode(
+            AutomationWorkflow.self, from: Data(json.utf8)
+        )
+        XCTAssertEqual(workflow.steps[0].nextStepID, "finish")
+
+        workflow.steps[0].nextStepID = workflow.steps[0].id
+        XCTAssertEqual(workflow.repairForwardEdges(), [workflow.steps[0].id])
+        XCTAssertEqual(workflow.steps[0].nextStepID, "finish")
+
+        let encoded = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(workflow)
+        ) as? [String: Any]
+        let steps = encoded?["steps"] as? [[String: Any]]
+        XCTAssertEqual(steps?.first?["next_step_id"] as? String, "finish")
+    }
+
     func testScheduleDraftBuildsOneTimeAndMinimumIntervalRules() {
         var once = ScheduleEditorDraft()
         once.ruleKind = .once

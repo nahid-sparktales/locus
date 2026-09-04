@@ -563,6 +563,7 @@ extension AppModel {
             runtime.pendingBlockingQuestion = nil
         }
         if type == "turn_done" {
+            completeAutomationWorkflowStep(from: event)
             let reason = event["reason"] as? String ?? "complete"
             recordAutomaticModelRoutingOutcome(
                 sessionID: runtime.sessionID,
@@ -640,7 +641,8 @@ extension AppModel {
                 runID: notificationRunID
             )
         } else if type == "turn_done" {
-            if state == .completed {
+            let isWorkflowStep = event["workflow_execution_id"] as? String != nil
+            if state == .completed, !isWorkflowStep {
                 if runtime.pendingQuestion != nil {
                     notifyNeedsAttentionIfInactive(
                         body: "A background chat asked you a question.",
@@ -654,7 +656,7 @@ extension AppModel {
                         workspace: runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
                     )
                 }
-            } else if state == .failed || state == .interrupted {
+            } else if (state == .failed || state == .interrupted), !isWorkflowStep {
                 notifyNeedsAttentionIfInactive(
                     body: "A background chat stopped and needs attention.",
                     sessionID: runtime.sessionID,
