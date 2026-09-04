@@ -82,7 +82,9 @@ struct LocusApp: App {
                 )
                 .background {
                     ZStack {
-                        MainWindowMarker()
+                        MainWindowMarker(
+                            coordinator: model.workspaceLayout.liveResizeCoordinator
+                        )
                         MainWindowPresenterInstaller(presenter: mainWindowPresenter)
                     }
                 }
@@ -512,8 +514,10 @@ private struct MainWindowPresenterInstaller: View {
 }
 
 private struct MainWindowMarker: NSViewRepresentable {
+    let coordinator: LiveResizeCoordinator
+
     func makeNSView(context: Context) -> MainWindowMarkerView {
-        MainWindowMarkerView()
+        MainWindowMarkerView(coordinator: coordinator)
     }
 
     func updateNSView(_ nsView: MainWindowMarkerView, context: Context) {
@@ -524,10 +528,66 @@ private struct MainWindowMarker: NSViewRepresentable {
 private final class MainWindowMarkerView: NSView {
     private var preparedUITestWindow = false
     private var normalizedLaunchWindow = false
+    private let coordinator: LiveResizeCoordinator
+    private weak var observedWindow: NSWindow?
+    private var resizeObservers: [NSObjectProtocol] = []
+
+    init(coordinator: LiveResizeCoordinator) {
+        self.coordinator = coordinator
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        resizeObservers.forEach(NotificationCenter.default.removeObserver)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        observeLiveResize(of: window)
         markWindow()
+    }
+
+    private func observeLiveResize(of window: NSWindow?) {
+        guard observedWindow !== window else { return }
+        resizeObservers.forEach(NotificationCenter.default.removeObserver)
+        resizeObservers.removeAll(keepingCapacity: true)
+        observedWindow = window
+        guard let window else { return }
+        let center = NotificationCenter.default
+        resizeObservers.append(center.addObserver(
+            forName: NSWindow.willStartLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                self?.coordinator.beginLiveResize()
+                self?.coordinator.update(width: window?.frame.width ?? 0)
+            }
+        })
+        resizeObservers.append(center.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                guard window?.inLiveResize == true else { return }
+                self?.coordinator.update(width: window?.frame.width ?? 0)
+            }
+        })
+        resizeObservers.append(center.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                self?.coordinator.endLiveResize(finalWidth: window?.frame.width ?? 0)
+            }
+        })
     }
 
     func markWindow() {
@@ -571,8 +631,17 @@ private final class MainWindowMarkerView: NSView {
     }
 }
 
+private struct RootViewUpdateProbe: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        locusPerformanceSignposter.emitEvent("Root View Update")
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var workspaceLayout: WorkspaceLayoutModel
     @EnvironmentObject private var updates: AppUpdateController
     @EnvironmentObject private var toastCenter: ToastCenter
     @EnvironmentObject private var landingFlow: LandingFlowModel
@@ -626,6 +695,19 @@ struct RootView: View {
             let zoomedWorkspaceWidth = min(
                 model.zoomedChatWidth,
                 max(minimumWorkspaceWidth, widthAfterChrome - minimumInspectorWidth)
+            )
+            let workspaceWidth = model.inspectorZoomed && docksInspector
+                ? zoomedWorkspaceWidth
+                : max(widthAfterChrome - (docksInspector ? dockedInspectorWidth : 0), 0)
+            let geometrySnapshot = WorkspaceGeometrySnapshot(
+                windowSize: proxy.size,
+                sidebarWidth: docksSidebar ? sidebarWidth : 0,
+                workspaceWidth: workspaceWidth,
+                workspaceHeight: proxy.size.height,
+                inspectorWidth: docksInspector ? dockedInspectorWidth : 0,
+                composerWidth: min(max(workspaceWidth - 48, 0), 740),
+                docksSidebar: docksSidebar,
+                docksInspector: docksInspector
             )
 
             ZStack(alignment: .leading) {
@@ -693,7 +775,12 @@ struct RootView: View {
                         .frame(width: min(model.inspectorWidth, proxy.size.width - railWidth))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                         .padding(.trailing, railWidth)
-                        .shadow(color: .black.opacity(0.16), radius: 18, x: -8, y: 0)
+                        .shadow(
+                            color: workspaceLayout.isLiveResizing ? .clear : .black.opacity(0.16),
+                            radius: workspaceLayout.isLiveResizing ? 0 : 18,
+                            x: -8,
+                            y: 0
+                        )
                         .transition(LocusMotion.transition(
                             edge: .trailing,
                             reduceMotion: reduceMotion
@@ -704,7 +791,12 @@ struct RootView: View {
                 if compactSidebarPresented && !docksSidebar && !model.sidebarCollapsed {
                     SessionSidebarView()
                         .frame(width: overlaySidebarWidth)
-                        .shadow(color: .black.opacity(0.18), radius: 18, x: 8, y: 0)
+                        .shadow(
+                            color: workspaceLayout.isLiveResizing ? .clear : .black.opacity(0.18),
+                            radius: workspaceLayout.isLiveResizing ? 0 : 18,
+                            x: 8,
+                            y: 0
+                        )
                         .transition(LocusMotion.transition(
                             edge: .leading,
                             reduceMotion: reduceMotion
@@ -712,11 +804,28 @@ struct RootView: View {
                         .zIndex(3)
                 }
             }
+            .environment(\.locusWorkspaceGeometry, geometrySnapshot)
+            .onAppear {
+                workspaceLayout.updateGeometry(geometrySnapshot)
+            }
+            .onChange(of: geometrySnapshot) { _, snapshot in
+                // Retain the latest exact geometry for commands and
+                // diagnostics without publishing a second width-driven pass.
+                workspaceLayout.updateGeometry(snapshot)
+            }
             .onChange(of: docksSidebar) { _, docked in
                 if docked { compactSidebarPresented = false }
             }
             .onChange(of: model.sidebarCollapsed) { _, collapsed in
                 if collapsed { compactSidebarPresented = false }
+            }
+        }
+        .environment(\.locusIsLiveResizing, workspaceLayout.isLiveResizing)
+        .background(RootViewUpdateProbe().frame(width: 0, height: 0))
+        .transaction { transaction in
+            if workspaceLayout.isLiveResizing {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
             }
         }
         // Keyed on the sidebar and the zoom flag only: including the inspector

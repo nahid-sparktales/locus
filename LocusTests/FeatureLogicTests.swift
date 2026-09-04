@@ -5660,6 +5660,51 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testComposerMeasurementUsesDraftTypographyAndFourPointWidthKeys() {
+        XCTAssertEqual(
+            ComposerMetrics.effectiveMeasurementWidth(511.9, isLiveResizing: true),
+            508
+        )
+        XCTAssertEqual(
+            ComposerMetrics.effectiveMeasurementWidth(511.9, isLiveResizing: false),
+            511.9
+        )
+
+        let baseline = ComposerMetrics.cacheKey(
+            for: "draft",
+            effectiveWidth: 508,
+            typographyToken: 1,
+            draftRevision: 7
+        )
+        XCTAssertNotEqual(
+            baseline,
+            ComposerMetrics.cacheKey(
+                for: "draft",
+                effectiveWidth: 512,
+                typographyToken: 1,
+                draftRevision: 7
+            )
+        )
+        XCTAssertNotEqual(
+            baseline,
+            ComposerMetrics.cacheKey(
+                for: "draft",
+                effectiveWidth: 508,
+                typographyToken: 2,
+                draftRevision: 7
+            )
+        )
+        XCTAssertNotEqual(
+            baseline,
+            ComposerMetrics.cacheKey(
+                for: "changed draft",
+                effectiveWidth: 508,
+                typographyToken: 1,
+                draftRevision: 8
+            )
+        )
+    }
+
     func testComposerReturnActionCoversSendQueueSteerAndNewlineStates() {
         XCTAssertEqual(
             ComposerReturnAction.current(
