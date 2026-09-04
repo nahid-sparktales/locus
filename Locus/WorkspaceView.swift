@@ -28,18 +28,19 @@ struct WorkspaceView: View {
     private var contentArea: some View {
         ZStack(alignment: .topTrailing) {
             chatContent
-                .frame(
-                    width: workspaceGeometry.workspaceWidth,
-                    height: workspaceGeometry.workspaceHeight
-                )
+                // The parent VStack already proposes exactly the space left
+                // below the toolbar. Pinning a pre-subtracted height here
+                // reserved that toolbar space twice and lifted the composer.
+                .frame(width: workspaceGeometry.workspaceWidth)
+                .frame(maxHeight: .infinity)
 
             if activityCenter.activityCenterPresented {
                 ActivityCenterView()
                     .environmentObject(model)
                     .frame(
-                        width: max(280, min(440, workspaceGeometry.workspaceWidth - 24)),
-                        height: max(0, workspaceGeometry.workspaceHeight - 24)
+                        width: max(280, min(440, workspaceGeometry.workspaceWidth - 24))
                     )
+                    .frame(maxHeight: .infinity)
                     .locusSurface(.floating, radius: 12)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay {

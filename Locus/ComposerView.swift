@@ -265,7 +265,10 @@ struct ComposerView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.bottom, 22)
+        // Keep the card clear of the window edge without leaving the large
+        // gap that became visible once the workspace stopped clipping its
+        // bottom chrome.
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
