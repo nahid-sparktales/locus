@@ -3444,6 +3444,7 @@ final class LocusUITests: XCTestCase {
         // An unresolved recovery opens the new Attention inbox first. Merely
         // viewing it must not resolve the item or mark Activity history seen.
         XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Clear"].exists)
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
 
         let activityTab = app.descendants(matching: .any).matching(

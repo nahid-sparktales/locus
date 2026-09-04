@@ -1286,7 +1286,7 @@ struct ActivityCenterView: View {
 
     private var unavailableAttentionItems: [AttentionItem] {
         activityCenter.attentionItems.filter {
-            $0.kind == "recoverable_run" && $0.actions.contains("clear")
+            $0.kind == "recoverable_run" && $0.unavailable == true
         }
     }
 

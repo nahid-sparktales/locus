@@ -114,20 +114,25 @@ def _attention_items(service: ChatService) -> list[dict[str, Any]]:
                 **item,
                 "detail": "The original chat was deleted. Clear this recovery item.",
                 "actions": ["clear"],
+                "unavailable": True,
             }
         projected.append(item)
     return projected
 
 
-def _clear_orphaned_recoveries(
+def _clear_recoveries(
     service: ChatService, *, run_id: str = ""
 ) -> dict[str, Any]:
     items = [
         item for item in _attention_items(service)
-        if _orphaned_recovery(item) and (not run_id or item.get("run_id") == run_id)
+        if item.get("kind") == "recoverable_run"
+        and (
+            (bool(run_id) and item.get("run_id") == run_id)
+            or (not run_id and _orphaned_recovery(item))
+        )
     ]
     if run_id and not items:
-        raise HTTPException(409, "that recovery is no longer unavailable")
+        raise HTTPException(409, "that run no longer needs recovery")
     try:
         cleared = service.run_store.discard_recoverable_runs([
             str(item["run_id"]) for item in items
@@ -144,11 +149,11 @@ def _clear_orphaned_recoveries(
 
 
 def attention_clear(run_id: str, service: ServiceDependency) -> dict[str, Any]:
-    return _clear_orphaned_recoveries(service, run_id=run_id)
+    return _clear_recoveries(service, run_id=run_id)
 
 
 def attention_clear_unavailable(service: ServiceDependency) -> dict[str, Any]:
-    return _clear_orphaned_recoveries(service)
+    return _clear_recoveries(service)
 
 
 def execution_detail(execution_id: str, service: ServiceDependency) -> dict[str, Any]:

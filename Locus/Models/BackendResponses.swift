@@ -170,9 +170,10 @@ struct AttentionItem: Codable, Identifiable, Hashable {
     let timestamp: Double
     let actions: [String]
     let request: [String: JSONValue]?
+    let unavailable: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, group, title, detail, timestamp, actions, request
+        case id, kind, group, title, detail, timestamp, actions, request, unavailable
         case sessionID = "session_id"
         case runID = "run_id"
         case workflowExecutionID = "workflow_execution_id"
@@ -187,7 +188,8 @@ struct AttentionItem: Codable, Identifiable, Hashable {
         workflowExecutionID: String? = nil, workflowStepID: String? = nil,
         automationKind: String? = nil, automationID: String? = nil,
         title: String, detail: String, timestamp: Double = Date().timeIntervalSince1970,
-        actions: [String], request: [String: JSONValue]? = nil
+        actions: [String], request: [String: JSONValue]? = nil,
+        unavailable: Bool? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -203,6 +205,7 @@ struct AttentionItem: Codable, Identifiable, Hashable {
         self.timestamp = timestamp
         self.actions = actions
         self.request = request
+        self.unavailable = unavailable
     }
 }
 

@@ -820,7 +820,10 @@ extension AppModel {
                     ? run.recoveryReason ?? "The run is \(run.state)."
                     : "The original chat was deleted. Clear this recovery item.",
                 timestamp: run.updatedAt,
-                actions: chatAvailable ? [canResume ? "resume" : "retry", "open_chat"] : ["clear"]
+                actions: chatAvailable
+                    ? [canResume ? "resume" : "retry", "open_chat", "clear"]
+                    : ["clear"],
+                unavailable: !chatAvailable
             ))
         }
         return items
@@ -927,7 +930,7 @@ extension AppModel {
             case "deny": answerActivityPermission(run, decision: "deny")
             case "resume": resumeOrchestration(run)
             case "retry": retryRun(run)
-            case "clear": clearUnavailableAttentionRun(run)
+            case "clear": clearAttentionRecovery(run)
             case "open_chat": openActivityRun(run)
             default: break
             }
@@ -949,7 +952,7 @@ extension AppModel {
         }
     }
 
-    private func clearUnavailableAttentionRun(_ run: OrchestrationRun) {
+    private func clearAttentionRecovery(_ run: OrchestrationRun) {
         guard clearingAttentionRunIDs.insert(run.id).inserted else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -962,7 +965,7 @@ extension AppModel {
                 await activity.refreshActivityRuns(announceFailure: false)
                 await refreshOrchestrationRuns(select: nil)
                 if response.clearedCount == 1 {
-                    showToast("Cleared unavailable recovery")
+                    showToast("Cleared recovery")
                 }
             } catch {
                 await activity.refreshActivityRuns(announceFailure: false)

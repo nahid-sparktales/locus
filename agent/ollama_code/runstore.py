@@ -2499,9 +2499,9 @@ class RunStore:
                 else:
                     kind, title = "recoverable_run", "Work needs recovery"
                     detail = str(row["recovery_reason"] or f"The run is {state.replace('_', ' ')}.")
-                    actions = (["resume", "open_chat"] if state == "paused"
+                    actions = (["resume", "open_chat", "clear"] if state == "paused"
                                and str(row["run_kind"]) == "team"
-                               else ["retry", "open_chat"])
+                               else ["retry", "open_chat", "clear"])
                 items.append({
                     "id": f"run:{run_id}", "kind": kind,
                     "group": "decisions" if state.startswith("waiting_") else "recoveries",

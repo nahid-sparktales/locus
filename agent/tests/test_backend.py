@@ -1998,7 +1998,9 @@ def test_health_and_models(client):
     assert models["current"] == "test-model"
 
 
-def test_attention_clears_only_recoveries_whose_chat_is_gone(client, tmp_path):
+def test_attention_clears_any_recovery_but_bulk_only_clears_missing_chats(
+    client, tmp_path
+):
     service = client.app.state.service
     available_session = SessionStore(str(tmp_path))
     runs = [
@@ -2017,12 +2019,9 @@ def test_attention_clears_only_recoveries_whose_chat_is_gone(client, tmp_path):
         if item["kind"] == "recoverable_run"
     }
     assert items["orphan-one"]["actions"] == ["clear"]
+    assert items["orphan-one"]["unavailable"] is True
     assert "original chat was deleted" in items["orphan-one"]["detail"]
-    assert items["available-run"]["actions"] == ["retry", "open_chat"]
-
-    refused = client.post("/api/attention/available-run/clear", json={})
-    assert refused.status_code == 409
-    assert service.run_store.run("available-run")["state"] == "failed"
+    assert items["available-run"]["actions"] == ["retry", "open_chat", "clear"]
 
     cleared_one = client.post("/api/attention/orphan-one/clear", json={})
     assert cleared_one.status_code == 200
@@ -2035,9 +2034,15 @@ def test_attention_clears_only_recoveries_whose_chat_is_gone(client, tmp_path):
     assert service.run_store.run("orphan-two")["state"] == "discarded"
     assert service.run_store.run("available-run")["state"] == "failed"
 
+    cleared_available = client.post("/api/attention/available-run/clear", json={})
+    assert cleared_available.status_code == 200
+    assert cleared_available.json()["cleared_run_ids"] == ["available-run"]
+    assert service.run_store.run("available-run")["state"] == "discarded"
+    assert client.post("/api/attention/available-run/clear", json={}).status_code == 409
+
     remaining = client.get("/api/attention").json()
-    assert remaining["unresolved_count"] == 1
-    assert remaining["items"][0]["run_id"] == "available-run"
+    assert remaining["unresolved_count"] == 0
+    assert remaining["items"] == []
 
 
 def test_event_trigger_routes_queue_into_the_existing_chat_and_retain_history(client):
