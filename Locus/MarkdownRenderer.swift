@@ -902,13 +902,9 @@ private struct MarkdownBlocksView: View {
         switch block {
         case .paragraph(let runs):
             let artifact = standaloneArtifact(in: runs)
-            let artifactImage = artifact.flatMap { reference in
-                reference.kind == .image ? NSImage(contentsOf: reference.url) : nil
-            }
-            if let artifact, let artifactImage {
-                WorkspaceImageArtifactView(
+            if let artifact, artifact.kind == .image {
+                AsyncWorkspaceImageArtifactView(
                     reference: artifact,
-                    image: artifactImage,
                     caption: runs.map(\.text).joined(),
                     selectionStore: selectionStore,
                     selectionSpan: selectionSpan(at: path),
@@ -1498,71 +1494,6 @@ enum MarkdownLinkPolicy {
         let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         guard candidate.path == root.path || candidate.path.hasPrefix(rootPrefix) else { return nil }
         return candidate
-    }
-}
-
-private struct WorkspaceImageArtifactView: View {
-    let reference: WorkspaceArtifactReference
-    let image: NSImage
-    let caption: String
-    let selectionStore: TranscriptSelectionStore?
-    let selectionSpan: TranscriptSelectionSpan?
-    let onOpen: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            SwiftUI.Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 620, maxHeight: 420, alignment: .leading)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
-                }
-
-            HStack(spacing: 8) {
-                if let selectionStore, let selectionSpan {
-                    ResponseSelectableText(
-                        attributedText: MarkdownNativeText.plain(
-                            caption,
-                            font: .systemFont(ofSize: 11, weight: .medium),
-                            color: NSColor(LocusTheme.muted),
-                            lineSpacing: 0
-                        ),
-                        span: selectionSpan,
-                        store: selectionStore
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text(caption)
-                        .font(.locus(size: 9, weight: .medium))
-                        .foregroundStyle(LocusTheme.muted)
-                        .textSelection(.enabled)
-                }
-                Spacer(minLength: 8)
-                artifactAction("Open", symbol: "arrow.up.forward.app", action: onOpen)
-                artifactAction("Reveal", symbol: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([reference.url])
-                }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Image artifact, \(reference.relativePath)")
-    }
-
-    private func artifactAction(
-        _ title: String,
-        symbol: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.locus(size: 9, weight: .semibold))
-        }
-        .buttonStyle(.locus())
-        .foregroundStyle(LocusTheme.muted)
-        .accessibilityLabel("\(title) \(reference.relativePath)")
     }
 }
 
