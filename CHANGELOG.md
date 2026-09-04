@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.4.0 — 2026-09-04
+
+### Added
+
+- **Automation Studio turns schedules and events into workflows.** Scheduled,
+  Gmail, Telegram, webhook, and price-triggered agents can use a forward-only
+  sequence of Agent, Condition, and Approval steps. A safe simulator previews
+  templates, branches, outputs, and approval cards without calling a model or
+  creating chat history.
+- **Attention shows only work that needs a decision.** Questions, permissions,
+  workflow approvals, recoverable runs, retryable failures, and configuration
+  warnings share one deduplicated inbox with inline actions. Ordinary successful
+  and informational activity remains in Activity.
+
+### Changed
+
+- **Window resizing and long responses stay responsive.** Shared workspace
+  geometry, bounded text-measurement caches, append-only streaming, incremental
+  Markdown rendering, focused state models, and asynchronous image thumbnails
+  keep expensive work off the hottest interface paths.
+- **Workflow occurrences are durable.** Each occurrence snapshots its workflow,
+  keeps exclusive use of its dedicated chat between steps, records attempts and
+  approvals, and resumes explicitly after a failure or restart without silently
+  repeating external actions.
+
+### Fixed
+
+- **Workspace chats open reliably under macOS privacy controls.** Locus now
+  keeps the already validated workspace path when the system blocks a child
+  process from rediscovering its current folder.
+- **Attention recoveries can be cleared when work is no longer wanted.** This
+  applies whether the original chat still exists or has already been deleted.
+- **The composer stays against the bottom edge.** Workspace layout no longer
+  reserves the toolbar height twice, so the composer remains visible at normal
+  and compact window sizes.
+- **Generated project and design-system checks are current.** The checked-in
+  Xcode project and workflow editor typography now match the deterministic CI
+  generators and source audit.
+
 ## 2.3.0 — 2026-09-03
 
 ### Added
