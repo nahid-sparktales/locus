@@ -36,6 +36,7 @@
 		0E827EEE9A376C5883629C24 /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		0EE20A5823F71CE649F5669A /* OrchestrationRunsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA950FE5E9C533D215492CA3 /* OrchestrationRunsModel.swift */; };
 		0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EA24EB82248151706E566E /* GitStatusModels.swift */; };
+		0F93C3A166B1038C8682007E /* AutomationWorkflowEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */; };
 		0FBC368B79ED323BB62EE8DD /* DiffHunks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE116E00D831A9EE4433A893 /* DiffHunks.swift */; };
 		0FCA7915F1F08420BB34DDC0 /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
 		103299801152B4576C99D18C /* AppModel+WorkspaceProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF7C32F369DF7295D8B8077 /* AppModel+WorkspaceProfiles.swift */; };
@@ -101,6 +102,7 @@
 		387433BAAF6C2B9D0277AD2F /* CompanionWireTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 622AFAF0F2B7F699AB240371 /* CompanionWireTypes.swift */; };
 		3904FFCBA508404034843585 /* AppModel+PermissionsAndCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F1D91E4EBBD0BE7E4027FD /* AppModel+PermissionsAndCapabilities.swift */; };
 		39A8C59555920212F6EAA8B8 /* WalletSignerService.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1A7536131C96359528103360 /* WalletSignerService.xpc */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		39E06D90641080F2E20F7B5C /* AutomationWorkflowEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */; };
 		3ADED25B5030F2CD34B36E35 /* AppModel+LandingFlowFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494AA2883078C54BAF0BF14C /* AppModel+LandingFlowFacade.swift */; };
 		3AEFFA65AC2FCC64061F9F9D /* SessionCatalogModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098BDBE9B53A4C18575502B4 /* SessionCatalogModel.swift */; };
 		3B8A090FB2704FB3B2908B2B /* AppModel+TeamRunLiveFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C84873DD1B30B35462F4F21 /* AppModel+TeamRunLiveFacade.swift */; };
@@ -763,6 +765,7 @@
 		DC50A772A73C632C7A5100DA /* SessionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionState.swift; sourceTree = "<group>"; };
 		DC810CE30AC24EDB05F14614 /* InspectorAgentTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorAgentTab.swift; sourceTree = "<group>"; };
 		DCD462D667D6F46951C8C8CE /* WalletVaultKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletVaultKeychain.swift; sourceTree = "<group>"; };
+		DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationWorkflowEditorView.swift; sourceTree = "<group>"; };
 		E11B2324D330884AA4555A92 /* Sheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sheets.swift; sourceTree = "<group>"; };
 		E16033E84DC973F0FD1BFA21 /* AppModel+ActivityCenterFacade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ActivityCenterFacade.swift"; sourceTree = "<group>"; };
 		E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
@@ -991,6 +994,7 @@
 				8CF7C32F369DF7295D8B8077 /* AppModel+WorkspaceProfiles.swift */,
 				EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */,
 				CEDE792B67295C1B0196FC71 /* AppUpdateController.swift */,
+				DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */,
 				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
 				3793FC69B1D813ED07567A2E /* BackendService.swift */,
 				8BC4DF20CC84C89DD48D30CB /* BackgroundServicesModel.swift */,
@@ -1683,6 +1687,7 @@
 				ADB5339D466EB316F9370689 /* AppUpdateController.swift in Sources */,
 				BB3B4FBD72B6DCBDACCBD36D /* ApplicationContextService.swift in Sources */,
 				1C60596E5A4E13265770012D /* ApplicationLifecycleCoordinator.swift in Sources */,
+				0F93C3A166B1038C8682007E /* AutomationWorkflowEditorView.swift in Sources */,
 				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
 				2F30B3F6DF8AD2063BBAF9C9 /* BackendResponses.swift in Sources */,
 				F9405ED899AAD041CF6BAD66 /* BackendService.swift in Sources */,
@@ -1872,6 +1877,7 @@
 				382E5A2A04FD4523C5C185C1 /* AppUpdateController.swift in Sources */,
 				ADB25B720E359FF17C8EFCB6 /* ApplicationContextService.swift in Sources */,
 				7F9953DE0E3D298F11FC2E0E /* ApplicationLifecycleCoordinator.swift in Sources */,
+				39E06D90641080F2E20F7B5C /* AutomationWorkflowEditorView.swift in Sources */,
 				A5B2C39A822A7FEBDB129E2C /* BackendProcess.swift in Sources */,
 				8DF0CC82CB1CCC58D6EF0C05 /* BackendResponses.swift in Sources */,
 				03BC5D8CAF07F44D0618F330 /* BackendService.swift in Sources */,

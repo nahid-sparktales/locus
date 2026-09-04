@@ -222,7 +222,7 @@ def test_webhook_hmac_rejects_stale_and_modified_requests() -> None:
     assert not verify_webhook_signature("secret", timestamp, signature, body, now=1_700_001_000)
 
 
-def test_schema_ten_adds_price_state_without_losing_schedules(tmp_path) -> None:
+def test_schema_upgrade_adds_price_state_without_losing_schedules(tmp_path) -> None:
     path = tmp_path / "runs.sqlite3"
     store = RunStore(path)
     store.create_schedule(
@@ -261,7 +261,7 @@ def test_schema_ten_adds_price_state_without_losing_schedules(tmp_path) -> None:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert version == 10
+    assert version == 11
     assert {
         "connector_connections",
         "event_triggers",
@@ -270,7 +270,10 @@ def test_schema_ten_adds_price_state_without_losing_schedules(tmp_path) -> None:
     } <= tables
     with sqlite3.connect(path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(event_triggers)")}
-    assert {"trigger_kind", "runtime_state_json"} <= columns
+    assert {
+        "trigger_kind", "runtime_state_json", "workflow_json",
+        "runner", "team_id", "team_name",
+    } <= columns
 
 
 def test_schema_nine_event_trigger_rows_migrate_in_place(tmp_path) -> None:

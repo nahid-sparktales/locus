@@ -424,6 +424,7 @@ def _run_user_turn(
     mode: str = "work",
     reserved_run_id: str = "",
     solo_swarm_enabled: bool = True,
+    workflow_outputs: list[dict[str, Any]] | None = None,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
@@ -453,6 +454,12 @@ def _run_user_turn(
         execution_environment=environment,
     )
     svc.active_run_id = run_id
+    svc.core.tool_ctx.workflow_result = None
+    svc.core.tool_ctx.workflow_outputs = svc.core.tool_registry.set_workflow_outputs(
+        workflow_outputs
+    )
+    workflow_result_only = just_chat and bool(svc.core.tool_ctx.workflow_outputs)
+    svc.core.tool_registry.set_workflow_result_only(workflow_result_only)
     svc.core.tool_ctx.memory_session_id = svc.core.session.session_id
     svc.core.tool_ctx.memory_run_id = run_id
     run = svc.run_store.run(run_id) or {}
@@ -552,7 +559,7 @@ def _run_user_turn(
         svc.core.run_turn(
             text,
             svc.decide,
-            allow_tools=not just_chat,
+            allow_tools=not just_chat or workflow_result_only,
             attachments=attachments,
             persisted_user_metadata=persisted_metadata,
         )
@@ -578,6 +585,9 @@ def _run_user_turn(
         # ``turn_done`` persists the terminal boundary before this identity is
         # released. A process crash leaves the running record recoverable.
         svc.core.tool_registry.set_solo_swarm_enabled(False)
+        svc.core.tool_registry.set_workflow_outputs(None)
+        svc.core.tool_registry.set_workflow_result_only(False)
+        svc.core.tool_ctx.workflow_outputs = []
         svc.core.tool_ctx.delegate_read_only = None
         svc.active_solo_swarm = None
         svc.core.reset_system_message()
@@ -590,9 +600,14 @@ def _run_team_turn(
     text: str,
     manifest: dict[str, Any],
     attachments: list[dict[str, str]] | None = None,
+    workflow_outputs: list[dict[str, Any]] | None = None,
 ) -> None:
     """Run specialists, ordered permission-controlled writers, review, and synthesis."""
     core = svc.core
+    core.tool_ctx.workflow_result = None
+    core.tool_ctx.workflow_outputs = core.tool_registry.set_workflow_outputs(
+        workflow_outputs
+    )
     if isinstance(manifest.get("_resume"), dict):
         # Attachments are never persisted, so a resumed run cannot carry them.
         attachments = None
@@ -1109,6 +1124,7 @@ def _run_team_turn(
                 "state": task_state,
             })
         core._suppress_turn_done = False
+        core.tool_registry.set_workflow_outputs(None)
         core.end_steerable_turn()
         svc.active_orchestrator = None
         svc.active_team = None
@@ -1124,6 +1140,7 @@ def _run_team_turn(
                 "iteration_limit": core.last_turn_result.get("iteration_limit"),
             })
         svc.emit(terminal_event)
+        core.tool_ctx.workflow_outputs = []
         core._emit_info()
         svc.active_run_id = None
         core.tool_ctx.memory_run_id = ""
@@ -1940,6 +1957,14 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), str(exc))
             return
         team_manifest = msg.get("team")
+        workflow_outputs = msg.get("workflow_outputs")
+        if workflow_outputs is not None and (
+            not isinstance(workflow_outputs, list)
+            or not all(isinstance(item, dict) for item in workflow_outputs[:64])
+        ):
+            _command_error(svc, str(mtype), "The workflow output schema is malformed.")
+            return
+        workflow_outputs = workflow_outputs[:64] if isinstance(workflow_outputs, list) else None
         solo_swarm = msg.get("solo_swarm")
         if solo_swarm is not None and not isinstance(solo_swarm, dict):
             _command_error(svc, str(mtype), "The legacy Solo delegation setting is malformed.")
@@ -1964,15 +1989,20 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if text.startswith("/") and not just_chat:
             call, args = _run_slash, (svc, text)
         elif team_manifest is not None:
-            call, args = _run_team_turn, (svc, text, team_manifest, attachments)
+            call = _run_team_turn
+            args = (svc, text, team_manifest, attachments)
+            if workflow_outputs is not None:
+                args = (*args, workflow_outputs)
         else:
             reserved_run_id = str(msg.get("run_id") or "")
-            args = (svc, text, just_chat, attachments, agent_config, mode or "work")
             adaptive_solo = not just_chat and not text.startswith("/")
-            if reserved_run_id or adaptive_solo:
+            args = (svc, text, just_chat, attachments, agent_config, mode or "work")
+            if reserved_run_id or adaptive_solo or workflow_outputs is not None:
                 args = (*args, reserved_run_id)
-            if adaptive_solo:
-                args = (*args, True)
+            if adaptive_solo or workflow_outputs is not None:
+                args = (*args, adaptive_solo)
+            if workflow_outputs is not None:
+                args = (*args, workflow_outputs)
             call = _run_user_turn
         if not svc.start_turn(loop, call, *args):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")

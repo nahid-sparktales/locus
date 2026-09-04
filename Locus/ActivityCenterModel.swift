@@ -6,8 +6,16 @@ import Foundation
 /// AppModel.
 @MainActor
 final class ActivityCenterModel: ObservableObject {
+    enum Tab: String, CaseIterable, Identifiable {
+        case attention = "Attention"
+        case activity = "Activity"
+        var id: String { rawValue }
+    }
+
     @Published var activityCenterPresented = false
+    @Published var selectedTab: Tab = .activity
     @Published var activityRuns: [OrchestrationRun] = []
+    @Published private(set) var persistedAttentionItems: [AttentionItem] = []
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var acknowledgedWarningRunIDs: Set<String> = []
@@ -16,13 +24,28 @@ final class ActivityCenterModel: ObservableObject {
     private var persistenceEnabled = false
     private var defaults: UserDefaults = .standard
     private var toastHandler: (String) -> Void = { _ in }
+    private var liveAttentionProvider: () -> [AttentionItem] = { [] }
 
     var activityNeedsAttentionCount: Int {
-        let states = Set(["waiting_permission", "waiting_computer",
-                          "waiting_dispatch_approval", "paused", "interrupted", "failed"])
-        return visibleActivityRuns.filter {
-            states.contains($0.state) && activityIsUnseen($0)
-        }.count
+        attentionItems.count
+    }
+
+    var attentionItems: [AttentionItem] {
+        let live = liveAttentionProvider()
+        var seenKeys: Set<String> = []
+        var combined: [AttentionItem] = []
+        for item in live + persistedAttentionItems {
+            let key = item.runID.map { "run:\($0)" } ?? item.id
+            guard seenKeys.insert(key).inserted else { continue }
+            combined.append(item)
+        }
+        let groupOrder: [AttentionGroup: Int] = [
+            .decisions: 0, .recoveries: 1, .configuration: 2,
+        ]
+        return combined.sorted {
+            (groupOrder[$0.group, default: 3], $0.timestamp, $0.id)
+                < (groupOrder[$1.group, default: 3], $1.timestamp, $1.id)
+        }
     }
 
     var visibleActivityRuns: [OrchestrationRun] {
@@ -47,9 +70,11 @@ final class ActivityCenterModel: ObservableObject {
 
     func configure(
         backend: BackendService,
+        liveAttentionProvider: @escaping () -> [AttentionItem] = { [] },
         toastHandler: @escaping (String) -> Void
     ) {
         self.backend = backend
+        self.liveAttentionProvider = liveAttentionProvider
         self.toastHandler = toastHandler
     }
 
@@ -61,7 +86,13 @@ final class ActivityCenterModel: ObservableObject {
                 as: OrchestrationRunsResponse.self
             )
             activityRuns = response.runs
-            if activityCenterPresented { markAllActivitySeen() }
+            if activityCenterPresented, selectedTab == .activity { markAllActivitySeen() }
+            if let attention: AttentionResponse = try? await backend.get(
+                "/api/attention", query: [URLQueryItem(name: "limit", value: "500")],
+                as: AttentionResponse.self
+            ) {
+                persistedAttentionItems = attention.items
+            }
         } catch where announceFailure {
             toastHandler("Could not load activity: \(error.localizedDescription)")
         } catch {
@@ -71,13 +102,22 @@ final class ActivityCenterModel: ObservableObject {
     }
 
     func openActivityCenter() {
+        // Resolve the opening tab after the fresh inbox projection arrives.
+        // Starting on Attention prevents a cold first open from marking
+        // ordinary Activity as seen before we know whether blockers exist.
+        selectedTab = .attention
         activityCenterPresented = true
-        markAllActivitySeen()
         Task { @MainActor [weak self] in
             guard let self else { return }
             await refreshActivityRuns()
-            markAllActivitySeen()
+            selectedTab = attentionItems.isEmpty ? .activity : .attention
+            if selectedTab == .activity { markAllActivitySeen() }
         }
+    }
+
+    func selectTab(_ tab: Tab) {
+        selectedTab = tab
+        if tab == .activity { markAllActivitySeen() }
     }
 
     func toggleActivityCenter() {

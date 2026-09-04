@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+from ollama_code.api.event_triggers import trigger_create
+from ollama_code.api.schedules import schedule_create
 from ollama_code.capabilities import CAPABILITY_ENV, enabled, snapshot
 from ollama_code.extensions import ExtensionManager
 from ollama_code.tool_registry import ToolRegistry
@@ -26,3 +33,12 @@ def test_disabled_capabilities_remove_model_tools(tmp_path, monkeypatch):
     assert "search_extension_resources" not in names
     assert "load_extension_prompt" not in names
     assert "search_extension_tools" in names
+
+
+def test_disabled_workflow_capability_rejects_new_workflow_payloads(monkeypatch):
+    monkeypatch.setenv(CAPABILITY_ENV["automation_workflows_v1"], "false")
+    service = SimpleNamespace()
+    with pytest.raises(HTTPException, match="automation_workflows_v1"):
+        schedule_create(service, {"workflow": {"version": 1}})
+    with pytest.raises(HTTPException, match="automation_workflows_v1"):
+        trigger_create(service, {"runner": "team"})

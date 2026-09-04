@@ -1,5 +1,17 @@
 GET /api/health
 GET /api/provider
+GET /api/attention
+POST /api/attention/clear-unavailable
+POST /api/attention/{run_id}/clear
+GET /api/automation-executions
+GET /api/automation-executions/{execution_id}
+POST /api/automation-executions/{execution_id}/approve
+POST /api/automation-executions/{execution_id}/cancel
+POST /api/automation-executions/{execution_id}/complete-step
+POST /api/automation-executions/{execution_id}/reject
+POST /api/automation-executions/{execution_id}/retry
+POST /api/automation-workflows/simulate
+POST /api/automation-workflows/validate
 GET /api/context-snapshots
 PUT /api/context-snapshots/{snapshot_id}
 DELETE /api/context-snapshots/{snapshot_id}

@@ -634,6 +634,12 @@ class AgentCore:
             locked = JUST_CHAT_SYSTEM_PROMPT.format(
                 model_identity=self.model_identity_label()
             )
+            if self.tool_ctx.workflow_outputs:
+                locked += (
+                    "\n\nThis Ask-mode turn is an automation step with declared outputs. "
+                    "The only available tool is submit_workflow_result; call it exactly once "
+                    "with every declared field before ending the turn."
+                )
             project_context = None
         else:
             locked = BASE_SYSTEM_PROMPT.format(
@@ -3463,6 +3469,7 @@ class AgentCore:
                 "tool": tc.name,
                 "summary": summary,
                 "detail": detail,
+                "always_eligible": not force_confirmation,
                 "preview": {"summary": summary, "detail": detail},
                 **event_info,
             })

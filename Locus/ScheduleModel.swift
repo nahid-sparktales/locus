@@ -33,6 +33,7 @@ final class ScheduleModel: ObservableObject {
     private var openRun: (OrchestrationRun) -> Void = { _ in }
     private var notifyPaused: (String) -> Void = { _ in }
     private var toastHandler: (String) -> Void = { _ in }
+    private var supportsWorkflows: () -> Bool = { false }
 
     var nextScheduledTask: ScheduledTask? {
         scheduledTasks
@@ -52,7 +53,8 @@ final class ScheduleModel: ObservableObject {
         admitQueuedRun: @escaping (OrchestrationRun) async -> Void,
         openRun: @escaping (OrchestrationRun) -> Void,
         notifyPaused: @escaping (String) -> Void,
-        toastHandler: @escaping (String) -> Void
+        toastHandler: @escaping (String) -> Void,
+        supportsWorkflows: @escaping () -> Bool = { false }
     ) {
         self.backend = backend
         self.persistenceEnabled = persistenceEnabled
@@ -66,6 +68,7 @@ final class ScheduleModel: ObservableObject {
         self.openRun = openRun
         self.notifyPaused = notifyPaused
         self.toastHandler = toastHandler
+        self.supportsWorkflows = supportsWorkflows
     }
 
     /// UI-test fixtures need scheduled agents without a backend.
@@ -110,6 +113,14 @@ final class ScheduleModel: ObservableObject {
 
     func saveSchedule(_ draft: ScheduleEditorDraft) async -> Bool {
         guard let backend else { return false }
+        var workflow = draft.workflow
+        if workflow.steps.count == 1,
+           workflow.steps[0].type == .agent,
+           workflow.steps[0].instructionTemplate?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+           !draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            workflow.steps[0].instructionTemplate = draft.prompt
+            workflow.steps[0].mode = draft.mode
+        }
         guard let rule = encodedJSONObject(draft.rule()) else {
             toastHandler("The schedule rule could not be saved")
             return false
@@ -120,7 +131,7 @@ final class ScheduleModel: ObservableObject {
         }
         var body: [String: Any] = [
             "name": draft.name,
-            "prompt": draft.prompt,
+            "prompt": workflow.firstAgent?.instructionTemplate ?? draft.prompt,
             "workspace_root": draft.workspaceRoot,
             "mode": draft.mode.rawValue,
             "execution_environment": draft.executionEnvironment.rawValue,
@@ -130,6 +141,9 @@ final class ScheduleModel: ObservableObject {
             "timezone": draft.timezone,
             "rule": rule,
         ]
+        if supportsWorkflows(), let encodedWorkflow = encodedJSONObject(workflow) {
+            body["workflow"] = encodedWorkflow
+        }
         if draft.runner == .team {
             body["team_id"] = draft.teamID ?? ""
             body["team_name"] = draft.teamName
@@ -315,8 +329,8 @@ final class ScheduleModel: ObservableObject {
             if let schedule = response.schedule { replaceScheduledTask(schedule) }
             await refreshMetadata()
             await refreshActivity()
-            if response.run.state == "queued" {
-                await admitQueuedRun(response.run)
+            if let run = response.run, run.state == "queued" {
+                await admitQueuedRun(run)
             }
             if announceFailure {
                 toastHandler(response.claimed ? "Scheduled task queued" : "That run is already queued")

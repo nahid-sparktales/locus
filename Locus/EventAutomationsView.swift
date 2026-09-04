@@ -1199,6 +1199,8 @@ private struct PriceSecretDraft: Identifiable, Hashable {
 
 private struct EventTriggerEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var draft: EventTriggerEditorDraft
     @State private var connectionSheet: ConnectorKind?
     @ObservedObject var automation: EventAutomationModel
@@ -1334,28 +1336,57 @@ private struct EventTriggerEditorView: View {
                                 .foregroundStyle(LocusTheme.muted)
                         }
                     }
-                    Picker("Mode", selection: $draft.mode) {
-                        ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    if app.automationWorkflowsEnabled {
+                        AutomationWorkflowEditorView(
+                            workflow: $draft.workflow,
+                            connectors: workflowConnectorOptions
+                        )
+                    } else {
+                        Picker("Mode", selection: $draft.mode) {
+                            ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Instruction")
+                                .font(.locus(size: 9, weight: .semibold))
+                                .foregroundStyle(LocusTheme.textSecondary)
+                            TextEditor(text: $draft.instruction)
+                                .font(.locus(size: 10))
+                                .frame(minHeight: 110)
+                                .overlay(alignment: .topLeading) {
+                                    if draft.instruction.isEmpty {
+                                        Text("What should this agent do with each event?")
+                                            .font(.locus(size: 10))
+                                            .foregroundStyle(LocusTheme.muted)
+                                            .padding(.leading, 5)
+                                            .padding(.top, 8)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                                .accessibilityLabel("Instruction")
+                                .accessibilityIdentifier("eventTrigger.instruction")
+                        }
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Instruction")
-                            .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.textSecondary)
-                        TextEditor(text: $draft.instruction)
-                            .font(.locus(size: 10))
-                            .frame(minHeight: 110)
-                            .overlay(alignment: .topLeading) {
-                                if draft.instruction.isEmpty {
-                                    Text("What should this agent do with each event?")
-                                        .font(.locus(size: 10))
-                                        .foregroundStyle(LocusTheme.muted)
-                                        .padding(.leading, 5)
-                                        .padding(.top, 8)
-                                        .allowsHitTesting(false)
+                    if app.automationWorkflowsEnabled {
+                        Picker("Runner", selection: $draft.runner) {
+                            ForEach(ScheduleRunner.selectableCases) { runner in
+                                Text(runner.title).tag(runner)
+                            }
+                        }
+                        if draft.runner == .team {
+                            Picker("Team", selection: $draft.teamID) {
+                                Text("Choose a team").tag(String?.none)
+                                ForEach(agentTeams.agentTeams) { team in
+                                    Text(team.name).tag(Optional(team.id.uuidString))
                                 }
                             }
-                            .accessibilityLabel("Instruction")
-                            .accessibilityIdentifier("eventTrigger.instruction")
+                            .onChange(of: draft.teamID) { _, value in
+                                draft.teamName = value.flatMap { id in
+                                    agentTeams.agentTeams.first(where: {
+                                        $0.id.uuidString == id
+                                    })?.name
+                                } ?? ""
+                            }
+                        }
                     }
                     Text("This saved instruction is trusted configuration. Incoming bodies and JSON values are untrusted data and cannot alter permissions or this trigger.")
                         .font(.locus(size: 8))
@@ -1512,8 +1543,15 @@ private struct EventTriggerEditorView: View {
         if draft.targetSessionID.isEmpty {
             return "Choose where this agent's events arrive."
         }
-        if draft.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let instruction = app.automationWorkflowsEnabled
+            ? (draft.workflow.firstAgent?.instructionTemplate ?? "")
+            : draft.instruction
+        if instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Write what this agent should do with each event."
+        }
+        if app.automationWorkflowsEnabled, draft.runner == .team,
+           draft.teamID.flatMap(UUID.init(uuidString:)) == nil {
+            return "Choose the Team that handles each event."
         }
         if draft.triggerKind == .price {
             guard let threshold = draft.filters.priceCondition?.thresholdDecimal,
@@ -1530,6 +1568,13 @@ private struct EventTriggerEditorView: View {
             return draft.triggerKind == .price
                 ? [.priceFeed, .webhook].contains(connection.kind)
                 : connection.kind != .priceFeed
+        }
+    }
+
+    private var workflowConnectorOptions: [WorkflowConnectorOption] {
+        automation.connections.compactMap { connection in
+            guard draft.actionConnectionIDs.contains(connection.id) else { return nil }
+            return WorkflowConnectorOption(id: connection.id, name: connection.displayName)
         }
     }
 

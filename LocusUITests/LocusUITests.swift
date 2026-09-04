@@ -3518,19 +3518,34 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThanOrEqual(abs(destination.frame.midY - configureAgent.frame.midY), 2)
         XCTAssertGreaterThan(destination.frame.minX, configureAgent.frame.maxX)
         XCTAssertGreaterThan(destination.frame.minY, newChat.frame.maxY)
-        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
+        XCTAssertTrue(waitUntil {
+            "\(destination.value ?? "")".contains("1 needs attention")
+        })
         destination.click()
         XCTAssertTrue(anyElement("activity.center").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("configureAgent.sheet").exists)
+        // An unresolved recovery opens the new Attention inbox first. Merely
+        // viewing it must not resolve the item or mark Activity history seen.
+        XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Clear"].exists)
+        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
+
+        let activityTab = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Activity")
+        ).firstMatch
+        XCTAssertTrue(activityTab.waitForExistence(timeout: 3))
+        activityTab.click()
         XCTAssertTrue(anyElement("activity.run.seed-run").waitForExistence(timeout: 3))
         XCTAssertTrue(app.textViews["composer.input"].exists)
-        XCTAssertTrue("\(destination.value ?? "")".contains("No new activity"))
+        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
 
         destination.click()
         XCTAssertFalse(anyElement("activity.center").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
 
         destination.click()
+        XCTAssertTrue(activityTab.waitForExistence(timeout: 3))
+        activityTab.click()
         let remove = anyElement("activity.remove.seed-run")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
         // The activity center is a SwiftUI overlay. macOS 15 and 26 can mark
@@ -3539,6 +3554,25 @@ final class LocusUITests: XCTestCase {
         // path at the button's center and verify the resulting removal.
         remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
+        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
+    }
+
+    func testOrphanedRecoveryOffersIndividualAndBulkClear() {
+        relaunchWithRunFixture("orphaned-activity")
+
+        let destination = anyElement("sidebar.activity")
+        XCTAssertTrue(destination.waitForExistence(timeout: 3))
+        destination.click()
+
+        XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
+        let bulkClear = anyElement("attention.clearUnavailable")
+        XCTAssertTrue(
+            bulkClear.waitForExistence(timeout: 3)
+                || app.buttons["Clear Unavailable"].exists
+        )
+        XCTAssertTrue(app.buttons["Clear"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        XCTAssertFalse(app.buttons["Open Chat"].exists)
     }
 
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {

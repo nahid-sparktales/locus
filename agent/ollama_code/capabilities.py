@@ -18,6 +18,7 @@ CAPABILITY_ENV = {
     "browser": "LOCUS_CAPABILITY_BROWSER",
     "transcript_search": "LOCUS_CAPABILITY_TRANSCRIPT_SEARCH",
     "event_triggers": "LOCUS_CAPABILITY_EVENT_TRIGGERS",
+    "automation_workflows_v1": "LOCUS_CAPABILITY_AUTOMATION_WORKFLOWS_V1",
 }
 
 

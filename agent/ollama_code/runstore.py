@@ -21,6 +21,16 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .automation_workflows import (
+    WorkflowValidationError,
+    agent_prompt,
+    evaluate_condition,
+    implicit_workflow,
+    render_template,
+    step_by_id,
+    validate_step_result,
+    validate_workflow,
+)
 from .event_triggers import (
     MAX_PENDING_PER_TRIGGER,
     EventTriggerValidationError,
@@ -39,7 +49,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -138,6 +148,12 @@ class RunStore:
             pass
         self._lock = threading.RLock()
         self.read_only = False
+        disk_version = self._existing_schema_version()
+        if disk_version is not None and disk_version > SCHEMA_VERSION:
+            # A downgraded app must not even enter the write-capable
+            # initializer: CREATE IF NOT EXISTS and WAL pragmas are writes.
+            self.read_only = True
+            return
         try:
             self._initialize()
         except (OSError, sqlite3.DatabaseError) as exc:
@@ -150,6 +166,24 @@ class RunStore:
             self.path.chmod(0o600)
         except OSError:
             pass
+
+    def _existing_schema_version(self) -> int | None:
+        if not self.path.exists():
+            return None
+        try:
+            uri = f"file:{self.path}?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+                ).fetchone()
+                if exists is None:
+                    return None
+                row = connection.execute(
+                    "SELECT version FROM schema_meta WHERE singleton=1"
+                ).fetchone()
+                return int(row[0]) if row is not None else None
+        except (OSError, sqlite3.DatabaseError, ValueError, TypeError):
+            return None
 
     def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
         if readonly or self.read_only:
@@ -299,6 +333,11 @@ class RunStore:
             version = int(connection.execute(
                 "SELECT version FROM schema_meta WHERE singleton=1"
             ).fetchone()[0])
+            if version > SCHEMA_VERSION:
+                raise sqlite3.DatabaseError(
+                    f"run database schema {version} is newer than supported schema "
+                    f"{SCHEMA_VERSION}"
+                )
             if version < 3:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute("ALTER TABLE job_attempts ADD COLUMN provider TEXT")
@@ -543,6 +582,179 @@ class RunStore:
                     )
                 connection.execute("UPDATE schema_meta SET version=10 WHERE singleton=1")
                 connection.commit()
+            if version < 11:
+                connection.execute("BEGIN IMMEDIATE")
+                schedule_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(schedules)")
+                }
+                if "workflow_json" not in schedule_columns:
+                    connection.execute("ALTER TABLE schedules ADD COLUMN workflow_json TEXT")
+                trigger_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(event_triggers)")
+                }
+                if "workflow_json" not in trigger_columns:
+                    connection.execute("ALTER TABLE event_triggers ADD COLUMN workflow_json TEXT")
+                if "runner" not in trigger_columns:
+                    connection.execute(
+                        "ALTER TABLE event_triggers ADD COLUMN runner TEXT"
+                        " NOT NULL DEFAULT 'solo'"
+                    )
+                if "team_id" not in trigger_columns:
+                    connection.execute("ALTER TABLE event_triggers ADD COLUMN team_id TEXT")
+                if "team_name" not in trigger_columns:
+                    connection.execute("ALTER TABLE event_triggers ADD COLUMN team_name TEXT")
+                receipt_columns = {
+                    str(row[1])
+                    for row in connection.execute(
+                        "PRAGMA table_info(connector_action_receipts)"
+                    )
+                }
+                for statement in (
+                    "ALTER TABLE connector_action_receipts ADD COLUMN automation_execution_id TEXT",
+                    "ALTER TABLE connector_action_receipts ADD COLUMN workflow_step_id TEXT",
+                    "ALTER TABLE connector_action_receipts ADD COLUMN tool_call_id TEXT",
+                    "ALTER TABLE connector_action_receipts ADD COLUMN arguments_hash TEXT",
+                ):
+                    column = statement.split("ADD COLUMN ", 1)[1].split(" ", 1)[0]
+                    if column not in receipt_columns:
+                        connection.execute(statement)
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS automation_executions (
+                        id TEXT PRIMARY KEY,
+                        automation_kind TEXT NOT NULL,
+                        automation_id TEXT NOT NULL,
+                        occurrence_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        workflow_json TEXT NOT NULL,
+                        context_json TEXT NOT NULL DEFAULT '{}',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        current_step_id TEXT,
+                        current_run_id TEXT,
+                        error TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        completed_at REAL,
+                        UNIQUE(automation_kind, occurrence_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS automation_executions_automation_idx
+                        ON automation_executions(automation_kind, automation_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS automation_executions_state_idx
+                        ON automation_executions(state, updated_at);
+                    CREATE TABLE IF NOT EXISTS automation_step_attempts (
+                        execution_id TEXT NOT NULL REFERENCES automation_executions(id)
+                            ON DELETE CASCADE,
+                        step_id TEXT NOT NULL,
+                        attempt INTEGER NOT NULL,
+                        run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+                        state TEXT NOT NULL,
+                        result_json TEXT,
+                        error TEXT,
+                        started_at REAL,
+                        completed_at REAL,
+                        PRIMARY KEY(execution_id, step_id, attempt),
+                        UNIQUE(run_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS automation_step_attempts_run_idx
+                        ON automation_step_attempts(run_id);
+                    CREATE TABLE IF NOT EXISTS automation_approvals (
+                        id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL REFERENCES automation_executions(id)
+                            ON DELETE CASCADE,
+                        step_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        explanation TEXT NOT NULL,
+                        approve_step_id TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        resolved_at REAL,
+                        UNIQUE(execution_id, step_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS automation_approvals_waiting_idx
+                        ON automation_approvals(state, created_at);
+                    CREATE TABLE IF NOT EXISTS automation_session_leases (
+                        session_id TEXT PRIMARY KEY,
+                        execution_id TEXT NOT NULL UNIQUE
+                            REFERENCES automation_executions(id) ON DELETE CASCADE,
+                        acquired_at REAL NOT NULL
+                    );
+                    """
+                )
+                connection.execute("UPDATE schema_meta SET version=11 WHERE singleton=1")
+                connection.commit()
+            # A model turn that died with the previous app process is never
+            # silently replayed. Keep the session lease and make the exact
+            # step explicitly retryable in Attention.
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
+                " WHERE state IN ('advancing','awaiting_run')",
+                (
+                    "The app stopped between workflow steps. Retry this step when ready.",
+                    time.time(),
+                ),
+            )
+            interrupted = connection.execute(
+                """
+                SELECT attempts.execution_id, attempts.step_id, attempts.attempt,
+                       attempts.run_id, COALESCE(runs.owner_pid, 0) AS owner_pid
+                FROM automation_step_attempts AS attempts
+                JOIN automation_executions AS executions
+                  ON executions.id=attempts.execution_id
+                LEFT JOIN runs ON runs.id=attempts.run_id
+                WHERE attempts.state IN ('running', 'dispatching')
+                  AND executions.state='running'
+                """
+            ).fetchall()
+            for attempt in interrupted:
+                if _alive(int(attempt["owner_pid"] or 0)):
+                    continue
+                connection.execute(
+                    "UPDATE automation_step_attempts SET state='failed', error=?,"
+                    " completed_at=? WHERE execution_id=? AND step_id=? AND attempt=?",
+                    (
+                        "The app stopped while this step was running. Retry it when ready.",
+                        time.time(), attempt["execution_id"], attempt["step_id"],
+                        attempt["attempt"],
+                    ),
+                )
+                connection.execute(
+                    "UPDATE automation_executions SET state='failed', error=?,"
+                    " updated_at=? WHERE id=?",
+                    (
+                        "The app stopped while this step was running. Retry it when ready.",
+                        time.time(), attempt["execution_id"],
+                    ),
+                )
+            queued_workflow_runs = connection.execute(
+                "SELECT id, manifest_json FROM runs WHERE state='queued'"
+            ).fetchall()
+            for queued in queued_workflow_runs:
+                try:
+                    manifest = json.loads(queued["manifest_json"] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                execution_id = str(manifest.get("workflow_execution_id") or "")
+                if not execution_id:
+                    continue
+                bound = connection.execute(
+                    "SELECT 1 FROM automation_step_attempts"
+                    " WHERE execution_id=? AND run_id=? LIMIT 1",
+                    (execution_id, queued["id"]),
+                ).fetchone()
+                if bound is None:
+                    connection.execute(
+                        "UPDATE runs SET state='cancelled', recoverable=0,"
+                        " recovery_reason=?, completed_at=?, updated_at=? WHERE id=?",
+                        (
+                            "The app stopped before this workflow run was attached to its step.",
+                            time.time(), time.time(), queued["id"],
+                        ),
+                    )
+            connection.commit()
             # Dispatch claims and run creation intentionally use separate
             # transactions. A crash between them is therefore recoverable:
             # link a run that was already created, otherwise make the event
@@ -616,7 +828,6 @@ class RunStore:
                     now, now, now if terminal else None,
                 ),
             )
-
     def mcp_tasks(self, *, run_id: str = "", nonterminal: bool = False) -> list[dict[str, Any]]:
         clauses: list[str] = []
         values: list[Any] = []
@@ -726,6 +937,21 @@ class RunStore:
                     scheduled_for,
                 ),
             )
+            workflow_execution_id = str(
+                safe_manifest.get("workflow_execution_id") or ""
+            ) if isinstance(safe_manifest, dict) else ""
+            workflow_step_id = str(
+                safe_manifest.get("workflow_step_id") or ""
+            ) if isinstance(safe_manifest, dict) else ""
+            if workflow_execution_id and workflow_step_id and state in {
+                "running", "dispatching",
+            }:
+                connection.execute(
+                    "UPDATE automation_step_attempts SET state='running', started_at=?"
+                    " WHERE execution_id=? AND step_id=? AND run_id=?"
+                    " AND state IN ('queued','dispatching')",
+                    (now, workflow_execution_id, workflow_step_id, run_id),
+                )
 
     def mark_export(
         self, run_id: str, state: str, *, attempts: int = 0,
@@ -1115,6 +1341,11 @@ class RunStore:
 
     @staticmethod
     def _event_trigger_row(row: sqlite3.Row) -> dict[str, Any]:
+        stored_workflow = (
+            json.loads(row["workflow_json"])
+            if "workflow_json" in row.keys() and row["workflow_json"]
+            else None
+        )
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1122,6 +1353,9 @@ class RunStore:
             "target_session_id": row["target_session_id"],
             "instruction": row["instruction"],
             "mode": row["mode"],
+            "runner": row["runner"],
+            "team_id": row["team_id"],
+            "team_name": row["team_name"],
             "trigger_kind": row["trigger_kind"],
             "filters": json.loads(row["filters_json"] or "{}"),
             "runtime_state": json.loads(row["runtime_state_json"] or "{}"),
@@ -1134,6 +1368,10 @@ class RunStore:
             "last_event_at": row["last_event_at"],
             "last_run_id": row["last_run_id"],
             "last_error": row["last_error"],
+            "workflow": stored_workflow or implicit_workflow(
+                str(row["instruction"]), str(row["mode"])
+            ),
+            "workflow_persisted": stored_workflow is not None,
         }
 
     @staticmethod
@@ -1319,10 +1557,39 @@ class RunStore:
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
+        workflow_value = value.get("workflow")
+        runner = str(value.get("runner") or "solo")
+        team_id = str(value.get("team_id") or "") or None
+        team_name = " ".join(str(value.get("team_name") or "").split())[:120] or None
+        if runner not in {"solo", "team"}:
+            raise RunStoreError("event trigger runner must be solo or team")
+        if runner == "team" and not team_id:
+            raise RunStoreError("event trigger Team runner requires a team")
+        if runner == "solo":
+            team_id = team_name = None
         try:
-            normalized = normalize_trigger(value)
+            workflow = (
+                validate_workflow(
+                    workflow_value,
+                    allowed_connection_ids={
+                        str(item) for item in value.get("action_connection_ids", [])
+                    },
+                )
+                if workflow_value is not None else None
+            )
+            prepared = dict(value)
+            if workflow is not None:
+                first_agent = next(
+                    step for step in workflow["steps"] if step["type"] == "agent"
+                )
+                prepared["instruction"] = first_agent["instruction_template"]
+                prepared["mode"] = first_agent["mode"]
+            normalized = normalize_trigger(prepared)
         except EventTriggerValidationError as exc:
             raise RunStoreError(str(exc)) from exc
+        except (WorkflowValidationError, StopIteration) as exc:
+            message = str(exc) or "workflow must contain an Agent step"
+            raise RunStoreError(message) from exc
         source_connection = self.connector_connection(normalized["connection_id"])
         if source_connection is None:
             raise RunStoreError("connector connection not found")
@@ -1348,7 +1615,12 @@ class RunStore:
                 "name", "connection_id", "target_session_id", "instruction", "mode",
                 "trigger_kind", "filters", "action_connection_ids", "enabled",
             )
-            if all(existing.get(key) == normalized.get(key) for key in definition_fields):
+            if (all(existing.get(key) == normalized.get(key) for key in definition_fields)
+                    and existing.get("runner") == runner
+                    and existing.get("team_id") == team_id
+                    and existing.get("team_name") == team_name
+                    and existing.get("workflow_persisted") == (workflow is not None)
+                    and (workflow is None or existing.get("workflow") == workflow)):
                 return existing
             raise RunStoreError("an event trigger with that id already exists")
         created = float(now if now is not None else time.time())
@@ -1358,17 +1630,19 @@ class RunStore:
                     """
                     INSERT INTO event_triggers(
                         id, name, connection_id, target_session_id, instruction,
-                        mode, trigger_kind, filters_json, runtime_state_json,
-                        action_connection_ids_json, enabled,
+                        mode, runner, team_id, team_name, trigger_kind, filters_json, runtime_state_json,
+                        action_connection_ids_json, workflow_json, enabled,
                         created_at, updated_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?)
                     """,
                     (
                         trigger_id, normalized["name"], normalized["connection_id"],
                         normalized["target_session_id"], normalized["instruction"],
-                        normalized["mode"], normalized["trigger_kind"],
+                        normalized["mode"], runner, team_id, team_name,
+                        normalized["trigger_kind"],
                         _json(normalized["filters"]),
                         _json(normalized["action_connection_ids"]),
+                        _json(workflow) if workflow is not None else None,
                         int(normalized["enabled"]), created, created,
                     ),
                 )
@@ -1386,17 +1660,50 @@ class RunStore:
             raise RunStoreError("event trigger not found")
         allowed = {
             "name", "connection_id", "target_session_id", "instruction", "mode",
-            "trigger_kind", "filters", "action_connection_ids", "enabled",
+            "trigger_kind", "filters", "action_connection_ids", "enabled", "workflow",
+            "runner", "team_id", "team_name",
         }
         unknown = set(updates) - allowed
         if unknown:
             raise RunStoreError(f"unknown trigger field: {sorted(unknown)[0]}")
-        merged = {key: existing[key] for key in allowed}
+        merged = {key: existing[key] for key in allowed if key != "workflow"}
         merged.update(updates)
+        runner = str(merged.get("runner") or "solo")
+        team_id = str(merged.get("team_id") or "") or None
+        team_name = " ".join(str(merged.get("team_name") or "").split())[:120] or None
+        if runner not in {"solo", "team"}:
+            raise RunStoreError("event trigger runner must be solo or team")
+        if runner == "team" and not team_id:
+            raise RunStoreError("event trigger Team runner requires a team")
+        if runner == "solo":
+            team_id = team_name = None
+        workflow_value = (
+            updates.get("workflow")
+            if "workflow" in updates
+            else existing.get("workflow") if existing.get("workflow_persisted") else None
+        )
         try:
+            workflow = (
+                validate_workflow(
+                    workflow_value,
+                    allowed_connection_ids={
+                        str(item) for item in merged.get("action_connection_ids", [])
+                    },
+                )
+                if workflow_value is not None else None
+            )
+            if workflow is not None:
+                first_agent = next(
+                    step for step in workflow["steps"] if step["type"] == "agent"
+                )
+                merged["instruction"] = first_agent["instruction_template"]
+                merged["mode"] = first_agent["mode"]
             normalized = normalize_trigger(merged)
         except EventTriggerValidationError as exc:
             raise RunStoreError(str(exc)) from exc
+        except (WorkflowValidationError, StopIteration) as exc:
+            message = str(exc) or "workflow must contain an Agent step"
+            raise RunStoreError(message) from exc
         source_connection = self.connector_connection(normalized["connection_id"])
         if source_connection is None:
             raise RunStoreError("connector connection not found")
@@ -1418,17 +1725,20 @@ class RunStore:
             connection.execute(
                 """
                 UPDATE event_triggers SET name=?, connection_id=?, target_session_id=?,
-                    instruction=?, mode=?, trigger_kind=?, filters_json=?,
-                    action_connection_ids_json=?, enabled=?, updated_at=?,
+                    instruction=?, mode=?, runner=?, team_id=?, team_name=?, trigger_kind=?, filters_json=?,
+                    action_connection_ids_json=?, workflow_json=?, enabled=?, updated_at=?,
                     last_error=CASE WHEN ? THEN NULL ELSE last_error END
                 WHERE id=?
                 """,
                 (
                     normalized["name"], normalized["connection_id"],
                     normalized["target_session_id"], normalized["instruction"],
-                    normalized["mode"], normalized["trigger_kind"],
+                    normalized["mode"], runner, team_id, team_name,
+                    normalized["trigger_kind"],
                     _json(normalized["filters"]),
-                    _json(normalized["action_connection_ids"]), int(normalized["enabled"]),
+                    _json(normalized["action_connection_ids"]),
+                    _json(workflow) if workflow is not None else None,
+                    int(normalized["enabled"]),
                     current, int(normalized["enabled"] and not existing["enabled"]),
                     trigger_id,
                 ),
@@ -1736,7 +2046,11 @@ class RunStore:
                 " ('completed','failed','interrupted','cancelled','discarded') LIMIT 1",
                 (session_id,),
             ).fetchone()
-            if active is not None:
+            workflow_lease = connection.execute(
+                "SELECT 1 FROM automation_session_leases WHERE session_id=? LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if active is not None or workflow_lease is not None:
                 raise RunStoreError("the target chat is busy")
             attempt = int(row["attempt"] or 0)
             run_id = uuid.uuid5(
@@ -1758,8 +2072,8 @@ class RunStore:
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
-        if state not in {"queued", "failed"}:
-            raise RunStoreError("event dispatch state must be queued or failed")
+        if state not in {"queued", "failed", "completed", "cancelled"}:
+            raise RunStoreError("event dispatch state is invalid")
         current = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -1889,11 +2203,17 @@ class RunStore:
             "tool_name": row["tool_name"],
             "result": json.loads(row["result_json"] or "{}"),
             "created_at": row["created_at"],
+            "automation_execution_id": row["automation_execution_id"],
+            "workflow_step_id": row["workflow_step_id"],
+            "tool_call_id": row["tool_call_id"],
+            "arguments_hash": row["arguments_hash"],
         }
 
     def record_connector_action_receipt(
         self, idempotency_key: str, *, event_delivery_id: str,
         tool_name: str, result: dict[str, Any], now: float | None = None,
+        automation_execution_id: str = "", workflow_step_id: str = "",
+        tool_call_id: str = "", arguments_hash: str = "",
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
@@ -1903,21 +2223,721 @@ class RunStore:
         with self._lock, self._connect() as connection:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO connector_action_receipts(
-                    idempotency_key, event_delivery_id, tool_name, result_json, created_at
-                ) VALUES(?, NULLIF(?, ''), ?, ?, ?)
+                INSERT INTO connector_action_receipts(
+                    idempotency_key, event_delivery_id, tool_name, result_json, created_at,
+                    automation_execution_id, workflow_step_id, tool_call_id, arguments_hash
+                ) VALUES(?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?, ?)
+                ON CONFLICT(idempotency_key) DO UPDATE SET
+                    automation_execution_id=COALESCE(
+                        connector_action_receipts.automation_execution_id,
+                        excluded.automation_execution_id
+                    ),
+                    workflow_step_id=CASE
+                        WHEN connector_action_receipts.workflow_step_id IS NULL
+                          OR connector_action_receipts.workflow_step_id=''
+                        THEN excluded.workflow_step_id
+                        ELSE connector_action_receipts.workflow_step_id END,
+                    tool_call_id=CASE
+                        WHEN connector_action_receipts.tool_call_id IS NULL
+                          OR connector_action_receipts.tool_call_id=''
+                        THEN excluded.tool_call_id
+                        ELSE connector_action_receipts.tool_call_id END,
+                    arguments_hash=CASE
+                        WHEN connector_action_receipts.arguments_hash IS NULL
+                          OR connector_action_receipts.arguments_hash=''
+                        THEN excluded.arguments_hash
+                        ELSE connector_action_receipts.arguments_hash END
                 """,
                 (
                     idempotency_key, event_delivery_id, tool_name[:160],
-                    _json(sanitize_event(result)), created,
+                    _json(sanitize_event(result)), created, automation_execution_id,
+                    workflow_step_id[:64], tool_call_id[:160], arguments_hash[:64],
                 ),
             )
         return self.connector_action_receipt(idempotency_key) or {}
+
+    # ---------------------------------------------------- automation workflows
+
+    @staticmethod
+    def _automation_execution_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "automation_kind": row["automation_kind"],
+            "automation_id": row["automation_id"],
+            "occurrence_id": row["occurrence_id"],
+            "session_id": row["session_id"],
+            "state": row["state"],
+            "workflow": json.loads(row["workflow_json"] or "{}"),
+            "context": json.loads(row["context_json"] or "{}"),
+            "settings": json.loads(row["settings_json"] or "{}"),
+            "current_step_id": row["current_step_id"],
+            "current_run_id": row["current_run_id"],
+            "error": row["error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "completed_at": row["completed_at"],
+        }
+
+    @staticmethod
+    def _automation_attempt_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "execution_id": row["execution_id"],
+            "step_id": row["step_id"],
+            "attempt": int(row["attempt"]),
+            "run_id": row["run_id"],
+            "state": row["state"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "error": row["error"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+        }
+
+    @staticmethod
+    def _automation_approval_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "execution_id": row["execution_id"],
+            "step_id": row["step_id"],
+            "state": row["state"],
+            "title": row["title"],
+            "explanation": row["explanation"],
+            "approve_step_id": row["approve_step_id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "resolved_at": row["resolved_at"],
+        }
+
+    def automation_execution(
+        self, execution_id: str, *, include_details: bool = True
+    ) -> dict[str, Any] | None:
+        with self._lock, self._connect(readonly=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM automation_executions WHERE id=?", (execution_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            value = self._automation_execution_row(row)
+            if include_details:
+                attempts = connection.execute(
+                    "SELECT * FROM automation_step_attempts WHERE execution_id=?"
+                    " ORDER BY COALESCE(started_at, completed_at), step_id, attempt",
+                    (execution_id,),
+                ).fetchall()
+                approvals = connection.execute(
+                    "SELECT * FROM automation_approvals WHERE execution_id=?"
+                    " ORDER BY created_at, step_id",
+                    (execution_id,),
+                ).fetchall()
+                value["attempts"] = [self._automation_attempt_row(item) for item in attempts]
+                value["approvals"] = [self._automation_approval_row(item) for item in approvals]
+        return value
+
+    def automation_executions(
+        self, *, automation_kind: str = "", automation_id: str = "", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if automation_kind:
+            clauses.append("automation_kind=?")
+            values.append(automation_kind)
+        if automation_id:
+            clauses.append("automation_id=?")
+            values.append(automation_id)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        bounded = max(1, min(int(limit), 500))
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT * FROM automation_executions" + where
+                + " ORDER BY created_at DESC LIMIT ?", (*values, bounded),
+            ).fetchall()
+        return [self._automation_execution_row(row) for row in rows]
+
+    def attention_items(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Project unresolved action state without creating a second inbox store."""
+        bounded = max(1, min(int(limit), 1_000))
+        items: list[dict[str, Any]] = []
+        workflow_run_ids: set[str] = set()
+        with self._lock, self._connect(readonly=True) as connection:
+            approvals = connection.execute(
+                """
+                SELECT a.*, e.session_id, e.automation_kind, e.automation_id,
+                       e.current_run_id
+                FROM automation_approvals a
+                JOIN automation_executions e ON e.id=a.execution_id
+                WHERE a.state='waiting' AND e.state='waiting_approval'
+                ORDER BY a.created_at
+                """
+            ).fetchall()
+            for row in approvals:
+                if row["current_run_id"]:
+                    workflow_run_ids.add(str(row["current_run_id"]))
+                items.append({
+                    "id": f"workflow-approval:{row['id']}",
+                    "kind": "workflow_approval", "group": "decisions",
+                    "session_id": row["session_id"], "run_id": row["current_run_id"],
+                    "workflow_execution_id": row["execution_id"],
+                    "workflow_step_id": row["step_id"],
+                    "automation_kind": row["automation_kind"],
+                    "automation_id": row["automation_id"],
+                    "title": row["title"], "detail": row["explanation"],
+                    "timestamp": row["created_at"], "actions": ["approve", "reject"],
+                })
+            failures = connection.execute(
+                "SELECT * FROM automation_executions WHERE state='failed'"
+                " ORDER BY updated_at"
+            ).fetchall()
+            for row in failures:
+                run_id = str(row["current_run_id"] or "")
+                if run_id:
+                    workflow_run_ids.add(run_id)
+                items.append({
+                    "id": f"workflow-failure:{row['id']}",
+                    "kind": "workflow_failure", "group": "recoveries",
+                    "session_id": row["session_id"], "run_id": run_id or None,
+                    "workflow_execution_id": row["id"],
+                    "workflow_step_id": row["current_step_id"],
+                    "automation_kind": row["automation_kind"],
+                    "automation_id": row["automation_id"],
+                    "title": "Workflow step failed",
+                    "detail": row["error"] or "This step can be retried.",
+                    "timestamp": row["updated_at"], "actions": ["retry", "cancel"],
+                })
+
+            completed_questions = connection.execute(
+                """
+                SELECT events.event_id, events.occurred_at, events.payload_json,
+                       runs.id AS run_id, runs.session_id
+                FROM run_events AS events
+                JOIN runs ON runs.id=events.run_id
+                WHERE events.type='question_ready'
+                  AND runs.state IN ('completed','failed','interrupted','cancelled')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM runs AS later
+                      WHERE later.session_id=runs.session_id
+                        AND later.created_at > events.occurred_at
+                  )
+                ORDER BY events.occurred_at
+                """
+            ).fetchall()
+            for row in completed_questions:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                question = payload.get("question")
+                if not isinstance(question, dict):
+                    continue
+                question_id = str(question.get("id") or row["event_id"])
+                items.append({
+                    "id": f"completed-question:{row['session_id']}:{question_id}",
+                    "kind": "completed_question", "group": "decisions",
+                    "session_id": row["session_id"], "run_id": row["run_id"],
+                    "workflow_execution_id": None, "workflow_step_id": None,
+                    "automation_kind": None, "automation_id": None,
+                    "title": str(question.get("title") or "Agent question"),
+                    "detail": str(question.get("question") or "An answer is required."),
+                    "timestamp": row["occurred_at"],
+                    "actions": ["answer", "open_chat"], "request": question,
+                })
+
+            states = (
+                "waiting_permission", "waiting_computer", "waiting_dispatch_approval",
+                "paused", "interrupted", "failed",
+            )
+            placeholders = ",".join("?" for _ in states)
+            runs = connection.execute(
+                f"SELECT * FROM runs WHERE state IN ({placeholders}) ORDER BY updated_at",
+                states,
+            ).fetchall()
+            for row in runs:
+                run_id = str(row["id"])
+                if run_id in workflow_run_ids:
+                    continue
+                state = str(row["state"])
+                payload: dict[str, Any] = {}
+                relevant = {
+                    "waiting_permission": (
+                        "permission_request", "question_required",
+                    ),
+                    "waiting_computer": ("computer_action_request",),
+                    "waiting_dispatch_approval": ("dispatch_plan_ready",),
+                }.get(state, ())
+                if relevant:
+                    marks = ",".join("?" for _ in relevant)
+                    event = connection.execute(
+                        f"SELECT payload_json FROM run_events WHERE run_id=?"
+                        f" AND type IN ({marks}) ORDER BY seq DESC LIMIT 1",
+                        (run_id, *relevant),
+                    ).fetchone()
+                    if event is not None:
+                        try:
+                            payload = json.loads(event["payload_json"] or "{}")
+                        except (TypeError, ValueError):
+                            payload = {}
+                if state == "waiting_permission" and payload.get("type") == "question_required":
+                    kind, title = "structured_question", "Agent question"
+                    questions = payload.get("questions")
+                    first = questions[0] if isinstance(questions, list) and questions else {}
+                    detail = str(first.get("question") or "An answer is required.")
+                    actions = ["answer", "open_chat"]
+                elif state == "waiting_permission":
+                    kind, title = "permission_request", "Permission requested"
+                    tool = str(payload.get("tool") or "tool")
+                    target = str(payload.get("detail") or payload.get("summary") or "")
+                    detail = f"{tool}: {target}" if target else tool
+                    actions = ["allow_once"]
+                    if payload.get("always_eligible") is not False:
+                        actions.append("always_allow")
+                    actions.extend(["deny", "open_chat"])
+                elif state == "waiting_computer":
+                    kind, title = "computer_control", "Computer Control requested"
+                    detail = str(payload.get("detail") or "Open the chat to continue safely.")
+                    actions = ["open_chat"]
+                elif state == "waiting_dispatch_approval":
+                    kind, title = "team_plan", "Team plan ready for review"
+                    detail, actions = "Open the chat to review the full plan.", ["open_chat"]
+                else:
+                    kind, title = "recoverable_run", "Work needs recovery"
+                    detail = str(row["recovery_reason"] or f"The run is {state.replace('_', ' ')}.")
+                    actions = (["resume", "open_chat", "clear"] if state == "paused"
+                               and str(row["run_kind"]) == "team"
+                               else ["retry", "open_chat", "clear"])
+                items.append({
+                    "id": f"run:{run_id}", "kind": kind,
+                    "group": "decisions" if state.startswith("waiting_") else "recoveries",
+                    "session_id": row["session_id"], "run_id": run_id,
+                    "workflow_execution_id": None, "workflow_step_id": None,
+                    "automation_kind": None, "automation_id": None,
+                    "title": title, "detail": detail,
+                    "timestamp": row["updated_at"], "actions": actions,
+                    "request": payload,
+                })
+
+            schedules = connection.execute(
+                "SELECT id, name, last_error, updated_at FROM schedules"
+                " WHERE last_error IS NOT NULL AND last_error!=''"
+            ).fetchall()
+            for row in schedules:
+                items.append({
+                    "id": f"schedule-warning:{row['id']}",
+                    "kind": "schedule_warning", "group": "configuration",
+                    "session_id": None, "run_id": None,
+                    "workflow_execution_id": None, "workflow_step_id": None,
+                    "automation_kind": "schedule", "automation_id": row["id"],
+                    "title": f"{row['name']} needs configuration",
+                    "detail": row["last_error"], "timestamp": row["updated_at"],
+                    "actions": ["clear_warning", "open_configuration"],
+                })
+            triggers = connection.execute(
+                "SELECT id, name, target_session_id, last_run_id, last_error, updated_at"
+                " FROM event_triggers WHERE deleted=0"
+                " AND last_error IS NOT NULL AND last_error!=''"
+            ).fetchall()
+            for row in triggers:
+                items.append({
+                    "id": f"event-warning:{row['id']}",
+                    "kind": "event_warning", "group": "configuration",
+                    "session_id": row["target_session_id"], "run_id": row["last_run_id"],
+                    "workflow_execution_id": None, "workflow_step_id": None,
+                    "automation_kind": "event", "automation_id": row["id"],
+                    "title": f"{row['name']} needs configuration",
+                    "detail": row["last_error"], "timestamp": row["updated_at"],
+                    "actions": ["clear_warning", "open_configuration"],
+                })
+        detail_priority = {
+            "permission_request": 0, "structured_question": 0,
+            "completed_question": 0, "computer_control": 0, "team_plan": 0,
+            "workflow_approval": 0, "workflow_failure": 1,
+            "recoverable_run": 2, "schedule_warning": 3, "event_warning": 3,
+        }
+        deduplicated: dict[str, dict[str, Any]] = {}
+        for item in items:
+            run_id = str(item.get("run_id") or "")
+            key = f"run:{run_id}" if run_id else str(item["id"])
+            existing = deduplicated.get(key)
+            if existing is None or detail_priority.get(str(item["kind"]), 4) < \
+                    detail_priority.get(str(existing["kind"]), 4):
+                deduplicated[key] = item
+        items = list(deduplicated.values())
+        group_order = {"decisions": 0, "recoveries": 1, "configuration": 2}
+        items.sort(key=lambda item: (
+            group_order.get(str(item.get("group")), 3),
+            float(item.get("timestamp") or 0), str(item.get("id") or ""),
+        ))
+        return items[:bounded]
+
+    def create_automation_execution(
+        self, *, automation_kind: str, automation_id: str, occurrence_id: str,
+        session_id: str, workflow: dict[str, Any], trigger: dict[str, Any],
+        settings: dict[str, Any], execution_id: str = "", now: float | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        if automation_kind not in {"schedule", "event"}:
+            raise RunStoreError("automation kind must be schedule or event")
+        try:
+            normalized = validate_workflow(workflow)
+        except WorkflowValidationError as exc:
+            raise RunStoreError(str(exc)) from exc
+        if not session_id:
+            raise RunStoreError("automation execution requires a session")
+        execution_id = execution_id or uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"locus:automation:{automation_kind}:{occurrence_id}",
+        ).hex
+        created = float(now if now is not None else time.time())
+        safe_context = sanitize_event({"trigger": trigger, "steps": {}})
+        safe_settings = sanitize_event(settings)
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            duplicate = connection.execute(
+                "SELECT * FROM automation_executions"
+                " WHERE automation_kind=? AND occurrence_id=?",
+                (automation_kind, occurrence_id),
+            ).fetchone()
+            if duplicate is not None:
+                connection.commit()
+                return self._automation_execution_row(duplicate), False
+            lease = connection.execute(
+                "SELECT execution_id FROM automation_session_leases WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if lease is not None:
+                raise RunStoreError("the automation chat is waiting for an earlier workflow")
+            connection.execute(
+                """
+                INSERT INTO automation_executions(
+                    id, automation_kind, automation_id, occurrence_id, session_id,
+                    state, workflow_json, context_json, settings_json,
+                    current_step_id, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, 'advancing', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_id, automation_kind, automation_id, occurrence_id,
+                    session_id, _json(normalized), _json(safe_context),
+                    _json(safe_settings), normalized["entry_step_id"], created, created,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO automation_session_leases(session_id, execution_id, acquired_at)"
+                " VALUES(?, ?, ?)",
+                (session_id, execution_id, created),
+            )
+            connection.commit()
+        execution = self.automation_execution(execution_id)
+        if execution is None:
+            raise RunStoreError("automation execution could not be created")
+        return execution, True
+
+    def advance_automation_execution(self, execution_id: str) -> dict[str, Any]:
+        """Evaluate zero or more deterministic steps and stop at an Agent/Approval."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        for _ in range(21):
+            execution = self.automation_execution(execution_id, include_details=False)
+            if execution is None:
+                raise RunStoreError("automation execution not found")
+            if execution["state"] in {"completed", "cancelled"}:
+                return {"action": "finished", "execution": execution}
+            if execution["state"] not in {"advancing", "awaiting_run"}:
+                raise RunStoreError("automation execution is not ready to advance")
+            step_id = str(execution.get("current_step_id") or "")
+            if not step_id:
+                return self._finish_automation_execution(execution_id, "completed")
+            try:
+                step = step_by_id(execution["workflow"], step_id)
+                context = execution["context"]
+                if step["type"] == "agent":
+                    prompt = agent_prompt(step, context)
+                    with self._lock, self._connect() as connection:
+                        connection.execute(
+                            "UPDATE automation_executions SET state='awaiting_run',"
+                            " error=NULL, updated_at=? WHERE id=? AND state IN"
+                            " ('advancing','awaiting_run')",
+                            (time.time(), execution_id),
+                        )
+                    return {
+                        "action": "run_agent", "execution": self.automation_execution(execution_id),
+                        "step": step, "prompt": prompt,
+                    }
+                if step["type"] == "approval":
+                    explanation = render_template(step["explanation_template"], context)
+                    approval_id = uuid.uuid5(
+                        uuid.NAMESPACE_URL, f"locus:approval:{execution_id}:{step_id}"
+                    ).hex
+                    now = time.time()
+                    with self._lock, self._connect() as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        connection.execute(
+                            """
+                            INSERT INTO automation_approvals(
+                                id, execution_id, step_id, state, title, explanation,
+                                approve_step_id, created_at, updated_at
+                            ) VALUES(?, ?, ?, 'waiting', ?, ?, ?, ?, ?)
+                            ON CONFLICT(execution_id, step_id) DO UPDATE SET
+                                title=excluded.title, explanation=excluded.explanation,
+                                approve_step_id=excluded.approve_step_id,
+                                updated_at=excluded.updated_at
+                            """,
+                            (
+                                approval_id, execution_id, step_id, step["title"],
+                                explanation, step.get("approve_step_id"), now, now,
+                            ),
+                        )
+                        connection.execute(
+                            "UPDATE automation_executions SET state='waiting_approval',"
+                            " current_run_id=NULL, updated_at=? WHERE id=?",
+                            (now, execution_id),
+                        )
+                        connection.commit()
+                    return {
+                        "action": "wait_for_approval",
+                        "execution": self.automation_execution(execution_id),
+                    }
+                outcome = evaluate_condition(step, context)
+                next_step = step.get("true_step_id" if outcome else "false_step_id")
+                now = time.time()
+                with self._lock, self._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO automation_step_attempts(
+                            execution_id, step_id, attempt, state, result_json,
+                            started_at, completed_at
+                        ) VALUES(?, ?, 1, 'completed', ?, ?, ?)
+                        """,
+                        (execution_id, step_id, _json({"outcome": outcome}), now, now),
+                    )
+                    connection.execute(
+                        "UPDATE automation_executions SET current_step_id=?,"
+                        " state='advancing', updated_at=? WHERE id=?",
+                        (next_step, now, execution_id),
+                    )
+                    connection.commit()
+            except WorkflowValidationError as exc:
+                return self.fail_automation_step(execution_id, str(exc))
+        return self.fail_automation_step(execution_id, "workflow exceeded its step limit")
+
+    def bind_automation_step_run(
+        self, execution_id: str, step_id: str, run_id: str
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            execution = connection.execute(
+                "SELECT state, current_step_id FROM automation_executions WHERE id=?",
+                (execution_id,),
+            ).fetchone()
+            if execution is None:
+                raise RunStoreError("automation execution not found")
+            if execution["state"] != "awaiting_run" or execution["current_step_id"] != step_id:
+                raise RunStoreError("automation step changed before its run was queued")
+            attempt = int(connection.execute(
+                "SELECT COALESCE(MAX(attempt), 0) + 1 FROM automation_step_attempts"
+                " WHERE execution_id=? AND step_id=?",
+                (execution_id, step_id),
+            ).fetchone()[0])
+            connection.execute(
+                """
+                INSERT INTO automation_step_attempts(
+                    execution_id, step_id, attempt, run_id, state, started_at
+                ) VALUES(?, ?, ?, ?, 'queued', ?)
+                """,
+                (execution_id, step_id, attempt, run_id, now),
+            )
+            connection.execute(
+                "UPDATE automation_executions SET state='running', current_run_id=?,"
+                " error=NULL, updated_at=? WHERE id=?",
+                (run_id, now, execution_id),
+            )
+            connection.commit()
+        return self.automation_execution(execution_id) or {}
+
+    def complete_automation_step(
+        self, execution_id: str, *, run_id: str, result: dict[str, Any] | None,
+        error: str = "",
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        execution = self.automation_execution(execution_id, include_details=False)
+        if execution is None:
+            raise RunStoreError("automation execution not found")
+        if execution["state"] != "running" or execution.get("current_run_id") != run_id:
+            raise RunStoreError("that workflow step is no longer running")
+        step_id = str(execution["current_step_id"])
+        step = step_by_id(execution["workflow"], step_id)
+        if error:
+            return self.fail_automation_step(execution_id, error, run_id=run_id)
+        try:
+            validated = validate_step_result(step, result or {})
+        except WorkflowValidationError as exc:
+            return self.fail_automation_step(execution_id, str(exc), run_id=run_id)
+        context = execution["context"]
+        context.setdefault("steps", {})[step_id] = validated
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE automation_step_attempts SET state='completed', result_json=?,"
+                " error=NULL, completed_at=? WHERE execution_id=? AND step_id=?"
+                " AND run_id=? AND state IN ('queued','running','dispatching')",
+                (_json(validated), now, execution_id, step_id, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunStoreError("workflow step result was already recorded")
+            connection.execute(
+                "UPDATE automation_executions SET state='advancing', context_json=?,"
+                " current_step_id=?, current_run_id=NULL, error=NULL, updated_at=? WHERE id=?",
+                (_json(context), step.get("next_step_id"), now, execution_id),
+            )
+            connection.commit()
+        return self.advance_automation_execution(execution_id)
+
+    def fail_automation_step(
+        self, execution_id: str, error: str, *, run_id: str = ""
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        message = error.strip()[:4_000] or "The workflow step failed."
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT current_step_id, current_run_id FROM automation_executions WHERE id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("automation execution not found")
+            effective_run = run_id or str(row["current_run_id"] or "")
+            if effective_run:
+                connection.execute(
+                    "UPDATE automation_step_attempts SET state='failed', error=?,"
+                    " completed_at=? WHERE execution_id=? AND run_id=?"
+                    " AND state NOT IN ('completed','failed')",
+                    (message, now, execution_id, effective_run),
+                )
+            connection.execute(
+                "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
+                " WHERE id=? AND state NOT IN ('completed','cancelled')",
+                (message, now, execution_id),
+            )
+            connection.commit()
+        return {"action": "failed", "execution": self.automation_execution(execution_id)}
+
+    def retry_automation_step(self, execution_id: str) -> dict[str, Any]:
+        execution = self.automation_execution(execution_id, include_details=False)
+        if execution is None:
+            raise RunStoreError("automation execution not found")
+        if execution["state"] != "failed":
+            raise RunStoreError("only a failed workflow step can be retried")
+        step = step_by_id(execution["workflow"], str(execution["current_step_id"] or ""))
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE automation_executions SET state=?, current_run_id=NULL,"
+                " error=NULL, updated_at=? WHERE id=? AND state='failed'",
+                ("awaiting_run" if step["type"] == "agent" else "advancing",
+                 time.time(), execution_id),
+            )
+        if step["type"] != "agent":
+            return self.advance_automation_execution(execution_id)
+        return {
+            "action": "run_agent", "execution": self.automation_execution(execution_id),
+            "step": step,
+            "prompt": agent_prompt(step, execution["context"]),
+            "warning": (
+                "Retrying does not undo local files or commands from the failed attempt. "
+                "Recorded connector actions will not be repeated."
+            ),
+        }
+
+    def decide_automation_approval(
+        self, execution_id: str, *, approve: bool
+    ) -> dict[str, Any]:
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            execution = connection.execute(
+                "SELECT * FROM automation_executions WHERE id=?", (execution_id,)
+            ).fetchone()
+            if execution is None:
+                raise RunStoreError("automation execution not found")
+            if execution["state"] != "waiting_approval":
+                raise RunStoreError("that approval is no longer waiting")
+            approval = connection.execute(
+                "SELECT * FROM automation_approvals WHERE execution_id=?"
+                " AND step_id=? AND state='waiting'",
+                (execution_id, execution["current_step_id"]),
+            ).fetchone()
+            if approval is None:
+                raise RunStoreError("that approval is no longer waiting")
+            decision = "approved" if approve else "rejected"
+            connection.execute(
+                "UPDATE automation_approvals SET state=?, updated_at=?, resolved_at=?"
+                " WHERE id=? AND state='waiting'",
+                (decision, now, now, approval["id"]),
+            )
+            if approve:
+                connection.execute(
+                    "UPDATE automation_executions SET state='advancing',"
+                    " current_step_id=?, error=NULL, updated_at=? WHERE id=?",
+                    (approval["approve_step_id"], now, execution_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE automation_executions SET state='cancelled', error=NULL,"
+                    " completed_at=?, updated_at=? WHERE id=?",
+                    (now, now, execution_id),
+                )
+                connection.execute(
+                    "DELETE FROM automation_session_leases WHERE execution_id=?",
+                    (execution_id,),
+                )
+            connection.commit()
+        if approve:
+            return self.advance_automation_execution(execution_id)
+        return {"action": "finished", "execution": self.automation_execution(execution_id)}
+
+    def cancel_automation_execution(self, execution_id: str) -> dict[str, Any]:
+        return self._finish_automation_execution(execution_id, "cancelled")
+
+    def _finish_automation_execution(
+        self, execution_id: str, state: str
+    ) -> dict[str, Any]:
+        if state not in {"completed", "cancelled"}:
+            raise RunStoreError("automation execution terminal state is invalid")
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE automation_executions SET state=?, current_step_id=NULL,"
+                " current_run_id=NULL, error=NULL, completed_at=?, updated_at=?"
+                " WHERE id=? AND state NOT IN ('completed','cancelled')",
+                (state, now, now, execution_id),
+            )
+            if cursor.rowcount == 0 and connection.execute(
+                "SELECT 1 FROM automation_executions WHERE id=?", (execution_id,)
+            ).fetchone() is None:
+                raise RunStoreError("automation execution not found")
+            connection.execute(
+                "DELETE FROM automation_session_leases WHERE execution_id=?",
+                (execution_id,),
+            )
+            connection.commit()
+        return {"action": "finished", "execution": self.automation_execution(execution_id)}
 
     # ---------------------------------------------------------- scheduled work
 
     @staticmethod
     def _schedule_row(row: sqlite3.Row) -> dict[str, Any]:
+        stored_workflow = (
+            json.loads(row["workflow_json"])
+            if "workflow_json" in row.keys() and row["workflow_json"]
+            else None
+        )
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1940,6 +2960,10 @@ class RunStore:
             "last_run_at": row["last_run_at"],
             "last_run_id": row["last_run_id"],
             "last_error": row["last_error"],
+            "workflow": stored_workflow or implicit_workflow(
+                str(row["prompt"]), str(row["mode"])
+            ),
+            "workflow_persisted": stored_workflow is not None,
         }
 
     @staticmethod
@@ -1991,10 +3015,22 @@ class RunStore:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
         created = float(now if now is not None else time.time())
+        workflow_value = value.get("workflow")
         try:
-            schedule = normalize_schedule(value, now=created)
+            workflow = validate_workflow(workflow_value) if workflow_value is not None else None
+            prepared = dict(value)
+            if workflow is not None:
+                first_agent = next(
+                    step for step in workflow["steps"] if step["type"] == "agent"
+                )
+                prepared["prompt"] = first_agent["instruction_template"]
+                prepared["mode"] = first_agent["mode"]
+            schedule = normalize_schedule(prepared, now=created)
         except ScheduleValidationError as exc:
             raise RunStoreError(str(exc)) from exc
+        except (WorkflowValidationError, StopIteration) as exc:
+            message = str(exc) or "workflow must contain an Agent step"
+            raise RunStoreError(message) from exc
         schedule_id = str(value.get("id") or uuid.uuid4().hex)
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,159}", schedule_id):
             raise RunStoreError("schedule id is invalid")
@@ -2006,8 +3042,8 @@ class RunStore:
                         id, name, prompt, workspace_root, mode,
                         execution_environment, runner, team_id, team_name,
                         provider, provider_account_id, model, timezone,
-                        rule_json, enabled, next_run_at, created_at, updated_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        rule_json, workflow_json, enabled, next_run_at, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         schedule_id, schedule["name"], schedule["prompt"],
@@ -2016,7 +3052,9 @@ class RunStore:
                         schedule["team_id"] or None, schedule["team_name"] or None,
                         schedule["provider"], schedule["provider_account_id"] or None,
                         schedule["model"], schedule["timezone"],
-                        _json(schedule["rule"]), int(schedule["enabled"]),
+                        _json(schedule["rule"]),
+                        _json(workflow) if workflow is not None else None,
+                        int(schedule["enabled"]),
                         schedule["next_run_at"], created, created,
                     ),
                 )
@@ -2035,13 +3073,18 @@ class RunStore:
         allowed = {
             "name", "prompt", "workspace_root", "mode", "execution_environment",
             "runner", "team_id", "team_name", "provider", "provider_account_id",
-            "model", "timezone", "rule", "enabled",
+            "model", "timezone", "rule", "enabled", "workflow",
         }
         unknown = set(updates) - allowed
         if unknown:
             raise RunStoreError(f"unknown schedule field: {sorted(unknown)[0]}")
-        merged = {key: existing[key] for key in allowed}
+        merged = {key: existing[key] for key in allowed if key != "workflow"}
         merged.update(updates)
+        workflow_value = (
+            updates.get("workflow")
+            if "workflow" in updates
+            else existing.get("workflow") if existing.get("workflow_persisted") else None
+        )
         changed_timing = bool({"rule", "timezone"} & set(updates))
         reenabled = updates.get("enabled") is True and not existing["enabled"]
         disabled = updates.get("enabled") is False
@@ -2053,9 +3096,19 @@ class RunStore:
             # one-time rule without treating the edit as a new schedule.
             validation_value["enabled"] = False
         try:
+            workflow = validate_workflow(workflow_value) if workflow_value is not None else None
+            if workflow is not None:
+                first_agent = next(
+                    step for step in workflow["steps"] if step["type"] == "agent"
+                )
+                validation_value["prompt"] = first_agent["instruction_template"]
+                validation_value["mode"] = first_agent["mode"]
             schedule = normalize_schedule(validation_value, now=current)
         except ScheduleValidationError as exc:
             raise RunStoreError(str(exc)) from exc
+        except (WorkflowValidationError, StopIteration) as exc:
+            message = str(exc) or "workflow must contain an Agent step"
+            raise RunStoreError(message) from exc
         if not changed_timing and not reenabled and not disabled:
             schedule["enabled"] = existing["enabled"]
             schedule["next_run_at"] = existing["next_run_at"]
@@ -2069,7 +3122,7 @@ class RunStore:
                     name=?, prompt=?, workspace_root=?, mode=?,
                     execution_environment=?, runner=?, team_id=?, team_name=?,
                     provider=?, provider_account_id=?, model=?, timezone=?,
-                    rule_json=?, enabled=?, next_run_at=?, updated_at=?,
+                    rule_json=?, workflow_json=?, enabled=?, next_run_at=?, updated_at=?,
                     last_error=CASE WHEN ? THEN NULL ELSE last_error END
                 WHERE id=?
                 """,
@@ -2080,6 +3133,7 @@ class RunStore:
                     schedule["team_name"] or None, schedule["provider"],
                     schedule["provider_account_id"] or None, schedule["model"],
                     schedule["timezone"], _json(schedule["rule"]),
+                    _json(workflow) if workflow is not None else None,
                     int(schedule["enabled"]), schedule["next_run_at"], current,
                     int(reenabled), schedule_id,
                 ),
@@ -2246,8 +3300,8 @@ class RunStore:
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
-        if state not in {"queued", "failed", "skipped"}:
-            raise RunStoreError("occurrence state must be queued, failed or skipped")
+        if state not in {"queued", "failed", "skipped", "completed", "cancelled"}:
+            raise RunStoreError("schedule occurrence state is invalid")
         current = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
@@ -2390,7 +3444,14 @@ class RunStore:
                 f"SELECT 1 FROM runs WHERE session_id=? AND state IN ({places}) LIMIT 1",
                 (session_id, *active),
             ).fetchone()
-        return row is not None
+            try:
+                workflow_lease = connection.execute(
+                    "SELECT 1 FROM automation_session_leases WHERE session_id=? LIMIT 1",
+                    (session_id,),
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                workflow_lease = None
+        return row is not None or workflow_lease is not None
 
     def rearm_schedule_slot(self, schedule_id: str, *, next_run_at: float) -> dict[str, Any]:
         """Put back a slot whose occurrence was skipped rather than run.
@@ -2580,6 +3641,34 @@ class RunStore:
             raise RunStoreError(f"run not found: {run_id}")
         self.set_state(run_id, "discarded", recoverable=False)
         return self.run(run_id) or run
+
+    def discard_recoverable_runs(self, run_ids: list[str]) -> list[str]:
+        """Atomically discard the requested runs that still need recovery."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        wanted = list(dict.fromkeys(str(run_id) for run_id in run_ids if run_id))
+        if not wanted:
+            return []
+        placeholders = ",".join("?" for _ in wanted)
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"SELECT id FROM runs WHERE id IN ({placeholders})"
+                " AND state IN ('paused','interrupted','failed')",
+                wanted,
+            ).fetchall()
+            discarded = [str(row["id"]) for row in rows]
+            if discarded:
+                discarded_placeholders = ",".join("?" for _ in discarded)
+                connection.execute(
+                    f"UPDATE runs SET state='discarded', recoverable=0,"
+                    " recovery_reason=NULL, completed_at=?, updated_at=?"
+                    f" WHERE id IN ({discarded_placeholders})",
+                    (now, now, *discarded),
+                )
+        discarded_set = set(discarded)
+        return [run_id for run_id in wanted if run_id in discarded_set]
 
     def export(self, run_id: str, *, include_content: bool = False) -> dict[str, Any]:
         run = self.run(run_id, include_events=True)

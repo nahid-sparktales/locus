@@ -46,11 +46,15 @@ final class ActivityCenterModelTests: XCTestCase {
         ])!
     }
 
-    private func makeModel(persistenceEnabled: Bool = true) -> ActivityCenterModel {
+    private func makeModel(
+        persistenceEnabled: Bool = true,
+        liveAttention: @escaping () -> [AttentionItem] = { [] }
+    ) -> ActivityCenterModel {
         let model = ActivityCenterModel()
         model.restore(persistenceEnabled: persistenceEnabled, defaults: defaults)
         model.configure(
             backend: stubbedBackendService(),
+            liveAttentionProvider: liveAttention,
             toastHandler: { [weak self] in self?.toasts.append($0) }
         )
         return model
@@ -105,7 +109,12 @@ final class ActivityCenterModelTests: XCTestCase {
     }
 
     func testDismissOnlyAcceptsTerminalRunsAndHidesThem() {
-        let model = makeModel()
+        let attention = AttentionItem(
+            id: "run:run-done", kind: "recoverable_run", group: .recoveries,
+            runID: "run-done", title: "Needs recovery", detail: "Failed",
+            actions: ["retry"]
+        )
+        let model = makeModel(liveAttention: { [attention] })
         let live = run(id: "run-live", state: "running")
         let done = run(id: "run-done", state: "failed")
         model.activityRuns = [live, done]
@@ -116,8 +125,41 @@ final class ActivityCenterModelTests: XCTestCase {
 
         model.dismissActivityRun(done)
         XCTAssertEqual(model.visibleActivityRuns.map(\.id), ["run-live"])
-        XCTAssertEqual(model.activityNeedsAttentionCount, 0)
+        // Hiding an Activity history row never resolves its authoritative
+        // Attention item or lowers the badge.
+        XCTAssertEqual(model.activityNeedsAttentionCount, 1)
         XCTAssertEqual(defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs"), ["run-done"])
+    }
+
+    func testAttentionBadgeDeduplicatesRelatedRowsByRunAndPrefersDetail() {
+        let detailed = AttentionItem(
+            id: "permission:1", kind: "permission_request", group: .decisions,
+            runID: "same-run", title: "Permission requested", detail: "shell: /tmp",
+            actions: ["allow_once", "deny"]
+        )
+        let generic = AttentionItem(
+            id: "run:same-run", kind: "recoverable_run", group: .recoveries,
+            runID: "same-run", title: "Needs recovery", detail: "Waiting",
+            actions: ["retry"]
+        )
+        let model = makeModel(liveAttention: { [detailed, generic] })
+
+        XCTAssertEqual(model.activityNeedsAttentionCount, 1)
+        XCTAssertEqual(model.attentionItems.first?.kind, "permission_request")
+    }
+
+    func testUnavailableRecoveryClearActionSurvivesAttentionDeduplication() {
+        let unavailable = AttentionItem(
+            id: "run:missing-chat", kind: "recoverable_run", group: .recoveries,
+            runID: "missing-chat", title: "Work needs recovery",
+            detail: "The original chat was deleted. Clear this recovery item.",
+            actions: ["clear"], unavailable: true
+        )
+        let model = makeModel(liveAttention: { [unavailable] })
+
+        XCTAssertEqual(model.activityNeedsAttentionCount, 1)
+        XCTAssertEqual(model.attentionItems.first?.actions, ["clear"])
+        XCTAssertEqual(model.attentionItems.first?.unavailable, true)
     }
 
 }

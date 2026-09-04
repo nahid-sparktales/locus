@@ -13,3 +13,8 @@ func encodedJSONObject<T: Encodable>(_ value: T) -> [String: Any]? {
     guard let data = try? JSONEncoder().encode(value) else { return nil }
     return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 }
+
+func encodedJSONValue<T: Encodable>(_ value: T) -> Any? {
+    guard let data = try? JSONEncoder().encode(value) else { return nil }
+    return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+}

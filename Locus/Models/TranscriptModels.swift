@@ -177,6 +177,7 @@ struct HealthResponse: Codable {
     let model: String?
     let error: String?
     let updateAvailable: Bool?
+    var capabilities: [String: Bool]? = nil
 }
 
 struct HistoryMessage: Codable {

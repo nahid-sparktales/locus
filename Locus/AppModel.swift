@@ -16,6 +16,10 @@ final class AppModel: ObservableObject {
     /// Compatibility publication for views not yet moved to RuntimeStatusModel.
     /// RuntimeStatusModel remains the only owner of the underlying values.
     @Published private var runtimeFacadeRevision: UInt = 0
+    @Published var backendCapabilities: [String: Bool] = [:]
+    var automationWorkflowsEnabled: Bool {
+        backendCapabilities["automation_workflows_v1"] == true
+    }
     enum ProviderConnectionTestFollowUp: Equatable {
         case notNeeded
         case saveRequired
@@ -367,6 +371,8 @@ final class AppModel: ObservableObject {
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
     @Published var retryingRunIDs: Set<String> = []  // internal(for: AppModel extension files)
+    @Published var clearingAttentionRunIDs: Set<String> = []  // internal(for: Attention actions)
+    @Published var isClearingUnavailableAttention = false
     @Published var clearingChatWarningSessionIDs: Set<String> = []  // internal(for: sidebar actions)
     var showArchivedSessions: Bool {
         get { sessionCatalog.snapshot.showArchivedSessions }
@@ -936,6 +942,9 @@ final class AppModel: ObservableObject {
         )
         activity.configure(
             backend: backend,
+            liveAttentionProvider: { [weak self] in
+                self?.liveAttentionItems() ?? []
+            },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         toastCenter.onToastReplaced = { [weak self] in self?.pendingDeletedChat = nil }
@@ -967,7 +976,10 @@ final class AppModel: ObservableObject {
             notifyPaused: { [weak self] body in
                 self?.notifyNeedsAttentionIfInactive(body: body)
             },
-            toastHandler: { [weak self] message in self?.showToast(message) }
+            toastHandler: { [weak self] message in self?.showToast(message) },
+            supportsWorkflows: { [weak self] in
+                self?.automationWorkflowsEnabled ?? false
+            }
         )
         eventAutomations.configure(
             backend: backend,
@@ -1020,6 +1032,9 @@ final class AppModel: ObservableObject {
             },
             onWarningResolved: { [weak self] runID in
                 self?.clearRunWarningPresentation(runID: runID)
+            },
+            supportsWorkflows: { [weak self] in
+                self?.automationWorkflowsEnabled ?? false
             }
         )
         providerAccountsModel.configure(
