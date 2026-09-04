@@ -1,6 +1,8 @@
 GET /api/health
 GET /api/provider
 GET /api/attention
+POST /api/attention/clear-unavailable
+POST /api/attention/{run_id}/clear
 GET /api/automation-executions
 GET /api/automation-executions/{execution_id}
 POST /api/automation-executions/{execution_id}/approve

@@ -218,6 +218,18 @@ struct AttentionResponse: Codable {
     }
 }
 
+struct AttentionClearResponse: Codable {
+    let ok: Bool
+    let clearedCount: Int
+    let clearedRunIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case clearedCount = "cleared_count"
+        case clearedRunIDs = "cleared_run_ids"
+    }
+}
+
 struct CompanionChatDispatchResponse: Codable {
     let ok: Bool
     let claimed: Bool

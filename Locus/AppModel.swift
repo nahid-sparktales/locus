@@ -320,6 +320,8 @@ final class AppModel: ObservableObject {
     @Published var clearSessionsConfirmationPresented = false
     @Published var isClearingSessions = false
     @Published var retryingRunIDs: Set<String> = []  // internal(for: AppModel extension files)
+    @Published var clearingAttentionRunIDs: Set<String> = []  // internal(for: Attention actions)
+    @Published var isClearingUnavailableAttention = false
     @Published var clearingChatWarningSessionIDs: Set<String> = []  // internal(for: sidebar actions)
     var showArchivedSessions: Bool {
         get { sessionCatalog.snapshot.showArchivedSessions }

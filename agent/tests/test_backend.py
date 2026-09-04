@@ -1998,6 +1998,48 @@ def test_health_and_models(client):
     assert models["current"] == "test-model"
 
 
+def test_attention_clears_only_recoveries_whose_chat_is_gone(client, tmp_path):
+    service = client.app.state.service
+    available_session = SessionStore(str(tmp_path))
+    runs = [
+        ("orphan-one", "deleted-chat-one"),
+        ("orphan-two", "deleted-chat-two"),
+        ("available-run", available_session.session_id),
+    ]
+    for run_id, session_id in runs:
+        service.run_store.queue_run(run_id, session_id=session_id, request="work")
+        service.run_store.set_state(
+            run_id, "failed", recoverable=True, reason="The run failed."
+        )
+
+    items = {
+        item["run_id"]: item for item in client.get("/api/attention").json()["items"]
+        if item["kind"] == "recoverable_run"
+    }
+    assert items["orphan-one"]["actions"] == ["clear"]
+    assert "original chat was deleted" in items["orphan-one"]["detail"]
+    assert items["available-run"]["actions"] == ["retry", "open_chat"]
+
+    refused = client.post("/api/attention/available-run/clear", json={})
+    assert refused.status_code == 409
+    assert service.run_store.run("available-run")["state"] == "failed"
+
+    cleared_one = client.post("/api/attention/orphan-one/clear", json={})
+    assert cleared_one.status_code == 200
+    assert cleared_one.json()["cleared_run_ids"] == ["orphan-one"]
+    assert service.run_store.run("orphan-one")["state"] == "discarded"
+
+    cleared_rest = client.post("/api/attention/clear-unavailable", json={})
+    assert cleared_rest.status_code == 200
+    assert cleared_rest.json()["cleared_run_ids"] == ["orphan-two"]
+    assert service.run_store.run("orphan-two")["state"] == "discarded"
+    assert service.run_store.run("available-run")["state"] == "failed"
+
+    remaining = client.get("/api/attention").json()
+    assert remaining["unresolved_count"] == 1
+    assert remaining["items"][0]["run_id"] == "available-run"
+
+
 def test_event_trigger_routes_queue_into_the_existing_chat_and_retain_history(client):
     session_id = client.get("/api/sessions").json()["current"]
     connection = client.post("/api/connectors", json={

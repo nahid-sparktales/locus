@@ -807,13 +807,20 @@ extension AppModel {
         for run in activity.activityRuns where !detailedRunIDs.contains(run.id) {
             guard ["failed", "interrupted", "paused"].contains(run.state) else { continue }
             let canResume = run.state == "paused" && run.runKind == "team"
+            let chatAvailable = run.sessionID.map { sessionID in
+                sessionID == currentSessionID
+                    || taskWorkers[sessionID] != nil
+                    || sessions.contains(where: { $0.id == sessionID })
+            } ?? false
             items.append(AttentionItem(
                 id: "run:\(run.id)", kind: "recoverable_run", group: .recoveries,
                 sessionID: run.sessionID, runID: run.id,
                 title: "Work needs recovery",
-                detail: run.recoveryReason ?? "The run is \(run.state).",
+                detail: chatAvailable
+                    ? run.recoveryReason ?? "The run is \(run.state)."
+                    : "The original chat was deleted. Clear this recovery item.",
                 timestamp: run.updatedAt,
-                actions: [canResume ? "resume" : "retry", "open_chat"]
+                actions: chatAvailable ? [canResume ? "resume" : "retry", "open_chat"] : ["clear"]
             ))
         }
         return items
@@ -920,6 +927,7 @@ extension AppModel {
             case "deny": answerActivityPermission(run, decision: "deny")
             case "resume": resumeOrchestration(run)
             case "retry": retryRun(run)
+            case "clear": clearUnavailableAttentionRun(run)
             case "open_chat": openActivityRun(run)
             default: break
             }
@@ -938,6 +946,50 @@ extension AppModel {
                   let session = sessions.first(where: { $0.id == sessionID }) {
             activity.activityCenterPresented = false
             resume(session)
+        }
+    }
+
+    private func clearUnavailableAttentionRun(_ run: OrchestrationRun) {
+        guard clearingAttentionRunIDs.insert(run.id).inserted else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { clearingAttentionRunIDs.remove(run.id) }
+            do {
+                let response: AttentionClearResponse = try await backend.post(
+                    "/api/attention/\(run.id)/clear", body: [:],
+                    as: AttentionClearResponse.self
+                )
+                await activity.refreshActivityRuns(announceFailure: false)
+                await refreshOrchestrationRuns(select: nil)
+                if response.clearedCount == 1 {
+                    showToast("Cleared unavailable recovery")
+                }
+            } catch {
+                await activity.refreshActivityRuns(announceFailure: false)
+                showToast("That recovery is no longer clearable: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func clearUnavailableAttentionRecoveries() {
+        guard !isClearingUnavailableAttention else { return }
+        isClearingUnavailableAttention = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isClearingUnavailableAttention = false }
+            do {
+                let response: AttentionClearResponse = try await backend.post(
+                    "/api/attention/clear-unavailable", body: [:],
+                    as: AttentionClearResponse.self
+                )
+                await activity.refreshActivityRuns(announceFailure: false)
+                await refreshOrchestrationRuns(select: nil)
+                let noun = response.clearedCount == 1 ? "recovery" : "recoveries"
+                showToast("Cleared \(response.clearedCount) unavailable \(noun)")
+            } catch {
+                await activity.refreshActivityRuns(announceFailure: false)
+                showToast("Could not clear unavailable recoveries: \(error.localizedDescription)")
+            }
         }
     }
 

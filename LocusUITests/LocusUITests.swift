@@ -3473,6 +3473,24 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
     }
 
+    func testOrphanedRecoveryOffersIndividualAndBulkClear() {
+        relaunchWithRunFixture("orphaned-activity")
+
+        let destination = anyElement("sidebar.activity")
+        XCTAssertTrue(destination.waitForExistence(timeout: 3))
+        destination.click()
+
+        XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
+        let bulkClear = anyElement("attention.clearUnavailable")
+        XCTAssertTrue(
+            bulkClear.waitForExistence(timeout: 3)
+                || app.buttons["Clear Unavailable"].exists
+        )
+        XCTAssertTrue(app.buttons["Clear"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        XCTAssertFalse(app.buttons["Open Chat"].exists)
+    }
+
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
         let configureAgent = anyElement("sidebar.configureAgent")
         XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))

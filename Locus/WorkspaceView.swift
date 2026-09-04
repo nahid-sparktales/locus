@@ -1128,6 +1128,7 @@ struct ActivityCenterView: View {
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
     @State private var workflowRetryConfirmation: AttentionItem?
+    @State private var clearUnavailableConfirmationPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1153,6 +1154,14 @@ struct ActivityCenterView: View {
                 }) {
                     Button("Clear Finished") { model.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
+                }
+                if activityCenter.selectedTab == .attention,
+                   !unavailableAttentionItems.isEmpty {
+                    Button("Clear Unavailable") {
+                        clearUnavailableConfirmationPresented = true
+                    }
+                    .disabled(model.isClearingUnavailableAttention)
+                    .accessibilityIdentifier("attention.clearUnavailable")
                 }
                 Button {
                     Task { await activityCenter.refreshActivityRuns() }
@@ -1257,7 +1266,28 @@ struct ActivityCenterView: View {
                 + "the failed attempt may still be present in the workspace."
             )
         }
+        .confirmationDialog(
+            "Clear \(unavailableAttentionItems.count) unavailable recoveries?",
+            isPresented: $clearUnavailableConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Unavailable", role: .destructive) {
+                model.clearUnavailableAttentionRecoveries()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "They will leave Attention because their original chats no longer exist. "
+                + "Their discarded run history will remain in Activity."
+            )
+        }
         .accessibilityIdentifier("activity.center")
+    }
+
+    private var unavailableAttentionItems: [AttentionItem] {
+        activityCenter.attentionItems.filter {
+            $0.kind == "recoverable_run" && $0.actions.contains("clear")
+        }
     }
 
     private var attentionContent: some View {
@@ -1359,7 +1389,7 @@ struct ActivityCenterView: View {
         HStack(spacing: 8) {
             ForEach(item.actions, id: \.self) { action in
                 if action != "answer" {
-                    if ["reject", "deny", "cancel"].contains(action) {
+                    if ["reject", "deny", "cancel", "clear"].contains(action) {
                         Button(attentionActionTitle(action), role: .destructive) {
                             model.performAttentionAction(item, action: action)
                         }
@@ -1390,6 +1420,7 @@ struct ActivityCenterView: View {
         case "allow_once": "Allow Once"
         case "always_allow": "Always Allow"
         case "deny": "Deny"
+        case "clear": "Clear"
         case "clear_warning": "Clear Warning"
         case "open_configuration": "Open Configuration"
         case "open_chat": "Open Chat"

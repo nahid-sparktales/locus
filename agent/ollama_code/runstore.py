@@ -3642,6 +3642,34 @@ class RunStore:
         self.set_state(run_id, "discarded", recoverable=False)
         return self.run(run_id) or run
 
+    def discard_recoverable_runs(self, run_ids: list[str]) -> list[str]:
+        """Atomically discard the requested runs that still need recovery."""
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
+        wanted = list(dict.fromkeys(str(run_id) for run_id in run_ids if run_id))
+        if not wanted:
+            return []
+        placeholders = ",".join("?" for _ in wanted)
+        now = time.time()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"SELECT id FROM runs WHERE id IN ({placeholders})"
+                " AND state IN ('paused','interrupted','failed')",
+                wanted,
+            ).fetchall()
+            discarded = [str(row["id"]) for row in rows]
+            if discarded:
+                discarded_placeholders = ",".join("?" for _ in discarded)
+                connection.execute(
+                    f"UPDATE runs SET state='discarded', recoverable=0,"
+                    " recovery_reason=NULL, completed_at=?, updated_at=?"
+                    f" WHERE id IN ({discarded_placeholders})",
+                    (now, now, *discarded),
+                )
+        discarded_set = set(discarded)
+        return [run_id for run_id in wanted if run_id in discarded_set]
+
     def export(self, run_id: str, *, include_content: bool = False) -> dict[str, Any]:
         run = self.run(run_id, include_events=True)
         if run is None:

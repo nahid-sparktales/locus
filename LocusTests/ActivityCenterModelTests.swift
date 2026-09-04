@@ -148,4 +148,17 @@ final class ActivityCenterModelTests: XCTestCase {
         XCTAssertEqual(model.attentionItems.first?.kind, "permission_request")
     }
 
+    func testUnavailableRecoveryClearActionSurvivesAttentionDeduplication() {
+        let unavailable = AttentionItem(
+            id: "run:missing-chat", kind: "recoverable_run", group: .recoveries,
+            runID: "missing-chat", title: "Work needs recovery",
+            detail: "The original chat was deleted. Clear this recovery item.",
+            actions: ["clear"]
+        )
+        let model = makeModel(liveAttention: { [unavailable] })
+
+        XCTAssertEqual(model.activityNeedsAttentionCount, 1)
+        XCTAssertEqual(model.attentionItems.first?.actions, ["clear"])
+    }
+
 }

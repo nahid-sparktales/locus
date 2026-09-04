@@ -14,6 +14,7 @@ from ..automation_workflows import (
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..runstore import RunStoreError
+from ..sessions import SessionStore
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -88,12 +89,66 @@ def attention_list(
     service: ServiceDependency,
     limit: int = Query(default=500, ge=1, le=1_000),
 ) -> dict[str, Any]:
-    all_items = service.run_store.attention_items(limit=1_000)
+    all_items = _attention_items(service)
     return {
         "items": all_items[:limit],
         "unresolved_count": len(all_items),
         "read_only": service.run_store.read_only,
     }
+
+
+def _orphaned_recovery(item: dict[str, Any]) -> bool:
+    return (
+        item.get("kind") == "recoverable_run"
+        and bool(item.get("run_id"))
+        and SessionStore.path_for(str(item.get("session_id") or "")) is None
+    )
+
+
+def _attention_items(service: ChatService) -> list[dict[str, Any]]:
+    items = service.run_store.attention_items(limit=1_000)
+    projected: list[dict[str, Any]] = []
+    for item in items:
+        if _orphaned_recovery(item):
+            item = {
+                **item,
+                "detail": "The original chat was deleted. Clear this recovery item.",
+                "actions": ["clear"],
+            }
+        projected.append(item)
+    return projected
+
+
+def _clear_orphaned_recoveries(
+    service: ChatService, *, run_id: str = ""
+) -> dict[str, Any]:
+    items = [
+        item for item in _attention_items(service)
+        if _orphaned_recovery(item) and (not run_id or item.get("run_id") == run_id)
+    ]
+    if run_id and not items:
+        raise HTTPException(409, "that recovery is no longer unavailable")
+    try:
+        cleared = service.run_store.discard_recoverable_runs([
+            str(item["run_id"]) for item in items
+        ])
+    except RunStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if run_id and run_id not in cleared:
+        raise HTTPException(409, "that recovery has already changed")
+    return {
+        "ok": True,
+        "cleared_count": len(cleared),
+        "cleared_run_ids": cleared,
+    }
+
+
+def attention_clear(run_id: str, service: ServiceDependency) -> dict[str, Any]:
+    return _clear_orphaned_recoveries(service, run_id=run_id)
+
+
+def attention_clear_unavailable(service: ServiceDependency) -> dict[str, Any]:
+    return _clear_orphaned_recoveries(service)
 
 
 def execution_detail(execution_id: str, service: ServiceDependency) -> dict[str, Any]:
@@ -335,6 +390,14 @@ def register_routes(router: APIRouter) -> None:
         "/api/automation-executions", execution_list, methods=["GET"]
     )
     router.add_api_route("/api/attention", attention_list, methods=["GET"])
+    router.add_api_route(
+        "/api/attention/clear-unavailable",
+        attention_clear_unavailable,
+        methods=["POST"],
+    )
+    router.add_api_route(
+        "/api/attention/{run_id}/clear", attention_clear, methods=["POST"]
+    )
     router.add_api_route(
         "/api/automation-executions/{execution_id}", execution_detail, methods=["GET"]
     )
