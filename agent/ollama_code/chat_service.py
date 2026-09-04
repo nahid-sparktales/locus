@@ -167,6 +167,10 @@ class ChatService:
             GLOBAL_MODEL_SCHEDULER.has_active_lease
         )
         self.run_store.prune()
+        # Every launch authenticates with a token of its own and so names a
+        # lease database of its own; the ones from launches that have ended are
+        # unreachable files nothing else deletes.
+        GLOBAL_MODEL_SCHEDULER.sweep_stale_databases()
         for expired_task_id in EvaluationStore(
             self.run_store
         ).expired_successful_task_ids():
