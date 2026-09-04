@@ -32,6 +32,7 @@ from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
     OpenAIResponsesMultiAgentError,
 )
+from .paths import app_dir
 from .proxy import sanitized_child_environment
 from .remote import AUTH_ANTHROPIC, RemoteClient
 from .runstore import RunStore
@@ -465,16 +466,36 @@ class ModelCallScheduler:
             self._condition.notify_all()
 
 
+LEASE_DATABASE_PREFIX = "model-call-leases-"
+LEASE_DATABASE_SUFFIX = ".sqlite3"
+
+
+def lease_namespace() -> str:
+    """The lease namespace this process shares with its sibling workers.
+
+    Leases are only comparable between processes that speak for the same
+    authenticated agent, so the namespace is the launch token's digest: every
+    worker Locus starts for one launch derives the same one, and a different
+    launch — which mints a fresh token — can never collide with it.
+    """
+    token = os.environ.get("LOCUS_AGENT_TOKEN") or "standalone"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def lease_database_path(namespace: str | None = None) -> Path:
+    """The lease database for *namespace* under the current agent data root."""
+    return app_dir() / (
+        f"{LEASE_DATABASE_PREFIX}{namespace or lease_namespace()}{LEASE_DATABASE_SUFFIX}"
+    )
+
+
 class CrossProcessModelCallScheduler:
     """Crash-recoverable leases shared by every local task-worker process."""
 
     def __init__(self, limit: int = 3, lease_seconds: int = 660, path: Path | None = None) -> None:
         self.limit = max(1, min(limit, MAX_TEAM_CONCURRENCY))
         self.lease_seconds = max(30, lease_seconds)
-        home = Path(os.environ.get("OLLAMA_CODE_HOME") or Path.home() / ".ollama-code")
-        token = os.environ.get("LOCUS_AGENT_TOKEN") or "standalone"
-        namespace = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
-        self.path = path or (home / f"model-call-leases-{namespace}.sqlite3")
+        self.path = path or lease_database_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.path.parent.chmod(0o700)

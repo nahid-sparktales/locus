@@ -12,6 +12,7 @@ import pytest
 from ollama_code.ollama import OllamaError
 from ollama_code.openai_responses_multi_agent import OpenAIResponsesMultiAgentError
 from ollama_code.orchestration import (
+    LEASE_DATABASE_PREFIX,
     AgentJob,
     AgentResult,
     CrossProcessModelCallScheduler,
@@ -20,6 +21,7 @@ from ollama_code.orchestration import (
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
+    lease_database_path,
     normalize_dispatch_candidate,
     orchestration_fingerprint,
     ordered_writer_jobs,
@@ -904,6 +906,24 @@ def test_cross_process_scheduler_instances_share_leases_and_reap_expiry(tmp_path
     two.join()
     assert order == ["a", "b"]
     assert first.active_count == 0
+
+
+def test_lease_database_path_is_one_file_per_launch_under_the_data_root(
+    monkeypatch, tmp_path
+):
+    """Workers of one launch share a file; a new launch never reuses one."""
+    monkeypatch.setenv("OLLAMA_CODE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCUS_AGENT_TOKEN", "launch-one")
+    first = lease_database_path()
+    sibling_worker = lease_database_path()
+    monkeypatch.setenv("LOCUS_AGENT_TOKEN", "launch-two")
+    next_launch = lease_database_path()
+
+    assert first.parent == tmp_path
+    assert first.name.startswith(LEASE_DATABASE_PREFIX)
+    assert first.suffix == ".sqlite3"
+    assert sibling_worker == first
+    assert next_launch != first
 
 
 def _git(cwd: Path, *args: str) -> str:
