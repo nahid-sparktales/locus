@@ -238,8 +238,8 @@ struct MessageContentView: View {
     }
 }
 
-/// The active reply reparses on the streaming coalescer's cadence and discards
-/// stale results, so provider chunks never trigger synchronous Markdown work.
+/// The active reply publishes an append-only revision. Completed Markdown
+/// blocks freeze once, while the mutable tail stays native plain text.
 struct StreamingMessageContentView: View {
     @ObservedObject var reply: StreamingReplyState
     let thinkingVisibility: ThinkingVisibility
@@ -249,14 +249,14 @@ struct StreamingMessageContentView: View {
     var selectionStore: TranscriptSelectionStore? = nil
     var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
-    @State private var presentedSnapshot = StreamingReplySnapshot()
+    @State private var selectionSnapshot: StreamingReplySnapshot?
 
     private var isSelecting: Bool {
         selectionStore?.activeRowIDs.contains(selectionRowID) == true
     }
 
     var body: some View {
-        let snapshot = isSelecting ? presentedSnapshot : reply.snapshot
+        let snapshot = selectionSnapshot ?? reply.snapshot
         VStack(alignment: .leading, spacing: 14) {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
@@ -297,16 +297,8 @@ struct StreamingMessageContentView: View {
                     .opacity(0.8)
             }
         }
-        .onAppear {
-            presentedSnapshot = reply.snapshot
-        }
-        .onChange(of: reply.snapshot) { _, next in
-            guard !isSelecting else { return }
-            presentedSnapshot = next
-        }
         .onChange(of: isSelecting) { _, selecting in
-            guard !selecting else { return }
-            presentedSnapshot = reply.snapshot
+            selectionSnapshot = selecting ? reply.snapshot : nil
         }
     }
 }
@@ -428,7 +420,7 @@ private struct StreamingThinkingSegmentView: View {
 
     private var summaryText: String {
         let values = displaySections.compactMap { section -> String? in
-            let plain = MarkdownPlainTextRenderer.render(section)
+            let plain = StreamingReasoningSummary.render(section)
             return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ").nilIfEmpty
         }
         return values.joined(separator: " · ").nilIfEmpty ?? (isActive ? "Thinking…" : "Reasoning")
@@ -441,6 +433,7 @@ private struct StreamingThinkingSegmentView: View {
 }
 
 struct StreamingPlainTextView: NSViewRepresentable {
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
     let text: String
     let font: NSFont
     let color: NSColor
@@ -460,11 +453,13 @@ struct StreamingPlainTextView: NSViewRepresentable {
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.heightTracksTextView = false
         view.textContainer?.lineFragmentPadding = 0
+        view.setLiveResizeMeasurementActive(isLiveResizing)
         update(view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ nsView: AppendOnlyTextView, context: Context) {
+        nsView.setLiveResizeMeasurementActive(isLiveResizing)
         update(nsView, coordinator: context.coordinator)
     }
 
@@ -474,13 +469,18 @@ struct StreamingPlainTextView: NSViewRepresentable {
         context: Context
     ) -> CGSize? {
         guard let width = proposal.width, width > 0 else { return nil }
-        return CGSize(width: width, height: nsView.measuredHeight(for: width))
+        nsView.setLiveResizeMeasurementActive(isLiveResizing)
+        return CGSize(
+            width: width,
+            height: nsView.measuredHeight(for: width, isLiveResizing: isLiveResizing)
+        )
     }
 
     private func update(_ view: AppendOnlyTextView, coordinator: Coordinator) {
         let value = text as NSString
         let attributes = textAttributes
-        if value.length >= coordinator.utf16Length {
+        guard text != coordinator.text else { return }
+        if text.hasPrefix(coordinator.text) {
             let suffix = value.substring(from: coordinator.utf16Length)
             if !suffix.isEmpty {
                 view.textStorage?.append(NSAttributedString(string: suffix, attributes: attributes))
@@ -489,7 +489,8 @@ struct StreamingPlainTextView: NSViewRepresentable {
             view.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attributes))
         }
         coordinator.utf16Length = value.length
-        view.invalidateIntrinsicContentSize()
+        coordinator.text = text
+        view.contentDidChange()
     }
 
     private var textAttributes: [NSAttributedString.Key: Any] {
@@ -504,10 +505,31 @@ struct StreamingPlainTextView: NSViewRepresentable {
 
     final class Coordinator {
         var utf16Length = 0
+        var text = ""
+    }
+}
+
+enum StreamingReasoningSummary {
+    static func render(_ source: String) -> String {
+        source.split(separator: "\n", omittingEmptySubsequences: true)
+            .map { line in
+                line.drop(while: { "#>*-_` ".contains($0) })
+            }
+            .joined(separator: " ")
     }
 }
 
 final class AppendOnlyTextView: LocusSelectionTextView {
+    private struct MeasurementKey: Hashable {
+        let revision: UInt
+        let width: CGFloat
+    }
+
+    private var contentRevision: UInt = 0
+    private var measurements = TranscriptMeasurementCache<MeasurementKey>(capacity: 4)
+    private var liveResizeMeasurementActive = false
+    private var lastIntrinsicWidth: CGFloat?
+
     /// Shares the transcript's TextKit 1 stack and selection wash so the
     /// streaming fast path is indistinguishable from the parsed markdown that
     /// replaces it a frame later.
@@ -518,14 +540,41 @@ final class AppendOnlyTextView: LocusSelectionTextView {
         return view
     }
 
-    func measuredHeight(for width: CGFloat) -> CGFloat {
+    func contentDidChange() {
+        contentRevision &+= 1
+        measurements.removeAll()
+        lastIntrinsicWidth = nil
+        invalidateIntrinsicContentSize()
+    }
+
+    func setLiveResizeMeasurementActive(_ active: Bool) {
+        guard active != liveResizeMeasurementActive else { return }
+        let wasActive = liveResizeMeasurementActive
+        liveResizeMeasurementActive = active
+        lastIntrinsicWidth = nil
+        if wasActive, !active {
+            measurements.removeAll()
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    func measuredHeight(for width: CGFloat, isLiveResizing: Bool? = nil) -> CGFloat {
         guard let textContainer, let layoutManager else { return 1 }
+        let effectiveWidth = ResponseSelectableTextView.effectiveMeasurementWidth(
+            width,
+            wraps: true,
+            isLiveResizing: isLiveResizing ?? liveResizeMeasurementActive
+        )
+        let key = MeasurementKey(revision: contentRevision, width: effectiveWidth)
+        if let cached = measurements.value(for: key) { return cached.height }
         textContainer.containerSize = NSSize(
-            width: max(width, 1),
+            width: effectiveWidth,
             height: .greatestFiniteMagnitude
         )
         layoutManager.ensureLayout(for: textContainer)
-        return max(ceil(layoutManager.usedRect(for: textContainer).height), 1)
+        let height = max(ceil(layoutManager.usedRect(for: textContainer).height), 1)
+        measurements.insert(NSSize(width: effectiveWidth, height: height), for: key)
+        return height
     }
 
     override var intrinsicContentSize: NSSize {
@@ -538,7 +587,15 @@ final class AppendOnlyTextView: LocusSelectionTextView {
     override func setFrameSize(_ newSize: NSSize) {
         let widthChanged = abs(newSize.width - frame.width) > 0.5
         super.setFrameSize(newSize)
-        if widthChanged { invalidateIntrinsicContentSize() }
+        let effectiveWidth = ResponseSelectableTextView.effectiveMeasurementWidth(
+            newSize.width,
+            wraps: true,
+            isLiveResizing: liveResizeMeasurementActive
+        )
+        if widthChanged, effectiveWidth != lastIntrinsicWidth {
+            lastIntrinsicWidth = effectiveWidth
+            invalidateIntrinsicContentSize()
+        }
     }
 }
 

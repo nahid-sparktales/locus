@@ -2,6 +2,37 @@ import AppKit
 import Markdown
 import SwiftUI
 
+enum StreamingMarkdownBoundary {
+    /// Returns a conservative prefix boundary outside fenced code. A blank
+    /// separator confirms that the preceding top-level block is complete;
+    /// an open fence deliberately keeps the whole tail provisional.
+    static func lastStableBoundary(in source: String) -> String.Index? {
+        var fence: Character?
+        var lastBoundary: String.Index?
+        var lineStart = source.startIndex
+
+        while lineStart < source.endIndex {
+            let lineEnd = source[lineStart...].firstIndex(of: "\n") ?? source.endIndex
+            let line = source[lineStart..<lineEnd]
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            if trimmed.hasPrefix("```") {
+                fence = fence == "`" ? nil : (fence == nil ? "`" : fence)
+            } else if trimmed.hasPrefix("~~~") {
+                fence = fence == "~" ? nil : (fence == nil ? "~" : fence)
+            }
+
+            let nextStart = lineEnd < source.endIndex
+                ? source.index(after: lineEnd)
+                : source.endIndex
+            if fence == nil, line.isEmpty, nextStart > source.startIndex {
+                lastBoundary = nextStart
+            }
+            lineStart = nextStart
+        }
+        return lastBoundary
+    }
+}
+
 struct MarkdownInlineStyle: OptionSet, Hashable, Sendable {
     let rawValue: Int
 
@@ -787,8 +818,150 @@ struct MarkdownBodyView: View {
 }
 
 /// Streaming Markdown is parsed at the transcript's already-coalesced update
-/// cadence on a detached task. A superseding text snapshot cancels the stale
-/// presentation before it can replace the newest one.
+@MainActor
+final class StreamingRenderCoordinator: ObservableObject {
+    static let mutableTailLimit = 32 * 1_024
+
+    @Published private(set) var revision: UInt = 0
+    private(set) var stableBlocks: [MarkdownRenderBlock] = []
+    private(set) var provisionalText = ""
+    private(set) var sourceText = ""
+
+    private var committedSource = ""
+    private var generation: UInt = 0
+    private var parseTask: Task<Void, Never>?
+    private(set) var parseCountForTesting = 0
+    var isParsingForTesting: Bool { parseTask != nil }
+
+    func update(text: String, isFinal: Bool = false) {
+        if !text.hasPrefix(sourceText) {
+            reset(to: text)
+        } else {
+            sourceText = text
+        }
+        if isFinal {
+            parseFinal(text)
+        } else {
+            refreshProvisionalText()
+            scheduleStableParseIfNeeded()
+        }
+        publishRevision()
+    }
+
+    func cancel() {
+        generation &+= 1
+        parseTask?.cancel()
+        parseTask = nil
+    }
+
+    private func reset(to text: String) {
+        cancel()
+        committedSource = ""
+        stableBlocks = []
+        sourceText = text
+        provisionalText = text
+    }
+
+    private func refreshProvisionalText() {
+        guard sourceText.hasPrefix(committedSource) else {
+            provisionalText = sourceText
+            return
+        }
+        provisionalText = String(sourceText.dropFirst(committedSource.count))
+    }
+
+    private func scheduleStableParseIfNeeded() {
+        guard parseTask == nil else { return }
+        let remaining = provisionalText
+        // Keep every parser invocation bounded. A very large unfinished block
+        // remains plain until completion instead of monopolizing a worker.
+        let parsingWindow = String(remaining.prefix(Self.mutableTailLimit))
+        guard let boundary = StreamingMarkdownBoundary.lastStableBoundary(
+            in: parsingWindow
+        ) else {
+            // An unfinished paragraph, list, fence, or table stays native
+            // plain text. It can grow beyond the cap without invoking the
+            // parser; the authoritative completed response reconciles it.
+            return
+        }
+        let candidate = String(parsingWindow[..<boundary])
+        guard !candidate.isEmpty else { return }
+        let prefix = committedSource
+        let expectedGeneration = generation
+        parseCountForTesting += 1
+        parseTask = Task { @MainActor [weak self] in
+            let parsed = await Task.detached(priority: .userInitiated) {
+                let signpostID = locusPerformanceSignposter.makeSignpostID()
+                let interval = locusPerformanceSignposter.beginInterval(
+                    "Parse Streaming Markdown",
+                    id: signpostID,
+                    "characters=\(candidate.count)"
+                )
+                defer {
+                    locusPerformanceSignposter.endInterval(
+                        "Parse Streaming Markdown",
+                        interval
+                    )
+                }
+                return MarkdownDocumentParser.parse(candidate)
+            }.value
+            guard let self, !Task.isCancelled,
+                  self.generation == expectedGeneration,
+                  self.committedSource == prefix,
+                  self.sourceText.hasPrefix(prefix + candidate)
+            else { return }
+            self.stableBlocks.append(contentsOf: parsed)
+            self.committedSource += candidate
+            self.parseTask = nil
+            self.refreshProvisionalText()
+            self.scheduleStableParseIfNeeded()
+            self.publishRevision()
+        }
+    }
+
+    private func parseFinal(_ text: String) {
+        cancel()
+        sourceText = text
+        provisionalText = text
+        let expectedGeneration = generation
+        parseCountForTesting += 1
+        parseTask = Task { @MainActor [weak self] in
+            let parsed = await Task.detached(priority: .userInitiated) {
+                let signpostID = locusPerformanceSignposter.makeSignpostID()
+                let interval = locusPerformanceSignposter.beginInterval(
+                    "Parse Final Markdown",
+                    id: signpostID,
+                    "characters=\(text.count)"
+                )
+                defer {
+                    locusPerformanceSignposter.endInterval("Parse Final Markdown", interval)
+                }
+                return MarkdownDocumentParser.parse(text)
+            }.value
+            guard let self, !Task.isCancelled,
+                  self.generation == expectedGeneration,
+                  self.sourceText == text
+            else { return }
+            self.stableBlocks = parsed
+            self.committedSource = text
+            self.provisionalText = ""
+            self.parseTask = nil
+            self.publishRevision()
+        }
+    }
+
+    private func publishRevision() {
+        revision &+= 1
+        locusPerformanceSignposter.emitEvent(
+            "Publish Markdown Revision",
+            "revision=\(self.revision)"
+        )
+    }
+}
+
+/// Completed top-level blocks are parsed once. The mutable tail uses the
+/// append-only native text view, so provider deltas never synchronously reparse
+/// the accumulated response.
 struct StreamingMarkdownBodyView: View {
     let text: String
     var workspacePath: String? = nil
@@ -797,11 +970,11 @@ struct StreamingMarkdownBodyView: View {
     var selectionRootPath: [Int] = []
     var selectionRowID: String = ""
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
-    @State private var blocks: [MarkdownRenderBlock] = []
+    @StateObject private var coordinator = StreamingRenderCoordinator()
 
     var body: some View {
         Group {
-            if blocks.isEmpty, !text.isEmpty {
+            if coordinator.sourceText != text {
                 StreamingPlainTextView(
                     text: text,
                     font: .systemFont(ofSize: density.fontSize),
@@ -809,20 +982,35 @@ struct StreamingMarkdownBodyView: View {
                     lineSpacing: density.lineSpacing
                 )
             } else {
-                MarkdownBlocksView(
-                    blocks: blocks,
-                    workspacePath: workspacePath,
-                    density: density,
-                    selectionStore: selectionStore,
-                    selectionSpans: MarkdownSelectionProjection.spans(
-                        for: blocks,
-                        rootPath: selectionRootPath,
-                        firstSeparator: "\n\n",
-                        rowID: selectionRowID
-                    ),
-                    pathPrefix: selectionRootPath,
-                    onOpenWorkspaceReference: onOpenWorkspaceReference
-                )
+                VStack(alignment: .leading, spacing: 0) {
+                    if !coordinator.stableBlocks.isEmpty {
+                        MarkdownBlocksView(
+                            blocks: coordinator.stableBlocks,
+                            workspacePath: workspacePath,
+                            density: density,
+                            selectionStore: selectionStore,
+                            selectionSpans: MarkdownSelectionProjection.spans(
+                                for: coordinator.stableBlocks,
+                                rootPath: selectionRootPath,
+                                firstSeparator: "\n\n",
+                                rowID: selectionRowID
+                            ),
+                            pathPrefix: selectionRootPath,
+                            onOpenWorkspaceReference: onOpenWorkspaceReference
+                        )
+                    }
+                    if !coordinator.provisionalText.isEmpty {
+                        StreamingPlainTextView(
+                            text: coordinator.provisionalText,
+                            font: .systemFont(ofSize: density.fontSize),
+                            color: NSColor(
+                                density == .compact ? LocusTheme.muted : LocusTheme.inkSoft
+                            ),
+                            lineSpacing: density.lineSpacing
+                        )
+                        .padding(.top, coordinator.stableBlocks.isEmpty ? 0 : density.lineSpacing)
+                    }
+                }
             }
         }
         .environment(\.openURL, OpenURLAction { url in
@@ -830,19 +1018,10 @@ struct StreamingMarkdownBodyView: View {
             return .handled
         })
         .task(id: text) {
-            let snapshot = text
-            let parseTask = Task.detached(priority: .userInitiated) {
-                guard !Task.isCancelled else { return [MarkdownRenderBlock]() }
-                let parsed = MarkdownDocumentParser.parse(snapshot)
-                return Task.isCancelled ? [] : parsed
-            }
-            let parsed = await withTaskCancellationHandler {
-                await parseTask.value
-            } onCancel: {
-                parseTask.cancel()
-            }
-            guard !Task.isCancelled, snapshot == text else { return }
-            blocks = parsed
+            coordinator.update(text: text)
+        }
+        .onDisappear {
+            coordinator.cancel()
         }
     }
 
