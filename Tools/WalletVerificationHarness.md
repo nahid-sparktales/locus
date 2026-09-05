@@ -85,11 +85,16 @@ does not change user preferences to force a pass. Close running Locus applicatio
 first; the runner does not terminate an unrelated installed app. `--preflight-only`
 checks readiness without starting an app or build. `--allow-dirty` is smoke-only.
 For a hosted CI runner whose accessibility defaults are not controlled, use
-`--native-profile regular-light` instead of `--profile`. It selects and records
+`--native-profile compact-light` instead of `--profile`. The hosted display is
+too small for the regular window; regular profiles remain a dedicated-Mac gate.
+This option selects and records
 the one exact contrast/motion profile matching the actual native preferences;
 it does not change those preferences or claim the other profiles were tested.
 An explicit `--profile` still rejects any mismatch, and both options together
 are invalid. The receipt always contains the resolved full profile name.
+An environment mismatch retains an immutable `executed: false` preflight
+receipt, including the measured display and native settings. It cannot count as
+executed coverage, even when the source is clean.
 
 One serialized, ad-hoc signed Debug build produces one exact xctestrun. Every
 source-discovered UI test ID (minimum 140) is explicitly requested, and the raw

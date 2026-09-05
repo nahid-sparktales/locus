@@ -92,6 +92,33 @@ def validate_environment(actual: dict, profile: dict, os_major: int, config: dic
         raise ValueError("Display is too small for the exact requested window profile")
 
 
+def retain_preflight_failure(output: Path, *, actual: dict, profile_name: str,
+                             os_major: int, tests: list[str], error: str) -> Path:
+    """Retain blocked attempts too; an unexecuted profile earns no coverage."""
+    run = output.resolve() / str(uuid.uuid4())
+    run.mkdir(parents=True, exist_ok=False)
+    receipt = {
+        "schemaVersion": 1,
+        "status": "blocked",
+        "phase": "preflight",
+        "error": error,
+        "source": source_identity(),
+        "profile": profile_name,
+        "osMajor": os_major,
+        "preflight": actual,
+        "requestedTests": tests,
+        "matrixSHA256": sha256(CONFIG),
+        "recordedAt": utc_now(),
+        "executed": False,
+        "counts": None,
+        "releaseEligible": False,
+        "fullMatrixComplete": False,
+    }
+    receipt["receiptSHA256"] = digest(receipt)
+    immutable_json(run / "receipt.json", receipt)
+    return run
+
+
 def configure(value: object, environment: dict, tests: list[str]) -> int:
     count = 0
     if isinstance(value, dict):
@@ -216,7 +243,13 @@ def main():
         )
         profile_name = args.profile or native_profile(config, args.native_profile, actual)
         profile = profiles(config)[profile_name]
-        validate_environment(actual, profile, args.os_major, config)
+        try:
+            validate_environment(actual, profile, args.os_major, config)
+        except ValueError as failure:
+            run = retain_preflight_failure(args.output, actual=actual,
+                profile_name=profile_name, os_major=args.os_major, tests=tests,
+                error=str(failure))
+            raise SystemExit(f"UI profile not run: {failure}; evidence retained at {run}") from failure
         if args.preflight_only:
             print(
                 json.dumps(

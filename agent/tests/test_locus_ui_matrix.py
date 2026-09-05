@@ -151,6 +151,38 @@ def test_exact_requested_ids_are_forwarded_without_silent_skips():
         matrix.configure(value, {}, tests)
 
 
+def test_blocked_preflight_receipt_is_unique_immutable_and_never_coverage(tmp_path, monkeypatch):
+    source = {"revision": "a" * 40, "dirty": False}
+    monkeypatch.setattr(matrix, "source_identity", lambda: source)
+    actual = {"screenWidth": 1024, "screenHeight": 768}
+    request = dict(actual=actual, profile_name="regular-light-standard",
+                   os_major=15, tests=["LocusUITests/testExample"], error="Display is too small")
+    first = matrix.retain_preflight_failure(tmp_path, **request)
+    before = (first / "receipt.json").read_bytes()
+    second = matrix.retain_preflight_failure(tmp_path, **request)
+    assert first != second
+    assert (first / "receipt.json").read_bytes() == before
+    receipt = json.loads(before)
+    expected = receipt.pop("receiptSHA256")
+    assert matrix.digest(receipt) == expected
+    assert receipt["status"] == "blocked"
+    assert receipt["phase"] == "preflight"
+    assert receipt["source"] == source
+    assert receipt["preflight"] == actual
+    assert receipt["requestedTests"] == request["tests"]
+    assert receipt["counts"] is None
+    assert not receipt["executed"]
+    assert not receipt["releaseEligible"]
+    assert not receipt["fullMatrixComplete"]
+
+
+def test_hosted_ci_requests_compact_profile_without_claiming_regular_coverage():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert "--native-profile compact-light" in workflow
+    assert "--native-profile regular-light" not in workflow
+    assert "locus-ui-macos15-compact-light-native-" in workflow
+
+
 def test_test_command_uses_one_default_execution_without_retries():
     configuration = Path("/tmp/exact-generated.xctestrun")
     results = Path("/tmp/unique-result.xcresult")

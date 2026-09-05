@@ -349,14 +349,14 @@ jobs:
         run: >-
           python3 Tools/RunLocusUIMatrix.py
           --os-major 15
-          --native-profile regular-light
+          --native-profile compact-light
           --derived-data "$RUNNER_TEMP/locus-ui-derived"
           --output "$RUNNER_TEMP/locus-ui-evidence"
       - name: Retain requested IDs, exact counts, screenshots, and failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: locus-ui-macos15-regular-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: locus-ui-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/locus-ui-evidence
           if-no-files-found: error
           retention-days: 90
