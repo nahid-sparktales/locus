@@ -213,7 +213,13 @@ final class WalletSolanaIntegrationTests: XCTestCase {
         endpoint: String
     ) async throws {
         var lastStatus = "missing"
-        for _ in 0..<400 {
+        // Hosted validators can keep producing confirmations beyond the old
+        // forty-second polling window. Wait against a monotonic deadline;
+        // never substitute "confirmed" for finalized or broadcast again.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(120))
+        while clock.now < deadline {
+            try Task.checkCancellation()
             let value = try await solanaRPC(
                 endpoint: endpoint, method: "getSignatureStatuses",
                 params: [[signature], ["searchTransactionHistory": true]]
@@ -232,7 +238,9 @@ final class WalletSolanaIntegrationTests: XCTestCase {
                     return
                 }
             }
-            try await Task.sleep(for: .milliseconds(100))
+            try await clock.sleep(until: min(
+                clock.now.advanced(by: .milliseconds(250)), deadline
+            ))
         }
         throw NSError(
             domain: "WalletSolanaIntegrationTests", code: 4,
@@ -247,6 +255,8 @@ final class WalletSolanaIntegrationTests: XCTestCase {
         params: [Any]
     ) async throws -> Any {
         var request = URLRequest(url: try XCTUnwrap(URL(string: endpoint)))
+        // Bound each local transport operation as well as the polling loop.
+        request.timeoutInterval = 10
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
