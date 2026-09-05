@@ -21,8 +21,16 @@ final class WalletLibFuzzerTests: XCTestCase {
         let corpus = try XCTUnwrap(environment["LOCUS_FUZZ_CORPUS"])
         let artifacts = try XCTUnwrap(environment["LOCUS_FUZZ_ARTIFACTS"])
         let seconds = try XCTUnwrap(environment["LOCUS_FUZZ_SECONDS"])
+        let runID = try XCTUnwrap(environment["LOCUS_FUZZ_RUN_ID"])
+        let chunkID = try XCTUnwrap(environment["LOCUS_FUZZ_CHUNK_ID"])
+        let phase = try XCTUnwrap(environment["LOCUS_FUZZ_PHASE"])
+        let receipt = try XCTUnwrap(environment["LOCUS_FUZZ_RECEIPT"])
+        XCTAssertNotNil(UUID(uuidString: runID))
+        XCTAssertNotNil(UUID(uuidString: chunkID))
+        XCTAssertEqual(phase, environment["LOCUS_FUZZ_REPLAY"] == "1" ? "replay" : "fuzz")
         XCTAssertTrue(WalletLibFuzzer.targets.contains(target))
         WalletLibFuzzer.target = target
+        WalletLibFuzzer.iterations = 0
         URLProtocol.registerClass(WalletFuzzNoNetwork.self)
         defer { URLProtocol.unregisterClass(WalletFuzzNoNetwork.self) }
 
@@ -39,14 +47,15 @@ final class WalletLibFuzzerTests: XCTestCase {
             return walletFuzzerRunDriver(&count, &pointer, walletSwiftFuzzerInput)
         }
         XCTAssertEqual(result, 0)
-        if let receipt = environment["LOCUS_FUZZ_RECEIPT"] {
-            let payload: [String: Any] = ["target": target,
+        let payload: [String: Any] = ["target": target,
+                "runID": runID, "chunkID": chunkID, "phase": phase,
+                "processID": ProcessInfo.processInfo.processIdentifier,
                 "processCPUSeconds": Double(clock() - start) / Double(CLOCKS_PER_SEC),
                 "sourceRevision": environment["LOCUS_FUZZ_REVISION"] ?? "unknown",
                 "result": result, "iterations": WalletLibFuzzer.iterations]
-            try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-                .write(to: URL(fileURLWithPath: receipt), options: .atomic)
-        }
+        // A replay, retry, or stale process must never replace another record.
+        try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            .write(to: URL(fileURLWithPath: receipt), options: .withoutOverwriting)
     }
 }
 
@@ -83,11 +92,17 @@ private enum WalletLibFuzzer {
             _ = try? await WalletDappTransactionDecoder.sui(
                 .init(transactionBase64: data.base64EncodedString(), accountAddress: sui.address),
                 networkID: "sui:mainnet", account: sui, reviewedAssets: [])
-        case "connections", "metadata":
+        case "connections":
             if let record = try? decoder.decode(WalletConnectionRecord.self, from: data) {
                 let store = try? WalletPublicStore(path: ":memory:")
                 try? store?.upsertConnection(record)
                 _ = try? store?.loadConnections()
+            }
+        case "metadata":
+            if let asset = try? decoder.decode(WalletAsset.self, from: data) {
+                let store = try? WalletPublicStore(path: ":memory:")
+                try? store?.upsertAsset(asset)
+                _ = try? store?.loadAssets()
             }
         case "namespaces":
             if let proposals = try? decoder.decode([WalletConnectionNamespaceProposal].self, from: data) {

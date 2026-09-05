@@ -327,17 +327,20 @@ jobs:
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
-      - name: Accessibility and keyboard UI tests
+      - name: Serialized full UI suite with exact result accounting
         env:
           LOCUS_BUNDLE_MODE: skip
         run: >-
-          xcodebuild test
-          -project Locus.xcodeproj
-          -scheme Locus
-          -configuration Debug
-          -destination 'platform=macOS'
-          -only-testing:LocusUITests
-          CODE_SIGN_IDENTITY=-
-          DEVELOPMENT_TEAM=
-          LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
-          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+          python3 Tools/RunLocusUIMatrix.py
+          --os-major 15
+          --profile regular-light-standard
+          --derived-data "$RUNNER_TEMP/locus-ui-derived"
+          --output "$RUNNER_TEMP/locus-ui-evidence"
+      - name: Retain requested IDs, exact counts, screenshots, and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-ui-macos15-regular-light-standard-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/locus-ui-evidence
+          if-no-files-found: error
+          retention-days: 90

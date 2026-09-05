@@ -20,8 +20,35 @@ final class LocusUITests: XCTestCase {
         // Stale window-restoration state can suppress the main window at
         // launch; tests must not depend on the machine's saved state.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        if let appearance = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_APPEARANCE"] {
+            XCTAssertTrue(["Light", "Dark"].contains(appearance))
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
+            app.launchArguments += ["-AppleInterfaceStyle", appearance]
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_MATRIX_PROFILE"] != nil {
+            // These must be real native settings, not synthetic app overrides.
+            let environment = ProcessInfo.processInfo.environment
+            XCTAssertEqual(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+                environment["LOCUS_UI_TESTING_EXPECT_CONTRAST"] == "1")
+            XCTAssertEqual(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                environment["LOCUS_UI_TESTING_EXPECT_MOTION"] == "1")
+        }
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_MATRIX_PROFILE"] != nil {
+            let environment = ProcessInfo.processInfo.environment
+            XCTAssertEqual(app.windows.firstMatch.frame.width,
+                CGFloat(try XCTUnwrap(Double(environment["LOCUS_UI_TESTING_WINDOW_WIDTH"] ?? ""))), accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height,
+                CGFloat(try XCTUnwrap(Double(environment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] ?? ""))), accuracy: 2)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        // Never leave this test's launched fixture app registered as a live
+        // same-bundle-ID target for the next serialized test session.
+        app?.terminate()
+        app = nil
     }
 
     /// How long the first screen a launch fixture renders is given to appear.
@@ -2767,6 +2794,7 @@ final class LocusUITests: XCTestCase {
             app.terminate()
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = height
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
             app.launchArguments = [
                 "-ApplePersistenceIgnoreState", "YES",
                 "-AppleInterfaceStyle", appearance,
@@ -2848,6 +2876,7 @@ final class LocusUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
+        app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = "dark"
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "-AppleInterfaceStyle", "Dark",
@@ -4137,6 +4166,7 @@ final class LocusUITests: XCTestCase {
             app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = height
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
             app.launchArguments = [
                 "-ApplePersistenceIgnoreState", "YES",
                 "-AppleInterfaceStyle", appearance,

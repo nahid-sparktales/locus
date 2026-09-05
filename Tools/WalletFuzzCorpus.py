@@ -19,7 +19,7 @@ def main() -> None:
         "authorization_ffi": ["rust-ffi/authorization.json"],
         "calldata_ffi": ["rust-ffi/calldata.json"],
         "connections": ["connections/public-record.json"],
-        "metadata": ["connections/public-record.json"],
+        "metadata": ["metadata/public-asset.json"],
         "namespaces": ["connections/namespace-proposal.json"],
         "authorization": ["authorization/siwe.txt", "authorization/siws.txt"],
         "quote_math": ["quote/integer-operands.txt"],

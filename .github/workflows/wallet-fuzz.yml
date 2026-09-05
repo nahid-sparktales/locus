@@ -1,10 +1,16 @@
 name: Wallet coverage-guided fuzzing
 on:
   pull_request:
-    paths: ["Locus/**", "LocusTests/Wallet*", "WalletSignerCore/**", "WalletConnectionsRuntime/**", "FuzzCorpus/**", "Tools/*Wallet*", "project.yml", ".github/workflows/wallet-fuzz.yml"]
+    paths: ["Locus/**", "LocusTests/Wallet*", "WalletSignerCore/**", "WalletSignerService/**", "WalletConnectionsRuntime/**", "WalletConnectionsWeb/**", "Vendor/**", "Config/**", "FuzzCorpus/**", "Tools/*Wallet*", "agent/tests/test_wallet_fuzz*", "agent/tests/test_wallet_test_execution.py", "project.yml", "Locus.xcodeproj/**", ".github/workflows/wallet-fuzz.yml"]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      chunk_wall_seconds:
+        description: "Wall-time budget per target chunk (CPU evidence is measured separately)"
+        type: choice
+        default: "1800"
+        options: ["60", "1800", "14400"]
 
 permissions:
   contents: read
@@ -24,7 +30,7 @@ jobs:
   rust:
     needs: inputs
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -38,19 +44,25 @@ jobs:
       - name: Replay corpus and run production signer under ASan and checked arithmetic
         env:
           LOCUS_FUZZ_TARGET: ${{ matrix.target }}
-          LOCUS_FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || '1800' }}
+          LOCUS_FUZZ_SECONDS: ${{ inputs.chunk_wall_seconds || (github.event_name == 'pull_request' && '60' || '1800') }}
           LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-rust
         run: Tools/RunWalletRustFuzz.sh
       - name: Keep minimized candidates and completion logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: rust-fuzz-${{ matrix.target }}-${{ github.sha }}
-          path: ${{ runner.temp }}/wallet-fuzz-rust
+          name: rust-fuzz-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wallet-fuzz-rust/runs
+          if-no-files-found: error
+          retention-days: 90
   swift:
     needs: inputs
     runs-on: macos-15
     timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [evm_decoder, solana_decoder, sui_decoder, connections, namespaces, authorization, metadata, quote_math]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install reviewed test-only fuzz runtime
@@ -61,8 +73,8 @@ jobs:
           git diff --exit-code -- Locus.xcodeproj/project.pbxproj
       - name: Replay corpora and fuzz production Swift with ASan and boundary UBSan
         env:
-          LOCUS_FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || '1800' }}
-          LOCUS_FUZZ_REQUIRE_CLEAN: "1"
+          LOCUS_FUZZ_TARGET: ${{ matrix.target }}
+          LOCUS_FUZZ_SECONDS: ${{ inputs.chunk_wall_seconds || (github.event_name == 'pull_request' && '60' || '1800') }}
           LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-swift
         run: |
           export LOCUS_FUZZ_LLVM_PREFIX="$(brew --prefix llvm@21)"
@@ -71,9 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: swift-fuzz-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/wallet-fuzz-swift/*.json
-            ${{ runner.temp }}/wallet-fuzz-swift/*.log
-            ${{ runner.temp }}/wallet-fuzz-swift/artifacts
-            ${{ runner.temp }}/wallet-fuzz-swift/corpus
+          name: swift-fuzz-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wallet-fuzz-swift/runs
+          if-no-files-found: error
+          retention-days: 90

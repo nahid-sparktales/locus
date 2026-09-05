@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "supportedOSMajors": [14, 15, 26],
+  "minimumFullSuiteTests": 140,
+  "sizes": {
+    "compact": {"width": 720, "height": 620},
+    "regular": {"width": 1120, "height": 700}
+  },
+  "appearances": ["Light", "Dark"],
+  "accessibilityModes": {
+    "standard": {"increaseContrast": false, "reduceMotion": false},
+    "contrast": {"increaseContrast": true, "reduceMotion": false},
+    "motion": {"increaseContrast": false, "reduceMotion": true},
+    "contrast-motion": {"increaseContrast": true, "reduceMotion": true}
+  },
+  "profileScope": "Initial launch of every test; tests that intentionally change size or appearance retain their explicit scenario-specific overrides.",
+  "manualEvidenceStillRequired": [
+    "VoiceOver reading order and keyboard-only completion",
+    "Native accessibility preferences verified on each operating system",
+    "Live connector approval, rejection, reconnect, and restart",
+    "Swap quoting, allowance review, final swap review, and reconciliation",
+    "Camera and image QR permission, failure, and recovery states"
+  ]
+}
