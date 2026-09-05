@@ -84,6 +84,7 @@ struct LaunchEvidenceIndex: Codable {
     let schemaVersion: Int
     let releaseRevision: Int
     let sourceRevision: String
+    let phase: String
     let artifactIdentity: ReleaseArtifactIdentity
     let approvals: [LaunchApprovalEvidence]
     let chainTotals: [ChainTransactionTotal]
@@ -93,8 +94,8 @@ struct LaunchEvidenceIndex: Codable {
 
 struct ReleaseArtifactIdentity: Codable {
     let bundleVersion: String
-    let outerAppCodeDirectorySHA256: String
-    let signerCodeDirectorySHA256: String
+    let outerAppCodeDirectoryHash: String
+    let signerCodeDirectoryHash: String
     let archiveSHA256: String
 }
 
@@ -106,6 +107,7 @@ struct ChainTransactionTotal: Codable {
 struct ActionCoverageEvidence: Codable {
     let networkID: String
     let action: String
+    let successfulOperations: Int
     let successfulTransactions: Int
 }
 
@@ -114,7 +116,7 @@ struct ConnectionCoverageEvidence: Codable {
     let connector: String
     let direction: String
     let method: String
-    let successfulSessions: Int
+    let successfulOperations: Int
 }
 
 struct LaunchApprovalEvidence: Codable {
@@ -160,15 +162,42 @@ guard CommandLine.arguments.count == 5 else {
     fail("usage: SignWalletCapabilityManifest.swift manifest.json evidence-index.json private-key.base64 signed-output.json")
 }
 
-let inputURL = URL(fileURLWithPath: CommandLine.arguments[1])
-let evidenceURL = URL(fileURLWithPath: CommandLine.arguments[2])
+let verifying = CommandLine.arguments[1] == "--verify"
+let inputURL = URL(fileURLWithPath: CommandLine.arguments[verifying ? 2 : 1])
+let evidenceURL = URL(fileURLWithPath: CommandLine.arguments[verifying ? 3 : 2])
 let keyURL = URL(fileURLWithPath: CommandLine.arguments[3])
 let outputURL = URL(fileURLWithPath: CommandLine.arguments[4])
+
+// Counts are observations, not operator-entered metrics. Recompute the
+// hash-linked ledger independently before reading any signing-key bytes.
+func verifyRecordedEvidence() throws {
+    let verifier = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .appendingPathComponent("WalletLaunchEvidence.py")
+    guard FileManager.default.fileExists(atPath: verifier.path) else {
+        fail("the checked-in wallet evidence verifier is missing")
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["python3", verifier.path, "verify", evidenceURL.path, inputURL.path]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.standardError
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        fail("recorded release evidence failed independent recomputation")
+    }
+}
 
 do {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    let manifest = try decoder.decode(CapabilityManifest.self, from: Data(contentsOf: inputURL))
+    let inputData = try Data(contentsOf: inputURL)
+    guard inputData.count <= 1_048_576 else { fail("capability input is oversized") }
+    let signedInput = verifying ? try decoder.decode(SignedCapabilityManifest.self, from: inputData) : nil
+    let manifest = try signedInput?.manifest ?? decoder.decode(CapabilityManifest.self, from: inputData)
+    let evidenceData = try Data(contentsOf: evidenceURL)
+    guard evidenceData.count <= 16 * 1_048_576 else { fail("evidence index is oversized") }
+    let evidence = try decoder.decode(LaunchEvidenceIndex.self, from: evidenceData)
     let limits = manifest.canaryLimits ?? []
     guard limits.count <= 10_000 else { fail("too many canary limits") }
     var limitIDs = Set<String>()
@@ -216,14 +245,19 @@ do {
           manifest.expiresAt.timeIntervalSince(manifest.issuedAt) <= 31 * 24 * 60 * 60 else {
         fail("the manifest must be current and valid for no more than 31 days")
     }
-    let requiredApprovals = manifest.releaseStage == "general_availability"
-        ? gaApprovals : canaryApprovals
+    let requiredApprovals: Set<String> = evidence.phase == "testnet_rehearsal_authorization"
+        ? ["release_candidate_build"]
+        : (manifest.releaseStage == "general_availability" ? gaApprovals : canaryApprovals)
     let missing = requiredApprovals.subtracting(manifest.completedApprovals)
     guard missing.isEmpty else {
         fail("\(manifest.releaseStage) approvals are incomplete: \(missing.sorted().joined(separator: ", "))")
     }
     guard manifest.completedApprovals.isSubset(of: gaApprovals) else {
         fail("completedApprovals contains an unknown approval")
+    }
+    if evidence.phase == "testnet_rehearsal_authorization",
+       manifest.completedApprovals != requiredApprovals {
+        fail("rehearsal authorization must not claim unperformed release approvals")
     }
     let knownNetworks: Set<String> = [
         "eip155:1", "eip155:11155111", "solana:mainnet-beta",
@@ -316,80 +350,36 @@ do {
         }
     }
 
-    let evidenceData = try Data(contentsOf: evidenceURL)
+    try verifyRecordedEvidence()
     let evidenceHash = SHA256.hash(data: evidenceData).map { String(format: "%02x", $0) }.joined()
     guard manifest.evidenceIndexSHA256 == evidenceHash else {
         fail("evidenceIndexSHA256 does not match the supplied evidence index")
     }
-    let evidence = try decoder.decode(LaunchEvidenceIndex.self, from: evidenceData)
     let lowercaseHex = CharacterSet(charactersIn: "0123456789abcdef")
     func validSHA256(_ value: String) -> Bool {
         value.count == 64 && value.unicodeScalars.allSatisfy(lowercaseHex.contains)
+    }
+    func validCDHash(_ value: String) -> Bool {
+        value.count == 40 && value.unicodeScalars.allSatisfy(lowercaseHex.contains)
     }
     guard evidence.schemaVersion == 2,
           evidence.releaseRevision == manifest.revision,
           (40...64).contains(evidence.sourceRevision.count),
           evidence.sourceRevision.unicodeScalars.allSatisfy(lowercaseHex.contains),
           !evidence.artifactIdentity.bundleVersion.isEmpty,
-          validSHA256(evidence.artifactIdentity.outerAppCodeDirectorySHA256),
-          validSHA256(evidence.artifactIdentity.signerCodeDirectorySHA256),
+          validCDHash(evidence.artifactIdentity.outerAppCodeDirectoryHash),
+          validCDHash(evidence.artifactIdentity.signerCodeDirectoryHash),
           validSHA256(evidence.artifactIdentity.archiveSHA256) else {
         fail("the evidence index schema or release revision does not match the manifest")
     }
-    let chainByNetwork = networkChains
-    let enabledChains = Set(manifest.networkGrants.compactMap {
-        chainByNetwork[$0.networkID]
-    })
-    let chainTotals = Dictionary(
-        uniqueKeysWithValues: evidence.chainTotals.map { ($0.chain, $0.successfulTransactions) }
-    )
-    guard chainTotals.count == evidence.chainTotals.count,
-          Set(chainTotals.keys).isSubset(of: ["evm", "solana", "sui"]),
-          enabledChains.allSatisfy({ chainTotals[$0, default: 0] > 0 }) else {
-        fail("the evidence index lacks explicit successful transaction totals for every enabled chain")
-    }
-    if manifest.releaseStage == "general_availability" {
-        guard enabledChains.allSatisfy({ chainTotals[$0, default: 0] >= 100 }) else {
-            fail("GA requires at least 100 successful transactions per enabled chain")
-        }
-    }
-    let coveredActions = Set(evidence.actionCoverage.compactMap { item -> String? in
-        guard item.successfulTransactions > 0 else { return nil }
-        return "\(item.networkID):\(item.action)"
-    })
-    let actionCapabilities: Set<String> = [
-        "native_transfer", "fungible_token_transfer", "nft_transfer",
-        "exact_input_swap", "reviewed_call", "standardized_sign_in",
-    ]
-    let requiredActions = Set(manifest.networkGrants.flatMap { grant in
-        grant.capabilities.intersection(actionCapabilities).map {
-            "\(grant.networkID):\($0)"
-        }
-    })
-    guard requiredActions.isSubset(of: coveredActions) else {
-        fail("the evidence index lacks success coverage for an explicitly enabled action")
-    }
-    let coveredConnections = Set(evidence.connectionCoverage.compactMap { item -> String? in
-        guard item.successfulSessions > 0 else { return nil }
-        return "\(item.networkID):\(item.connector):\(item.direction):\(item.method)"
-    })
-    let requiredConnections = Set(manifest.networkGrants.flatMap { grant in
-        grant.connectors.flatMap { connector in
-            connector.directions.flatMap { direction in
-                connector.methods.map { method in
-                    "\(grant.networkID):\(connector.connector):\(direction):\(method)"
-                }
-            }
-        }
-    })
-    guard requiredConnections.isSubset(of: coveredConnections) else {
-        fail("the evidence index lacks success coverage for an explicitly enabled connection path")
-    }
+    // The verifier enforces unique records before constructing any dictionary,
+    // maps initial mainnet scope to explicit testnet rehearsal observations,
+    // and counts sign-in/account operations without inventing transactions.
     let grouped = Dictionary(grouping: evidence.approvals, by: \.approval)
     guard grouped.values.allSatisfy({ $0.count == 1 }) else {
         fail("the evidence index contains duplicate approval records")
     }
-    let evidenceRoot = evidenceURL.deletingLastPathComponent().standardizedFileURL
+    let evidenceRoot = evidenceURL.deletingLastPathComponent().resolvingSymlinksInPath()
     for approval in requiredApprovals.sorted() {
         guard let item = grouped[approval]?.first,
               item.status == "passed",
@@ -398,7 +388,7 @@ do {
               item.completedAt <= Date() else {
             fail("approval \(approval) has no complete, attributable evidence")
         }
-        let artifact = evidenceRoot.appendingPathComponent(item.artifactPath).standardizedFileURL
+        let artifact = evidenceRoot.appendingPathComponent(item.artifactPath).resolvingSymlinksInPath()
         let rootPath = evidenceRoot.path.hasSuffix("/") ? evidenceRoot.path : evidenceRoot.path + "/"
         guard artifact.path.hasPrefix(rootPath),
               FileManager.default.fileExists(atPath: artifact.path) else {
@@ -423,20 +413,24 @@ do {
             }
         }
         if approval == "release_candidate_soak" {
-            let metrics = item.metrics ?? [:]
-            guard metrics["duration_days", default: 0] >= 30,
-                  metrics["external_testers", default: 0] >= 25,
-                  metrics["ethereum_successful_transactions", default: 0] >= 100,
-                  metrics["solana_successful_transactions", default: 0] >= 100,
-                  metrics["sui_successful_transactions", default: 0] >= 100,
-                  metrics["unauthorized_signing", default: 1] == 0,
-                  metrics["secret_exposure", default: 1] == 0,
-                  metrics["unrecoverable_vaults", default: 1] == 0,
-                  metrics["unresolved_broadcast_ambiguity", default: 1] == 0,
-                  metrics["loss_producing_decoder_discrepancy", default: 1] == 0 else {
-                fail("the release-candidate soak does not meet the GA thresholds")
+            guard evidence.phase == "mainnet_soak", item.metrics == nil else {
+                fail("soak totals must be derived from recorded observations, not supplied approval metrics")
             }
         }
+    }
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let canonical = try encoder.encode(manifest)
+    if let signedInput {
+        guard let bytes = Data(base64Encoded: CommandLine.arguments[4]), bytes.count == 32,
+              let signature = Data(base64Encoded: signedInput.signatureBase64) else {
+            fail("invalid capability verification key or signature")
+        }
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: bytes)
+        guard key.isValidSignature(signature, for: canonical) else { fail("capability signature is invalid") }
+        print("capability_signature_and_recorded_evidence_verified")
+        exit(0)
     }
     let keyText = try String(contentsOf: keyURL, encoding: .utf8)
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -444,10 +438,6 @@ do {
         fail("the signing key file must contain one base64-encoded 32-byte Ed25519 private key")
     }
     let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: keyData)
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    let canonical = try encoder.encode(manifest)
     let signature = try privateKey.signature(for: canonical)
     let signed = SignedCapabilityManifest(
         manifest: manifest,

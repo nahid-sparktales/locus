@@ -95,6 +95,65 @@ Developer ID provisioning profiles authorizing their Keychain access group.
 Post-package activation removes the former circular dependency between a
 bundled activating manifest and the hash of its notarized containing archive.
 
+### Release authority, invitations, and offline behavior
+
+The separately signed `WalletReviewCeiling` is non-activating scope, with no
+operational expiry. Connector initialization may inspect that scope for pinned
+SDK/configuration identities, but it cannot use it as an operational grant.
+The app and authenticated signer independently verify schema-v2 activation
+history, time-limited schema-v3 capabilities, and fresh schema-v2 review
+restrictions. Source revisions and installed CDHashes are 40 lowercase hex
+characters; archive SHA-256 values are separate 64-character identities.
+
+Each transition binds the exact candidate, ceiling digest, predecessor digest,
+and normalized resulting authority. Initial production canary activation
+includes Ethereum, Solana, and Sui. Renewal changes lease/evidence data without
+restoring removed scope or resetting budgets. Restrictions preserve removed
+grants and lowered permanent limits. Promotion retains the exact candidate,
+tested scope, and permanent restrictions while removing temporary canary gates.
+The signer appends its accepted high-water mark before enabling authority;
+the app must acknowledge the same protected checkpoint.
+
+Canary invitations are separately signed, installation-bound admissions. The
+installation identifier is random signer-owned, device-only state, not a wallet
+key or caller-selected database field. Admission and release history have
+separate append-only records so importing an invitation cannot rewrite the
+global release history. Lease renewal cannot change its allocation or serial.
+Replacement generations require explicit prior-serial revocation. Cumulative
+reservation keys bind the candidate rather than the lease revision, and remain
+reserved across ambiguous broadcasts and admission/activation renewal.
+
+Preparation and the final vault-signing or connector-submission boundary check
+live admission. A revoked or expired invitation cannot block persistence of an
+emergency restriction; it leaves the installation dormant instead. The signer
+accepts expired historical records only as lineage proof, never as current
+authority. Missing or broken history fails closed. Fetches are bounded and occur
+outside WebKit; the present reader accepts at most 64 linked transitions per
+request and requires a verified signer checkpoint to resume.
+
+Leases last at most 31 days. An offline installation may retain its previously
+verified permissions until its current activation or admission expires. There
+is no promise of immediate offline revocation. Distribution operators must
+renew at least 72 hours before expiry and record any availability gap; tooling
+does not automatically publish, renew, approve, or declare a successful soak.
+
+New installed candidates start a fresh all-chain canary only at a higher global
+revision, with a changed source/code identity and fresh admission. The protected
+checkpoint retains retired candidate IDs; an older candidate cannot be restored
+with a higher revision. Repacking the same source does not reset budgets.
+Canary restrictions retain every limit identity, including inactive ones, so
+promotion cannot silently turn a removed quota into uncapped authority.
+GA expiry uses the current activation lease, not an obsolete canary invitation.
+
+Candidate automatic updates remain bound to the sealed canary/stable feeds,
+exact candidate archive, build version, and admitted release stage. A dormant
+or expired candidate does not silently fall back to the stable feed. A person
+may explicitly choose **Check for Safety Updates**, after a warning that a new
+build ends the candidate and requires fresh wallet authorization. This separate
+manual cycle uses the sealed stable feed, a strictly newer build, approved HTTPS
+archive hosts, and Sparkle's normal cryptographic verification. It conveys no
+wallet signing authority and is never treated as same-artifact GA promotion.
+
 Sui's GA transport is GraphQL for reads, simulation, execution, and
 reconciliation. Debug localnet may use an explicitly bounded loopback path;
 Release transport remains HTTPS-only. gRPC migration and batching are deferred.

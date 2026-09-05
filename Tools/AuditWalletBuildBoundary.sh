@@ -79,7 +79,8 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
     \( -name WalletSigner.xpc -o -name WalletConnections.xpc \
         -o -name WalletRecovery.app -o -name 'WalletConnections*' \
         -o -name 'LocusReownSwift_*' -o -name 'ReownSwift*' \
-        -o -iname '*wallet*activation*' -o -name 'WalletSignerSBOM*' \
+        -o -iname '*wallet*activation*' -o -iname '*wallet*authority*' \
+        -o -iname '*wallet*admission*' -o -iname '*wallet*ceiling*' -o -name 'WalletSignerSBOM*' \
         -o -name 'phantom-wallet-sdk-*.LICENSE' -o -name 'eyes-0.1.8.LICENSE' \
         -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) \
     -print -quit)"
@@ -89,13 +90,15 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
 }
 
 ! /usr/bin/plutil -p "${mas_app}/Contents/Info.plist" | /usr/bin/grep -Eq \
-    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode)' || {
+    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' || {
     echo "error: Mac App Store Info.plist contains connector configuration" >&2
     exit 1
 }
 
 mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
 mas_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
+mas_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
+mas_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
 direct_macho_count=0
 mas_macho_count=0
 

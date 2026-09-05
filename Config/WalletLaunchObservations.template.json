@@ -1,5 +1,6 @@
 {
-  "approvals": [],
+  "schemaVersion": 2,
+  "sourceRevision": "",
   "artifactIdentity": {
     "archiveSHA256": "",
     "bundleVersion": "",
@@ -9,8 +10,5 @@
   "phase": "pre_canary_rehearsal",
   "candidateID": "",
   "authoritySHA256": "",
-  "eventLedger": { "path": "", "sha256": "" },
-  "releaseRevision": 1,
-  "schemaVersion": 2,
-  "sourceRevision": ""
+  "events": []
 }

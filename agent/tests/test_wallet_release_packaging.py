@@ -1,8 +1,10 @@
 """Release tool boundaries; no real signing identities or credentials are used."""
+
 import copy
 import datetime as dt
 import importlib.util
 import plistlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +12,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("wallet_export_provenance", ROOT / "Tools/WalletExportProvenance.py")
+spec = importlib.util.spec_from_file_location(
+    "wallet_export_provenance", ROOT / "Tools/WalletExportProvenance.py"
+)
 provenance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(provenance)
 
@@ -19,13 +23,19 @@ def _snapshot():
     return {
         "sourceRevision": "a" * 40,
         "bundleVersion": "24",
-        "outerApp": {"CDHash": "b" * 40, "TeamIdentifier": "ABCDEFGHIJ", "Identifier": "io.sparktales.locus"},
+        "outerApp": {
+            "CDHash": "b" * 40,
+            "TeamIdentifier": "ABCDEFGHIJ",
+            "Identifier": "io.sparktales.locus",
+        },
         "signers": {"signer": {"CDHash": "c" * 40, "profileSHA256": "d" * 64}},
         "files": {"Contents/Info.plist": "e" * 64, "Contents/MacOS/Locus": "f" * 64},
     }
 
 
-@pytest.mark.parametrize("field", ["sourceRevision", "bundleVersion", "outerApp", "signers", "files"])
+@pytest.mark.parametrize(
+    "field", ["sourceRevision", "bundleVersion", "outerApp", "signers", "files"]
+)
 def test_export_receipt_rejects_changed_source_signature_profile_or_content(monkeypatch, field):
     recorded = _snapshot()
     receipt = {"schemaVersion": 1, "exportMethod": "developer-id", **recorded}
@@ -52,14 +62,18 @@ def test_export_receipt_rejects_a_non_developer_id_export():
         provenance.verify({"schemaVersion": 1, "exportMethod": "development"}, Path("unused"))
 
 
-@pytest.mark.parametrize("mutation", ["expired", "wrong_team", "development", "wrong_group", "wrong_identifier"])
+@pytest.mark.parametrize(
+    "mutation", ["expired", "wrong_team", "development", "wrong_group", "wrong_identifier"]
+)
 def test_signer_profile_validation_requires_distribution_authority(tmp_path, monkeypatch, mutation):
     team = "ABCDEFGHIJ"
     signer = tmp_path / "WalletSigner.xpc"
     (signer / "Contents").mkdir(parents=True)
     (signer / "Contents/embedded.provisionprofile").write_bytes(b"fixture CMS")
     profile = {
-        "ExpirationDate": dt.datetime(2099, 1, 1), "TeamIdentifier": [team], "ProvisionsAllDevices": True,
+        "ExpirationDate": dt.datetime(2099, 1, 1),
+        "TeamIdentifier": [team],
+        "ProvisionsAllDevices": True,
         "Entitlements": {
             "keychain-access-groups": [f"{team}.io.sparktales.locus.WalletSigner"],
             "com.apple.application-identifier": f"{team}.io.sparktales.locus.WalletSigner",
@@ -85,13 +99,52 @@ def test_unsigned_provenance_survives_resigning_and_never_modifies_the_input(tmp
     executable = tmp_path / "fixture"
     subprocess.run(
         ["xcrun", "clang", "-x", "c", "-", "-o", str(executable)],
-        input=b"int main(void) { return 0; }\n", capture_output=True, check=True,
+        input=b"int main(void) { return 0; }\n",
+        capture_output=True,
+        check=True,
     )
-    subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "fixture.one", str(executable)], check=True, capture_output=True)
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", "--identifier", "fixture.one", str(executable)],
+        check=True,
+        capture_output=True,
+    )
+    displayed = subprocess.run(
+        ["codesign", "-dv", "--verbose=4", str(executable)], check=True, capture_output=True
+    )
+    # This is Apple's actual CDHash output, not a made-up 64-hex fixture.
+    cdhash = re.search(rb"^CDHash=([0-9a-f]{40})$", displayed.stderr, re.MULTILINE)
+    assert cdhash
+    security_identity = subprocess.run(
+        [
+            "xcrun",
+            "swift",
+            "-e",
+            """
+import Foundation
+import Security
+var code: SecStaticCode?
+guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: CommandLine.arguments[1]) as CFURL,
+    [], &code) == errSecSuccess, let code else { exit(1) }
+var raw: CFDictionary?
+guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation),
+    &raw) == errSecSuccess, let raw,
+    let bytes = (raw as NSDictionary)[kSecCodeInfoUnique] as? Data else { exit(1) }
+print(bytes.map { String(format: "%02x", $0) }.joined())
+""",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert security_identity.stdout.strip() == cdhash.group(1)
     first_bytes = executable.read_bytes()
     first = provenance.unsigned_digest(executable)
     assert executable.read_bytes() == first_bytes
-    subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "fixture.two", str(executable)], check=True, capture_output=True)
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", "--identifier", "fixture.two", str(executable)],
+        check=True,
+        capture_output=True,
+    )
     second_bytes = executable.read_bytes()
     assert first_bytes != second_bytes
     assert provenance.unsigned_digest(executable) == first
@@ -123,8 +176,16 @@ def test_export_packaging_cannot_write_an_archive_inside_the_sealed_app(tmp_path
     receipt = tmp_path / "receipt.json"
     receipt.write_text("{}")
     result = subprocess.run(
-        ["zsh", str(ROOT / "Tools/PackageExportedWalletRelease.sh"), str(app), str(app / "candidate.zip")],
-        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LOCUS_WALLET_EXPORT_PROVENANCE": str(receipt)},
+        [
+            "zsh",
+            str(ROOT / "Tools/PackageExportedWalletRelease.sh"),
+            str(app),
+            str(app / "candidate.zip"),
+        ],
+        env={
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LOCUS_WALLET_EXPORT_PROVENANCE": str(receipt),
+        },
         capture_output=True,
     )
     assert result.returncode != 0

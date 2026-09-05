@@ -64,6 +64,23 @@ clean candidate revision before canary activation.
 - [ ] Post-package activation, signer-owned rollback protection, signed finite
   canary limits, exact connector ownership/configuration, and reviewed provider
   identity gates pass the integrated candidate regression suite.
+- [ ] Schema-v2 hash-linked activation history, non-activating review ceiling,
+  installation-bound admission, unchanged-authority renewal, permanent
+  restriction preservation, and same-archive GA promotion pass independent
+  app/signer and real signed-executable identity verification. Native unit
+  fixtures and release-tool tests are implementation checks, not this approval.
+- [ ] The checked-in local-chain scenario catalog has no missing, pending, or
+  skipped required scenario. Two local provider fault paths are not labeled
+  independent production-provider evidence. Independent Sui fixture signing
+  must not widen the production signer chain allowlist.
+- [ ] All 48 OS/UI profiles (macOS 14/15/26 × 16 profiles), the complete UI suite,
+  keyboard-only checks, and attributable VoiceOver reviews pass. The matrix
+  runner rejects missing/skipped tests and actual OS/accessibility mismatches.
+- [ ] All eight Swift and five Rust fuzz targets have clean corpus replay and
+  at least 24 measured target-process CPU-hours each on one clean candidate
+  identity. Unique immutable receipts, actual coverage instrumentation, and
+  supported platform leak checks are independently verified. Build or idle
+  wall time is never credited toward the 312 CPU-hour minimum.
 - [ ] Dormant archive/export packaging passes on the release-signing Mac and an
   independent clean Mac. `Tools/ArchiveWalletRelease.sh` uses Xcode Developer ID
   export with the nested signer provisioning profiles; exported-artifact

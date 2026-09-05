@@ -256,73 +256,18 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
         "${signer_info}" 2>/dev/null || true)"
     review_manifest="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewManifestBase64' \
         "${signer_info}" 2>/dev/null || true)"
+    review_ceiling="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewCeilingBase64' \
+        "${signer_info}" 2>/dev/null || true)"
     if [[ "${wallet_release_channel}" == "disabled" ]]; then
-        [[ -z "${capability_key}" && -z "${capability_manifest}" && -z "${review_manifest}" ]] || {
+        [[ -z "${capability_key}" && -z "${capability_manifest}" && -z "${review_manifest}" && -z "${review_ceiling}" ]] || {
             echo "error: a wallet-disabled release must not embed wallet manifests" >&2
             exit 1
         }
     else
-        [[ -n "${capability_key}" && -z "${capability_manifest}" && -n "${review_manifest}" ]] || {
-            echo "error: wallet ${wallet_release_channel} must be dormant: embed the public key and signed review ceiling, but no capability manifest" >&2
-            exit 1
-        }
-        review_file="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-wallet-review.XXXXXX")"
-        if ! /bin/echo -n "${review_manifest}" | /usr/bin/base64 -D > "${review_file}"; then
-            /bin/rm -f "${review_file}"
-            echo "error: embedded wallet review manifest is not valid base64" >&2
-            exit 1
-        fi
-        review_schema="$(/usr/bin/plutil -extract manifest.schemaVersion raw -o - \
-            "${review_file}" 2>/dev/null || true)"
-        review_revision="$(/usr/bin/plutil -extract manifest.revision raw -o - \
-            "${review_file}" 2>/dev/null || true)"
-        [[ "${review_schema}" == "2" && "${review_revision}" -gt 0 ]] || {
-            /bin/rm -f "${review_file}"
-            echo "error: wallet release requires a signed schema-v2 review manifest" >&2
-            exit 1
-        }
-        if ! /usr/bin/xcrun swift "${repo_root}/Tools/SignWalletReviewManifest.swift" \
-            --verify "${review_file}" "${capability_key}" >/dev/null
-        then
-            /bin/rm -f "${review_file}"
-            echo "error: wallet release review manifest failed signature or structure verification" >&2
-            exit 1
-        fi
-        /usr/bin/python3 "${repo_root}/Tools/VerifyWalletProviderBindings.py" \
-            "${review_file}" "${info_plist}"
-        /bin/rm -f "${review_file}"
-        # The invited canary is intentionally all-chain. The dormant artifact
-        # carries every reviewed provider, while the post-notarization envelope
-        # decides which exact identities are activated.
-        provider_keys=(
-            LocusWalletAlchemyEthereumMainnetRPCURL
-            LocusWalletQuickNodeEthereumMainnetRPCURL
-            LocusWalletAlchemySolanaMainnetRPCURL
-            LocusWalletQuickNodeSolanaMainnetRPCURL
-            LocusWalletAlchemySuiMainnetGraphQLURL
-            LocusWalletQuickNodeSuiMainnetGraphQLURL
-        )
-        for provider_key in "${provider_keys[@]}"
-        do
-            provider_url="$(/usr/libexec/PlistBuddy -c "Print :${provider_key}" \
-                "${info_plist}" 2>/dev/null || true)"
-            [[ "${provider_url}" == https://* ]] || {
-                echo "error: wallet ${wallet_release_channel} requires an HTTPS ${provider_key} endpoint" >&2
-                exit 1
-            }
-        done
-        activation_url="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReleaseActivationURL' \
-            "${info_plist}" 2>/dev/null || true)"
-        [[ "${activation_url}" == https://* && "${activation_url}" != *'@'* \
-            && "${activation_url}" != *'#'* ]] || {
-            echo "error: wallet release activation must use a credential-free HTTPS endpoint" >&2
-            exit 1
-        }
-        [[ ! -e "${resources}/wallet-activation.json" \
-            && ! -e "${resources}/WalletReleaseActivation.json" ]] || {
-            echo "error: the dormant artifact must not contain an activating envelope" >&2
-            exit 1
-        }
+        # Defensive backstop: candidate routes above must have exec'd the
+        # immutable Xcode-export packager before this legacy signing path.
+        echo "error: wallet candidates require ArchiveWalletRelease.sh export provenance" >&2
+        exit 1
     fi
 fi
 # Sign the deepest privileged component first, then each containing boundary.
@@ -440,7 +385,7 @@ fi
 /usr/bin/shasum -a 256 "${zip_out}"
 /bin/ls -lh "${zip_out}"
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
-    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml"
+    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml" stable
     echo "Upload Locus-macOS.zip, appcast.xml, components.json, and" \
         "${(j:, :)component_archives} to the same draft GitHub release."
     echo "They travel together: installed apps resolve both the appcast and the"

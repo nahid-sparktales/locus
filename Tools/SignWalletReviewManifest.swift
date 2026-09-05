@@ -680,9 +680,95 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+func canonicalObject(_ value: Any) throws -> Data {
+    try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+}
+
+/// The ceiling is a separate, non-activating signature domain. Reuse the full
+/// reviewed-entry validator without inheriting an operational expiry date.
+func validatedCeiling(_ input: [String: Any], requireNormalized: Bool) throws -> [String: Any] {
+    guard Set(input.keys) == ["schemaVersion", "domain", "reviewRevision", "reviewedAt", "scope"],
+          let schema = input["schemaVersion"] as? Int, schema == 1,
+          input["domain"] as? String == "locus-wallet-review-ceiling-v1",
+          let revision = input["reviewRevision"] as? Int, revision > 0,
+          let reviewedText = input["reviewedAt"] as? String,
+          let reviewedAt = ISO8601DateFormatter().date(from: reviewedText),
+          ISO8601DateFormatter().string(from: reviewedAt) == reviewedText,
+          reviewedAt <= Date(), var scope = input["scope"] as? [String: Any],
+          Set(scope.keys) == ["assets", "evmContracts", "explorerTemplates", "adapterIDs", "connectors",
+                             "providerIdentities", "signInAdapters", "programIdentities", "uniswapConfigurations"] else {
+        fail("review ceiling schema, date, or signature domain is invalid")
+    }
+    let now = Date()
+    var projection = scope
+    projection["schemaVersion"] = 2
+    projection["revision"] = revision
+    projection["issuedAt"] = ISO8601DateFormatter().string(from: now)
+    projection["expiresAt"] = ISO8601DateFormatter().string(from: now.addingTimeInterval(1))
+    projection["assets"] = (scope["assets"] as? [[String: Any]] ?? []).map { item in
+        var item = item; item["manifestRevision"] = revision; return item
+    }
+    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    let manifest = try decoder.decode(ReviewManifest.self, from: canonicalObject(projection))
+    guard isValidReviewManifest(manifest, now: now) else { fail("review ceiling contains invalid reviewed identities") }
+    scope = try JSONSerialization.jsonObject(with: canonicalEncoder().encode(manifest)) as! [String: Any]
+    for name in ["schemaVersion", "revision", "issuedAt", "expiresAt"] { scope.removeValue(forKey: name) }
+    scope["assets"] = (scope["assets"] as! [[String: Any]]).map { item in
+        var item = item; item["manifestRevision"] = 1; return item
+    }
+    for name in ["assets", "evmContracts", "connectors", "providerIdentities", "signInAdapters",
+                 "programIdentities", "uniswapConfigurations"] {
+        let values = scope[name] as! [Any]
+        let encoded = try values.map { (try canonicalObject($0), $0) }
+        scope[name] = encoded.sorted { $0.0.lexicographicallyPrecedes($1.0) }.map(\.1)
+    }
+    if requireNormalized, try canonicalObject(scope) != canonicalObject(input["scope"]!) {
+        fail("review ceiling scope must use canonical sorted, explicit reviewed identities")
+    }
+    var ceiling = input; ceiling["scope"] = scope
+    return ceiling
+}
+
 do {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--verify-ceiling" {
+        let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
+        guard data.count <= 1_048_576,
+              let signed = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(signed.keys) == ["ceiling", "signatureBase64"],
+              let input = signed["ceiling"] as? [String: Any],
+              let text = signed["signatureBase64"] as? String,
+              let signature = Data(base64Encoded: text), signature.count == 64,
+              let keyData = Data(base64Encoded: CommandLine.arguments[3]), keyData.count == 32 else {
+            fail("invalid signed review ceiling")
+        }
+        let ceiling = try validatedCeiling(input, requireNormalized: true)
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: keyData)
+        guard key.isValidSignature(signature, for: try canonicalObject(ceiling)) else {
+            fail("review ceiling signature differs from the embedded verification key")
+        }
+        print("review_ceiling_verified_non_activating")
+        exit(0)
+    }
+    if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--sign-ceiling" {
+        let inputData = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
+        guard inputData.count <= 1_048_576,
+              let input = try JSONSerialization.jsonObject(with: inputData) as? [String: Any] else {
+            fail("invalid review ceiling input")
+        }
+        let ceiling = try validatedCeiling(input, requireNormalized: false)
+        let keyText = try String(contentsOfFile: CommandLine.arguments[3], encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let bytes = Data(base64Encoded: keyText), bytes.count == 32 else { fail("invalid signing key") }
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: bytes)
+        let signature = try key.signature(for: canonicalObject(ceiling))
+        let signed: [String: Any] = ["ceiling": ceiling, "signatureBase64": signature.base64EncodedString()]
+        try canonicalObject(signed).write(to: URL(fileURLWithPath: CommandLine.arguments[4]), options: .atomic)
+        print("public_key_base64=\(key.publicKey.rawRepresentation.base64EncodedString())")
+        print("review_ceiling_sha256=\(SHA256.hash(data: try canonicalObject(ceiling)).map { String(format: "%02x", $0) }.joined())")
+        exit(0)
+    }
     if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--verify" {
         let signedURL = URL(fileURLWithPath: CommandLine.arguments[2])
         let signed = try decoder.decode(

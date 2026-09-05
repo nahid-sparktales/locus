@@ -17,7 +17,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
 timestamp = (now - datetime.timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
-canary = [
+release_approvals = [
     "signer_audit",
     "application_penetration_test",
     "legal_regional_matrix",
@@ -28,6 +28,7 @@ canary = [
     "derivation_reproduction",
     "release_candidate_build",
 ]
+canary = ["release_candidate_build"]
 
 def evidence(approvals, destination):
     rows = []
@@ -68,35 +69,29 @@ def evidence(approvals, destination):
         "sourceRevision": "a" * 40,
         "artifactIdentity": {
             "bundleVersion": "1",
-            "outerAppCodeDirectorySHA256": "b" * 64,
-            "signerCodeDirectorySHA256": "c" * 64,
+            "outerAppCodeDirectoryHash": "b" * 40,
+            "signerCodeDirectoryHash": "c" * 40,
             "archiveSHA256": "d" * 64,
         },
         "approvals": rows,
+        "phase": "testnet_rehearsal_authorization",
+        "candidateID": "e" * 64,
+        "authoritySHA256": "f" * 64,
         "chainTotals": [
-            {"chain": "evm", "successfulTransactions": 1},
-            {"chain": "solana", "successfulTransactions": 1},
+            {"chain": "evm", "successfulTransactions": 0},
+            {"chain": "solana", "successfulTransactions": 0},
+            {"chain": "sui", "successfulTransactions": 0},
         ],
         "actionCoverage": [],
-        "connectionCoverage": [
-            {
-                "networkID": network,
-                "connector": "phantom",
-                "direction": "external_account_to_locus",
-                "method": method,
-                "successfulSessions": 1,
-            }
-            for network, methods in {
-                "solana:devnet": [
-                    "list_accounts", "send_transaction", "sign_in_with_solana"
-                ],
-                "eip155:11155111": [
-                    "list_accounts", "send_transaction", "sign_in_with_ethereum"
-                ],
-            }.items()
-            for method in methods
-        ],
+        "connectionCoverage": [],
+        "soak": None,
     }
+    ledger = {key: payload[key] for key in ("schemaVersion", "sourceRevision", "artifactIdentity",
+                                          "phase", "candidateID", "authoritySHA256")}
+    ledger["events"] = []
+    ledger_path = destination.with_name(destination.stem + "-ledger.json")
+    ledger_path.write_text(json.dumps(ledger, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    payload["eventLedger"] = {"path": ledger_path.name, "sha256": hashlib.sha256(ledger_path.read_bytes()).hexdigest()}
     destination.write_text(
         json.dumps(payload, sort_keys=True, separators=(",", ":")),
         encoding="utf-8",
@@ -141,7 +136,7 @@ manifest(
     ["list_accounts", "send_transaction", "sign_in_with_ethereum"],
 )
 
-ga = canary + [
+ga = release_approvals + [
     "release_candidate_soak", "publication_disclosures", "support_security_readiness"
 ]
 ga_evidence = root / "ga-evidence.json"

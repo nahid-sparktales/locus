@@ -12,6 +12,10 @@ artifact_dir="${artifact_dir:A}"
 }
 channel="${LOCUS_WALLET_RELEASE_CHANNEL:?set LOCUS_WALLET_RELEASE_CHANNEL=canary or ga}"
 [[ "${channel}" == "canary" || "${channel}" == "ga" ]] || exit 1
+[[ "${channel}" == "canary" ]] || {
+    echo "error: GA promotes the retained notarized canary ZIP; a fresh GA archive would invalidate its soak" >&2
+    exit 1
+}
 [[ -z "$(/usr/bin/git -C "${repo_root}" status --porcelain)" ]] || {
     echo "error: commit the candidate before archiving; a clean revision is required" >&2
     exit 1
@@ -20,7 +24,8 @@ revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
 team="${LOCUS_TEAM_ID:-4X4RJA7GMD}"
 [[ "${team}" =~ '^[A-Z0-9]{10}$' ]] || exit 1
 [[ -n "${LOCUS_WALLET_CAPABILITY_PUBLIC_KEY:-}" \
-    && -n "${LOCUS_WALLET_REVIEW_MANIFEST_BASE64:-}" \
+    && -n "${LOCUS_WALLET_REVIEW_CEILING_BASE64:-}" \
+    && -z "${LOCUS_WALLET_REVIEW_MANIFEST_BASE64:-}" \
     && -z "${LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64:-}" ]] || {
     echo "error: a dormant candidate requires the verification key and signed review ceiling, with no capability manifest" >&2
     exit 1
@@ -54,13 +59,14 @@ settings=(
     LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSigner.entitlements
     PROVISIONING_PROFILE_SPECIFIER= LOCUS_WALLET_ARCHIVE=1
     LOCUS_SOURCE_REVISION="${revision}" LOCUS_BUNDLE_MODE=standalone
-    LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64=
+    LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64= LOCUS_WALLET_REVIEW_MANIFEST_BASE64=
 )
 required_settings=(
-    LOCUS_WALLET_CAPABILITY_PUBLIC_KEY LOCUS_WALLET_REVIEW_MANIFEST_BASE64
+    LOCUS_WALLET_CAPABILITY_PUBLIC_KEY LOCUS_WALLET_REVIEW_CEILING_BASE64
     LOCUS_REOWN_PROJECT_ID LOCUS_WALLETCONNECT_REDIRECT_URL
     LOCUS_PHANTOM_APP_ID LOCUS_PHANTOM_REDIRECT_URL
     LOCUS_WALLET_RELEASE_ACTIVATION_URL
+    LOCUS_CANARY_UPDATE_FEED_URL LOCUS_WALLET_CANDIDATE_ARCHIVE_URL
     LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL
     LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL
     LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL

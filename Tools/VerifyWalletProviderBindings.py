@@ -125,7 +125,8 @@ def verify_connector_bindings(review: dict, info: dict) -> int:
 def main() -> None:
     if len(sys.argv) != 3:
         fail("usage: VerifyWalletProviderBindings.py signed-review.json app-Info.plist")
-    review = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["manifest"]
+    document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    review = document["ceiling"]["scope"] if "ceiling" in document else document["manifest"]
     with Path(sys.argv[2]).open("rb") as stream:
         info = plistlib.load(stream)
     reviewed = {

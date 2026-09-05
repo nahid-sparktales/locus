@@ -31,12 +31,14 @@ if mode == "key" {
 } else {
     let keyData = Data(base64Encoded: try Data(contentsOf: keyURL))!
     let key = try Curve25519.Signing.PrivateKey(rawRepresentation: keyData)
+    if mode == "public" { print(key.publicKey.rawRepresentation.base64EncodedString()); exit(0) }
     let input = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[3]))
     let object = try JSONSerialization.jsonObject(with: input) as! [String: Any]
-    if mode == "sign" {
+    if mode == "sign" || mode == "sign-ceiling" || mode == "sign-envelope" {
         let canonical = try JSONSerialization.data(withJSONObject: object,
             options: [.sortedKeys, .withoutEscapingSlashes])
-        let signed: [String: Any] = ["manifest": object,
+        let field = mode == "sign-ceiling" ? "ceiling" : mode == "sign-envelope" ? "envelope" : "manifest"
+        let signed: [String: Any] = [field: object,
             "signatureBase64": try key.signature(for: canonical).base64EncodedString()]
         FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: signed,
             options: [.sortedKeys, .withoutEscapingSlashes]))
@@ -72,6 +74,7 @@ def activation_tools(tmp_path_factory):
     for source, binary in [
         (helper_source, helper),
         (ROOT / "Tools/SignWalletReleaseActivation.swift", cli),
+        (ROOT / "Tools/SignWalletReviewManifest.swift", directory / "sign-review"),
     ]:
         compiled = _run(["xcrun", "swiftc", source, "-o", binary])
         assert compiled.returncode == 0, compiled.stderr
@@ -92,7 +95,7 @@ def activation_case(tmp_path, activation_tools):
     issued = iso(now - timedelta(minutes=1))
     expiry = iso(now + timedelta(hours=1))
     metadata = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "sourceRevision": "a" * 40,
         "bundleVersion": "fixture-1",
         "outerAppCodeDirectoryHash": "b" * 40,
@@ -102,24 +105,42 @@ def activation_case(tmp_path, activation_tools):
         "issuedAt": issued,
         "expiresAt": expiry,
         "revision": 2,
+        "transition": "initial",
+        "purpose": "testnet_rehearsal",
+        "admissionGeneration": 0,
+        "revokedAdmissionSerials": [],
+        "permanentLimits": [],
     }
     evidence = {
         "schemaVersion": 2,
         "sourceRevision": metadata["sourceRevision"],
         "releaseRevision": 2,
+        "phase": "testnet_rehearsal_authorization",
         "artifactIdentity": {
             "bundleVersion": metadata["bundleVersion"],
-            "outerAppCodeDirectorySHA256": metadata["outerAppCodeDirectoryHash"],
-            "signerCodeDirectorySHA256": metadata["signerCodeDirectoryHash"],
+            "outerAppCodeDirectoryHash": metadata["outerAppCodeDirectoryHash"],
+            "signerCodeDirectoryHash": metadata["signerCodeDirectoryHash"],
             "archiveSHA256": metadata["archiveSHA256"],
         },
     }
-    ceiling = {
+    review = {
         "schemaVersion": 2,
         "revision": 1,
         "issuedAt": issued,
         "expiresAt": expiry,
-        "assets": [{"id": "testnet-fixture-asset", "manifestRevision": 1, "symbol": "TEST"}],
+        "assets": [
+            {
+                "canonicalID": "eip155:11155111/slip44:60",
+                "networkID": "eip155:11155111",
+                "chain": "evm",
+                "kind": "native",
+                "name": "Fixture Ether",
+                "symbol": "TEST",
+                "decimals": 18,
+                "trust": "curated",
+                "manifestRevision": 1,
+            }
+        ],
         "adapterIDs": [],
         "evmContracts": [],
         "explorerTemplates": {},
@@ -139,7 +160,18 @@ def activation_case(tmp_path, activation_tools):
             }
         ],
     }
-    restriction = copy.deepcopy(ceiling)
+    ceiling = {
+        "schemaVersion": 1,
+        "domain": "locus-wallet-review-ceiling-v1",
+        "reviewRevision": 1,
+        "reviewedAt": issued,
+        "scope": {
+            key: value
+            for key, value in review.items()
+            if key not in {"schemaVersion", "revision", "issuedAt", "expiresAt"}
+        },
+    }
+    restriction = copy.deepcopy(review)
     restriction["revision"] = 2
     restriction["assets"][0]["manifestRevision"] = 2
     capability = {
@@ -148,14 +180,26 @@ def activation_case(tmp_path, activation_tools):
         "releaseStage": "invited_canary",
         "issuedAt": issued,
         "expiresAt": expiry,
-        # Dormant fixture: deliberately no network authority is granted.
-        "networkGrants": [],
+        # Testnet rehearsal fixture: deliberately no mainnet authority is granted.
+        "networkGrants": [
+            {"networkID": "eip155:11155111", "capabilities": ["native_transfer"], "connectors": []}
+        ],
         "approvedRegions": [],
-        "completedApprovals": [],
+        "completedApprovals": ["release_candidate_build"],
     }
     cli, helper, key_path = activation_tools
 
-    def invoke(*, tamper_signature=False, tamper_evidence_hash=False):
+    invocation_count = 0
+
+    def invoke(
+        *,
+        tamper_signature=False,
+        tamper_evidence_hash=False,
+        previous=None,
+        tamper_inner_date=False,
+    ):
+        nonlocal invocation_count
+        invocation_count += 1
         paths = {
             name: tmp_path / f"{name}.json"
             for name in [
@@ -165,8 +209,87 @@ def activation_case(tmp_path, activation_tools):
                 "ceiling",
                 "evidence",
                 "output",
+                "ledger",
+                "build-report",
             ]
         }
+        paths["output"] = tmp_path / f"output-{invocation_count}.json"
+        capability["revision"] = restriction["revision"] = evidence["releaseRevision"] = metadata[
+            "revision"
+        ]
+        for item in restriction["assets"]:
+            item["manifestRevision"] = metadata["revision"]
+        if previous is not None:
+            metadata["previousEnvelopeSHA256"] = hashlib.sha256(
+                json.dumps(previous["envelope"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        if tamper_inner_date:
+            capability["issuedAt"] = capability["issuedAt"].removesuffix("Z") + ".000Z"
+        # Describe computes the same normalization as the issuer, before any
+        # evidence or signature can depend on these identifiers.
+        for name, value in [
+            ("metadata", metadata),
+            ("capability", capability),
+            ("restriction", restriction),
+        ]:
+            _write(paths[name], value)
+        _write(paths["ceiling"], {"ceiling": ceiling})
+        described = _run(
+            [
+                cli,
+                "--describe",
+                paths["metadata"],
+                paths["capability"],
+                paths["restriction"],
+                paths["ceiling"],
+            ]
+        )
+        assert described.returncode == 0, described.stderr
+        metadata.update(json.loads(described.stdout))
+        evidence.update(
+            candidateID=metadata["candidateID"], authoritySHA256=metadata["authoritySHA256"]
+        )
+        if previous is not None and metadata["transition"] in {"restriction", "promotion"}:
+            evidence["authoritySHA256"] = previous["envelope"]["authoritySHA256"]
+        ledger = {
+            key: evidence[key]
+            for key in [
+                "schemaVersion",
+                "sourceRevision",
+                "artifactIdentity",
+                "phase",
+                "candidateID",
+                "authoritySHA256",
+            ]
+        }
+        ledger["events"] = []
+        _write(paths["ledger"], ledger)
+        _write(paths["build-report"], {"synthetic": True, "notReleaseEvidence": True})
+        evidence.update(
+            eventLedger={
+                "path": paths["ledger"].name,
+                "sha256": hashlib.sha256(paths["ledger"].read_bytes()).hexdigest(),
+            },
+            approvals=[
+                {
+                    "approval": "release_candidate_build",
+                    "status": "passed",
+                    "reviewer": "Synthetic fixture",
+                    "organization": "Tests only",
+                    "completedAt": issued,
+                    "artifactPath": paths["build-report"].name,
+                    "artifactSHA256": hashlib.sha256(
+                        paths["build-report"].read_bytes()
+                    ).hexdigest(),
+                }
+            ],
+            chainTotals=[
+                {"chain": chain, "successfulTransactions": 0} for chain in ["evm", "solana", "sui"]
+            ],
+            actionCoverage=[],
+            connectionCoverage=[],
+            soak=None,
+        )
         _write(paths["metadata"], metadata)
         _write(paths["evidence"], evidence)
         capability["evidenceIndexSHA256"] = hashlib.sha256(
@@ -180,12 +303,18 @@ def activation_case(tmp_path, activation_tools):
             ("ceiling", ceiling),
         ]:
             _write(paths[name], value)
-            result = _run([helper, "sign", key_path, paths[name]])
+            result = _run(
+                [helper, "sign-ceiling" if name == "ceiling" else "sign", key_path, paths[name]]
+            )
             assert result.returncode == 0, result.stderr
             signed = json.loads(result.stdout)
             if tamper_signature and name == "restriction":
                 signed["signatureBase64"] = base64.b64encode(bytes(64)).decode()
             _write(paths[name], signed)
+        previous_argument = "initial"
+        if previous is not None:
+            previous_argument = tmp_path / "previous-envelope.json"
+            _write(previous_argument, previous)
         result = _run(
             [
                 cli,
@@ -194,12 +323,15 @@ def activation_case(tmp_path, activation_tools):
                 paths["restriction"],
                 paths["ceiling"],
                 paths["evidence"],
+                previous_argument,
                 key_path,
                 paths["output"],
             ]
         )
         return result, paths["output"]
 
+    invoke.capability = capability
+    invoke.ceiling = ceiling
     return metadata, evidence, restriction, invoke
 
 
@@ -277,3 +409,314 @@ def test_tampered_inner_signature_is_rejected(activation_case):
     _, _, _, invoke = activation_case
     result, output = invoke(tamper_signature=True)
     _rejected(result, output, "invalid signature")
+
+
+def test_noncanonical_nested_lease_date_is_rejected(activation_case):
+    _, _, _, invoke = activation_case
+    result, output = invoke(tamper_inner_date=True)
+    _rejected(result, output, "metadata or review restriction is invalid")
+
+
+def test_unchanged_scope_renewal_requires_previous_signed_history(activation_case):
+    metadata, _, _, invoke = activation_case
+    result, output = invoke()
+    assert result.returncode == 0, result.stderr
+    previous = json.loads(output.read_text())
+    metadata.update(revision=3, transition="renewal")
+    result, output = invoke(previous=previous)
+    assert result.returncode == 0, result.stderr
+    assert (
+        json.loads(output.read_text())["envelope"]["authoritySHA256"]
+        == previous["envelope"]["authoritySHA256"]
+    )
+
+
+def test_renewal_cannot_change_reviewed_authority(activation_case):
+    metadata, _, _, invoke = activation_case
+    result, output = invoke()
+    assert result.returncode == 0, result.stderr
+    previous = json.loads(output.read_text())
+    metadata.update(revision=3, transition="renewal")
+    invoke.capability["approvedRegions"] = ["US"]
+    result, output = invoke(previous=previous)
+    _rejected(result, output, "renewal changed authority")
+
+
+def test_narrowing_floor_cannot_restore_a_removed_grant(activation_case):
+    metadata, _, _, invoke = activation_case
+    invoke.capability["networkGrants"][0]["capabilities"] = [
+        "fungible_token_transfer",
+        "native_transfer",
+    ]
+    result, output = invoke()
+    assert result.returncode == 0, result.stderr
+    initial = json.loads(output.read_text())
+    metadata.update(revision=3, transition="restriction")
+    invoke.capability["networkGrants"][0]["capabilities"] = ["native_transfer"]
+    result, output = invoke(previous=initial)
+    assert result.returncode == 0, result.stderr
+    narrowed = json.loads(output.read_text())
+    metadata["revision"] = 4
+    invoke.capability["networkGrants"][0]["capabilities"] = [
+        "fungible_token_transfer",
+        "native_transfer",
+    ]
+    result, output = invoke(previous=narrowed)
+    _rejected(result, output, "restore previously restricted authority")
+
+
+def test_missing_previous_history_cannot_issue_renewal(activation_case):
+    metadata, _, _, invoke = activation_case
+    metadata["transition"] = "renewal"
+    result, output = invoke()
+    _rejected(result, output, "initial activation requires explicit initial lineage")
+
+
+def test_restriction_cannot_delete_an_existing_canary_limit_identity(activation_case):
+    metadata, _, _, invoke = activation_case
+    invoke.capability["canaryLimits"] = [
+        {
+            "networkID": "eip155:11155111",
+            "assetID": "eip155:11155111/slip44:60",
+            "action": "native_transfer",
+            "ownership": "locus_vault",
+            "maximumTransactionBaseUnits": "10",
+            "maximumCumulativeBaseUnits": "100",
+            "maximumFeeBaseUnits": "10",
+            "maximumCumulativeFeeBaseUnits": "100",
+            "maximumTransactions": 10,
+        }
+    ]
+    result, output = invoke()
+    assert result.returncode == 0, result.stderr
+    previous = json.loads(output.read_text())
+    metadata.update(revision=3, transition="restriction")
+    invoke.capability["canaryLimits"] = []
+    result, output = invoke(previous=previous)
+    _rejected(result, output, "emergency limit reduction must remain permanent")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "archiveSHA256",
+        "sourceRevision",
+        "outerAppCodeDirectoryHash",
+        "signerCodeDirectoryHash",
+        "signature",
+        "canary",
+    ],
+)
+def test_stable_feed_promotion_requires_exact_retained_archive(
+    activation_case, activation_tools, tmp_path, mutation
+):
+    metadata, _, review, invoke = activation_case
+    cli, helper, key = activation_tools
+    metadata.update(
+        transition="promotion",
+        purpose="production",
+        releaseStage="general_availability",
+        previousEnvelopeSHA256="9" * 64,
+    )
+    capability = copy.deepcopy(invoke.capability)
+    capability["releaseStage"] = "general_availability"
+    capability["evidenceIndexSHA256"] = "8" * 64
+    review["revision"] = metadata["revision"]
+    paths = {
+        name: tmp_path / f"promotion-{name}.json"
+        for name in ["metadata", "capability", "review", "ceiling", "signed", "identity"]
+    }
+    for name, value in [
+        ("metadata", metadata),
+        ("capability", capability),
+        ("review", review),
+        ("ceiling", {"ceiling": invoke.ceiling}),
+    ]:
+        _write(paths[name], value)
+    described = _run(
+        [
+            cli,
+            "--describe",
+            *[paths[name] for name in ["metadata", "capability", "review", "ceiling"]],
+        ]
+    )
+    assert described.returncode == 0, described.stderr
+    metadata.update(json.loads(described.stdout))
+    for name, field, value, mode in [
+        ("capability", "capabilityManifest", capability, "sign"),
+        ("review", "reviewRestriction", review, "sign"),
+    ]:
+        _write(paths[name], value)
+        signed = _run([helper, mode, key, paths[name]])
+        assert signed.returncode == 0, signed.stderr
+        metadata[field] = json.loads(signed.stdout)
+    _write(paths["ceiling"], invoke.ceiling)
+    signed = _run([helper, "sign-ceiling", key, paths["ceiling"]])
+    _write(paths["ceiling"], json.loads(signed.stdout))
+    if mutation == "canary":
+        metadata["releaseStage"] = "invited_canary"
+    _write(paths["metadata"], metadata)
+    signed = json.loads(_run([helper, "sign-envelope", key, paths["metadata"]]).stdout)
+    if mutation == "signature":
+        signed["signatureBase64"] = base64.b64encode(bytes(64)).decode()
+    _write(paths["signed"], signed)
+    identity = {
+        field: metadata[field]
+        for field in [
+            "sourceRevision",
+            "bundleVersion",
+            "outerAppCodeDirectoryHash",
+            "signerCodeDirectoryHash",
+            "archiveSHA256",
+        ]
+    }
+    if mutation in identity:
+        identity[mutation] = "0" * len(identity[mutation])
+    _write(paths["identity"], identity)
+    public = _run([helper, "public", key]).stdout.strip()
+    result = _run(
+        [cli, "--verify-promotion", paths["signed"], public, paths["identity"], paths["ceiling"]]
+    )
+    assert (result.returncode == 0) == (mutation is None), result.stderr
+
+
+def test_ceiling_issuer_normalizes_nonactivating_scope(activation_case, activation_tools, tmp_path):
+    _, _, _, invoke = activation_case
+    cli, _, key = activation_tools
+    input_path, output_path = tmp_path / "ceiling-input.json", tmp_path / "signed-ceiling.json"
+    _write(input_path, invoke.ceiling)
+    result = _run([cli.parent / "sign-review", "--sign-ceiling", input_path, key, output_path])
+    assert result.returncode == 0, result.stderr
+    ceiling = json.loads(output_path.read_text())["ceiling"]
+    assert "expiresAt" not in ceiling and "issuedAt" not in ceiling
+    assert ceiling["domain"] == "locus-wallet-review-ceiling-v1"
+    public_key = next(
+        line.split("=", 1)[1]
+        for line in result.stdout.splitlines()
+        if line.startswith("public_key_base64=")
+    )
+    verified = _run([cli.parent / "sign-review", "--verify-ceiling", output_path, public_key])
+    assert verified.returncode == 0, verified.stderr
+
+
+def test_ceiling_rejects_operational_expiry(activation_case, activation_tools, tmp_path):
+    metadata, _, _, invoke = activation_case
+    cli, _, key = activation_tools
+    invoke.ceiling["expiresAt"] = metadata["expiresAt"]
+    input_path, output_path = tmp_path / "ceiling-input.json", tmp_path / "signed-ceiling.json"
+    _write(input_path, invoke.ceiling)
+    result = _run([cli.parent / "sign-review", "--sign-ceiling", input_path, key, output_path])
+    _rejected(result, output_path, "signature domain is invalid")
+
+
+@pytest.fixture
+def admission_case(activation_case, activation_tools, tmp_path):
+    metadata, _, restriction, invoke = activation_case
+    cli, helper, key = activation_tools
+    # Signature-layer fixture only: no mainnet grants and no installed identity.
+    metadata.update(purpose="production", cohortID="1" * 64, admissionGeneration=1)
+    limit = {
+        "networkID": "eip155:11155111",
+        "assetID": "eip155:11155111/slip44:60",
+        "action": "native_transfer",
+        "ownership": "locus_vault",
+        "maximumTransactionBaseUnits": "10",
+        "maximumCumulativeBaseUnits": "100",
+        "maximumFeeBaseUnits": "10",
+        "maximumCumulativeFeeBaseUnits": "100",
+        "maximumTransactions": 10,
+    }
+    invoke.capability["canaryLimits"] = [limit]
+    paths = {
+        name: tmp_path / f"admission-{name}.json"
+        for name in ["metadata", "capability", "review", "ceiling", "envelope", "input", "output"]
+    }
+    for name, value in [
+        ("metadata", metadata),
+        ("capability", invoke.capability),
+        ("review", restriction),
+        ("ceiling", {"ceiling": invoke.ceiling}),
+    ]:
+        _write(paths[name], value)
+    result = _run(
+        [
+            cli,
+            "--describe",
+            paths["metadata"],
+            paths["capability"],
+            paths["review"],
+            paths["ceiling"],
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    metadata.update(json.loads(result.stdout))
+    envelope = copy.deepcopy(metadata)
+    for field, name in [("capabilityManifest", "capability"), ("reviewRestriction", "review")]:
+        signed = _run([helper, "sign", key, paths[name]])
+        assert signed.returncode == 0, signed.stderr
+        envelope[field] = json.loads(signed.stdout)
+    _write(paths["envelope"], envelope)
+    signed = _run([helper, "sign-envelope", key, paths["envelope"]])
+    assert signed.returncode == 0, signed.stderr
+    _write(paths["envelope"], json.loads(signed.stdout))
+    admission = {
+        "schemaVersion": 1,
+        "domain": "locus-wallet-canary-admission-v1",
+        "candidateID": metadata["candidateID"],
+        "cohortID": metadata["cohortID"],
+        "installationID": "2" * 64,
+        "serial": "3" * 64,
+        "generation": 1,
+        "issuedAt": metadata["issuedAt"],
+        "expiresAt": metadata["expiresAt"],
+        "allocation": [copy.deepcopy(limit)],
+    }
+
+    def issue():
+        _write(paths["input"], admission)
+        result = _run(
+            [cli, "--sign-admission", paths["input"], paths["envelope"], key, paths["output"]]
+        )
+        return result, paths["output"]
+
+    return admission, issue
+
+
+def test_admission_binds_device_and_finite_allocation(admission_case):
+    admission, issue = admission_case
+    result, output = issue()
+    assert result.returncode == 0, result.stderr
+    signed = json.loads(output.read_text())
+    assert signed["admission"] == admission
+    assert len(base64.b64decode(signed["signatureBase64"])) == 64
+
+
+@pytest.mark.parametrize(
+    "mutation", ["candidate", "device", "generation", "expiry", "amount", "arbitrary_field"]
+)
+def test_admission_rejects_substitution_and_broader_authority(admission_case, mutation):
+    admission, issue = admission_case
+    if mutation == "candidate":
+        admission["candidateID"] = "0" * 64
+    elif mutation == "device":
+        admission["installationID"] = "an-unbound-address-or-device-name"
+    elif mutation == "generation":
+        admission["generation"] = 2
+    elif mutation == "expiry":
+        admission["expiresAt"] = (
+            (datetime.now(timezone.utc) + timedelta(days=32))
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    elif mutation == "amount":
+        admission["allocation"][0]["maximumTransactionBaseUnits"] = "11"
+    else:
+        admission["rawRequest"] = "not-permitted"
+    result, output = issue()
+    _rejected(
+        result,
+        output,
+        "admission identity, expiry, revocation state, or finite allocation is invalid",
+    )

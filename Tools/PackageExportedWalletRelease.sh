@@ -21,6 +21,9 @@ receipt="${receipt:A}"
 revision="$(/usr/bin/git -C "${repo_root}" rev-parse HEAD)"
 built_revision="$(/usr/bin/plutil -extract sourceRevision raw -o - "${receipt}")"
 channel="$(/usr/bin/plutil -extract releaseChannel raw -o - "${receipt}")"
+[[ "${channel}" != "ga" && "${LOCUS_WALLET_RELEASE_CHANNEL:-}" != "ga" ]] || {
+    echo "error: GA must promote the retained notarized canary ZIP, never repackage it" >&2; exit 1
+}
 [[ "${built_revision}" == "${revision}" \
     && ( "${channel}" == "canary" || "${channel}" == "ga" ) \
     && "${LOCUS_WALLET_RELEASE_CHANNEL:-${channel}}" == "${channel}" ]] || {
@@ -67,7 +70,10 @@ python3 "${repo_root}/Tools/WalletExportProvenance.py" verify "${roundtrip}" "${
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     /usr/sbin/spctl --assess --type execute -vv "${roundtrip}"
     /usr/bin/xcrun stapler validate "${roundtrip}"
-    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml"
+    update_channel=stable
+    [[ "${channel}" != "canary" ]] || update_channel=canary
+    /bin/mkdir -p "${zip_out:h}/${update_channel}"
+    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/${update_channel}/appcast.xml" "${update_channel}"
 fi
 /usr/bin/shasum -a 256 "${zip_out}"
 [[ -z "$(/usr/bin/git -C "${repo_root}" status --porcelain)" \

@@ -1,10 +1,14 @@
 # Dormant wallet release packaging
 
-Canary and GA use the same sequence: clean source → dormant Xcode archive →
+The canary candidate uses this sequence: clean source → dormant Xcode archive →
 Developer ID export → audit → notarize/staple → zip verification and signed
 appcast → evidence review → signed activation. The candidate never contains an
 activating capability manifest, which removes the cycle between a manifest and
 the hash of its own packaged app.
+
+GA promotes the exact notarized canary archive bytes after its complete soak;
+it does not rebuild or re-zip an artifact and inherit the previous candidate's
+evidence. The two designated Macs independently verify that same archive.
 
 ## Archive and export
 
@@ -13,12 +17,20 @@ external, new artifact directory; the archive tool rejects dirty source, an
 existing destination, or a destination under the checkout. Debug, Release, and
 ReleaseMAS use separate DerivedData directories.
 
-Set `LOCUS_WALLET_RELEASE_CHANNEL` to `canary` or `ga`. Supply the public
-verification key, signed schema-v2 review ceiling, exact provider URLs, connector
+Set `LOCUS_WALLET_RELEASE_CHANNEL` to `canary` for the candidate. Supply the public
+verification key, distinct signed non-activating review ceiling, exact provider URLs, connector
 identifiers, approved redirects, and activation endpoint through the release
-environment. `LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64` must be empty. Missing
+environment. Use `LOCUS_WALLET_REVIEW_CEILING_BASE64`; both
+`LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64` and the legacy
+`LOCUS_WALLET_REVIEW_MANIFEST_BASE64` must be empty. Missing
 configuration fails closed. The archive tool lists the required variable names;
 credentials and evidence files stay outside the repository.
+
+The archive also seals `LOCUS_CANARY_UPDATE_FEED_URL` and
+`LOCUS_WALLET_CANDIDATE_ARCHIVE_URL`. These public HTTPS locations must identify
+a distinct non-`latest` canary feed and the retained immutable candidate ZIP.
+The stable `SUFeedURL` remains unchanged. Both channels use the same sealed
+archive URL on promotion; do not rewrite either URL after signing.
 
 Run:
 
@@ -102,29 +114,74 @@ by the existing update-feed workflow. A run without notarization is explicitly a
 private verification artifact and is not eligible for activation. The tool does
 not publish a release or sign an activation.
 
+## Isolated canary updates and same-archive promotion
+
+Canary packaging writes `canary/appcast.xml`, never the stable feed. Its entries
+carry the explicit Sparkle `canary` channel. The generator requires an explicit
+`canary` or `stable` argument, verifies the preceding feed's signature and channel,
+and rejects mixed-channel histories. To initialize the first canary feed, set
+`LOCUS_APPCAST_INITIAL_CHANNEL=canary`; initialization succeeds only when its
+distinct endpoint returns HTTP 404, not on a timeout or other network failure.
+Component assets must still accompany the release that serves the configured
+component feed. No tool publishes or changes GitHub's latest release selection.
+
+Dormant wallet candidates without a current verified admission cannot check for
+updates. An admitted active canary selects its sealed canary feed and the exact
+candidate archive/version; verified GA promotion selects stable. Normal builds
+without wallet candidate configuration retain ordinary stable updates. The
+App Store artifact must contain neither candidate configuration nor its updater
+authority code. These controls do not replace signed device admissions.
+
+`ArchiveWalletRelease.sh` refuses fresh GA archives and packaging refuses to
+repackage GA. Preserve the final notarized canary ZIP. For promotion, first
+independently reverify its existing signed canary feed and unchanged archive as
+GA evidence, then sign the **unpublished** GA promotion. Generate its stable feed:
+
+```sh
+LOCUS_NOTARIZE=1 LOCUS_WALLET_GA_PROMOTION=/external/signed-ga-promotion.json \
+  Tools/GenerateAppcast.sh /external/retained/Locus-macOS.zip \
+  /external/new-stable-feed/appcast.xml stable
+```
+
+This read-only promotion preflight verifies the signature against the sealed
+wallet public key and matches the actual retained ZIP hash, source, version,
+outer-app/signer CodeDirectory identities, and review ceiling. It does not
+re-sign, re-zip, or modify the app. Independently audit the generated stable feed
+before publishing it and the promotion together. That final stable-feed audit is
+a **publication gate**, not an artifact prerequisite embedded in the very
+promotion needed to generate it; this avoids a new approval cycle.
+
 ## Sign activation only after evidence exists
 
 Collect the exact source revision, bundle version, outer-app and signer
 CodeDirectory hashes, final stapled archive hash, signed review ceiling, signed
 restriction, capability manifest, and schema-v2 launch evidence. Run
 `Tools/SignWalletReleaseActivation.swift` with the complete evidence index and
-its attributable approvals. The review restriction must be identical to or
+its attributable approvals and the preceding signed envelope (or `initial`).
+See [WalletReleaseEvidence.md](WalletReleaseEvidence.md) for the separate
+rehearsal-authorization, observed rehearsal, and counted-mainnet phases;
+canonical identity/fingerprint generation; and candidate-bound admissions.
+The review restriction must be identical to or
 narrower than the bundled ceiling; exact connector ownership/configuration and
 reviewed provider identities must match the intended activated networks.
 
 The app fetches activation outside WebKit and both app and authenticated signer
 verify it independently. Missing, invalid, expired, mismatched, or rolled-back
 activation leaves mainnet disabled. Higher-revision restrictions narrow
-authority and are the mechanism exercised by the incident drill.
+authority and are the mechanism exercised by the incident drill. Initial
+production activation requires all three mainnets and signed device admissions.
+Unchanged-scope renewal can extend an operational lease up to 31 days without
+changing the immutable ceiling or resetting the soak. Permanent restrictions
+cannot be removed by renewal or promotion. The chosen outage tolerance means
+offline clients can retain cached authority until expiry; it does not promise
+instant offline revocation.
 
 Developer ID export, live provisioning, notarization, second-Mac audit,
 independently verified updates, and external approvals remain uncompleted until
 actual attributable results exist. Script syntax and fixture tests alone cannot
 mark these gates complete.
 
-Local verification on 2026-09-04 passed 16 packaging fixtures, the complete
-814-test Python suite, lint and shell syntax checks. Xcode's installed export
-help confirms the selected Developer ID, automatic-signing and
-`stripSwiftSymbols` options. The credentialed archive/export flow has not been
+Local fixture results are recorded separately from release evidence and must be
+rerun on the final committed candidate. The credentialed archive/export flow has not been
 executed on this uncommitted implementation tree; its first real run remains a
 release gate, including investigation of any archive/export provenance drift.

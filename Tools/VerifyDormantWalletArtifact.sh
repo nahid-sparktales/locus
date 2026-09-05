@@ -3,18 +3,20 @@ set -euo pipefail
 app="${1:?usage: VerifyDormantWalletArtifact.sh <exported Locus.app>}"
 repo_root="${0:A:h:h}"
 info="${app}/Contents/Info.plist"
+python3 "${repo_root}/Tools/WalletUpdateChannel.py" plan "${info}" canary --require-candidate >/dev/null
 signer_info="${app}/Contents/XPCServices/WalletSigner.xpc/Contents/Info.plist"
 key="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityPublicKey' "${signer_info}")"
 capability="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletCapabilityManifestBase64' "${signer_info}")"
-review="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewManifestBase64' "${signer_info}")"
-[[ -n "${key}" && -n "${review}" && -z "${capability}" ]] || {
+review="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewCeilingBase64' "${signer_info}")"
+legacy_review="$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReviewManifestBase64' "${signer_info}" 2>/dev/null || true)"
+[[ -n "${key}" && -n "${review}" && -z "${capability}" && -z "${legacy_review}" ]] || {
     echo "error: the artifact is not dormant" >&2; exit 1
 }
 temporary="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-dormant-audit.XXXXXX")"
 trap '/bin/rm -rf "${temporary}"' EXIT
 /bin/echo -n "${review}" | /usr/bin/base64 -D > "${temporary}/review.json"
 /usr/bin/xcrun swift "${repo_root}/Tools/SignWalletReviewManifest.swift" \
-    --verify "${temporary}/review.json" "${key}" >/dev/null
+    --verify-ceiling "${temporary}/review.json" "${key}" >/dev/null
 # This check independently reproduces connector configuration digests as well
 # as the exact reviewed provider identities. It never prints the source values.
 python3 "${repo_root}/Tools/VerifyWalletProviderBindings.py" "${temporary}/review.json" "${info}"
@@ -29,7 +31,7 @@ app = Path(sys.argv[1])
 info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
 outer = plistlib.loads((app / "Contents/XPCServices/WalletSigner.xpc/Contents/Info.plist").read_bytes())
 inner = plistlib.loads((app / "Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/Info.plist").read_bytes())
-for key in ("LocusWalletCapabilityPublicKey", "LocusWalletCapabilityManifestBase64", "LocusWalletReviewManifestBase64", "LocusSourceRevision"):
+for key in ("LocusWalletCapabilityPublicKey", "LocusWalletCapabilityManifestBase64", "LocusWalletReviewManifestBase64", "LocusWalletReviewCeilingBase64", "LocusSourceRevision"):
     if outer.get(key) != inner.get(key):
         raise SystemExit("error: signer copies have different release configuration")
 if not re.fullmatch(r"[0-9a-f]{40}", str(info.get("LocusSourceRevision", ""))) or info.get("LocusSourceRevision") != outer.get("LocusSourceRevision"):
