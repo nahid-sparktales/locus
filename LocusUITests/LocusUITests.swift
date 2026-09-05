@@ -8,6 +8,15 @@ final class LocusUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["LOCUS_UI_TESTING"] = "1"
+        let sidebarHitTestMethods = [
+            "testSessionOrganizerMenus",
+            "testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet",
+            "testSidebarSearchIsRevealedFromTheWorkspacesHeader",
+        ]
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1",
+           sidebarHitTestMethods.contains(where: { name.hasSuffix(" \($0)]") }) {
+            app.launchEnvironment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] = "1"
+        }
         // The window is clamped to the screen, so a CI runner's display can
         // leave far less of a panel visible than a developer's. Forwarding an
         // explicit size makes that geometry reproducible locally with
@@ -1837,7 +1846,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(pinkAccent.value as? String, "Selected")
         XCTAssertEqual(blueAccent.value as? String, "Not selected")
         XCTAssertEqual(logoPreview.label, "Current Locus logo, Pink")
+        let appearanceForm = anyElement("settings.content.appearance")
+        revealSettingsControl(teamProgress, in: appearanceForm)
         teamProgress.click()
+        revealSettingsControl(contextUsage, in: appearanceForm)
         contextUsage.click()
 
         XCTAssertFalse(app.buttons["settings.save"].exists)
