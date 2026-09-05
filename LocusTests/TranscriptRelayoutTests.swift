@@ -158,6 +158,42 @@ final class TranscriptRelayoutTests: XCTestCase {
         XCTAssertEqual(summary.finalWidth, 1_184)
     }
 
+    func testResizeSamplerCapturesReadyInputWithoutASleepWakeCycle() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.entry, at: 10)
+        sampler.observe(.beforeSources, at: 10.002)
+        sampler.observe(.exit, at: 10.006)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 6, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerExcludesSleepAndDoesNotRestartAnOpenInterval() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.beforeTimers, at: 10)
+        sampler.observe(.beforeSources, at: 10.001)
+        sampler.observe(.entry, at: 10.002) // Nested entry must not erase prior work.
+        sampler.observe(.beforeWaiting, at: 10.003)
+        sampler.observe(.afterWaiting, at: 20)
+        sampler.observe(.beforeSources, at: 20.001)
+        sampler.observe(.exit, at: 20.004)
+        sampler.observe(.exit, at: 20.005)
+        sampler.finish(at: 21)
+        XCTAssertEqual(sampler.samples.count, 2)
+        XCTAssertEqual(sampler.samples[0], 3, accuracy: 0.0001)
+        XCTAssertEqual(sampler.samples[1], 4, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerCannotManufactureWorkFromAnEmptySession() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.finish(at: 10)
+        sampler.observe(.exit, at: 11)
+        XCTAssertTrue(sampler.samples.isEmpty)
+        sampler.observe(.beforeSources, at: 12)
+        sampler.finish(at: 12.002)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 2, accuracy: 0.0001)
+    }
+
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
         let initial = MarkdownNativeText.plain(
             Self.longProse,
