@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# A new PR revision invalidates the old revision's candidate evidence. Do not
+# cancel nightly or explicitly dispatched campaign chunks; each has its own ID.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   inputs:
     runs-on: macos-15

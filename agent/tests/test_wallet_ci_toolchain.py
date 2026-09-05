@@ -9,6 +9,16 @@ ROOT = Path(__file__).resolve().parents[2]
 SETUP_NODE = "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
 
 
+@pytest.mark.parametrize("workflow", ["ci.yml", "wallet-fuzz.yml"])
+def test_only_superseded_pr_revisions_preempt_runs_not_explicit_campaigns(workflow):
+    source = (ROOT / ".github/workflows" / workflow).read_text()
+    before_jobs = source.split("\njobs:", 1)[0]
+    assert "\nconcurrency:\n" in before_jobs
+    assert "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}" in before_jobs
+    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in before_jobs
+    assert "cancel-in-progress: true" not in before_jobs
+
+
 @pytest.mark.parametrize(
     "workflow,job", [("ci.yml", "wallet-signer"), ("wallet-fuzz.yml", "inputs")]
 )

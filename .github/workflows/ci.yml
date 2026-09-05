@@ -14,6 +14,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Only superseded PR revisions cancel one another. Protected branch/tag and
+# manually dispatched checks retain distinct run IDs and are never preempted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   wallet-signer:
     runs-on: macos-15

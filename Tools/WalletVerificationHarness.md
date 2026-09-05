@@ -65,6 +65,12 @@ CI provenance; these local JSON receipts are not cryptographic release approvals
 Any compiler, lock, corpus, source, or binary change starts a new campaign identity.
 Archive evidence beyond the workflow's 90-day retention period when needed.
 
+New PR revisions cancel superseded PR runs of the same workflow. Cancelled or
+incomplete runs earn no campaign credit; existing failure artifacts remain
+failures. Nightly and manually dispatched campaign chunks use distinct run IDs
+and are not preempted by PR updates. The per-workflow group and event-scoped
+cancellation follow [GitHub's concurrency rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
 ## UI matrix
 
 `Config/LocusUITestMatrix.json` defines macOS 14, 15 and 26, each with 16 profiles:
