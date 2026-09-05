@@ -18,6 +18,15 @@ enum LocusWindowSizing {
     static let defaultSize = NSSize(width: 1_250, height: 760)
     static let normalizationKey = "Locus.didNormalizeMainWindow.1250x760"
 
+    static func minimumContentSize(isUITesting: Bool) -> NSSize {
+        // Fixture dimensions describe the whole NSWindow frame, not its
+        // content. A 620-point content minimum forces a 652-point frame on
+        // macOS 26 after native titlebar chrome is added. Let the fixture's
+        // explicitly applied frame determine its usable content height;
+        // compact layout assertions must see the actual requested geometry.
+        NSSize(width: isUITesting ? 680 : 720, height: isUITesting ? 0 : 620)
+    }
+
     static func centeredFrame(in visibleFrame: NSRect) -> NSRect {
         centeredFrame(size: defaultSize, in: visibleFrame)
     }
@@ -82,8 +91,8 @@ struct LocusApp: App {
                     // The full three-column layout fits comfortably at the
                     // default size. Narrow windows progressively overlay the
                     // sidebar and inspector instead of clipping the workspace.
-                    minWidth: locusIsUITesting ? 680 : 720,
-                    minHeight: 620
+                    minWidth: LocusWindowSizing.minimumContentSize(isUITesting: locusIsUITesting).width,
+                    minHeight: LocusWindowSizing.minimumContentSize(isUITesting: locusIsUITesting).height
                 )
                 .background {
                     ZStack {

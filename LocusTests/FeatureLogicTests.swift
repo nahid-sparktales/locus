@@ -127,6 +127,30 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(compact.midY, display.midY)
     }
 
+    func testCompactUIFixtureUsesWholeWindowSizeWithoutAContentHeightFloor() {
+        let frame = LocusWindowSizing.uiTestFrame(
+            in: NSRect(x: 0, y: 0, width: 1_600, height: 1_000),
+            environment: [
+                "LOCUS_UI_TESTING_WINDOW_WIDTH": "720",
+                "LOCUS_UI_TESTING_WINDOW_HEIGHT": "620",
+            ]
+        )
+        XCTAssertEqual(frame.size, NSSize(width: 720, height: 620))
+        let fixtureMinimum = LocusWindowSizing.minimumContentSize(isUITesting: true)
+        XCTAssertEqual(fixtureMinimum, NSSize(width: 680, height: 0))
+        // Native chrome differs between supported macOS releases. None of
+        // these insets may turn the requested whole-frame height into a
+        // minimum content height and enlarge the acceptance window.
+        for titlebarHeight: CGFloat in [28, 32, 40] {
+            XCTAssertLessThanOrEqual(fixtureMinimum.height, frame.height - titlebarHeight)
+        }
+        XCTAssertEqual(
+            LocusWindowSizing.minimumContentSize(isUITesting: false),
+            NSSize(width: 720, height: 620),
+            "UI fixtures must not change normal user window minimums."
+        )
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)
