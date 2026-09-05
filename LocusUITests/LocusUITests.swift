@@ -1296,7 +1296,23 @@ final class LocusUITests: XCTestCase {
         relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
         let agentRules = app.buttons["wallet.hub.agent-rules"]
         XCTAssertTrue(agentRules.waitForExistence(timeout: 2))
+        let navigation = anyElement("wallet.hub.navigation")
+        XCTAssertTrue(navigation.waitForExistence(timeout: 2))
+        // Separate revealing the tab from activating it. An implicit scroll
+        // during click can otherwise hit the newly displayed scrollbar.
+        for _ in 0..<12 {
+            if navigation.frame.contains(agentRules.frame), agentRules.isHittable { break }
+            let scrollRight = agentRules.frame.maxX > navigation.frame.maxX
+            navigation.scroll(byDeltaX: scrollRight ? -100 : 100, deltaY: 0)
+        }
+        XCTAssertTrue(navigation.frame.contains(agentRules.frame))
+        XCTAssertTrue(waitUntilHittable(agentRules))
+        for scroller in navigation.scrollBars.allElementsBoundByIndex {
+            XCTAssertFalse(scroller.frame.intersects(agentRules.frame),
+                "The horizontal scrollbar must not cover the section button")
+        }
         agentRules.click()
+        XCTAssertTrue(waitUntil { agentRules.isSelected }, "Agent Rules must become the selected section")
         XCTAssertTrue(app.staticTexts["Agent Spending Rules"].waitForExistence(timeout: 2))
         XCTAssertTrue(anyElement("settings.wallet.rule.usage").exists)
     }

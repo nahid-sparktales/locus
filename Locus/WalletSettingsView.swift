@@ -309,7 +309,12 @@ struct WalletSettingsView: View {
                         .accessibilityIdentifier("wallet.hub.\(section.rawValue.lowercased().replacingOccurrences(of: " ", with: "-"))")
                 }
             }
+            // AppKit overlays its horizontal scroller at the bottom of this
+            // scroll view. Reserve a separate band so scrolling cannot put
+            // the thumb over the small section buttons' click targets.
+            .padding(.bottom, 20)
         }
+        .accessibilityIdentifier("wallet.hub.navigation")
     }
 
     @ViewBuilder
