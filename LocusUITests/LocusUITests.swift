@@ -90,7 +90,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForExistence(timeout: 3), file: file, line: line)
     }
 
-    /// Settings forms expose only visible rows on some macOS releases. Stop
+    /// Scrollable forms expose only visible rows on some macOS releases. Stop
     /// at the requested control, not at a fixed scroll offset tied to one
     /// window height, and retain an exact visible/hittable requirement.
     private func revealSettingsControl(
@@ -639,6 +639,7 @@ final class LocusUITests: XCTestCase {
             anyElement("workspace.sessionTitle"),
             anyElement("composer.input"),
             anyElement("composer.mode.plan"),
+            anyElement("composer.send"),
             anyElement("inspector.tabBar"),
             anyElement("sidebar.agentStatus"),
             anyElement("sidebar.more"),
@@ -648,6 +649,7 @@ final class LocusUITests: XCTestCase {
         }
         for element in [
             anyElement("composer.mode.plan"),
+            anyElement("composer.send"),
             anyElement("sidebar.agentStatus"),
             anyElement("sidebar.more"),
         ] {
@@ -660,9 +662,9 @@ final class LocusUITests: XCTestCase {
             )
         }
         XCTAssertGreaterThanOrEqual(
-            anyElement("composer.mode.plan").frame.maxY,
+            anyElement("composer.send").frame.maxY,
             window.frame.maxY - 28,
-            "The composer should stay close to the bottom edge",
+            "The primary composer action should stay close to the bottom edge, including when controls wrap",
             file: file,
             line: line
         )
@@ -1015,13 +1017,17 @@ final class LocusUITests: XCTestCase {
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
         let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101")
         let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
-        let composer = app.textViews["composer.input"]
+        let readingColumn = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Conversation transcript")
+        ).firstMatch
 
         XCTAssertTrue(userBubble.waitForExistence(timeout: 3))
         XCTAssertTrue(assistant.exists)
+        XCTAssertTrue(readingColumn.exists)
+        XCTAssertGreaterThan(readingColumn.frame.width, 0)
         XCTAssertLessThanOrEqual(
             userBubble.frame.width,
-            composer.frame.width * 0.84,
+            readingColumn.frame.width * 0.84,
             "user prompts should stay capped near 82 percent of the reading column"
         )
         XCTAssertGreaterThan(userBubble.frame.minX, assistant.frame.minX)
@@ -2987,8 +2993,14 @@ final class LocusUITests: XCTestCase {
         let planMode = anyElement("composer.mode.plan")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(planMode.frame.maxY, window.frame.maxY - 8)
+        // Mode controls can wrap above Voice/Send; measure the final action
+        // row instead of requiring the upper row to touch the window bottom.
+        let send = anyElement("composer.send")
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        XCTAssertTrue(window.frame.contains(send.frame))
+        XCTAssertLessThanOrEqual(send.frame.maxY, window.frame.maxY - 8)
         XCTAssertGreaterThanOrEqual(
-            planMode.frame.maxY,
+            send.frame.maxY,
             window.frame.maxY - 28,
             "The composer should stay close to the bottom edge"
         )
@@ -4307,15 +4319,16 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("landing.runChecks").exists)
         XCTAssertTrue(anyElement("landing.destination").exists)
 
-        let destinationControl = anyElement("landing.destination")
+        let form = app.scrollViews.containing(.any, identifier: "landing.destination").firstMatch
         let branchDestination = app.buttons["Branch, Commit & PR"].firstMatch
         XCTAssertTrue(branchDestination.exists)
+        revealSettingsControl(branchDestination, in: form)
         branchDestination.click()
-        // AppKit only publishes descendants of a SwiftUI ScrollView once they
-        // enter its viewport. Scroll the selected destination's form into the
-        // accessibility hierarchy before querying its fields.
-        destinationControl.scroll(byDeltaX: 0, deltaY: -400)
+        // Navigate the actual form viewport, not an offscreen selector whose
+        // synthetic wheel event can land on unrelated content behind the sheet.
+        revealSettingsControl(anyElement("landing.branch"), in: form)
         XCTAssertTrue(anyElement("landing.branch").waitForExistence(timeout: 3))
+        revealSettingsControl(anyElement("landing.commitMessage"), in: form)
         XCTAssertTrue(anyElement("landing.commitMessage").exists)
         XCTAssertTrue(anyElement("landing.confirm").exists)
     }
