@@ -10,6 +10,33 @@ GA promotes the exact notarized canary archive bytes after its complete soak;
 it does not rebuild or re-zip an artifact and inherit the previous candidate's
 evidence. The two designated Macs independently verify that same archive.
 
+## Connector build toolchain
+
+The wallet CI input jobs use exact Node `24.20.0` (supported Node 24 LTS) and
+npm `11.8.0`, not the runner image's defaults. The official
+[`actions/setup-node` v6.5.0 release](https://github.com/actions/setup-node/releases/tag/v6.5.0)
+is pinned to verified commit `249970729cb0ef3589644e2896645e5dc5ba9c38`, with
+automatic package-manager caching and latest-version lookup disabled. npm is
+installed with lifecycle scripts disabled into the runner's temporary directory;
+both versions are asserted before the unchanged locked connector install.
+
+This is a resolver compatibility pin, not an SDK or lockfile update. The
+macOS runner's npm `10.9.8` rejects the unchanged lockfile with a missing optional
+`utf-8-validate@5.0.10` entry; that failure was reproduced with only npm changed.
+Node `24.20.0` with npm `11.8.0` installs it without ignoring peer dependencies
+or omitting packages, and reproduces the checked-in connector bundle and SBOM.
+Local release operators must use the same exact pair and rerun the dependency,
+advisory, and byte-comparison gates. Future tool changes require fresh evidence.
+
+The independently downloaded official macOS arm64 Node archive matched
+[`SHASUMS256.txt`](https://nodejs.org/download/release/v24.20.0/SHASUMS256.txt):
+`40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8`.
+The published npm `11.8.0` package integrity is
+`sha512-n19sJeW+RGKdkHo8SCc5xhSwkKhQUFfZaFzSc+EsYXLjSqIV0tl72aDYQVuzVvfrbysGwdaQsNLNy58J10EBSQ==`.
+These build tools are distinct from the application dependency SBOM; a local
+toolchain reproduction does not establish a passing remote CI run or release
+approval. Earlier Node 25 reproductions remain historical evidence only.
+
 ## Archive and export
 
 Commit the candidate and regenerate the Xcode project before beginning. Use an

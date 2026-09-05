@@ -84,12 +84,18 @@ preferences before building or launching. It refuses a mismatched profile and
 does not change user preferences to force a pass. Close running Locus applications
 first; the runner does not terminate an unrelated installed app. `--preflight-only`
 checks readiness without starting an app or build. `--allow-dirty` is smoke-only.
+For a hosted CI runner whose accessibility defaults are not controlled, use
+`--native-profile regular-light` instead of `--profile`. It selects and records
+the one exact contrast/motion profile matching the actual native preferences;
+it does not change those preferences or claim the other profiles were tested.
+An explicit `--profile` still rejects any mismatch, and both options together
+are invalid. The receipt always contains the resolved full profile name.
 
 One serialized, ad-hoc signed Debug build produces one exact xctestrun. Every
 source-discovered UI test ID (minimum 140) is explicitly requested, and the raw
 result bundle, summary, test tree, counts, logs, source and binary identities are
 retained. A missing, skipped, duplicate, failed or retried case fails the profile.
-The CI job runs one full-suite macOS 15 profile; it does **not** claim the other 47
+The CI job runs one full-suite macOS 15 native profile; it does **not** claim the other 47
 OS/profile combinations. Native VoiceOver review, live connector paths, complete
 swap/allowance flows, and QR privacy/recovery checks remain separately attributable
 work until corresponding fixtures and real-device evidence exist.

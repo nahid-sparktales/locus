@@ -95,6 +95,20 @@ def test_matrix_has_16_profiles_and_all_four_accessibility_combinations():
             assert combinations == {(False, False), (True, False), (False, True), (True, True)}
 
 
+@pytest.mark.parametrize("contrast,motion,suffix", [
+    (False, False, "standard"), (True, False, "contrast"),
+    (False, True, "motion"), (True, True, "contrast-motion"),
+])
+def test_native_selection_records_actual_settings_without_mutating_them(contrast, motion, suffix):
+    config = json.loads(matrix.CONFIG.read_text())
+    actual = {"increaseContrast": contrast, "reduceMotion": motion}
+    before = copy.deepcopy(actual)
+    assert matrix.native_profile(config, "regular-light", actual) == f"regular-light-{suffix}"
+    assert actual == before
+    with pytest.raises(ValueError, match="exactly one"):
+        matrix.native_profile(config, "unknown-size", actual)
+
+
 @pytest.mark.parametrize(
     "change",
     [

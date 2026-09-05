@@ -37,6 +37,22 @@ def profiles(config: dict) -> dict:
     }
 
 
+def native_profile(config: dict, prefix: str, actual: dict) -> str:
+    """Name the actual native preferences, without changing them or a request."""
+    matches = [
+        name
+        for name, profile in profiles(config).items()
+        if name.startswith(prefix + "-")
+        and all(
+            profile["accessibility"][key] == actual[key]
+            for key in ("increaseContrast", "reduceMotion")
+        )
+    ]
+    if len(matches) != 1:
+        raise ValueError("Native settings do not identify exactly one UI profile")
+    return matches[0]
+
+
 def source_tests(root: Path = ROOT) -> list[str]:
     identifiers = []
     for path in sorted((root / "LocusUITests").glob("*.swift")):
@@ -164,7 +180,13 @@ def validate_results(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--os-major", required=True, type=int)
-    parser.add_argument("--profile", required=True)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--profile", help="Require this exact named profile")
+    selection.add_argument(
+        "--native-profile",
+        choices=["compact-light", "compact-dark", "regular-light", "regular-dark"],
+        help="CI convenience: record the actual native accessibility profile; never a full matrix claim",
+    )
     parser.add_argument("--derived-data", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
@@ -175,8 +197,7 @@ def main():
     parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()
     config = json.loads(CONFIG.read_text())
-    profile = profiles(config).get(args.profile)
-    if profile is None:
+    if args.profile is not None and args.profile not in profiles(config):
         parser.error("Unknown profile: " + ", ".join(profiles(config)))
     tests = source_tests()
     if len(tests) < config["minimumFullSuiteTests"]:
@@ -193,12 +214,14 @@ def main():
                 text=True,
             ).stdout
         )
+        profile_name = args.profile or native_profile(config, args.native_profile, actual)
+        profile = profiles(config)[profile_name]
         validate_environment(actual, profile, args.os_major, config)
         if args.preflight_only:
             print(
                 json.dumps(
                     {
-                        "profile": args.profile,
+                        "profile": profile_name,
                         "preflight": actual,
                         "requestedTests": tests,
                         "executed": False,
@@ -241,7 +264,9 @@ def main():
             {
                 "schemaVersion": 1,
                 "source": source,
-                "profile": args.profile,
+                "profile": profile_name,
+                "requestedProfile": args.profile,
+                "nativeProfileSelection": args.native_profile,
                 "profileDefinition": profile,
                 "profileScope": config["profileScope"],
                 "matrixSHA256": sha256(CONFIG),
@@ -273,7 +298,7 @@ def main():
                 )
             configuration = plistlib.loads(generated[0].read_bytes())
             test_environment = {
-                "LOCUS_UI_TESTING_MATRIX_PROFILE": args.profile,
+                "LOCUS_UI_TESTING_MATRIX_PROFILE": profile_name,
                 "LOCUS_UI_TESTING_WINDOW_WIDTH": str(profile["size"]["width"]),
                 "LOCUS_UI_TESTING_WINDOW_HEIGHT": str(profile["size"]["height"]),
                 "LOCUS_UI_TESTING_APPEARANCE": profile["appearance"],
@@ -385,7 +410,7 @@ def main():
                 "status": status,
                 "error": error,
                 "result": result,
-                "profile": args.profile,
+                "profile": profile_name,
                 "osMajor": args.os_major,
                 "counts": counts,
                 "source": source,
@@ -409,7 +434,7 @@ def main():
                 f"UI profile incomplete: {error}; evidence retained at {run}"
             )
         print(
-            f"Passed {len(tests)} requested UI tests for macOS {args.os_major}/{args.profile}; not a full matrix claim. Evidence: {run}"
+            f"Passed {len(tests)} requested UI tests for macOS {args.os_major}/{profile_name}; not a full matrix claim. Evidence: {run}"
         )
 
 

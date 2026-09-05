@@ -24,6 +24,22 @@ jobs:
           # current-tree scan and never sees a secret committed and removed
           # within a PR's commit series — which still lands in public history.
           fetch-depth: 0
+      - name: Install reviewed wallet JavaScript toolchain
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.20.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install reviewed wallet npm resolver
+        run: |
+          npm install --prefix "$RUNNER_TEMP/locus-wallet-npm" --no-save --package-lock=false --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org npm@11.8.0
+          echo "$RUNNER_TEMP/locus-wallet-npm/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify exact wallet JavaScript toolchain
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v24.20.0"
+          test "$(npm --version)" = "11.8.0"
       - name: Locked dependency, license, and SBOM gate
         run: python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/WalletSignerSBOM.cdx.json"
       - name: Wallet connection SDK provenance and activation gate
@@ -40,13 +56,13 @@ jobs:
         working-directory: WalletConnectionsWeb
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm audit --omit=dev --audit-level=high
-          npm run build
+          npm audit --audit-level=high
+          npm --ignore-scripts run build
           git diff --exit-code -- ../WalletConnectionsRuntime/Resources/WalletConnections.bundle.js
       - name: Rust advisory audit
         working-directory: WalletSignerCore
         run: |
-          cargo install cargo-audit --locked
+          cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
       - name: Rust formatting, lint, and tests
         working-directory: WalletSignerCore
@@ -327,20 +343,20 @@ jobs:
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
-      - name: Serialized full UI suite with exact result accounting
+      - name: Serialized full UI suite with exact native profile accounting
         env:
           LOCUS_BUNDLE_MODE: skip
         run: >-
           python3 Tools/RunLocusUIMatrix.py
           --os-major 15
-          --profile regular-light-standard
+          --native-profile regular-light
           --derived-data "$RUNNER_TEMP/locus-ui-derived"
           --output "$RUNNER_TEMP/locus-ui-evidence"
       - name: Retain requested IDs, exact counts, screenshots, and failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: locus-ui-macos15-regular-light-standard-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: locus-ui-macos15-regular-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/locus-ui-evidence
           if-no-files-found: error
           retention-days: 90
