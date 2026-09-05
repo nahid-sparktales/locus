@@ -30,10 +30,15 @@ rechecked on their own revision; passing results are not silently relabeled.
 | Python lint | Passed on `79b0270`. An earlier import-order failure was fixed without suppressions. |
 | Rust signer | **29 passed**; formatting and strict all-target Clippy passed. This is not a long fuzz campaign. |
 | Complete native suite | **1,194 passed**, 106.55 seconds, on clean `3dbca50`. This includes the knowledge fixture correction, composer geometry and resize sampler regressions. The prior `7f2ae0a` run failed one transcript inspector-drag pixel comparison (1.143% against its unchanged 1% ceiling). Additional failure-image/geometry diagnostics were added; the mismatch did not recur in either new full run (`8c4fd66` / `3dbca50`), but its cause has not been proven fixed. No tolerance or retry waiver was introduced. |
-| New scroll regressions | Clean `3f60ca4`: **1,195 passed, 3 failed**, zero skips, 1,198 native tests. The three failed tests contain five assertions: dispatcher visibility, follow after sending, and variable-height append/session replacement. `5fa3554` fixes an independently confirmed cancellation bug by separating lifecycle invalidation from ordinary scroll completions; these failures are not waived or marked fixed from static checks. The following clean `79b0270` run is blocked in Keychain before reaching them. |
+| New scroll regressions | Clean `3f60ca4`: **1,195 passed, 3 failed**, zero skips, 1,198 native tests. The following clean `79b0270` run completed after the Keychain pause: **1,194 passed, 5 failed**, zero skips, 1,199 tests. Three tests retain dispatcher visibility, follow-after-send, and append/session-replacement failures; two additional tests were interrupted by a normal-code runner exit and earn no pass credit. `5fa3554` fixes an independently confirmed cancellation bug but does not resolve this gate. |
 | Complete UI suite | **111 passed, 30 failed**, zero skips, all 141 tests requested, macOS 26 / compact-light-standard at `7f2ae0a`. Failed result bundles are retained. Subsequent targeted fixes are not a replacement for rerunning the complete 48-profile matrix. |
 | Focused UI regressions | On clean `3dbca50`, **24 passed, 6 failed**, zero skips, all 30 prior failures selected once. Wallet Hub navigation, narrow composer/team-plan flow, inspector resizing and resize sampling pass in this subset. Remaining failures cover Appearance settings visibility, three sidebar interactions, Startup help contrast, and a blank dispatcher transcript. Counts from different runs are not combined into a full-profile pass. |
 | Follow-up UI startup | The 15-case `3f60ca4` focused attempt times out enabling macOS automation before executing any test. All 15 remain missing; it earns no coverage. The failed result bundle and request are retained. |
+| Latest hosted UI suite | **132 passed, 9 failed**, zero skips, all 141 tests requested, macOS 15.7.9 / compact-light-native with Xcode 16.4. PR head `1dbc3c3` was tested as merge `f2a879443f7202b1ac847295b06018802ad3956a`. Five sidebar hit/interaction failures, two composer-bottom assertions, the Review and Land heading, and user-bubble width remain. This is one failed profile, not a complete cross-OS matrix. |
+| Focused clean-checkout verification | **5 passed, 0 failed, 0 skipped** on clean `05525f3ee3dcfe620fe15840f889a2548dfa82a6`: two orchestration request/cursor cases and three compact-sidebar focus cases. Build and test processes both exit zero; source is clean before and after, and the exact generated test artifact is recorded. This excludes the discarded transcript experiments and is not a full-suite or release pass. |
+| Compact sidebar follow-up | `63d1045` adds a compact-only native hosting boundary and three focus regressions, verified in the clean five-case run above. The separate eight-case UI attempt builds but times out enabling macOS automation before executing any requested case; no actual sidebar AX/click coverage is credited. |
+| UI measurement follow-up | `05525f3` corrects composer/bubble measurements and Review & Land viewport navigation from retained hosted AX/video evidence. Full UI-file typechecking and the design-system source audit pass. No new full-profile execution is claimed. |
+| Solana local-validator smoke | **5 passed, 0 failed, 0 skipped** on clean `79b0270`, with Agave 4.1.2 (`182084b8`). The native-transfer case finalized and passed exact wire/signature/slot, fee and transaction-specific balance checks in 15.94 seconds. The validator executable SHA-256 is `aa0fd7ccc9300a29e5bea0a4bc65b9de5a103b111bc09c654983494040e8eaf8`; the downloaded archive was independently checked against the pinned CI digest. This is unsigned Debug smoke verification, not the full token/collectible, production reconciler, crash/restart or real-connector matrix. |
 | Debug build | Passed with local ad-hoc signing, not Developer ID signing. |
 | Direct Release and ReleaseMAS | Both full standalone-backend builds passed in separate DerivedData directories. Distribution signing was disabled. |
 | Linked bundle boundary | Passed: **22 Direct and 14 MAS Mach-O files** inspected. No forbidden signer exports outside signer executables, or forbidden wallet connector/activation resources, configuration, or code in MAS. |
@@ -42,10 +47,10 @@ rechecked on their own revision; passing results are not silently relabeled.
 | License inventory | Signer SBOM covers 351 locked components; connector SBOM covers Reown and 292 npm entries, with zero unresolved npm license declarations. Vendor service/beta terms still need counsel. |
 | npm advisory audit | Zero reported advisories, including development dependencies, on the audited unchanged lock. |
 | Rust advisory audit | Zero reported vulnerabilities, but `derivative 2.2.0` / `RUSTSEC-2024-0388` and `paste 1.0.15` / `RUSTSEC-2024-0436` are unmaintained. Strict local `--deny warnings` exits 1; neither finding was waived in this report. Hosted CI permits these warnings, so its success is not a strict-audit pass. RustSec revision: `5a0ebedfe8bdd2e295b171f4162f8c977bcad9a5`. |
-| Hosted Rust fuzz replay | All five targets failed seed replay with LeakSanitizer reporting 56 bytes in two allocations in fuzz-driver/libc++ thread setup. Target source was PR head `a35aad5`, tested as merge `3ce39c7`. Stacks suggest a driver-lifetime issue, not a proven signer leak; the finding remains blocking. No timed mutation phase or clean CPU hours are credited. |
-| Hosted Swift fuzz replay | The downloaded Solana replay at the same merge source failed before XCTest bootstrap: LLVM 21 libFuzzer rejects `trace-pc-guard` instrumentation. Its receipt correctly records zero executed units, coverage and CPU credit. The separate normal-runtime-exit completion defect also remains; compiling the harness is not a working fuzz campaign. |
+| Hosted Rust fuzz replay | All five targets failed seed replay with LeakSanitizer reporting 56 bytes in two allocations in fuzz-driver/libc++ thread setup. This recurred for `1dbc3c3`, tested as merge `f2a8794`, after the earlier `a35aad5` / `3ce39c7` attempt. Stacks suggest a driver-lifetime issue, not a proven signer leak; the finding remains blocking. No timed mutation phase or clean CPU hours are credited. |
+| Hosted Swift fuzz replay | All eight latest hosted jobs failed. The downloaded Solana replay at `f2a8794` confirms the earlier pre-XCTest-bootstrap failure: LLVM 21 libFuzzer rejects `trace-pc-guard` instrumentation. Its receipt correctly records zero executed units, coverage and CPU credit. The separate normal-runtime-exit completion defect also remains; compiling the harness is not a working fuzz campaign. |
 | Installed-code identity | App/signer API and command-line 40-character CDHashes agreed on actual ad-hoc signed `7997de9` Debug executables. This is not notarization or release identity approval. |
-| Secret scan | A full-history redacted scan passed for **389 commits / 22.96 MB** through the `00aabe4` engineering checkpoint. Report-only follow-ups require their own scan. No private release credentials were used. |
+| Secret scan | A full-history redacted scan passed for **396 commits / 23.02 MB** through the `1dbc3c3` engineering checkpoint. Follow-ups require their own scan. No private release credentials were used. |
 
 Complete local logs and dependency reports are retained outside the checkout at
 `/Users/nahid/Documents/locus-wallet-evidence-20260904.EbK9iQ`. Native/UI result
@@ -56,7 +61,7 @@ UI recordings can include unrelated desktop background and must not be
 published raw. They remain private local diagnostic artifacts, not sanitized
 release receipts or externally attributable wallet evidence.
 
-## Findings corrected in this verification pass
+## Implementation changes and their verification limits
 
 - External EVM settlement now binds the reviewed sender, transaction fields,
   fee ceiling, and exact transaction-scoped effects. Swap code checks select
@@ -103,6 +108,13 @@ release receipts or externally attributable wallet evidence.
 - The knowledge fan-out error fixture now supplies valid early responses and
   fails the last awaited endpoint. This preserves every request assertion while
   avoiding scheduler-dependent cancellation of sibling requests.
+- `65d97ab` replaces a total-request-count wait with an event-driven observation
+  of the exact orchestration list, detail and incremental-events endpoints.
+  Registration snapshots existing requests atomically and observes subsequent
+  requests; unrelated metadata traffic cannot satisfy the wait. The original
+  one-second deadline, exact request counts and cursor assertions remain.
+  Both focused methods pass. An initial predicate-polling attempt timed out at
+  that same deadline and was replaced, not accepted as a pass.
 - Composer actions now wrap within narrow chat panes, preserving the same
   permission/mode/team controls and keeping Voice/Send/Stop together. Pure
   geometry tests cover compact widths, long labels, RTL, and non-finite probes;
@@ -125,6 +137,27 @@ release receipts or externally attributable wallet evidence.
   opt-in, DEBUG-only, capped at 32 metadata records and never consume events.
   The three failing sidebar clicks retain their original assertions; no
   coordinate-click workaround or accessibility exception was added.
+- The latest hosted AX log independently proves a visible compact sidebar row
+  resolves to the underlying conversation during accessibility hit-testing.
+  `63d1045` places only that overlay in its own clipped native hosting subtree,
+  preserving its environment and leaving the conversation non-modal. Dismissal
+  restores the original control only while the sidebar still owns focus. It
+  remembers a shared field editor's owning control rather than the reusable
+  editor, preserves drafts, refuses removed-window controls, and does not steal
+  focus that the user moved elsewhere. The Apple design guidance informed this
+  visible-layer/input-ownership relationship. Native focus tests pass; the actual
+  sidebar click/AX improvement still requires UI execution.
+- `05525f3` measures the final composer action after wrapping, with the same
+  8–28-point bottom bounds and containment checks, and measures the user bubble
+  against the actual transcript reading column with the unchanged 0.84 ceiling.
+  Review & Land navigation now requires the destination and its fields to be
+  visible/hittable in the form's own viewport before interaction. None of these
+  changes waives a geometry limit or substitutes coordinate clicks.
+- Isolated lazy-scroll experiments did not fix dispatcher visibility and were
+  not applied to the implementation branch. The native document-height estimate
+  can disagree with the actual logical footer by 55 points even when that footer
+  is aligned; separately, the dispatcher really has no realized final text.
+  These are distinct remaining issues, not a reason to relax visibility tests.
 - The Solana native smoke now uses a monotonic acceptance deadline with bounded
   idle/total-resource timeouts, and rejects a successful response arriving too
   late. Its finalized receipt must match submitted wire bytes, signature, slot,
@@ -176,12 +209,19 @@ release receipts or externally attributable wallet evidence.
    successfully but failed LaunchServices startup before test execution; its
    result bundle is retained with zero executed test credit. Fresh complete CI
    is required.
-   The following `79b0270` native run is currently blocked in
-   `MCPCredentialStore.set` / `SecItemAdd`; a one-second stack sample also shows
-   browser-key reads waiting inside Keychain, and SecurityAgent is active.
-   A user approval or a deliberately isolated test Keychain is needed; no
-   permission was auto-approved, credential was printed/exported, test was skipped,
-   or success was inferred from the stalled process.
+   The following `79b0270` native run paused in `MCPCredentialStore.set` /
+   `SecItemAdd`; a one-second stack sample also showed browser-key reads waiting
+   inside Keychain. It subsequently completed with the five failures recorded
+   above. No permission was auto-approved or credential printed/exported; the
+   two premature host exits remain unexplained, not waived. Test storage still
+   needs deliberate isolation from the user's Keychain.
+   Hosted run `33947113589` at merge `f2a8794` passed Python, mobile and signer
+   jobs, but failed native and UI verification. Native failures include the
+   dispatcher/append/replacement regressions and a test that counted unrelated
+   background requests before its required incremental-events fetch. The chain,
+   Swift smoke and release build steps were skipped after the native failure.
+   The separate local five-case Solana pass does not convert those skipped
+   hosted steps into successful evidence.
 5. **Release operations:** cold-start history currently has a 64-transition
    bound; longer-lineage paging is not implemented. Admission signing validates
    individual finite allocations, but does not supply the independently
