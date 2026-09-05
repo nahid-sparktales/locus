@@ -205,19 +205,38 @@ final class TranscriptRelayoutTests: XCTestCase {
         pump()
         parkTranscriptAtTop(in: live)
         let dragged = try XCTUnwrap(snapshot(live))
+        let draggedGeometry = snapshotGeometry(in: live, image: dragged)
 
         // The same model state, laid out from scratch, is the answer the
         // dragged transcript has to agree with.
         let rebuilt = mount(makeModel(inspectorWidth: endWidth), size: size)
         parkTranscriptAtTop(in: rebuilt)
         let reference = try XCTUnwrap(snapshot(rebuilt))
+        let referenceGeometry = snapshotGeometry(in: rebuilt, image: reference)
+        let difference = differingFraction(dragged, reference)
+        let sameDimensions = dragged.pixelsWide == reference.pixelsWide
+            && dragged.pixelsHigh == reference.pixelsHigh
+        if !sameDimensions || difference >= 0.01 {
+            attachSnapshot(dragged, name: "Dragged transcript")
+            attachSnapshot(reference, name: "Rebuilt transcript")
+            let geometry = XCTAttachment(string: """
+                differingFraction=\(difference)
+                Dragged snapshot:\n\(draggedGeometry)
+                Rebuilt snapshot:\n\(referenceGeometry)
+                """)
+            geometry.name = "Transcript relayout geometry"
+            geometry.lifetime = .keepAlways
+            add(geometry)
+        }
+        XCTAssertEqual(dragged.pixelsWide, reference.pixelsWide, "Snapshot widths must match exactly")
+        XCTAssertEqual(dragged.pixelsHigh, reference.pixelsHigh, "Snapshot heights must match exactly")
 
         // A few tenths of a percent of drift is the scroll anchor settling in
         // a different place between the two mounts. The defect this guards
         // against moves ~4.5% of the window, so the bar sits well between the
         // two rather than at either edge.
         XCTAssertLessThan(
-            differingFraction(dragged, reference), 0.01,
+            difference, 0.01,
             "The transcript kept row heights from the previous column width"
         )
     }
@@ -345,6 +364,60 @@ final class TranscriptRelayoutTests: XCTestCase {
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep
+    }
+
+    /// Read immediately after each image, without forcing another layout or
+    /// reading text, accessibility values, or responder descriptions. Bound
+    /// traversal and row output so failures retain useful, finite diagnostics.
+    private func snapshotGeometry(in root: NSView, image: NSBitmapImageRep) -> String {
+        var lines = [
+            "uptime=\(ProcessInfo.processInfo.systemUptime)",
+            "imagePixels=\(image.pixelsWide)x\(image.pixelsHigh) rootBounds=\(NSStringFromRect(root.bounds))",
+            "appActive=\(NSApp.isActive) appearance=\(root.effectiveAppearance.name.rawValue)"
+        ]
+        if let window = root.window {
+            let responderType = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+            lines.append("windowFrame=\(NSStringFromRect(window.frame)) contentLayout=\(NSStringFromRect(window.contentLayoutRect)) scale=\(window.backingScaleFactor)")
+            lines.append("windowKey=\(window.isKeyWindow) main=\(window.isMainWindow) visible=\(window.isVisible) responderType=\(responderType.prefix(128)) mouse=\(NSStringFromPoint(window.mouseLocationOutsideOfEventStream))")
+        } else {
+            lines.append("window=nil")
+        }
+        guard let scroll = transcriptScrollView(in: root) else {
+            return (lines + ["transcriptScrollView=nil"]).joined(separator: "\n")
+        }
+        let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: root)
+        lines.append("scrollFrame=\(NSStringFromRect(scroll.convert(scroll.bounds, to: root))) clipBounds=\(NSStringFromRect(scroll.contentView.bounds)) viewport=\(NSStringFromRect(viewport))")
+        if let document = scroll.documentView {
+            lines.append("documentFrame=\(NSStringFromRect(document.frame)) documentBounds=\(NSStringFromRect(document.bounds)) flipped=\(document.isFlipped)")
+        }
+        var pending: [NSView] = [scroll]
+        var visited = 0
+        var rowCount = 0
+        while visited < 512, rowCount < 24, let view = pending.popLast() {
+            visited += 1
+            if let text = view as? ResponseSelectableTextView {
+                let frame = text.convert(text.bounds, to: root)
+                if !text.isHiddenOrHasHiddenAncestor, frame.intersects(viewport) {
+                    lines.append("visibleText[\(rowCount)] frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(text.bounds)) container=\(NSStringFromSize(text.textContainer?.containerSize ?? .zero)) measurements=\(text.textLayoutMeasurementCount) cacheEntries=\(text.measurementCacheEntryCount)")
+                    rowCount += 1
+                }
+            }
+            pending.append(contentsOf: view.subviews.reversed())
+        }
+        lines.append("visitedViews=\(visited) visibleTextRows=\(rowCount) traversalTruncated=\(!pending.isEmpty)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func attachSnapshot(_ image: NSBitmapImageRep, name: String) {
+        let attachment: XCTAttachment
+        if let png = image.representation(using: .png, properties: [:]) {
+            attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        } else {
+            attachment = XCTAttachment(string: "Snapshot PNG encoding failed")
+        }
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func differingFraction(_ lhs: NSBitmapImageRep, _ rhs: NSBitmapImageRep) -> Double {
