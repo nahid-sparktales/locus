@@ -2389,9 +2389,10 @@ struct SettingsView: View {
                 Toggle("Launch Locus at login", isOn: $draft.launchAtLogin)
                     .accessibilityIdentifier("settings.launchAtLogin")
                 Text("Locus starts in the menu bar so schedules can run even when no window is open.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.launchAtLogin.explanation")
                 if let error = model.launchAtLoginError {
                     Text(error)
                         .font(.locus(size: 9))
