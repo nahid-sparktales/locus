@@ -181,7 +181,7 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
         controller.checkForUpdates(nil)
     }
 
-    func updater(_ updater: SPUUpdater, mayPerformUpdateCheck updateCheck: SPUUpdateCheck) throws {
+    func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
         if WalletCandidateUpdateAuthority.isCandidate(), !requestedSafetyUpdate,
            WalletCandidateUpdateAuthority.selection() == nil {
             throw NSError(domain: "LocusCandidateUpdate", code: 1,
