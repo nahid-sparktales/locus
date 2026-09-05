@@ -1,12 +1,21 @@
 {
+  "admissionGeneration": 0,
   "archiveSHA256": "",
+  "authoritySHA256": "",
   "bundleVersion": "",
+  "candidateID": "",
+  "cohortID": "",
   "expiresAt": "",
   "issuedAt": "",
   "outerAppCodeDirectoryHash": "",
+  "permanentLimits": [],
+  "purpose": "production",
   "releaseStage": "invited_canary",
-  "revision": 1,
-  "schemaVersion": 1,
+  "reviewCeilingSHA256": "",
+  "revision": 0,
+  "revokedAdmissionSerials": [],
+  "schemaVersion": 2,
   "signerCodeDirectoryHash": "",
-  "sourceRevision": ""
+  "sourceRevision": "",
+  "transition": "initial"
 }

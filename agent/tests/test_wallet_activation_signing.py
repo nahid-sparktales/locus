@@ -94,7 +94,11 @@ def activation_case(tmp_path, activation_tools):
 
     issued = iso(now - timedelta(minutes=1))
     expiry = iso(now + timedelta(hours=1))
-    metadata = {
+    # Derive real CLI fixtures from the shipped template so schema drift cannot
+    # leave release operators with an unusable starting document.
+    metadata = json.loads((ROOT / "Config/WalletReleaseActivationMetadata.template.json").read_text())
+    metadata.pop("cohortID")  # The isolated testnet rehearsal has no invited cohort.
+    metadata.update({
         "schemaVersion": 2,
         "sourceRevision": "a" * 40,
         "bundleVersion": "fixture-1",
@@ -110,7 +114,7 @@ def activation_case(tmp_path, activation_tools):
         "admissionGeneration": 0,
         "revokedAdmissionSerials": [],
         "permanentLimits": [],
-    }
+    })
     evidence = {
         "schemaVersion": 2,
         "sourceRevision": metadata["sourceRevision"],
@@ -339,6 +343,27 @@ def _rejected(result, output: Path, message: str) -> None:
     assert result.returncode != 0
     assert message in result.stderr
     assert not output.exists(), "a rejected input must not produce a signed envelope"
+
+
+def test_unfilled_release_template_remains_nonactivating(activation_tools, tmp_path):
+    template_path = ROOT / "Config/WalletReleaseActivationMetadata.template.json"
+    template = json.loads(template_path.read_text())
+    assert template["schemaVersion"] == 2
+    assert template["revision"] == template["admissionGeneration"] == 0
+    assert template["revokedAdmissionSerials"] == template["permanentLimits"] == []
+    for field in ("sourceRevision", "outerAppCodeDirectoryHash", "signerCodeDirectoryHash",
+                  "archiveSHA256", "candidateID", "reviewCeilingSHA256", "authoritySHA256",
+                  "cohortID", "issuedAt", "expiresAt"):
+        assert template[field] == ""
+    cli, _, _ = activation_tools
+    empty = tmp_path / "empty.json"
+    ceiling = tmp_path / "ceiling.json"
+    _write(empty, {})
+    _write(ceiling, {"ceiling": {"scope": {}}})
+    result = _run([cli, "--describe", template_path, empty, empty, ceiling])
+    assert result.returncode != 0
+    assert "sourceRevision is required" in result.stderr
+    assert not result.stdout
 
 
 def test_newer_asset_provenance_is_not_broader_authority(activation_case, activation_tools):

@@ -134,6 +134,14 @@ metadata signed-capability signed-review signed-ceiling evidence-index previous-
 ```
 
 Schema-v2 transitions are `initial`, `renewal`, `restriction`, or `promotion`.
+Start from `Config/WalletReleaseActivationMetadata.template.json`; its blank
+identities and zero revision/admission generation are deliberately unusable.
+Populate exact post-package identities, a witnessed monotonic revision, and the
+approved cohort/generation before computing the three `--describe` digests.
+For subsequent transitions add `previousEnvelopeSHA256` for the preceding
+canonical envelope; an initial transition must omit that field. A testnet
+rehearsal uses `purpose: testnet_rehearsal`, omits `cohortID`, and retains zero
+admission generation. Never fill these fields with automatically approved values.
 Non-initial issuance requires the preceding signed envelope. Renewal cannot
 change authority. Restriction cannot restore removed grants, and lowered
 emergency budgets remain permanent. Promotion must retain the exact candidate
