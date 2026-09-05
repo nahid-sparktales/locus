@@ -2,6 +2,7 @@ import Combine
 import Foundation
 
 #if LOCUS_DIRECT_DOWNLOAD
+import AppKit
 import Sparkle
 #endif
 
@@ -127,6 +128,8 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     private var canCheckObservation: AnyCancellable?
     private var automaticCheckObservation: AnyCancellable?
     private var automaticDownloadObservation: AnyCancellable?
+    private var candidateAuthorityObservation: AnyCancellable?
+    private var requestedSafetyUpdate = false
 
     init(startImmediately: Bool) {
         super.init()
@@ -146,6 +149,9 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
         automaticDownloadObservation = updater.publisher(for: \.automaticallyDownloadsUpdates)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.stateDidChange?() }
+        candidateAuthorityObservation = NotificationCenter.default.publisher(for: WalletCandidateUpdateAuthority.changed)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stateDidChange?() }
     }
 
     var canCheckForUpdates: Bool {
@@ -163,7 +169,62 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     }
 
     func checkForUpdates() {
+        if WalletCandidateUpdateAuthority.isCandidate() {
+            let alert = NSAlert()
+            alert.messageText = "Check for an update outside this wallet candidate?"
+            alert.informativeText = "Installing a newer signed release ends participation in this candidate. Mainnet wallet access will require fresh release approval and, where applicable, a new invitation. Your vault and recovery material are not changed by this check."
+            alert.addButton(withTitle: "Check for Safety Updates")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            requestedSafetyUpdate = true
+        }
         controller.checkForUpdates(nil)
+    }
+
+    func updater(_ updater: SPUUpdater, mayPerformUpdateCheck updateCheck: SPUUpdateCheck) throws {
+        if WalletCandidateUpdateAuthority.isCandidate(), !requestedSafetyUpdate,
+           WalletCandidateUpdateAuthority.selection() == nil {
+            throw NSError(domain: "LocusCandidateUpdate", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Updates for this wallet candidate require current verified release access."])
+        }
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        guard WalletCandidateUpdateAuthority.isCandidate() else { return nil }
+        if requestedSafetyUpdate { return Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String }
+        return WalletCandidateUpdateAuthority.selection()?.feedURL
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        if requestedSafetyUpdate { return [] }
+        guard let channel = WalletCandidateUpdateAuthority.selection()?.channel else { return [] }
+        return [channel]
+    }
+
+    func updater(_ updater: SPUUpdater, shouldProceedWithUpdate updateItem: SUAppcastItem,
+                 updateCheck: SPUUpdateCheck) throws {
+        guard WalletCandidateUpdateAuthority.isCandidate() else { return }
+        if requestedSafetyUpdate {
+            guard WalletCandidateUpdateAuthority.permitsSafetyUpdate(archiveURL: updateItem.fileURL?.absoluteString,
+                version: updateItem.versionString, channel: updateItem.channel,
+                stableFeed: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+                candidateArchive: Bundle.main.object(forInfoDictionaryKey: "LocusWalletCandidateArchiveURL") as? String,
+                installedVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) else {
+                throw NSError(domain: "LocusCandidateUpdate", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "The safety update is not a newer release on the approved stable channel."])
+            }
+            return
+        }
+        guard WalletCandidateUpdateAuthority.permits(WalletCandidateUpdateAuthority.selection(),
+            archiveURL: updateItem.fileURL?.absoluteString, version: updateItem.versionString,
+            channel: updateItem.channel) else {
+            throw NSError(domain: "LocusCandidateUpdate", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "This update does not match the verified wallet candidate and distribution channel."])
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        requestedSafetyUpdate = false
     }
 
     func updater(

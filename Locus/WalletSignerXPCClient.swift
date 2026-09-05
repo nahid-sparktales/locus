@@ -112,6 +112,15 @@ final class XPCWalletSignerClient: WalletSignerClient {
         }
     }
 
+    func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus {
+        try await call { proxy, reply in proxy.releaseAuthorityStatus(reply: reply) }
+    }
+
+    func applyReleaseHistory(_ history: WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus {
+        let data = try encoder.encode(history)
+        return try await call { proxy, reply in proxy.applyReleaseHistory(data, reply: reply) }
+    }
+
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus {
         let status: WalletSignerStatus = try await call { proxy, reply in
             proxy.deleteVault(confirmation, reply: reply)

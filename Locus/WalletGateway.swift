@@ -241,6 +241,8 @@ struct WalletActivityRecord: Codable, Equatable, Identifiable, Sendable {
     var expectedAction: WalletSemanticAction? = nil
     var semanticDigest: String? = nil
     var expectedContractAddress: String? = nil
+    var expectedEVMTransactionDigest: String? = nil
+    var expectedEVMMaximumFeeBaseUnits: String? = nil
 }
 
 enum WalletAmountFormatter {
@@ -538,6 +540,8 @@ protocol WalletSignerClient: AnyObject {
     func applyReleaseActivation(
         _ envelope: WalletSignedReleaseActivationEnvelope
     ) async throws -> WalletReleaseActivationStatus
+    func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus
+    func applyReleaseHistory(_ history: WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus
     #endif
     func deleteVault(confirmation: String) async throws -> WalletSignerStatus
     func deleteRecoveryVault(confirmation: String) async throws -> WalletSignerStatus
@@ -571,6 +575,14 @@ protocol WalletSignerClient: AnyObject {
 }
 
 extension WalletSignerClient {
+    #if LOCUS_DIRECT_DOWNLOAD
+    func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
+    func applyReleaseHistory(_ history: WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
+    #endif
     func cancelPreparation(intentID: String) {}
 
     func quoteUniswap(
@@ -733,6 +745,11 @@ final class WalletGateway: ObservableObject {
     private var reviewRegistry: WalletReviewRegistry?
     #if LOCUS_DIRECT_DOWNLOAD
     private let bundledReviewCeiling: WalletReviewRegistry?
+    private let immutableReviewCeiling: WalletSignedReviewCeiling?
+    private var verifiedReleaseAuthority: WalletVerifiedReleaseAuthority? {
+        didSet { NotificationCenter.default.post(name: WalletCandidateUpdateAuthority.changed, object: nil) }
+    }
+    @Published private(set) var canaryInstallationID: String?
     private let activationPublicKey: Curve25519.Signing.PublicKey?
     private let installedReleaseIdentity: WalletInstalledReleaseIdentity?
     private let releaseActivationURL: URL?
@@ -793,6 +810,7 @@ final class WalletGateway: ObservableObject {
         self.reviewRegistry = bundledReview
         #if LOCUS_DIRECT_DOWNLOAD
         bundledReviewCeiling = bundledReview
+        immutableReviewCeiling = WalletSignedReviewCeiling.loadBundled()
         activationPublicKey = Self.loadBundledActivationPublicKey()
         installedReleaseIdentity = WalletInstalledReleaseIdentity.current()
         releaseActivationURL = WalletReleaseActivationSource.endpoint()
@@ -893,8 +911,15 @@ final class WalletGateway: ObservableObject {
         configureUIFixture(environment: environment)
         #endif
         #if LOCUS_DIRECT_DOWNLOAD
+        if usesBundledReleaseActivation {
+            WalletCandidateUpdateAuthority.source = { [weak self] in
+                guard let self, let authority = self.verifiedReleaseAuthority,
+                      let installation = self.canaryInstallationID else { return nil }
+                return (authority, installation)
+            }
+        }
         if buildSupportsWalletAlpha, usesBundledReleaseActivation,
-           activationPublicKey != nil, bundledReviewCeiling != nil,
+           activationPublicKey != nil, immutableReviewCeiling != nil,
            environment["XCTestConfigurationFilePath"] == nil,
            environment["LOCUS_UI_TESTING"] != "1" {
             activationRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) {
@@ -1164,69 +1189,67 @@ final class WalletGateway: ObservableObject {
     private func performReleaseActivationRefresh() async {
         guard usesBundledReleaseActivation,
               let publicKey = activationPublicKey,
-              let ceiling = bundledReviewCeiling,
+              let ceiling = immutableReviewCeiling,
               let identity = installedReleaseIdentity else { return }
-        var candidates: [Data] = []
+        guard let authorityStatus = try? await signer.releaseAuthorityStatus() else {
+            launchGate = try! WalletLaunchGate()
+            verifiedReleaseAuthority = nil
+            await cancelAuthorityAffectedByActivation()
+            return
+        }
+        canaryInstallationID = authorityStatus.installationID
+        var candidates: [WalletReleaseHistoryRequest] = []
         if let url = releaseActivationURL,
-           let remote = try? await WalletReleaseActivationSource.fetch(from: url) {
+           let remote = try? await WalletReleaseHistorySource.fetch(from: url, checkpoint: authorityStatus.checkpoint) {
             candidates.append(remote)
         }
-        if let cached = WalletReleaseActivationCache.load(),
-           !candidates.contains(cached) {
-            candidates.append(cached)
+        if let checkpoint = authorityStatus.checkpoint {
+            candidates.append(.init(schemaVersion: 1, transitions: [checkpoint.signedTransition], admission: checkpoint.admission))
         }
-        for data in candidates {
+        for history in candidates {
             do {
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let signed = try decoder.decode(
-                    WalletSignedReleaseActivationEnvelope.self, from: data
-                )
-                let verified = try WalletReleaseActivationVerifier.verify(
-                    signed,
-                    publicKey: publicKey,
-                    bundledReviewCeiling: ceiling,
-                    installedIdentity: identity,
-                    minimumRevision: appliedActivationRevision,
-                    acceptedEnvelopeSHA256: appliedActivationDigest
-                )
-                let signerStatus = try await signer.applyReleaseActivation(signed)
-                guard let enabledNetworks = verified.launchGate.effectiveManifest?
-                    .enabledNetworkIDs else {
-                    throw WalletReleaseActivationError.malformed
-                }
-                guard signerStatus.revision == signed.envelope.revision,
-                      signerStatus.envelopeSHA256 == verified.envelopeSHA256,
-                      signerStatus.expiresAt == signed.envelope.expiresAt,
-                      signerStatus.enabledNetworkIDs == enabledNetworks else {
+                let verified = try WalletReleaseHistoryVerifier.verify(history, ceiling: ceiling,
+                    key: publicKey, identity: identity, previous: authorityStatus.checkpoint,
+                    installationID: authorityStatus.installationID)
+                let signerStatus = try await signer.applyReleaseHistory(history)
+                guard signerStatus.installationID == authorityStatus.installationID,
+                      signerStatus.checkpoint == verified.checkpoint else {
                     throw WalletReleaseActivationError.identityMismatch
                 }
-                let isNewAuthority = verified.signedEnvelope.envelope.revision
-                    != appliedActivationRevision
-                launchGate = verified.launchGate
+                let checkpoint = verified.checkpoint
+                let admitted = (try? verified.requireAdmission(installationID: authorityStatus.installationID)) != nil
+                let isNewAuthority = checkpoint != verifiedReleaseAuthority?.checkpoint
+                verifiedReleaseAuthority = verified
+                launchGate = admitted ? verified.launchGate : try! WalletLaunchGate()
                 reviewRegistry = verified.reviewRegistry
-                appliedActivationRevision = verified.signedEnvelope.envelope.revision
-                appliedActivationDigest = verified.envelopeSHA256
+                appliedActivationRevision = checkpoint.revision
+                appliedActivationDigest = checkpoint.digest
                 if isNewAuthority {
                     activationExpiryTask?.cancel()
-                    let expiresAt = min(signed.envelope.capabilityManifest.manifest.expiresAt,
-                        verified.reviewRegistry.manifest.expiresAt)
+                    let expiresAt = verified.authorityExpiresAt
                     activationExpiryTask = Task { [weak self] in
                         do {
                             try await Task.sleep(for: .seconds(max(0, expiresAt.timeIntervalSinceNow)))
                         } catch { return }
                         guard let self,
-                              self.appliedActivationDigest == verified.envelopeSHA256 else { return }
+                              self.appliedActivationDigest == checkpoint.digest else { return }
                         self.launchGate = try! WalletLaunchGate()
                         self.reviewRegistry = self.bundledReviewCeiling
+                        self.verifiedReleaseAuthority = nil
                         WalletReleaseActivationCache.remove()
                         await self.cancelAuthorityAffectedByActivation()
                     }
                     await cancelAuthorityAffectedByActivation()
+                    if let current = try? await signer.signerStatus() {
+                        applyRecoveryStatus(current)
+                        status = current.vaultState == .unlocked ? .unlocked : .locked
+                    }
                 }
                 // Persistence is a best-effort optimization, never a condition
                 // for enforcing authority already accepted by both processes.
-                try? WalletReleaseActivationCache.store(data)
+                let cached = WalletReleaseHistoryRequest(schemaVersion: 1,
+                    transitions: [checkpoint.signedTransition], admission: checkpoint.admission)
+                try? WalletReleaseActivationCache.store(WalletAuthorityEncoding.encode(cached))
                 return
             } catch {
                 continue
@@ -1234,10 +1257,60 @@ final class WalletGateway: ObservableObject {
         }
         if let expiry = launchGate.effectiveManifest?.expiresAt, expiry <= Date() {
             launchGate = try! WalletLaunchGate()
-            reviewRegistry = ceiling
+            reviewRegistry = bundledReviewCeiling
+            verifiedReleaseAuthority = nil
             WalletReleaseActivationCache.remove()
             await cancelAuthorityAffectedByActivation()
         }
+    }
+
+    private func requireCurrentReleaseAuthority(networkID: String) async throws {
+        guard WalletNetworkCatalog.descriptor(id: networkID)?.environment == .mainnet else { return }
+        guard let authority = verifiedReleaseAuthority,
+              authority.checkpoint.signedTransition.envelope.expiresAt > Date() else {
+            throw WalletReleaseActivationError.expired
+        }
+        let current = try await signer.releaseAuthorityStatus()
+        guard current.checkpoint == authority.checkpoint else {
+            await refreshReleaseActivation()
+            throw WalletReleaseActivationError.rollback
+        }
+        try authority.requireAdmission(installationID: current.installationID)
+    }
+
+    var canaryAccessDescription: String {
+        guard let authority = verifiedReleaseAuthority else {
+            return "Mainnet is dormant. A verified release activation and invitation are required."
+        }
+        if authority.checkpoint.signedTransition.envelope.releaseStage == .generalAvailability {
+            return "This exact release is approved for general availability."
+        }
+        guard let installation = canaryInstallationID,
+              (try? authority.requireAdmission(installationID: installation)) != nil else {
+            return "An invitation for this installation is required. Import the signed file supplied by the release team."
+        }
+        return "Invited canary access is active. Every transaction still requires its normal approval and signed spending limits."
+    }
+
+    func importCanaryAdmission(_ data: Data) async throws {
+        guard data.count <= 1_048_576, let ceiling = immutableReviewCeiling,
+              let key = activationPublicKey, let identity = installedReleaseIdentity else {
+            throw WalletReleaseActivationError.admissionRequired
+        }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let signed = try decoder.decode(WalletSignedCanaryAdmission.self, from: data)
+        let current = try await signer.releaseAuthorityStatus()
+        guard let checkpoint = current.checkpoint else { throw WalletReleaseActivationError.historyRequired }
+        let request = WalletReleaseHistoryRequest(schemaVersion: 1,
+            transitions: [checkpoint.signedTransition], admission: signed)
+        let verified = try WalletReleaseHistoryVerifier.verify(request, ceiling: ceiling,
+            key: key, identity: identity, previous: checkpoint, installationID: current.installationID)
+        try verified.requireAdmission(installationID: current.installationID)
+        let applied = try await signer.applyReleaseHistory(request)
+        guard applied.checkpoint == verified.checkpoint, applied.installationID == current.installationID else {
+            throw WalletReleaseActivationError.identityMismatch
+        }
+        await refreshReleaseActivation()
     }
 
     private func cancelAuthorityAffectedByActivation() async {
@@ -1301,6 +1374,11 @@ final class WalletGateway: ObservableObject {
         guard usesBundledReleaseActivation,
               let network = WalletNetworkCatalog.descriptor(id: networkID),
               network.environment == .mainnet else { return }
+        guard let authority = verifiedReleaseAuthority, let installation = canaryInstallationID,
+              authority.checkpoint.signedTransition.envelope.expiresAt > Date() else {
+            throw WalletReleaseActivationError.expired
+        }
+        try authority.requireAdmission(installationID: installation)
         guard let reviewRegistry, reviewRegistry.manifest.expiresAt > Date() else {
             throw Error.policyDenied("This network has no current provider review.")
         }
@@ -1900,7 +1978,10 @@ final class WalletGateway: ObservableObject {
                         account: account,
                         expectedAction: action,
                         expectedSemanticDigest: semanticDigest,
-                        expectedContractAddress: original.expectedContractAddress
+                        expectedContractAddress: original.expectedContractAddress,
+                        expectedEVMTransactionDigest: original.expectedEVMTransactionDigest,
+                        expectedEVMMaximumFeeBaseUnits: original.expectedEVMMaximumFeeBaseUnits,
+                        reviewRegistry: reviewRegistry
                     )
                     guard let index = transactionHistory.firstIndex(where: {
                         $0.id == recordID
@@ -5635,12 +5716,19 @@ final class WalletGateway: ObservableObject {
                 regionCode: regionCode
             )
             reviewedSemanticDigest = refreshed.semanticDigest
+            let evmCommitment = try refreshed.payload.evm.map {
+                try WalletSubmittedTransactionReconciler.evmTransactionCommitment($0,
+                    maximumFeeBaseUnits: external.review.maximumFeeBaseUnits)
+            }
+            try await requireCurrentReleaseAuthority(networkID: prepare.networkID)
+            try requestRouter.validatePending(binding: binding)
             try WalletCanaryBudget.reserve(
                 transaction: external.review,
                 ownership: .required(for: connection.connector), connector: connection.connector,
-                manifest: launchGate.effectiveManifest,
-                sourceRevision: installedReleaseIdentity?.sourceRevision ?? "",
-                signerOwned: false
+                manifest: verifiedReleaseAuthority?.budgetManifest() ?? launchGate.effectiveManifest,
+                sourceRevision: verifiedReleaseAuthority?.checkpoint.signedTransition.envelope.candidateID
+                    ?? installedReleaseIdentity?.sourceRevision ?? "",
+                signerOwned: false, enforcePermanentLimits: true
             )
             result = try await connectionsClient.executeExternal(
                 WalletExternalExecutionRequest(
@@ -5675,7 +5763,9 @@ final class WalletGateway: ObservableObject {
                 expiresAt: binding.expiresAt,
                 expectedAction: prepare.action,
                 semanticDigest: reviewedSemanticDigest,
-                expectedContractAddress: contract?.checksumAddress
+                expectedContractAddress: contract?.checksumAddress,
+                expectedEVMTransactionDigest: evmCommitment,
+                expectedEVMMaximumFeeBaseUnits: evmCommitment == nil ? nil : external.review.maximumFeeBaseUnits
             )
             transactionHistory.removeAll { $0.id == record.id }
             transactionHistory.insert(record, at: 0)

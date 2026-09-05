@@ -659,6 +659,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     private var launchGate: WalletLaunchGate?
     private var reviewRegistry: WalletReviewRegistry?
     private let bundledReviewCeiling: WalletReviewRegistry?
+    private let immutableReviewCeiling: WalletSignedReviewCeiling?
+    private var verifiedReleaseAuthority: WalletVerifiedReleaseAuthority?
     private let activationPublicKey: Curve25519.Signing.PublicKey?
     private var activeActivationDigest: String?
     private var activationExpiryTimer: DispatchSourceTimer?
@@ -683,6 +685,7 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         launchGate = nil
         reviewRegistry = ceiling
         bundledReviewCeiling = ceiling
+        immutableReviewCeiling = WalletSignedReviewCeiling.loadBundled()
         activationPublicKey = Self.loadActivationPublicKey()
         regionCode = (Locale.current.region?.identifier ?? "ZZ").uppercased()
         super.init()
@@ -700,11 +703,27 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     }
 
     func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void) {
+        // Protocol v3's legacy selector confers no release authority. Production
+        // activation requires the independently verified version-2 history.
+        reply(self.error("Wallet activation requires verified transition history."))
+    }
+
+    func releaseAuthorityStatus(reply: @escaping (Data) -> Void) {
         queue.async {
             do {
-                guard request.count <= WalletReleaseActivationVerifier.maximumEnvelopeBytes,
+                reply(self.encoded(WalletReleaseAuthorityStatus(
+                    installationID: try WalletSignerReleaseAuthorityStore.installationID(),
+                    checkpoint: try WalletSignerReleaseAuthorityStore.load())))
+            } catch { reply(self.error(error.localizedDescription)) }
+        }
+    }
+
+    func applyReleaseHistory(_ request: Data, reply: @escaping (Data) -> Void) {
+        queue.async {
+            do {
+                guard request.count <= WalletReleaseHistoryVerifier.maximumHistoryBytes,
                       let publicKey = self.activationPublicKey,
-                      let ceiling = self.bundledReviewCeiling,
+                      let ceiling = self.immutableReviewCeiling,
                       let identity = WalletInstalledReleaseIdentity.current(
                         signerBundle: .main
                       ) else {
@@ -713,34 +732,27 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let signed = try decoder.decode(
-                    WalletSignedReleaseActivationEnvelope.self, from: request
+                    WalletReleaseHistoryRequest.self, from: request
                 )
-                let accepted = try WalletSignerActivationRevisionStore.load()
-                let verified = try WalletReleaseActivationVerifier.verify(
-                    signed,
-                    publicKey: publicKey,
-                    bundledReviewCeiling: ceiling,
-                    installedIdentity: identity,
-                    minimumRevision: accepted?.revision ?? 0,
-                    acceptedEnvelopeSHA256: accepted?.envelopeSHA256
-                )
-                try WalletSignerActivationRevisionStore.store(
-                    .init(revision: verified.signedEnvelope.envelope.revision,
-                          envelopeSHA256: verified.envelopeSHA256)
-                )
-                self.launchGate = verified.launchGate
+                let accepted = try WalletSignerReleaseAuthorityStore.load()
+                let installation = try WalletSignerReleaseAuthorityStore.installationID()
+                let verified = try WalletReleaseHistoryVerifier.verify(signed, ceiling: ceiling,
+                    key: publicKey, identity: identity, previous: accepted, installationID: installation)
+                try WalletSignerReleaseAuthorityStore.store(verified.checkpoint)
+                let admitted = (try? verified.requireAdmission(installationID: installation)) != nil
+                self.launchGate = admitted ? verified.launchGate : nil
                 self.reviewRegistry = verified.reviewRegistry
-                if self.activeActivationDigest != verified.envelopeSHA256 {
+                let authorityChanged = self.verifiedReleaseAuthority?.checkpoint != verified.checkpoint
+                self.verifiedReleaseAuthority = verified
+                let digest = verified.checkpoint.digest
+                if self.activeActivationDigest != digest || authorityChanged {
                     self.clearActivationBoundAuthority()
-                    self.activeActivationDigest = verified.envelopeSHA256
+                    self.activeActivationDigest = digest
                     self.activationExpiryTimer?.cancel()
                     let timer = DispatchSource.makeTimerSource(queue: self.queue)
-                    timer.schedule(deadline: .now() + max(0, min(
-                        signed.envelope.capabilityManifest.manifest.expiresAt,
-                        verified.reviewRegistry.manifest.expiresAt
-                    ).timeIntervalSinceNow))
+                    timer.schedule(deadline: .now() + max(0, verified.authorityExpiresAt.timeIntervalSinceNow))
                     timer.setEventHandler { [weak self] in
-                        guard self?.activeActivationDigest == verified.envelopeSHA256 else { return }
+                        guard self?.activeActivationDigest == digest else { return }
                         self?.clearActivationBoundAuthority()
                         self?.launchGate = nil
                         self?.activeActivationDigest = nil
@@ -748,13 +760,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                     self.activationExpiryTimer = timer
                     timer.resume()
                 }
-                reply(self.encoded(WalletReleaseActivationStatus(
-                    revision: verified.signedEnvelope.envelope.revision,
-                    envelopeSHA256: verified.envelopeSHA256,
-                    expiresAt: verified.signedEnvelope.envelope.expiresAt,
-                    enabledNetworkIDs: verified.launchGate.effectiveManifest?.enabledNetworkIDs
-                        ?? []
-                )))
+                reply(self.encoded(WalletReleaseAuthorityStatus(installationID: installation,
+                    checkpoint: verified.checkpoint)))
             } catch {
                 reply(self.error(error.localizedDescription))
             }
@@ -4833,20 +4840,24 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
         try authorizeNetwork(transaction.networkID, chain: network.chain,
             capability: capability(for: transaction.action.type))
         try WalletCanaryBudget.reserve(transaction: transaction, ownership: .locusVault,
-            connector: nil, manifest: launchGate?.effectiveManifest,
-            sourceRevision: Bundle.main.object(forInfoDictionaryKey: "LocusSourceRevision") as? String ?? "",
-            signerOwned: true)
+            connector: nil, manifest: verifiedReleaseAuthority?.budgetManifest(),
+            sourceRevision: verifiedReleaseAuthority?.checkpoint.signedTransition.envelope.candidateID ?? "",
+            signerOwned: true, enforcePermanentLimits: true)
     }
 
     private func requireCurrentActivation() throws {
         guard let activeActivationDigest,
-              let accepted = try WalletSignerActivationRevisionStore.load(),
-              accepted.envelopeSHA256 == activeActivationDigest,
+              let authority = verifiedReleaseAuthority,
+              let accepted = try WalletSignerReleaseAuthorityStore.load(),
+              accepted == authority.checkpoint,
+              accepted.digest == activeActivationDigest,
+              accepted.signedTransition.envelope.expiresAt > Date(),
               accepted.revision == launchGate?.effectiveManifest?.revision else {
             clearActivationBoundAuthority()
             launchGate = nil
             throw WalletReleaseActivationError.rollback
         }
+        try authority.requireAdmission(installationID: WalletSignerReleaseAuthorityStore.installationID())
     }
 
     private func clearActivationBoundAuthority() {

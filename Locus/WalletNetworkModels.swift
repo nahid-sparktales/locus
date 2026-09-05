@@ -1067,6 +1067,16 @@ struct WalletReviewRegistry: Sendable {
         self.manifest = manifest
     }
 
+    /// Only for constructing a non-activating scope projection after its
+    /// distinct ceiling signature has been verified. This does not grant a
+    /// network capability or replace a signed operational review lease.
+    init(validatingScopeProjection manifest: WalletReviewManifest, now: Date) throws {
+        guard Self.isStructurallyValid(manifest, now: now), manifest.expiresAt > now else {
+            throw WalletReviewManifestError.malformed
+        }
+        self.manifest = manifest
+    }
+
     var assets: [WalletAsset] { manifest.assets }
     var evmContracts: [WalletContractRegistryEntry] { manifest.evmContracts }
 

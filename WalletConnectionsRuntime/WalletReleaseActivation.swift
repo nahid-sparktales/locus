@@ -60,7 +60,7 @@ struct WalletInstalledReleaseIdentity: Codable, Equatable, Sendable {
         ) == errSecSuccess,
         let values = information as? [CFString: Any],
         let hash = values[kSecCodeInfoUnique] as? Data,
-        !hash.isEmpty else { return nil }
+        hash.count == 20 else { return nil }
         return hash.map { String(format: "%02x", $0) }.joined()
     }
 }
@@ -107,6 +107,8 @@ enum WalletReleaseActivationError: LocalizedError, Equatable {
     case broaderThanCeiling
     case revisionConflict
     case stateUnavailable
+    case historyRequired
+    case admissionRequired
 
     var errorDescription: String? {
         switch self {
@@ -118,6 +120,8 @@ enum WalletReleaseActivationError: LocalizedError, Equatable {
         case .broaderThanCeiling: "The wallet release activation exceeds this build's review ceiling."
         case .revisionConflict: "The wallet activation revision was reused for different release data."
         case .stateUnavailable: "Wallet activation history is unavailable."
+        case .historyRequired: "The wallet requires the complete verified activation history."
+        case .admissionRequired: "This installation has no current invitation for the wallet canary."
         }
     }
 }
@@ -287,24 +291,26 @@ enum WalletCanaryBudget {
                         ownership: WalletConnectorAccountOwnership,
                         connector: WalletConnectionConnector?,
                         manifest: WalletCapabilityManifest?, sourceRevision: String,
-                        signerOwned: Bool) throws {
+                        signerOwned: Bool, enforcePermanentLimits: Bool = false) throws {
         guard WalletNetworkCatalog.descriptor(id: transaction.networkID)?.environment == .mainnet
         else { return }
         guard let manifest, manifest.expiresAt > Date() else {
             throw WalletReleaseActivationError.expired
         }
-        guard manifest.releaseStage == .invitedCanary else { return }
         let assetID = transaction.action.swapAllowanceSetup?.binding.inputAssetID
             ?? transaction.budgetAssetID
+        let matchingLimit = manifest.canaryLimits?.first {
+            $0.networkID == transaction.networkID && $0.assetID == assetID
+                && $0.action == transaction.action.type && $0.ownership == ownership
+                && $0.connector == connector
+        }
+        guard manifest.releaseStage == .invitedCanary
+                || (enforcePermanentLimits && matchingLimit != nil) else { return }
         let amount = transaction.action.swapAllowanceSetup?.binding.amountInBaseUnits
             ?? transaction.spendBaseUnits
         guard !sourceRevision.isEmpty,
               signerOwned == (ownership == .locusVault),
-              let limit = manifest.canaryLimits?.first(where: {
-                  $0.networkID == transaction.networkID && $0.assetID == assetID
-                    && $0.action == transaction.action.type && $0.ownership == ownership
-                    && $0.connector == connector
-              }) else { throw WalletReleaseActivationError.broaderThanCeiling }
+              let limit = matchingLimit else { throw WalletReleaseActivationError.broaderThanCeiling }
         let account = SHA256.hash(data: Data((sourceRevision + "|" + limit.identity).utf8))
             .map { String(format: "%02x", $0) }.joined()
         let service = "io.sparktales.locus.wallet-canary-budget.v1"

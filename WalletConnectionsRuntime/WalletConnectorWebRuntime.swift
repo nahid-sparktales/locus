@@ -77,7 +77,8 @@ final class WalletConnectorWebRuntime: NSObject {
         connectorConfigurationValues = WalletConnectorReleaseConfiguration.runtimeValues(
             from: bundle, environment: environment
         )
-        reviewRegistry = WalletReviewRegistry.loadBundled(from: bundle)
+        reviewRegistry = WalletSignedReviewCeiling.bundledConfigurationRegistry(bundle: bundle)
+            ?? WalletReviewRegistry.loadBundled(from: bundle)
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         encoder = JSONEncoder()

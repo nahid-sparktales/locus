@@ -101,6 +101,8 @@ struct WalletSettingsView: View {
     @Binding var browserEnabled: Bool
     @State private var deletePresented = false
     @State private var deleteRecoveryPresented = false
+    @State private var admissionImportInProgress = false
+    @State private var admissionImportError: String?
     @State private var policyPresented = false
     @State private var registryPresented = false
     @State private var contractPolicyEntry: WalletContractRegistryEntry?
@@ -331,6 +333,9 @@ struct WalletSettingsView: View {
             spendingRulesCard
         case .security:
             accountCard
+            #if LOCUS_DIRECT_DOWNLOAD
+            canaryAccessCard
+            #endif
             advancedCard
         }
     }
@@ -1300,6 +1305,54 @@ struct WalletSettingsView: View {
     }
 
     #if LOCUS_DIRECT_DOWNLOAD
+    private var canaryAccessCard: some View {
+        WalletSectionCard(title: "Invited Canary", symbol: "person.badge.shield.checkmark") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(gateway.canaryAccessDescription).font(.callout)
+                if let installation = gateway.canaryInstallationID {
+                    Text("Installation code").font(.caption.weight(.semibold))
+                    Text(installation).font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("wallet.canary.installation")
+                    Text("Share this public code with the release team. It is not a wallet address, recovery phrase, or permission to spend.")
+                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Button(admissionImportInProgress ? "Verifying Invitation…" : "Import Signed Invitation") {
+                        importCanaryInvitation()
+                    }
+                    .disabled(admissionImportInProgress)
+                    .accessibilityIdentifier("wallet.canary.import")
+                }
+                if let admissionImportError {
+                    Text(admissionImportError).font(.callout).foregroundStyle(LocusTheme.coral)
+                        .accessibilityIdentifier("wallet.canary.error")
+                }
+            }
+        }
+    }
+
+    private func importCanaryInvitation() {
+        guard !admissionImportInProgress else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Signed Canary Invitation"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        admissionImportInProgress = true
+        admissionImportError = nil
+        Task {
+            defer { admissionImportInProgress = false }
+            do {
+                let attributes = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard attributes.isRegularFile == true, let size = attributes.fileSize,
+                      (1...1_048_576).contains(size) else { throw WalletReleaseActivationError.malformed }
+                try await gateway.importCanaryAdmission(Data(contentsOf: url, options: .mappedIfSafe))
+            } catch {
+                admissionImportError = "The invitation could not be verified for this installation. Check the file and contact the release team."
+            }
+        }
+    }
+
     private func chooseWalletConnectQRImage() {
         guard !connectionOperationInProgress else { return }
         let panel = NSOpenPanel()

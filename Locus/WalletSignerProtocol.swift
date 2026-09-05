@@ -2098,6 +2098,8 @@ struct WalletRecoveryProcessFrameDecoder {
     func status(reply: @escaping (Data) -> Void)
     #if !LOCUS_APP_STORE
     func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void)
+    func releaseAuthorityStatus(reply: @escaping (Data) -> Void)
+    func applyReleaseHistory(_ request: Data, reply: @escaping (Data) -> Void)
     #endif
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)

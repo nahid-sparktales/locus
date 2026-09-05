@@ -67,6 +67,10 @@
 	<string>$(LOCUS_SOURCE_REVISION)</string>
 	<key>LocusWalletReleaseActivationURL</key>
 	<string>$(LOCUS_WALLET_RELEASE_ACTIVATION_URL)</string>
+	<key>LocusCanaryUpdateFeedURL</key>
+	<string>$(LOCUS_CANARY_UPDATE_FEED_URL)</string>
+	<key>LocusWalletCandidateArchiveURL</key>
+	<string>$(LOCUS_WALLET_CANDIDATE_ARCHIVE_URL)</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LocusGoogleOAuthClientID</key>

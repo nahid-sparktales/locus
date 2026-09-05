@@ -94,6 +94,11 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
+            key = "LOCUS_SUI_FIXTURE_SIGNER_BIN"
+            value = "$(LOCUS_SUI_FIXTURE_SIGNER_BIN)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER"
             value = "$(LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER)"
             isEnabled = "YES">

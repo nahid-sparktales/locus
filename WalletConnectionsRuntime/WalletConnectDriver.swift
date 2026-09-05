@@ -60,7 +60,8 @@ final class WalletConnectDriver: WalletConnectorDriver {
         )
         let projectID = configuration["LocusReownProjectID"] ?? ""
         let redirectValue = configuration["LocusWalletConnectRedirectURL"] ?? ""
-        guard let registry = WalletReviewRegistry.loadBundled(from: bundle),
+        guard let registry = WalletSignedReviewCeiling.bundledConfigurationRegistry(bundle: bundle)
+                ?? WalletReviewRegistry.loadBundled(from: bundle),
               let entry = registry.manifest.connectors.first(where: { $0.connector == .walletConnect }),
               let method = entry.methods.sorted(by: { $0.rawValue < $1.rawValue }).first,
               registry.containsConnector(

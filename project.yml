@@ -156,6 +156,8 @@ targets:
       - path: Locus/WalletStructuredAuthorization.swift
       - path: Locus/WalletVaultKeychain.swift
       - path: WalletConnectionsRuntime/WalletReleaseActivation.swift
+      - path: WalletConnectionsRuntime/WalletReleaseAuthority.swift
+      - path: WalletConnectionsRuntime/WalletReleaseAuthorityStore.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -192,6 +194,7 @@ targets:
         LOCUS_WALLET_CAPABILITY_PUBLIC_KEY: ""
         LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64: ""
         LOCUS_WALLET_REVIEW_MANIFEST_BASE64: ""
+        LOCUS_WALLET_REVIEW_CEILING_BASE64: ""
         LOCUS_SOURCE_REVISION: "$(LOCUS_SOURCE_REVISION)"
       configs:
         Debug:
@@ -231,6 +234,8 @@ targets:
         LOCUS_PHANTOM_APP_ID: ""
         LOCUS_PHANTOM_REDIRECT_URL: ""
         LOCUS_WALLET_RELEASE_ACTIVATION_URL: "https://github.com/nahid-sparktales/locus/releases/latest/download/wallet-activation.json"
+        LOCUS_CANARY_UPDATE_FEED_URL: ""
+        LOCUS_WALLET_CANDIDATE_ARCHIVE_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
@@ -346,6 +351,7 @@ schemes:
         LOCUS_SUI_LOCALNET_FAUCET_URL: "$(LOCUS_SUI_LOCALNET_FAUCET_URL)"
         LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER: "$(LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER)"
         LOCUS_SUI_LOCALNET_VERSION: "$(LOCUS_SUI_LOCALNET_VERSION)"
+        LOCUS_SUI_FIXTURE_SIGNER_BIN: "$(LOCUS_SUI_FIXTURE_SIGNER_BIN)"
         LOCUS_SOLANA_VALIDATOR_RPC_URL: "$(LOCUS_SOLANA_VALIDATOR_RPC_URL)"
         LOCUS_SOLANA_VALIDATOR_GENESIS_HASH: "$(LOCUS_SOLANA_VALIDATOR_GENESIS_HASH)"
         LOCUS_SOLANA_VALIDATOR_VERSION: "$(LOCUS_SOLANA_VALIDATOR_VERSION)"
