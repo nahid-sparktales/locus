@@ -2512,13 +2512,14 @@ private struct ConversationView: View {
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
     /// selection with it — and so a drag can run from one message into another.
     @StateObject private var selection = TranscriptSelectionStore()
 
-    private let bottomID = "conversation-bottom"
+    private static let bottomID = "conversation-bottom"
 
     var body: some View {
         let transcript = transcriptPresentation.snapshot
@@ -2547,8 +2548,10 @@ private struct ConversationView: View {
                         }
                     }
                     Color.clear
-                        .frame(height: 1)
-                        .id(bottomID)
+                        // Include the bottom breathing room in the logical
+                        // target so its anchor is also the viewport's end.
+                        .frame(height: 41)
+                        .id(Self.bottomID)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
@@ -2562,16 +2565,19 @@ private struct ConversationView: View {
                     #if DEBUG
                     TranscriptScrollBridge(
                         coordinator: scrollCoordinator,
-                        diagnosticItemCount: items.count
+                        diagnosticItemCount: items.count,
+                        scrollToBottom: { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
                     )
                     #else
-                    TranscriptScrollBridge(coordinator: scrollCoordinator)
+                    TranscriptScrollBridge(
+                        coordinator: scrollCoordinator,
+                        scrollToBottom: { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                    )
                     #endif
                 }
                 .frame(maxWidth: 780)
                 .padding(.horizontal, 24)
                 .padding(.top, transcript.isEmpty ? 0 : 24)
-                .padding(.bottom, 40)
                 .frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("conversation.scroll")
@@ -2579,7 +2585,7 @@ private struct ConversationView: View {
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !transcript.isEmpty {
                     Button {
-                        scrollCoordinator.jumpToLatest(animated: true)
+                        scrollCoordinator.jumpToLatest(animated: !reduceMotion)
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
                             .font(.locus(size: 9, weight: .semibold))
@@ -2618,6 +2624,7 @@ private struct ConversationView: View {
             }
             .onChange(of: model.currentSessionID) {
                 selection.reset()
+                scrollCoordinator.resetForSession()
             }
             .onAppear {
                 configureSelection(
@@ -2981,6 +2988,25 @@ private struct ConversationView: View {
 }
 
 struct TranscriptScrollMetrics {
+    /// Bounds overlap does not imply gesture ownership: compact sidebars and
+    /// floating panels can cover the transcript in the same window. Resolve
+    /// the native frontmost hit, including nested text/code scroll responders.
+    @MainActor
+    static func ownsWheelLocation(
+        _ locationInWindow: NSPoint,
+        eventWindow: NSWindow?,
+        scrollView: NSScrollView
+    ) -> Bool {
+        guard let window = scrollView.window, eventWindow === window,
+              let root = window.contentView,
+              scrollView.bounds.contains(scrollView.convert(locationInWindow, from: nil))
+        else { return false }
+        // NSView.hitTest takes a point in its superview's coordinates.
+        let point = root.superview?.convert(locationInWindow, from: nil) ?? locationInWindow
+        guard let hit = root.hitTest(point) else { return false }
+        return hit === scrollView || hit.isDescendant(of: scrollView)
+    }
+
     static func dominantVerticalWheelDelta(
         scrollingDeltaX: CGFloat,
         scrollingDeltaY: CGFloat,
@@ -3018,9 +3044,9 @@ struct TranscriptScrollMetrics {
     }
 }
 
-/// Owns the underlying NSScrollView. Streaming height changes are pinned once
-/// per display refresh by adjusting the clip-view origin directly; no SwiftUI
-/// scrollTo transaction is created for tokens or reasoning.
+/// Observes the native viewport and coalesces following to one logical-bottom
+/// request per display refresh. LazyVStack's native document extent is only an
+/// estimate; SwiftUI must resolve the target and realize its actual rows.
 @MainActor
 final class TranscriptScrollCoordinator: ObservableObject {
     @Published private(set) var followState = TranscriptFollowState()
@@ -3036,6 +3062,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var isUserLiveScrolling = false
     private var isRoutingVerticalWheel = false
     private var lastOriginY: CGFloat = 0
+    private var scrollToBottomTarget: (() -> Void)?
+    private var scrollIntentRevision: UInt64 = 0
     #if DEBUG
     private let geometryDiagnosticsEnabled = {
         let environment = ProcessInfo.processInfo.environment
@@ -3105,6 +3133,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
     #endif
 
+    func setBottomTarget(_ target: @escaping () -> Void) {
+        scrollToBottomTarget = target
+    }
+
     func attach(from anchor: NSView) {
         #if DEBUG
         geometryDiagnosticAnchor = anchor
@@ -3162,11 +3194,13 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
             [weak self, weak candidate] event in
-            guard let self, let candidate,
-                  let window = candidate.window, event.window === window
-            else { return event }
-            let point = candidate.convert(event.locationInWindow, from: nil)
-            guard candidate.bounds.contains(point) else { return event }
+            guard let self, let candidate else { return event }
+            guard TranscriptScrollMetrics.ownsWheelLocation(
+                event.locationInWindow, eventWindow: event.window, scrollView: candidate
+            ) else {
+                self.isRoutingVerticalWheel = false
+                return event
+            }
 
             if let deltaY = TranscriptScrollMetrics.dominantVerticalWheelDelta(
                 scrollingDeltaX: event.scrollingDeltaX,
@@ -3207,8 +3241,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
         #if DEBUG
         recordGeometry("content.changed")
         #endif
+        let revision = scrollIntentRevision
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.scrollIntentRevision == revision else { return }
             if self.followState.permitsAutomaticScroll {
                 self.schedulePin()
             } else {
@@ -3218,6 +3253,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detach() {
+        scrollIntentRevision &+= 1
+        isProgrammaticScroll = false
         pinPending = false
         displayLink?.isPaused = true
         mutateState { $0.detach() }
@@ -3230,6 +3267,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
         guard isSelectionDragActive != active else { return }
         isSelectionDragActive = active
         if active {
+            scrollIntentRevision &+= 1
+            isProgrammaticScroll = false
             pinPending = false
             displayLink?.isPaused = true
         } else {
@@ -3241,7 +3280,23 @@ final class TranscriptScrollCoordinator: ObservableObject {
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
-        if animated { scrollToBottom(animated: true) }
+        if animated {
+            scrollToBottom(animated: true)
+        } else {
+            schedulePin()
+        }
+    }
+
+    func resetForSession() {
+        scrollIntentRevision &+= 1
+        isProgrammaticScroll = false
+        pinPending = false
+        displayLink?.isPaused = true
+        isUserLiveScrolling = false
+        isSelectionDragActive = false
+        isRoutingVerticalWheel = false
+        mutateState { $0 = TranscriptFollowState() }
+        contentMayHaveChanged()
     }
 
     func detachAll() {
@@ -3252,6 +3307,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         detachObservers()
         scrollView = nil
         documentView = nil
+        scrollToBottomTarget = nil
     }
 
     private func wheelMoved(deltaY: CGFloat) {
@@ -3264,6 +3320,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func liveScrollStarted() {
+        scrollIntentRevision &+= 1
+        isProgrammaticScroll = false
         isUserLiveScrolling = true
         pinPending = false
         displayLink?.isPaused = true
@@ -3329,7 +3387,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func schedulePin() {
-        guard followState.permitsAutomaticScroll, let scrollView else { return }
+        guard followState.permitsAutomaticScroll, !isSelectionDragActive,
+              !isUserLiveScrolling, scrollToBottomTarget != nil, let scrollView
+        else { return }
         pinPending = true
         if displayLink == nil {
             let link = scrollView.displayLink(target: self, selector: #selector(displayTick(_:)))
@@ -3341,7 +3401,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     @objc private func displayTick(_ link: CADisplayLink) {
-        guard pinPending, followState.permitsAutomaticScroll else {
+        guard pinPending, followState.permitsAutomaticScroll,
+              !isSelectionDragActive, !isUserLiveScrolling else {
             link.isPaused = true
             return
         }
@@ -3351,21 +3412,18 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func scrollToBottom(animated: Bool) {
-        guard let scrollView, let documentView else { return }
-        let origin = NSPoint(
-            x: scrollView.contentView.bounds.origin.x,
-            y: TranscriptScrollMetrics.bottomOriginY(
-                documentBounds: documentView.bounds,
-                viewportHeight: scrollView.contentView.bounds.height,
-                isFlipped: documentView.isFlipped
-            )
-        )
+        guard followState.permitsAutomaticScroll, !isSelectionDragActive,
+              !isUserLiveScrolling, let scrollView, let scrollToBottomTarget
+        else { return }
+        scrollIntentRevision &+= 1
+        let revision = scrollIntentRevision
         #if DEBUG
-        recordGeometry("bottom.before", target: origin)
+        recordGeometry("bottom.before")
         #endif
         isProgrammaticScroll = true
-        let finish = { [weak self, weak scrollView] in
-            guard let self else { return }
+        let finish: @MainActor @Sendable () -> Void = { [weak self, weak scrollView] in
+            guard let self, self.scrollIntentRevision == revision,
+                  self.scrollView === scrollView else { return }
             if let scrollView {
                 scrollView.reflectScrolledClipView(scrollView.contentView)
                 self.lastOriginY = scrollView.contentView.bounds.origin.y
@@ -3373,21 +3431,22 @@ final class TranscriptScrollCoordinator: ObservableObject {
             self.isProgrammaticScroll = false
             self.updateNearBottom()
             #if DEBUG
-            self.recordGeometry("bottom.after", target: origin)
+            self.recordGeometry("bottom.after")
             #endif
         }
         if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                scrollView.contentView.animator().setBoundsOrigin(origin)
-            } completionHandler: {
+            withAnimation(LocusMotion.scroll, completionCriteria: .logicallyComplete) {
+                scrollToBottomTarget()
+            } completion: {
                 DispatchQueue.main.async(execute: finish)
             }
         } else {
-            scrollView.contentView.scroll(to: origin)
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-            finish()
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { scrollToBottomTarget() }
+            // The logical target resolves during SwiftUI's following layout,
+            // not synchronously while the proxy receives the request.
+            DispatchQueue.main.async(execute: finish)
         }
     }
 
@@ -3398,6 +3457,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func detachObservers() {
+        scrollIntentRevision &+= 1
+        isProgrammaticScroll = false
+        isUserLiveScrolling = false
         let center = NotificationCenter.default
         observers.forEach(center.removeObserver)
         observers.removeAll()
@@ -3421,23 +3483,34 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     #if DEBUG
     let diagnosticItemCount: Int
     #endif
+    let scrollToBottom: () -> Void
 
     func makeNSView(context: Context) -> TranscriptScrollAnchorView {
+        coordinator.setBottomTarget(scrollToBottom)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
         let view = TranscriptScrollAnchorView(frame: .zero)
         view.transcriptCoordinator = coordinator
-        DispatchQueue.main.async { coordinator.attach(from: view) }
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator, view.window != nil,
+                  view.transcriptCoordinator === coordinator else { return }
+            coordinator.attach(from: view)
+        }
         return view
     }
 
     func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
+        coordinator.setBottomTarget(scrollToBottom)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
         view.transcriptCoordinator = coordinator
-        DispatchQueue.main.async { coordinator.attach(from: view) }
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator, view.window != nil,
+                  view.transcriptCoordinator === coordinator else { return }
+            coordinator.attach(from: view)
+        }
     }
 
     static func dismantleNSView(_ nsView: TranscriptScrollAnchorView, coordinator: ()) {
