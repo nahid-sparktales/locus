@@ -2,6 +2,10 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+if [[ -z "${LOCUS_TEST_EXECUTION_LOCK_FD:-}" ]]; then
+  exec python3 "$repo_root/Tools/WalletTestExecution.py" --lock-timeout 600 -- "$0" "$@"
+fi
+python3 "$repo_root/Tools/WalletTestExecution.py" --assert-held
 pinned_version="4.1.2"
 validator_bin="${LOCUS_SOLANA_TEST_VALIDATOR_BIN:-$(command -v solana-test-validator 2>/dev/null || true)}"
 
@@ -39,7 +43,7 @@ validator_pid="$!"
 
 rpc_url="http://127.0.0.1:${port}"
 for _ in {1..300}; do
-  if genesis_hash="$(curl -fsS \
+  if genesis_hash="$(curl -fsS --connect-timeout 2 --max-time 3 \
       -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash","params":[]}' \
       "$rpc_url" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result", ""))' 2>/dev/null)" \

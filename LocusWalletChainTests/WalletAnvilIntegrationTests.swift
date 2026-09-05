@@ -205,7 +205,7 @@ final class WalletAnvilIntegrationTests: XCTestCase {
         }
     }
 
-    func testReviewedERC20ERC721ERC1155AndUniversalRouterExecuteOnAnvil() async throws {
+    func testReviewedCalldataBroadcastsButNoOpContractsCannotProveSettlement() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = environment["LOCUS_ANVIL_RPC_URL"],
               !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -803,6 +803,19 @@ final class WalletAnvilIntegrationTests: XCTestCase {
             (fetched?["input"] as? String)?.lowercased(),
             encoded.input.lowercased()
         )
+        // These tiny contracts exercise transport and encoding, not balances
+        // or ownership. A successful receipt must not certify economic effects.
+        let reconciliation = try WalletSubmittedTransactionReconciler.reconcileEVMObservedTransaction(
+            transactionID: broadcast, network: WalletNetworkCatalog.ethereumSepolia,
+            account: WalletAccount(id: "local-external", chain: .evm, address: from,
+                label: "Local fixture", networkIDs: [WalletGateway.sepoliaNetworkID],
+                ownership: .external(connectorID: .metamask)),
+            expectedAction: action, expectedContractAddress: entry.checksumAddress,
+            transaction: try XCTUnwrap(fetched), receipt: receipt
+        )
+        guard case .failed = reconciliation else {
+            return XCTFail("A success-only fixture cannot prove reviewed token, NFT, swap or allowance effects.")
+        }
     }
 
     private func rustCall<T: Decodable>(

@@ -2,6 +2,10 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+if [[ -z "${LOCUS_TEST_EXECUTION_LOCK_FD:-}" ]]; then
+  exec python3 "$repo_root/Tools/WalletTestExecution.py" --lock-timeout 600 -- "$0" "$@"
+fi
+python3 "$repo_root/Tools/WalletTestExecution.py" --assert-held
 pinned_version="1.79.0"
 pinned_commit="46f18562f1f5af2438d35828e8b62d5e0b972db7"
 case "$(uname -m)" in
@@ -35,6 +39,14 @@ cleanup() {
   find "$temp_dir" -depth -delete
 }
 trap cleanup EXIT INT TERM
+# Isolated test-only executable: no Locus signer library, production allowlist
+# change, runtime key import, or release-artifact embedding. Locked/offline so
+# running localnet never resolves a new dependency graph.
+cargo build --offline --locked \
+  --manifest-path "$repo_root/Tools/Fixtures/SuiLocalSigner/Cargo.toml" \
+  --target-dir "$temp_dir/fixture-build"
+fixture_signer="$temp_dir/fixture-build/debug/locus-sui-local-fixture-signer"
+[[ -x "$fixture_signer" ]] || { print -u2 'error: independent Sui fixture signer is unavailable'; exit 1; }
 archive="${LOCUS_SUI_ARCHIVE:-$temp_dir/$asset}"
 if [[ ! -f "$archive" ]]; then
   curl -fL --proto '=https' --tlsv1.2 \
@@ -81,4 +93,5 @@ LOCUS_BUNDLE_MODE=skip xcodebuild test -project Locus.xcodeproj \
   LOCUS_SUI_LOCALNET_GRAPHQL_URL="$graphql_url" \
   LOCUS_SUI_LOCALNET_FAUCET_URL="$faucet_url" \
   LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER="$chain_identifier" \
+  LOCUS_SUI_FIXTURE_SIGNER_BIN="$fixture_signer" \
   LOCUS_SUI_LOCALNET_VERSION="$pinned_version" "$@"

@@ -2,14 +2,8 @@ import Foundation
 import XCTest
 @testable import Locus
 
-@_silgen_name("locus_wallet_sign_sui_native_transfer_json")
-private func rustSignSuiNative(_ entropy: UnsafePointer<CChar>, _ request: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
-@_silgen_name("locus_wallet_string_free")
-private func rustFreeSui(_ value: UnsafeMutablePointer<CChar>)
-
 @MainActor
 final class WalletSuiIntegrationTests: XCTestCase {
-    private static let sender = "0xf967e21c16a4757daafec13ee79c0dc5c5329199be5d70c86fd07b8e75db892c"
     private static let recipient = "0x1111111111111111111111111111111111111111111111111111111111111111"
 
     func testLoopbackBoundaryAndProductionHTTPSOnly() throws {
@@ -26,7 +20,7 @@ final class WalletSuiIntegrationTests: XCTestCase {
                                                   expectedChainIdentifier: "4c78adac"))
     }
 
-    func testPinnedGraphQLNativeTransferAndRestartReconciliation() async throws {
+    func testIndependentFixtureSignerGraphQLNativeTransferAndClientReconciliation() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let endpoint = environment["LOCUS_SUI_LOCALNET_GRAPHQL_URL"], endpoint.hasPrefix("http://127.0.0.1:"),
               let faucet = environment["LOCUS_SUI_LOCALNET_FAUCET_URL"],
@@ -34,6 +28,10 @@ final class WalletSuiIntegrationTests: XCTestCase {
             throw XCTSkip("Run Tools/RunWalletSuiTests.sh against pinned Sui 1.79.0 GraphQL localnet.")
         }
         XCTAssertEqual(environment["LOCUS_SUI_LOCALNET_VERSION"], "1.79.0")
+        // Production Rust deliberately rejects local genesis identities. This
+        // separate, fixed-key executable signs the Swift reconstruction only;
+        // it does not replace the production signer/derivation evidence gate.
+        let sender = try XCTUnwrap(fixtureSigner(operation: "address")["address"] as? String)
         let client = try WalletSuiGraphQLClient(testLoopbackEndpoint: endpoint, expectedChainIdentifier: chain)
         _ = try await client.networkStatus()
         let wrongChain = try WalletSuiGraphQLClient(testLoopbackEndpoint: endpoint,
@@ -44,45 +42,43 @@ final class WalletSuiIntegrationTests: XCTestCase {
         var faucetRequest = URLRequest(url: try XCTUnwrap(URL(string: faucet + "/v2/gas")))
         faucetRequest.httpMethod = "POST"
         faucetRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        faucetRequest.httpBody = try JSONSerialization.data(withJSONObject: ["FixedAmountRequest": ["recipient": Self.sender]])
+        faucetRequest.httpBody = try JSONSerialization.data(withJSONObject: ["FixedAmountRequest": ["recipient": sender]])
         let (_, response) = try await URLSession.shared.data(for: faucetRequest)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
 
         var selection: WalletSuiGasCoinSelection?
         for _ in 0..<100 {
-            selection = try? await client.selectNativeGasCoin(owner: Self.sender, requiredBalanceBaseUnits: "11000000")
+            selection = try? await client.selectNativeGasCoin(owner: sender, requiredBalanceBaseUnits: "11234567")
             if selection != nil { break }
             try await Task.sleep(for: .milliseconds(200))
         }
         let selected = try XCTUnwrap(selection, "Faucet funding was not indexed")
         let status = selected.snapshot.network
         let object = selected.coin.reference
-        let fields: [String: Any] = [
-            "chain_identifier": chain, "sender": Self.sender, "recipient": Self.recipient,
-            "gas_object_id": object.objectID, "gas_object_version": object.version,
-            "gas_object_digest": object.digest, "gas_balance_base_units": selected.coin.balanceBaseUnits,
-            "amount_base_units": "1234567", "reference_gas_price_base_units": status.referenceGasPrice,
-            "gas_price_base_units": status.referenceGasPrice, "gas_budget_base_units": "10000000",
-            "current_epoch": status.epoch, "expiration_epoch": status.epoch + 1,
-        ]
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), as: UTF8.self)
-        let signed: [String: Any] = try String(repeating: "00", count: 32).withCString { entropy in
-            try json.withCString { request in
-                let pointer = try XCTUnwrap(rustSignSuiNative(entropy, request))
-                defer { rustFreeSui(pointer) }
-                return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(String(cString: pointer).utf8)) as? [String: Any])
-            }
-        }
-        let bcs = try XCTUnwrap(signed["transaction_bcs"] as? String)
+        let packet = WalletSuiPreparationPacket(
+            request: .init(networkID: WalletNetworkCatalog.suiTestnet.id, accountID: "local-fixture", source: .human,
+                action: .nativeTransfer(recipient: Self.recipient, amountBaseUnits: "1234567"), maximumFeeBaseUnits: "10000000"),
+            chainIdentifier: chain, checkpointSequence: status.checkpointSequence, checkpointTimestamp: status.checkpointTimestamp,
+            sender: sender, assetID: WalletNetworkCatalog.suiTestnet.nativeAssetID, coinType: WalletSuiAssetIdentity.nativeCoinType,
+            coinObject: nil, coinBalanceBaseUnits: nil, coinCheckpointSequence: nil, coinCheckpointTimestamp: nil,
+            transferredObject: nil, objectHasPublicTransfer: nil, objectCheckpointSequence: nil, objectCheckpointTimestamp: nil,
+            gasObject: object, gasBalanceBaseUnits: selected.coin.balanceBaseUnits, gasBudgetBaseUnits: "10000000",
+            referenceGasPriceBaseUnits: status.referenceGasPrice, gasPriceBaseUnits: status.referenceGasPrice,
+            currentEpoch: status.epoch, expirationEpoch: status.epoch, observedAt: Date()
+        )
+        let canonical = try WalletSuiCanonicalTransaction(packet: packet)
+        let bcs = canonical.transactionBCS.base64EncodedString()
+        let signed = try fixtureSigner(operation: "sign", transactionBCS: bcs)
         let signature = try XCTUnwrap(signed["signature"] as? String)
         let digest = try XCTUnwrap(signed["transaction_digest"] as? String)
-        XCTAssertEqual(signed["from"] as? String, Self.sender)
+        XCTAssertEqual(signed["address"] as? String, sender)
+        XCTAssertEqual(digest, canonical.transactionDigest)
         _ = try await client.simulateNativeTransfer(transactionBCS: bcs, expectedTransactionDigest: digest,
-            sender: Self.sender, recipient: Self.recipient, amountBaseUnits: "1234567",
+            sender: sender, recipient: Self.recipient, amountBaseUnits: "1234567",
             maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
         do {
             _ = try await client.simulateNativeTransfer(transactionBCS: bcs, expectedTransactionDigest: digest,
-                sender: Self.sender, recipient: Self.recipient, amountBaseUnits: "1234568",
+                sender: sender, recipient: Self.recipient, amountBaseUnits: "1234568",
                 maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
             XCTFail("Changed semantic amount passed simulation reconciliation")
         } catch { /* Simulation effects must match the exact amount. */ }
@@ -99,12 +95,49 @@ final class WalletSuiIntegrationTests: XCTestCase {
         let activity = try XCTUnwrap(reconciled, "Broadcast did not reconcile after client restart")
         XCTAssertTrue(activity.successful)
         XCTAssertEqual(activity.amountBaseUnits, "1234567")
-        XCTAssertEqual(activity.sender, Self.sender)
+        XCTAssertEqual(activity.sender, sender)
         do {
             _ = try await restarted.simulateNativeTransfer(transactionBCS: bcs, expectedTransactionDigest: digest,
-                sender: Self.sender, recipient: Self.recipient, amountBaseUnits: "1234567",
+                sender: sender, recipient: Self.recipient, amountBaseUnits: "1234567",
                 maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
             XCTFail("Consumed gas object version remained valid")
         } catch { /* The signed object's former version is stale after settlement. */ }
+    }
+
+    private func fixtureSigner(operation: String, transactionBCS: String? = nil) throws -> [String: Any] {
+        guard let path = ProcessInfo.processInfo.environment["LOCUS_SUI_FIXTURE_SIGNER_BIN"],
+              path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
+            throw NSError(domain: "WalletSuiLocalFixture", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The isolated local fixture signer is required; production signing cannot be substituted."])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["--local-fixture-only"]
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        let stopped = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in stopped.signal() }
+        var request: [String: Any] = ["operation": operation]
+        if let transactionBCS { request["transaction_bcs"] = transactionBCS }
+        let data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+        guard data.count <= 65_536 else { throw WalletRPCError.invalidResponse("Fixture request is excessive") }
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: data)
+        try input.fileHandleForWriting.close()
+        guard stopped.wait(timeout: .now() + 10) == .success else {
+            process.terminate()
+            throw WalletRPCError.invalidResponse("The isolated fixture signer timed out")
+        }
+        guard process.terminationStatus == 0 else {
+            throw WalletRPCError.invalidResponse("The isolated fixture signer rejected the transaction")
+        }
+        let response = try output.fileHandleForReading.readToEnd() ?? Data()
+        guard response.count <= 2048,
+              let result = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+            throw WalletRPCError.invalidResponse("The isolated fixture signer returned malformed evidence")
+        }
+        return result
     }
 }

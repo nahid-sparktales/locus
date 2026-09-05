@@ -1,0 +1,16 @@
+[package]
+name = "locus-sui-local-fixture-signer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+# This test executable is not a dependency of any Locus/Xcode target. Its fixed
+# public fixture key has no relationship to a Locus vault or recovery phrase.
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sui-crypto = { version = "=0.3.1", features = ["ed25519"] }
+sui-sdk-types = { version = "=0.3.2", features = ["serde", "hash"] }
+
+[workspace]
