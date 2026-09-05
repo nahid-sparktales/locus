@@ -1,5 +1,9 @@
 # Locus application audit
 
+For the later committed checkpoint, current failures, and release blockers, see
+[WalletVerificationProgress.md](WalletVerificationProgress.md). The results
+below remain historical and must not be relabeled as final-candidate evidence.
+
 Date: 2026-09-04. Baseline source revision: `79bbec9daed03c84c0b4d250c171110235dc6f6e`, plus the application fixes described below in the integration working tree. These results are development verification, not signed release evidence. Repeat release checks after the final source commit is fixed.
 
 This audit reviewed the native app's local backend and mobile-companion boundaries, credential persistence, agent permission checks, file and subprocess operations, crash/reconnect handling, dependency checks, CI, and accessibility-test coverage. Wallet activation and transaction authorization are reviewed separately in the wallet gate work. The visual and interaction review is recorded in `Docs/LocusUXAudit.md`.

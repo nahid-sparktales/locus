@@ -1,5 +1,9 @@
 # Locus UI and user-experience audit
 
+The later complete-suite attempts and still-open matrix gates are recorded in
+[WalletVerificationProgress.md](WalletVerificationProgress.md). The focused
+passes below do not imply that the full UI matrix is complete.
+
 Date: 2026-09-04. Scope: the native Wallet Hub, transaction and connection review, send/receive correction loops, shared Settings navigation copy, shared accessibility styling, and the UI audit harness. This is an engineering audit; it is not a study with external users or a claim that every Locus screen was visually inspected.
 
 ## Changes implemented
