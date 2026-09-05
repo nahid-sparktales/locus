@@ -164,6 +164,30 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(requests, initial + 2, "Queued work must not invoke a dismantled bridge's proxy")
     }
 
+    func testQueuedContentInvalidationSurvivesAnOrdinaryPin() {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        scroll.documentView?.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        var requests = 0
+        coordinator.setBottomTarget { requests += 1 }
+        coordinator.attach(from: anchor)
+        pump()
+        let initial = requests
+        XCTAssertGreaterThan(initial, 0)
+
+        // The content callback is queued; the explicit jump executes its
+        // target synchronously before that callback can reach the main queue.
+        // A normal pin is not a lifecycle cancellation of the pending update.
+        coordinator.contentMayHaveChanged()
+        coordinator.jumpToLatest(animated: true)
+        XCTAssertEqual(requests, initial + 1)
+        pump()
+        XCTAssertEqual(requests, initial + 2,
+            "Content queued before a pin still needs its coalesced post-layout target request")
+        coordinator.detachAll()
+    }
+
     func testWheelRoutingRejectsCoveringViewsAndOtherWindowsButKeepsNestedResponders() throws {
         let scroll = mountNativeScroll()
         let window = try XCTUnwrap(scroll.window)

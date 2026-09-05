@@ -3063,7 +3063,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var isRoutingVerticalWheel = false
     private var lastOriginY: CGFloat = 0
     private var scrollToBottomTarget: (() -> Void)?
+    // Lifecycle cancellation must not discard content queued before an
+    // ordinary pin. Pin completions have a separate latest-request serial.
     private var scrollIntentRevision: UInt64 = 0
+    private var pinCompletionRevision: UInt64 = 0
     #if DEBUG
     private let geometryDiagnosticsEnabled = {
         let environment = ProcessInfo.processInfo.environment
@@ -3415,14 +3418,16 @@ final class TranscriptScrollCoordinator: ObservableObject {
         guard followState.permitsAutomaticScroll, !isSelectionDragActive,
               !isUserLiveScrolling, let scrollView, let scrollToBottomTarget
         else { return }
-        scrollIntentRevision &+= 1
         let revision = scrollIntentRevision
+        pinCompletionRevision &+= 1
+        let pinRevision = pinCompletionRevision
         #if DEBUG
         recordGeometry("bottom.before")
         #endif
         isProgrammaticScroll = true
         let finish: @MainActor @Sendable () -> Void = { [weak self, weak scrollView] in
             guard let self, self.scrollIntentRevision == revision,
+                  self.pinCompletionRevision == pinRevision,
                   self.scrollView === scrollView else { return }
             if let scrollView {
                 scrollView.reflectScrolledClipView(scrollView.contentView)
