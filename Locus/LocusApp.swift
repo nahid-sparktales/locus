@@ -653,6 +653,82 @@ private struct RootViewUpdateProbe: NSViewRepresentable {
     }
 }
 
+/// A compact sidebar overlaps native transcript views. A SwiftUI z-index
+/// orders their drawing, but does not give its virtual accessibility children
+/// a separate native hit-test boundary on every supported macOS release.
+/// Keep this non-modal panel in a native hosting subtree: its visible bounds
+/// then own both pointer and accessibility hits, without hiding the workspace.
+private struct CompactSidebarHost: NSViewRepresentable {
+    func makeNSView(context: Context) -> CompactSidebarHostingView {
+        let view = CompactSidebarHostingView(rootView: content(environment: context.environment))
+        view.sizingOptions = []
+        view.safeAreaRegions = []
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateNSView(_ view: CompactSidebarHostingView, context: Context) {
+        view.rootView = content(environment: context.environment)
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: CompactSidebarHostingView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    static func dismantleNSView(_ view: CompactSidebarHostingView, coordinator: ()) {
+        view.restorePreviousFocusIfOwned()
+    }
+
+    private func content(environment: EnvironmentValues) -> AnyView {
+        AnyView(SessionSidebarView().environment(\.self, environment))
+    }
+}
+
+final class CompactSidebarHostingView: NSHostingView<AnyView> {
+    private weak var previousResponder: NSResponder?
+    private weak var previousWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window, let responder = window.firstResponder, !owns(responder) else { return }
+        // A field editor is shared by the window. Remember its owning control
+        // before editing in the sidebar can replace the editor's delegate.
+        if let editor = responder as? NSTextView, editor.isFieldEditor {
+            previousResponder = editor.delegate as? NSResponder
+        } else {
+            previousResponder = responder
+        }
+        previousWindow = window
+    }
+
+    func restorePreviousFocusIfOwned() {
+        guard let window, window === previousWindow,
+              let responder = window.firstResponder, owns(responder),
+              let previous = previousResponder else { return }
+        if let view = previous as? NSView, view.window !== window { return }
+        window.makeFirstResponder(previous)
+        previousResponder = nil
+        previousWindow = nil
+    }
+
+    private func owns(_ responder: NSResponder) -> Bool {
+        if let view = responder as? NSView,
+           view === self || view.isDescendant(of: self) { return true }
+        // AppKit's shared field editor belongs to the window, not the field's
+        // subtree. Its delegate identifies the actual editing control.
+        if let editor = responder as? NSTextView, editor.isFieldEditor,
+           let field = editor.delegate as? NSView {
+            return field === self || field.isDescendant(of: self)
+        }
+        return false
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var workspaceLayout: WorkspaceLayoutModel
@@ -806,8 +882,8 @@ struct RootView: View {
                 }
 
                 if compactSidebarPresented && !docksSidebar && !model.sidebarCollapsed {
-                    SessionSidebarView()
-                        .frame(width: overlaySidebarWidth)
+                    CompactSidebarHost()
+                        .frame(width: overlaySidebarWidth, height: proxy.size.height)
                         .shadow(
                             color: workspaceLayout.isLiveResizing ? .clear : .black.opacity(0.18),
                             radius: workspaceLayout.isLiveResizing ? 0 : 18,

@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import Locus
 
@@ -219,6 +221,75 @@ private final class ProviderHandoffURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+final class CompactSidebarFocusTests: XCTestCase {
+    @MainActor
+    private func withSidebar(
+        _ check: (NSWindow, NSTextField, CompactSidebarHostingView, NSTextField, NSTextField) throws -> Void
+    ) rethrows {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 320))
+        window.contentView = root
+        let original = NSTextField(frame: NSRect(x: 300, y: 20, width: 250, height: 24))
+        original.stringValue = "Unsent draft stays intact"
+        root.addSubview(original)
+        let outside = NSTextField(frame: NSRect(x: 300, y: 70, width: 250, height: 24))
+        root.addSubview(outside)
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(window.makeFirstResponder(original))
+
+        let sidebar = CompactSidebarHostingView(rootView: AnyView(Color.clear))
+        sidebar.sizingOptions = []
+        sidebar.frame = NSRect(x: 0, y: 0, width: 260, height: 320)
+        root.addSubview(sidebar)
+        let search = NSTextField(frame: NSRect(x: 20, y: 200, width: 220, height: 24))
+        search.stringValue = "Preserved search"
+        sidebar.addSubview(search)
+        XCTAssertTrue(window.makeFirstResponder(search))
+        try check(window, original, sidebar, search, outside)
+    }
+
+    @MainActor
+    func testDismissalRestoresOriginalFieldEditorOwnerAndPreservesDrafts() throws {
+        try withSidebar { window, original, sidebar, search, _ in
+            let sharedEditor = try XCTUnwrap(window.firstResponder as? NSTextView)
+            XCTAssertTrue(sharedEditor.isFieldEditor)
+            XCTAssertTrue(sharedEditor.delegate === search)
+
+            sidebar.restorePreviousFocusIfOwned()
+
+            let restoredEditor = try XCTUnwrap(window.firstResponder as? NSTextView)
+            XCTAssertTrue(restoredEditor.delegate === original)
+            XCTAssertEqual(original.stringValue, "Unsent draft stays intact")
+            XCTAssertEqual(search.stringValue, "Preserved search")
+        }
+    }
+
+    @MainActor
+    func testDismissalDoesNotStealFocusChosenOutsideSidebar() throws {
+        try withSidebar { window, _, sidebar, _, outside in
+            XCTAssertTrue(window.makeFirstResponder(outside))
+            sidebar.restorePreviousFocusIfOwned()
+            let editor = try XCTUnwrap(window.firstResponder as? NSTextView)
+            XCTAssertTrue(editor.delegate === outside)
+        }
+    }
+
+    @MainActor
+    func testDismissalDoesNotRestoreAControlRemovedFromTheWindow() throws {
+        try withSidebar { window, original, sidebar, search, _ in
+            original.removeFromSuperview()
+            sidebar.restorePreviousFocusIfOwned()
+            let editor = try XCTUnwrap(window.firstResponder as? NSTextView)
+            XCTAssertTrue(editor.delegate === search)
+        }
+    }
 }
 
 final class AppModelTests: XCTestCase {
