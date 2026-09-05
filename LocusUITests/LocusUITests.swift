@@ -3648,6 +3648,10 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_RUN_FIXTURE"] = fixture
         app.launchEnvironment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] = uncleanRecovery ? "1" : nil
         app.launchEnvironment["LOCUS_UI_TESTING_STALE_QUIT_STATE"] = staleQuitState ? "1" : nil
+        let geometryDiagnosticFixture = ["dispatcher-repair", "dispatch-plan"].contains(fixture)
+        app.launchEnvironment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] = geometryDiagnosticFixture
+            && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
+            ? "1" : nil
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }

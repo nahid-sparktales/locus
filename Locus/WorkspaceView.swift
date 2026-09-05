@@ -2558,7 +2558,16 @@ private struct ConversationView: View {
                 // anchor is a sibling of the platform scroll view, so
                 // `enclosingScrollView` is nil and streaming output is never
                 // followed.
-                .background { TranscriptScrollBridge(coordinator: scrollCoordinator) }
+                .background {
+                    #if DEBUG
+                    TranscriptScrollBridge(
+                        coordinator: scrollCoordinator,
+                        diagnosticItemCount: items.count
+                    )
+                    #else
+                    TranscriptScrollBridge(coordinator: scrollCoordinator)
+                    #endif
+                }
                 .frame(maxWidth: 780)
                 .padding(.horizontal, 24)
                 .padding(.top, transcript.isEmpty ? 0 : 24)
@@ -3027,9 +3036,85 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var isUserLiveScrolling = false
     private var isRoutingVerticalWheel = false
     private var lastOriginY: CGFloat = 0
+    #if DEBUG
+    private let geometryDiagnosticsEnabled = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["LOCUS_UI_TESTING"] == "1"
+            && environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
+    }()
+    private var geometryDiagnosticRecords = 0
+    private var geometryDiagnosticItemCount = 0
+    private let geometryDiagnosticStartedAt = ProcessInfo.processInfo.systemUptime
+    private weak var geometryDiagnosticAnchor: NSView?
+
+    func setDiagnosticItemCount(_ count: Int) {
+        guard geometryDiagnosticsEnabled else { return }
+        guard geometryDiagnosticItemCount != count else { return }
+        geometryDiagnosticItemCount = count
+        recordGeometry("items.changed")
+    }
+
+    /// Opt-in fixture diagnostics only. Never inspect text, accessibility
+    /// values, model identifiers, URLs, or object descriptions, and never
+    /// force layout while measuring the layout/scroll transition itself.
+    private func recordGeometry(_ event: String, target: NSPoint? = nil) {
+        guard geometryDiagnosticsEnabled, geometryDiagnosticRecords < 96 else { return }
+        geometryDiagnosticRecords += 1
+        func rect(_ value: NSRect) -> [Double] {
+            [Double(value.origin.x), Double(value.origin.y),
+             Double(value.size.width), Double(value.size.height)]
+        }
+        var record: [String: Any] = [
+            "event": event,
+            "record": geometryDiagnosticRecords,
+            "elapsedSeconds": ProcessInfo.processInfo.systemUptime - geometryDiagnosticStartedAt,
+            "itemCount": geometryDiagnosticItemCount,
+            "following": followState.isFollowingOutput,
+            "nearBottom": followState.isNearBottom,
+            "programmaticScroll": isProgrammaticScroll,
+            "pinPending": pinPending,
+            "attached": scrollView != nil,
+        ]
+        if let scrollView {
+            record["scrollFrame"] = rect(scrollView.frame)
+            record["scrollBounds"] = rect(scrollView.bounds)
+            record["clipBounds"] = rect(scrollView.contentView.bounds)
+            record["documentVisibleRect"] = rect(scrollView.documentVisibleRect)
+            record["windowContentSize"] = scrollView.window.map {
+                [Double($0.contentLayoutRect.width), Double($0.contentLayoutRect.height)]
+            }
+        }
+        if let documentView {
+            record["documentFrame"] = rect(documentView.frame)
+            record["documentBounds"] = rect(documentView.bounds)
+            record["documentFlipped"] = documentView.isFlipped
+            record["documentSubviewCount"] = documentView.subviews.count
+            if let anchor = geometryDiagnosticAnchor {
+                record["anchorBounds"] = rect(anchor.bounds)
+                record["anchorInDocument"] = rect(anchor.convert(anchor.bounds, to: documentView))
+                record["anchorInWindow"] = anchor.window != nil
+            }
+        }
+        if let target { record["targetOrigin"] = [Double(target.x), Double(target.y)] }
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            try? FileHandle.standardError.write(contentsOf: Data(
+                ("LocusTranscriptGeometry " + json + "\n").utf8
+            ))
+        }
+    }
+    #endif
 
     func attach(from anchor: NSView) {
-        guard let candidate = anchor.enclosingScrollView else { return }
+        #if DEBUG
+        geometryDiagnosticAnchor = anchor
+        #endif
+        guard let candidate = anchor.enclosingScrollView else {
+            #if DEBUG
+            recordGeometry("attach.noScrollView")
+            #endif
+            return
+        }
         if scrollView === candidate, documentView === candidate.documentView { return }
         detachObservers()
         scrollView = candidate
@@ -3111,11 +3196,17 @@ final class TranscriptScrollCoordinator: ObservableObject {
             }
             return nil
         }
+        #if DEBUG
+        recordGeometry("attach.ready")
+        #endif
         updateNearBottom()
         contentMayHaveChanged()
     }
 
     func contentMayHaveChanged() {
+        #if DEBUG
+        recordGeometry("content.changed")
+        #endif
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.followState.permitsAutomaticScroll {
@@ -3154,6 +3245,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detachAll() {
+        #if DEBUG
+        recordGeometry("detachAll")
+        #endif
         isRoutingVerticalWheel = false
         detachObservers()
         scrollView = nil
@@ -3198,6 +3292,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
     private func boundsChanged() {
         guard let scrollView else { return }
+        #if DEBUG
+        recordGeometry("bounds.changed")
+        #endif
         let origin = scrollView.contentView.bounds.origin.y
         if isProgrammaticScroll {
             lastOriginY = origin
@@ -3211,6 +3308,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func documentFrameChanged() {
+        #if DEBUG
+        recordGeometry("document.frameChanged")
+        #endif
         if followState.permitsAutomaticScroll, !isSelectionDragActive {
             schedulePin()
         } else {
@@ -3260,6 +3360,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
                 isFlipped: documentView.isFlipped
             )
         )
+        #if DEBUG
+        recordGeometry("bottom.before", target: origin)
+        #endif
         isProgrammaticScroll = true
         let finish = { [weak self, weak scrollView] in
             guard let self else { return }
@@ -3269,6 +3372,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
             }
             self.isProgrammaticScroll = false
             self.updateNearBottom()
+            #if DEBUG
+            self.recordGeometry("bottom.after", target: origin)
+            #endif
         }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
@@ -3312,8 +3418,14 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
 private struct TranscriptScrollBridge: NSViewRepresentable {
     let coordinator: TranscriptScrollCoordinator
+    #if DEBUG
+    let diagnosticItemCount: Int
+    #endif
 
     func makeNSView(context: Context) -> TranscriptScrollAnchorView {
+        #if DEBUG
+        coordinator.setDiagnosticItemCount(diagnosticItemCount)
+        #endif
         let view = TranscriptScrollAnchorView(frame: .zero)
         view.transcriptCoordinator = coordinator
         DispatchQueue.main.async { coordinator.attach(from: view) }
@@ -3321,6 +3433,9 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     }
 
     func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
+        #if DEBUG
+        coordinator.setDiagnosticItemCount(diagnosticItemCount)
+        #endif
         view.transcriptCoordinator = coordinator
         DispatchQueue.main.async { coordinator.attach(from: view) }
     }
