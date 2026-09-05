@@ -19,6 +19,21 @@ provenance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(provenance)
 
 
+def test_packaged_connector_notice_preserves_attribution_and_resolved_license_evidence():
+    notice = (ROOT / "WalletConnectionsRuntime/Resources/WalletConnectionsNotices.md").read_text()
+    audit = (ROOT / "Tools/AuditDistribution.sh").read_text()
+    attribution = "Portions © 2025 Reown, Inc. All Rights Reserved"
+    assert attribution in notice
+    assert attribution in audit
+    assert "NOASSERTION" not in notice
+    assert "87ad8fac24721cbe00377e92f429a500b0da4139" in notice
+    for name in ("phantom-wallet-sdk-87ad8fac.LICENSE", "eyes-0.1.8.LICENSE",
+                 "text-encoding-utf-8-1.0.2.LICENSE"):
+        assert name in notice
+        assert (ROOT / "WalletConnectionsWeb/licenses" / name).is_file()
+    assert "separate counsel approval" in notice
+
+
 def _snapshot():
     return {
         "sourceRevision": "a" * 40,

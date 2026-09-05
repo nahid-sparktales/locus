@@ -19,11 +19,16 @@ resources. The audited direct dependencies are:
 - `esbuild` 0.28.2 (build-time only)
 
 The npm lock currently contains nine transitive packages whose published
-package metadata omits a license declaration. They remain `NOASSERTION` in
-the SBOM and require counsel resolution before the legal release gate can be
-approved.
+package metadata omits a license declaration. The SBOM resolves these using
+version-and-integrity-bound license evidence: Phantom's MIT license at commit
+`87ad8fac24721cbe00377e92f429a500b0da4139`, the packaged `eyes` MIT license,
+and the packaged `text-encoding-utf-8` public-domain/Unlicense text. The exact
+texts ship as `phantom-wallet-sdk-87ad8fac.LICENSE`, `eyes-0.1.8.LICENSE`, and
+`text-encoding-utf-8-1.0.2.LICENSE`. Source-license verification does not replace
+separate counsel approval of Reown's terms or Phantom's embedded-wallet beta terms.
 
 Locus also incorporates the Sign-only product from a patched, file-digested
-vendor tree of Reown Swift 2.3.2. Portions © 2025 Reown, Inc. All Rights
-Reserved. The complete governing license is packaged as `LICENSE`; its
+vendor tree of Reown Swift 2.3.2.
+Portions © 2025 Reown, Inc. All Rights Reserved.
+The complete governing license is packaged as `LICENSE`; its
 SHA-256 is `e30bbba6782f025ba0b6ced7d36840ac8587073d8df06a21be369a5cfcfc5830`.
