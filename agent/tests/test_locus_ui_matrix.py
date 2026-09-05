@@ -135,3 +135,18 @@ def test_exact_requested_ids_are_forwarded_without_silent_skips():
     target["SkipTestIdentifiers"] = tests[:1]
     with pytest.raises(ValueError, match="excludes"):
         matrix.configure(value, {}, tests)
+
+
+def test_test_command_uses_one_default_execution_without_retries():
+    configuration = Path("/tmp/exact-generated.xctestrun")
+    results = Path("/tmp/unique-result.xcresult")
+    command = matrix.test_command(configuration, results)
+    assert command[:2] == ["xcodebuild", "test-without-building"]
+    assert command[command.index("-xctestrun") + 1] == str(configuration)
+    assert command[command.index("-resultBundlePath") + 1] == str(results)
+    assert command[command.index("-parallel-testing-enabled") + 1] == "NO"
+    assert "-only-testing:LocusUITests" in command
+    assert not set(command).intersection({
+        "-test-iterations", "-retry-tests-on-failure", "-run-tests-until-failure",
+        "-test-repetition-relaunch-enabled",
+    })

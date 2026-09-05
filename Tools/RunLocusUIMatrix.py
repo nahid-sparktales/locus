@@ -93,6 +93,25 @@ def configure(value: object, environment: dict, tests: list[str]) -> int:
     return count
 
 
+def test_command(configuration: Path, results: Path) -> list[str]:
+    # A single execution is Xcode's default. Explicit `-test-iterations 1`
+    # is rejected by current Xcode, which only accepts repetition counts > 1.
+    # Do not enable retries; validate_results also rejects repeated results.
+    return [
+        "xcodebuild",
+        "test-without-building",
+        "-xctestrun",
+        str(configuration),
+        "-destination",
+        "platform=macOS",
+        "-parallel-testing-enabled",
+        "NO",
+        "-only-testing:LocusUITests",
+        "-resultBundlePath",
+        str(results),
+    ]
+
+
 def validate_results(
     summary: dict, tree: dict, requested: list[str], os_major: int
 ) -> dict:
@@ -307,26 +326,14 @@ def main():
             registered_app = app
             with (run / "test.log").open("x") as log:
                 result = run_locked(
-                    [
-                        "xcodebuild",
-                        "test-without-building",
-                        "-xctestrun",
-                        str(configured),
-                        "-destination",
-                        "platform=macOS",
-                        "-parallel-testing-enabled",
-                        "NO",
-                        "-test-iterations",
-                        "1",
-                        "-only-testing:LocusUITests",
-                        "-resultBundlePath",
-                        str(run / "results.xcresult"),
-                    ],
+                    test_command(configured, run / "results.xcresult"),
                     cwd=ROOT,
                     env=environment,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 ).returncode
+            if result != 0:
+                raise ValueError(f"UI test process exited with status {result}; see test.log")
             results = {}
             for name in ("summary", "tests"):
                 results[name] = json.loads(
