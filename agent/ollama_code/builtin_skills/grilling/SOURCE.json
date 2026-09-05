@@ -5,6 +5,6 @@
   "upstream_path": "skills/productivity/grilling",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic",
+  "activation": "explicit",
   "adaptation": "Locus asks one decision question per turn, discovers repository facts directly, and locks implementation until the user confirms shared understanding"
 }

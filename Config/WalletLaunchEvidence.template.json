@@ -1,5 +1,16 @@
 {
   "approvals": [],
+  "artifactIdentity": {
+    "archiveSHA256": "",
+    "bundleVersion": "",
+    "outerAppCodeDirectoryHash": "",
+    "signerCodeDirectoryHash": ""
+  },
+  "phase": "pre_canary_rehearsal",
+  "candidateID": "",
+  "authoritySHA256": "",
+  "eventLedger": { "path": "", "sha256": "" },
   "releaseRevision": 1,
-  "schemaVersion": 1
+  "schemaVersion": 2,
+  "sourceRevision": ""
 }

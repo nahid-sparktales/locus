@@ -1,0 +1,64 @@
+import Foundation
+
+public protocol JWTWrapper: Codable {
+    var jwtString: String { get }
+
+    init(jwtString: String)
+}
+
+public protocol JWTClaims: JWTEncodable {
+    var iss: String { get }
+    var iat: UInt64 { get }
+    var exp: UInt64 { get }
+    var act: String? { get }
+
+    static var action: String? { get }
+}
+
+public protocol JWTClaimsCodable {
+    associatedtype Claims: JWTClaims
+    associatedtype Wrapper: JWTWrapper
+
+    init(claims: Claims) throws
+
+    func encode(iss: String) throws -> Claims
+}
+
+extension JWTClaimsCodable {
+
+    public static func decodeAndVerify(from wrapper: Wrapper) throws -> (Self, Claims) {
+        let jwt = try JWT<Claims>(string: wrapper.jwtString)
+
+        let publicKey = try DIDKey(did: jwt.claims.iss)
+        let signingPublicKey = try SigningPublicKey(rawRepresentation: publicKey.rawData)
+
+        guard try JWTValidator(jwtString: wrapper.jwtString).isValid(publicKey: signingPublicKey)
+        else { throw JWTError.signatureVerificationFailed }
+
+        guard Claims.action == jwt.claims.act
+        else { throw JWTError.actMismatch }
+
+        return (try Self.init(claims: jwt.claims), jwt.claims)
+    }
+
+    public func signAndCreateWrapper(keyPair: SigningPrivateKey) throws -> Wrapper {
+        let claims = try encode(iss: keyPair.publicKey.did)
+        let jwt = try JWT(claims: claims, signer: EdDSASigner(keyPair))
+        return Wrapper(jwtString: jwt.string)
+    }
+
+    public func defaultIat() -> UInt64 {
+        return UInt64(Date().timeIntervalSince1970)
+    }
+
+    public func defaultIatMilliseconds() -> UInt64 {
+        return Date().millisecondsSince1970
+    }
+
+    public func expiry(days: Int) -> UInt64 {
+        var components = DateComponents()
+        components.setValue(days, for: .day)
+        let date = Calendar.current.date(byAdding: components, to: Date())!
+        return UInt64(date.timeIntervalSince1970)
+    }
+}

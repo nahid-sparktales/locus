@@ -127,6 +127,76 @@ final class BrowserServiceTests: XCTestCase {
         XCTAssertEqual(disabled, "undefined")
     }
 
+    func testWalletStandardFixtureRegistersOnlyReviewedSolanaAndSuiFeatures() async throws {
+        let gateway = WalletGateway(
+            signer: UnavailableWalletSignerClient(),
+            environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+            ]
+        )
+        service.configureWalletGateway(gateway)
+        let tab = service.tab(for: "session-wallet-standard")
+        try await load("<title>Wallet Standard fixture</title>", into: tab)
+
+        let result = try await tab.webView.callAsyncJavaScript(
+            """
+            const wallets = [];
+            dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
+              detail: {
+                register(wallet) {
+                  wallets.push({
+                    name: wallet.name,
+                    chains: [...wallet.chains],
+                    features: Object.keys(wallet.features).sort(),
+                    frozen: Object.isFrozen(wallet)
+                      && Object.isFrozen(wallet.features)
+                      && Object.isFrozen(wallet.chains),
+                  });
+                },
+              },
+            }));
+            return wallets;
+            """,
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        )
+        let wallets = try XCTUnwrap(result as? [[String: Any]])
+        XCTAssertEqual(wallets.count, 2)
+        // Wallet Standard advertises a wallet's compiled supported chains;
+        // connected account grants are tested separately in WalletGatewayTests.
+        // Do not treat array order as a selected testnet.
+        let byChain = Dictionary(uniqueKeysWithValues: wallets.flatMap {
+            wallet -> [(String, [String: Any])] in
+            (wallet["chains"] as? [String] ?? []).map { ($0, wallet) }
+        })
+        XCTAssertEqual(Set(byChain.keys), [
+            "solana:mainnet-beta", "solana:devnet", "sui:mainnet", "sui:testnet",
+        ])
+        XCTAssertEqual(byChain["solana:devnet"]?["name"] as? String, "Locus Vault")
+        XCTAssertEqual(
+            byChain["solana:devnet"]?["features"] as? [String],
+            [
+                "solana:signAndSendTransaction", "solana:signIn",
+                "standard:connect", "standard:disconnect", "standard:events",
+            ]
+        )
+        XCTAssertEqual(byChain["sui:testnet"]?["features"] as? [String], [
+            "standard:connect", "standard:disconnect", "standard:events",
+            "sui:signAndExecuteTransaction",
+        ])
+        XCTAssertTrue(wallets.allSatisfy { $0["frozen"] as? Bool == true })
+        let advertised = wallets.flatMap { $0["features"] as? [String] ?? [] }
+        for forbidden in [
+            "solana:signTransaction", "solana:signAllTransactions",
+            "solana:signMessage", "sui:signTransaction",
+            "sui:signPersonalMessage",
+        ] {
+            XCTAssertFalse(advertised.contains(forbidden), forbidden)
+        }
+    }
+
     private func walletDiscovery(in webView: WKWebView) async throws -> [String: Any] {
         let result = try await webView.callAsyncJavaScript(
             """

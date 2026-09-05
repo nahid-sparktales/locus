@@ -17,6 +17,136 @@ private struct AgentSidebarGroupModel: Identifiable {
     let tasks: [SessionSummary]
 }
 
+#if DEBUG
+/// A metadata-only probe for the compact sidebar's native hit ownership.
+/// It never forces layout, exposes content, synthesizes input, or consumes an
+/// event. The opt-in fixture run is the only place it installs a monitor.
+private struct SidebarHitTestDiagnostics: NSViewRepresentable {
+    func makeNSView(context: Context) -> SidebarHitTestDiagnosticView {
+        SidebarHitTestDiagnosticView(frame: .zero)
+    }
+
+    func updateNSView(_ view: SidebarHitTestDiagnosticView, context: Context) {}
+}
+
+private final class SidebarHitTestDiagnosticView: NSView {
+    private let enabled = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["LOCUS_UI_TESTING"] == "1"
+            && environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1"
+    }()
+    private var eventMonitor: Any?
+    private var recordCount = 0
+    private var layoutRecordPending = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = nil
+        guard enabled, window != nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]
+        ) { [weak self] event in
+            guard let self, let scroll = self.enclosingScrollView,
+                  event.window === self.window,
+                  scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
+            else { return event }
+            let kind = event.type == .scrollWheel ? "wheel"
+                : (event.type == .rightMouseDown ? "rightMouseDown" : "leftMouseDown")
+            self.record(kind, eventPoint: event.locationInWindow)
+            return event
+        }
+        DispatchQueue.main.async { [weak self] in self?.record("attached") }
+    }
+
+    override func layout() {
+        super.layout()
+        guard enabled, !layoutRecordPending, recordCount < 32 else { return }
+        layoutRecordPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.layoutRecordPending = false
+            self.record("layout")
+        }
+    }
+
+    private func record(_ event: String, eventPoint: NSPoint? = nil) {
+        guard enabled, recordCount < 32, let window,
+              let root = window.contentView, let scroll = enclosingScrollView
+        else { return }
+        recordCount += 1
+        func rect(_ value: NSRect) -> [Double] {
+            [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
+        }
+        func belongs(_ view: NSView?, to ancestor: NSView?) -> Bool {
+            guard let ancestor else { return false }
+            var current = view
+            for _ in 0..<64 {
+                guard let view = current else { return false }
+                if view === ancestor { return true }
+                current = view.superview
+            }
+            return false
+        }
+        func hitMetadata(at point: NSPoint) -> [String: Any] {
+            // NSView.hitTest takes its argument in its superview's space.
+            let hitPoint = root.superview?.convert(point, from: nil) ?? point
+            let hit = root.hitTest(hitPoint)
+            let role: String
+            switch hit {
+            case is NSScrollView: role = "NSScrollView"
+            case is NSClipView: role = "NSClipView"
+            case is NSTextView: role = "NSTextView"
+            case is NSControl: role = "NSControl"
+            case .none: role = "none"
+            default: role = "NSView"
+            }
+            var metadata: [String: Any] = [
+                "pointInWindow": [Double(point.x), Double(point.y)],
+                "nativeRole": role,
+                "insideSidebarScroll": belongs(hit, to: scroll),
+                "insideSidebarDocument": belongs(hit, to: scroll.documentView),
+            ]
+            if let hit { metadata["nativeFrameInWindow"] = rect(hit.convert(hit.bounds, to: nil)) }
+            return metadata
+        }
+        let clip = scroll.contentView
+        var samples: [[String: Any]] = []
+        for y in [0.02, 0.5, 0.98] {
+            for x in [0.15, 0.5, 0.85] {
+                let point = NSPoint(x: clip.bounds.minX + clip.bounds.width * x,
+                                    y: clip.bounds.minY + clip.bounds.height * y)
+                samples.append(hitMetadata(at: clip.convert(point, to: nil)))
+            }
+        }
+        var record: [String: Any] = [
+            "event": event, "record": recordCount,
+            "windowContentSize": [Double(window.contentLayoutRect.width),
+                                  Double(window.contentLayoutRect.height)],
+            "scrollFrameInWindow": rect(scroll.convert(scroll.bounds, to: nil)),
+            "clipBounds": rect(clip.bounds), "samples": samples,
+        ]
+        if let document = scroll.documentView {
+            record["documentFrame"] = rect(document.frame)
+            record["documentBounds"] = rect(document.bounds)
+        }
+        if let eventPoint { record["eventHit"] = hitMetadata(at: eventPoint) }
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            try? FileHandle.standardError.write(contentsOf: Data(
+                ("LocusSidebarHitTest " + json + "\n").utf8
+            ))
+        }
+    }
+
+    deinit {
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+    }
+}
+#endif
+
 /// Cross-session transcript results observe their child model at the smallest
 /// owning boundary, so result updates do not invalidate the whole sidebar or AppModel.
 private struct TranscriptHitsSection: View {
@@ -275,6 +405,11 @@ struct SessionSidebarView: View {
                 .accessibilityLabel(
                     model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
                 )
+                .background {
+                    #if DEBUG
+                    SidebarHitTestDiagnostics()
+                    #endif
+                }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }

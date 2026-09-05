@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum WalletChain: String, Codable, CaseIterable, Sendable {
@@ -6,19 +7,128 @@ enum WalletChain: String, Codable, CaseIterable, Sendable {
     case sui
 }
 
+enum WalletExternalConnectorID: String, Codable, CaseIterable, Hashable, Sendable {
+    case metamask
+    case phantom
+    case slush
+}
+
+/// Public ownership metadata. Connector session material deliberately has no
+/// representation here; it remains in the Direct-only connector runtime's
+/// private WebKit or native SDK storage.
+enum WalletAccountOwnership: Codable, Equatable, Sendable {
+    case locusVault
+    case external(connectorID: WalletExternalConnectorID)
+    case connectorManaged(connectorID: WalletExternalConnectorID)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case connectorID
+    }
+
+    private enum Kind: String, Codable {
+        case locusVault = "locus_vault"
+        case external
+        case connectorManaged = "connector_managed"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .locusVault:
+            self = .locusVault
+        case .external:
+            self = .external(connectorID: try container.decode(
+                WalletExternalConnectorID.self, forKey: .connectorID
+            ))
+        case .connectorManaged:
+            self = .connectorManaged(connectorID: try container.decode(
+                WalletExternalConnectorID.self, forKey: .connectorID
+            ))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .locusVault:
+            try container.encode(Kind.locusVault, forKey: .kind)
+        case .external(let connectorID):
+            try container.encode(Kind.external, forKey: .kind)
+            try container.encode(connectorID, forKey: .connectorID)
+        case .connectorManaged(let connectorID):
+            try container.encode(Kind.connectorManaged, forKey: .kind)
+            try container.encode(connectorID, forKey: .connectorID)
+        }
+    }
+
+    var connectorID: WalletExternalConnectorID? {
+        switch self {
+        case .locusVault:
+            nil
+        case .external(let connectorID), .connectorManaged(let connectorID):
+            connectorID
+        }
+    }
+
+    var requiresWalletOwnedConfirmation: Bool {
+        if case .external = self { return true }
+        return false
+    }
+
+    var isConnectorManaged: Bool {
+        if case .connectorManaged = self { return true }
+        return false
+    }
+}
+
 struct WalletAccount: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let chain: WalletChain
     let address: String
+    /// Optional base64-encoded public-key bytes for standards that require the
+    /// key as well as its derived address (currently Sui Wallet Standard).
+    /// This is public account metadata, never recovery or signing material.
+    let publicKeyBase64: String?
     let label: String
     let networkIDs: [String]
+    let ownership: WalletAccountOwnership
 
-    init(id: String, chain: WalletChain, address: String, label: String, networkIDs: [String] = []) {
+    init(
+        id: String,
+        chain: WalletChain,
+        address: String,
+        publicKeyBase64: String? = nil,
+        label: String,
+        networkIDs: [String] = [],
+        ownership: WalletAccountOwnership = .locusVault
+    ) {
         self.id = id
         self.chain = chain
         self.address = address
+        self.publicKeyBase64 = publicKeyBase64
         self.label = label
         self.networkIDs = networkIDs
+        self.ownership = ownership
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, chain, address, publicKeyBase64, label, networkIDs, ownership
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        chain = try container.decode(WalletChain.self, forKey: .chain)
+        address = try container.decode(String.self, forKey: .address)
+        publicKeyBase64 = try container.decodeIfPresent(
+            String.self, forKey: .publicKeyBase64
+        )
+        label = try container.decode(String.self, forKey: .label)
+        networkIDs = try container.decodeIfPresent([String].self, forKey: .networkIDs) ?? []
+        ownership = try container.decodeIfPresent(
+            WalletAccountOwnership.self, forKey: .ownership
+        ) ?? .locusVault
     }
 }
 
@@ -34,17 +144,20 @@ enum WalletDerivedAccountsDecoder {
         let id: String
         let chain: WalletChain
         let address: String
+        let publicKeyBase64: String?
         let label: String
         let networkIDs: [String]
 
         enum CodingKeys: String, CodingKey {
             case id, chain, address, label
+            case publicKeyBase64 = "public_key_base64"
             case networkIDs = "network_ids"
         }
 
         var walletAccount: WalletAccount {
             WalletAccount(
-                id: id, chain: chain, address: address, label: label,
+                id: id, chain: chain, address: address,
+                publicKeyBase64: publicKeyBase64, label: label,
                 networkIDs: networkIDs
             )
         }
@@ -72,6 +185,104 @@ struct WalletExactInputSwapRoute: Codable, Equatable, Sendable {
     let quotedOutputBaseUnits: String
     let slippageBPS: Int
     let deadlineUnixSeconds: String
+    let quoteEvidence: WalletUniswapQuoteEvidence?
+
+    init(
+        protocolVersion: WalletUniversalRouterSwapProtocol,
+        pathAssetIDs: [String],
+        feeTiers: [UInt32],
+        minimumHopPriceX36: [String],
+        quotedOutputBaseUnits: String,
+        slippageBPS: Int,
+        deadlineUnixSeconds: String,
+        quoteEvidence: WalletUniswapQuoteEvidence? = nil
+    ) {
+        self.protocolVersion = protocolVersion
+        self.pathAssetIDs = pathAssetIDs
+        self.feeTiers = feeTiers
+        self.minimumHopPriceX36 = minimumHopPriceX36
+        self.quotedOutputBaseUnits = quotedOutputBaseUnits
+        self.slippageBPS = slippageBPS
+        self.deadlineUnixSeconds = deadlineUnixSeconds
+        self.quoteEvidence = quoteEvidence
+    }
+}
+
+/// Public, non-secret evidence returned by the independently verified on-chain
+/// quote path. The evidence is bound into the semantic action and therefore
+/// into the signer reconstruction; it never contains provider credentials or
+/// caller-supplied calldata.
+struct WalletUniswapQuoteEvidence: Codable, Equatable, Sendable {
+    let blockNumber: String
+    let blockHash: String
+    let quoteContractAddress: String
+    let quoteContractRuntimeCodeHash: String
+    let perHopOutputBaseUnits: [String]
+    let gasEstimate: String
+    let quotedAt: Date
+    let expiresAt: Date
+    let agreeingProviderCount: Int
+}
+
+struct WalletUniswapQuoteRequest: Codable, Equatable, Sendable {
+    let networkID: String
+    let universalRouterContractID: String
+    let inputAssetID: String
+    let outputAssetID: String
+    let amountInBaseUnits: String
+    let slippageBPS: Int
+    let recipient: String
+    let requiredProtocolVersion: WalletUniversalRouterSwapProtocol?
+    let requiredPathAssetIDs: [String]?
+    let requiredFeeTiers: [UInt32]?
+    let requiredDeadlineUnixSeconds: String?
+
+    init(
+        networkID: String,
+        universalRouterContractID: String,
+        inputAssetID: String,
+        outputAssetID: String,
+        amountInBaseUnits: String,
+        slippageBPS: Int,
+        recipient: String,
+        requiredProtocolVersion: WalletUniversalRouterSwapProtocol? = nil,
+        requiredPathAssetIDs: [String]? = nil,
+        requiredFeeTiers: [UInt32]? = nil,
+        requiredDeadlineUnixSeconds: String? = nil
+    ) {
+        self.networkID = networkID
+        self.universalRouterContractID = universalRouterContractID
+        self.inputAssetID = inputAssetID
+        self.outputAssetID = outputAssetID
+        self.amountInBaseUnits = amountInBaseUnits
+        self.slippageBPS = slippageBPS
+        self.recipient = recipient
+        self.requiredProtocolVersion = requiredProtocolVersion
+        self.requiredPathAssetIDs = requiredPathAssetIDs
+        self.requiredFeeTiers = requiredFeeTiers
+        self.requiredDeadlineUnixSeconds = requiredDeadlineUnixSeconds
+    }
+}
+
+struct WalletUniswapQuote: Codable, Equatable, Sendable {
+    let action: WalletSemanticAction
+    let quotedAt: Date
+    let expiresAt: Date
+}
+
+/// Provider-local result used only while two independently configured RPCs
+/// are compared. The coordinator discards it unless the block identity,
+/// contract identities, route outputs, and gas evidence agree exactly.
+struct WalletUniswapProviderQuote: Equatable, Sendable {
+    let blockNumber: UInt64
+    let blockHash: String
+    let protocolVersion: WalletUniversalRouterSwapProtocol
+    let pathAssetIDs: [String]
+    let feeTiers: [UInt32]
+    let perHopOutputBaseUnits: [String]
+    let quoteContractAddress: String
+    let quoteContractRuntimeCodeHash: String
+    let gasEstimate: String
 }
 
 enum WalletActionKind: String, Codable, Sendable {
@@ -79,6 +290,7 @@ enum WalletActionKind: String, Codable, Sendable {
     case fungibleTokenTransfer = "fungible_token_transfer"
     case nftTransfer = "nft_transfer"
     case exactInputSwap = "exact_input_swap"
+    case swapAllowanceSetup = "swap_allowance_setup"
     case reviewedCall = "reviewed_call"
     case standardizedSignIn = "standardized_sign_in"
     case reviewedTypedAuthorization = "reviewed_typed_authorization"
@@ -154,6 +366,7 @@ struct WalletSemanticAction: Codable, Equatable, Sendable {
     var authorizationFormat: String? = nil
     var metadataDigest: String? = nil
     var swapRoute: WalletExactInputSwapRoute? = nil
+    var swapAllowanceSetup: WalletSwapAllowanceSetup? = nil
 
     static func nativeTransfer(recipient: String, amountBaseUnits: String) -> Self {
         Self(type: .nativeTransfer, recipient: recipient, amountBaseUnits: amountBaseUnits,
@@ -210,6 +423,72 @@ struct WalletSemanticAction: Codable, Equatable, Sendable {
             adapterID: adapterID, swapRoute: route
         )
     }
+
+    static func swapAllowanceSetup(
+        contractID: String,
+        adapterID: String,
+        setup: WalletSwapAllowanceSetup
+    ) -> Self {
+        Self(
+            type: .swapAllowanceSetup,
+            recipient: setup.stage == .permit2ToUniversalRouter
+                ? setup.binding.universalRouterAddress : setup.binding.permit2Address,
+            amountBaseUnits: setup.approvalAmountBaseUnits,
+            contractID: contractID, function: nil, arguments: [],
+            valueBaseUnits: nil, inputAssetID: setup.binding.inputAssetID,
+            adapterID: adapterID, swapAllowanceSetup: setup
+        )
+    }
+}
+
+enum WalletSwapAllowanceStage: String, Codable, Sendable {
+    case erc20Reset = "erc20_reset"
+    case erc20ToPermit2 = "erc20_to_permit2"
+    case permit2ToUniversalRouter = "permit2_to_universal_router"
+}
+
+struct WalletSwapAllowanceBinding: Codable, Equatable, Sendable {
+    let networkID: String
+    let universalRouterContractID: String
+    let universalRouterAddress: String
+    let permit2Address: String
+    let inputAssetID: String
+    let outputAssetID: String
+    let amountInBaseUnits: String
+    let minimumOutputBaseUnits: String
+    let recipient: String
+    let route: WalletExactInputSwapRoute
+
+    func exactInputSwapAction() -> WalletSemanticAction {
+        .exactInputSwap(
+            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+            contractID: universalRouterContractID,
+            inputAssetID: inputAssetID,
+            outputAssetID: outputAssetID,
+            amountInBaseUnits: amountInBaseUnits,
+            minimumOutputBaseUnits: minimumOutputBaseUnits,
+            recipient: recipient,
+            route: route
+        )
+    }
+
+    func digest() -> String? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self) else { return nil }
+        return "sha256:" + SHA256.hash(data: data).map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+}
+
+struct WalletSwapAllowanceSetup: Codable, Equatable, Sendable {
+    let stage: WalletSwapAllowanceStage
+    let binding: WalletSwapAllowanceBinding
+    let bindingDigest: String
+    let approvalAmountBaseUnits: String
+    let expirationUnixSeconds: String?
 }
 
 struct WalletPrepareRequest: Codable, Equatable, Sendable {
@@ -218,6 +497,60 @@ struct WalletPrepareRequest: Codable, Equatable, Sendable {
     let source: WalletRequestSource
     let action: WalletSemanticAction
     let maximumFeeBaseUnits: String
+}
+
+enum WalletStructuredAuthorizationFormat: String, Codable, CaseIterable, Sendable {
+    case siwe = "eip4361"
+    case siws = "sign_in_with_solana"
+
+    var coreIdentifier: String {
+        switch self {
+        case .siwe: "siwe"
+        case .siws: "siws"
+        }
+    }
+
+    init?(toolValue: String) {
+        switch toolValue.lowercased() {
+        case "siwe", "eip4361": self = .siwe
+        case "siws", "sign_in_with_solana": self = .siws
+        default: return nil
+        }
+    }
+}
+
+/// Structured sign-in request for protocol v3. A caller supplies reviewed
+/// fields, never an arbitrary message. Both the app and signer independently
+/// validate these fields and reconstruct the canonical bytes to sign.
+struct WalletStructuredAuthorizationRequest: Codable, Equatable, Sendable {
+    let format: WalletStructuredAuthorizationFormat
+    let domain: String
+    let origin: String
+    let networkID: String
+    let accountID: String
+    let address: String
+    let statement: String?
+    let uri: String
+    let nonce: String
+    let issuedAt: Date
+    let expirationTime: Date
+    let notBefore: Date?
+    let requestID: String?
+    let resources: [String]
+}
+
+enum WalletStructuredAuthorizationSignatureEncoding: String, Codable, Sendable {
+    case eip191Hex = "eip191_hex"
+    case base58
+}
+
+struct WalletStructuredAuthorizationResult: Codable, Equatable, Sendable {
+    let request: WalletStructuredAuthorizationRequest
+    let canonicalMessage: String
+    let messageDigest: String
+    let signature: String
+    let signatureEncoding: WalletStructuredAuthorizationSignatureEncoding
+    let signedAt: Date
 }
 
 struct WalletAuthorizedRequest<Payload: Codable & Equatable & Sendable>: Codable, Equatable, Sendable {
@@ -362,6 +695,8 @@ enum WalletReviewedAdapters {
         "uniswap-universal-router-v2-exact-in-v1"
     static let uniswapUniversalRouterV2V3ExactIn =
         "uniswap-universal-router-v2-v3-exact-in-v2"
+    static let uniswapPermit2AllowanceSetup =
+        "uniswap-permit2-allowance-setup-v1"
     static let staticallySupportedIDs: Set<String> = [
         ethereumNativeTransfer, solanaNativeTransfer, solanaSPLTransferChecked,
         solanaToken2022TransferChecked,
@@ -371,6 +706,7 @@ enum WalletReviewedAdapters {
         erc20, erc721SafeTransfer, erc1155SafeTransfer,
         uniswapUniversalRouterV2ExactIn,
         uniswapUniversalRouterV2V3ExactIn,
+        uniswapPermit2AllowanceSetup,
     ]
 
     private struct FunctionShape: Equatable {
@@ -389,6 +725,12 @@ enum WalletReviewedAdapters {
     private static let universalRouterFunctions: [String: FunctionShape] = [
         "execute(bytes,bytes[],uint256)": FunctionShape(
             inputs: ["bytes", "bytes[]", "uint256"], stateMutability: "payable"
+        ),
+    ]
+    private static let permit2Functions: [String: FunctionShape] = [
+        "approve(address,address,uint160,uint48)": FunctionShape(
+            inputs: ["address", "address", "uint160", "uint48"],
+            stateMutability: "nonpayable"
         ),
     ]
     private static let erc721Functions: [String: FunctionShape] = [
@@ -421,6 +763,10 @@ enum WalletReviewedAdapters {
         if permitted == Set(universalRouterFunctions.keys),
            permitted.allSatisfy({ definitions[$0] == universalRouterFunctions[$0] }) {
             return uniswapUniversalRouterV2V3ExactIn
+        }
+        if permitted == Set(permit2Functions.keys),
+           permitted.allSatisfy({ definitions[$0] == permit2Functions[$0] }) {
+            return uniswapPermit2AllowanceSetup
         }
         return nil
     }
@@ -611,6 +957,106 @@ enum WalletEVMAssetAdapter {
     }
 }
 
+enum WalletSwapAllowanceAdapter {
+    static func resolve(
+        action: WalletSemanticAction,
+        registryEntry: WalletContractRegistryEntry,
+        configuration: WalletReviewedUniswapConfiguration,
+        now: Date = Date()
+    ) -> WalletEVMReviewedSemanticCall? {
+        guard action.type == .swapAllowanceSetup,
+              action.function == nil, action.arguments.isEmpty,
+              action.valueBaseUnits == nil,
+              let setup = action.swapAllowanceSetup,
+              setup.binding.digest() == setup.bindingDigest,
+              setup.binding.networkID == registryEntry.networkID,
+              setup.binding.universalRouterContractID
+                == configuration.universalRouterContractID,
+              setup.binding.universalRouterAddress.caseInsensitiveCompare(
+                configuration.contract(.universalRouter)?.address ?? ""
+              ) == .orderedSame,
+              setup.binding.permit2Address.caseInsensitiveCompare(
+                configuration.contract(.permit2)?.address ?? ""
+              ) == .orderedSame,
+              (setup.binding.route.quoteEvidence?.expiresAt ?? .distantPast) > now,
+              setup.binding.amountInBaseUnits != "0",
+              normalizedUnsigned(setup.binding.amountInBaseUnits)
+                == setup.binding.amountInBaseUnits,
+              normalizedUnsigned(setup.approvalAmountBaseUnits)
+                == setup.approvalAmountBaseUnits,
+              action.amountBaseUnits == setup.approvalAmountBaseUnits,
+              action.inputAssetID == setup.binding.inputAssetID,
+              let input = WalletEVMAssetIdentity.parse(setup.binding.inputAssetID),
+              input.networkID == registryEntry.networkID,
+              input.standard == .erc20, input.tokenID == nil else { return nil }
+
+        switch setup.stage {
+        case .erc20Reset, .erc20ToPermit2:
+            guard registryEntry.checksumAddress.caseInsensitiveCompare(
+                input.contractAddress
+            ) == .orderedSame,
+            WalletReviewedAdapters.validatedID(for: registryEntry)
+                == WalletReviewedAdapters.erc20,
+            action.adapterID == WalletReviewedAdapters.erc20,
+            setup.expirationUnixSeconds == nil,
+            setup.stage == .erc20Reset
+                ? setup.approvalAmountBaseUnits == "0"
+                : setup.approvalAmountBaseUnits
+                    == setup.binding.amountInBaseUnits else { return nil }
+            return WalletEVMReviewedSemanticCall(
+                adapterID: WalletReviewedAdapters.erc20,
+                assetID: input.canonicalID,
+                function: "approve(address,uint256)",
+                arguments: [
+                    WalletTypedArgument(
+                        type: "address", value: setup.binding.permit2Address
+                    ),
+                    WalletTypedArgument(
+                        type: "uint256", value: setup.approvalAmountBaseUnits
+                    ),
+                ]
+            )
+        case .permit2ToUniversalRouter:
+            guard registryEntry.id == configuration.permit2ContractID,
+                  registryEntry.checksumAddress.caseInsensitiveCompare(
+                    setup.binding.permit2Address
+                  ) == .orderedSame,
+                  WalletReviewedAdapters.validatedID(for: registryEntry)
+                    == WalletReviewedAdapters.uniswapPermit2AllowanceSetup,
+                  action.adapterID
+                    == WalletReviewedAdapters.uniswapPermit2AllowanceSetup,
+                  setup.approvalAmountBaseUnits
+                    == setup.binding.amountInBaseUnits,
+                  setup.expirationUnixSeconds
+                    == setup.binding.route.deadlineUnixSeconds else { return nil }
+            return WalletEVMReviewedSemanticCall(
+                adapterID: WalletReviewedAdapters.uniswapPermit2AllowanceSetup,
+                assetID: input.canonicalID,
+                function: "approve(address,address,uint160,uint48)",
+                arguments: [
+                    WalletTypedArgument(type: "address", value: input.contractAddress),
+                    WalletTypedArgument(
+                        type: "address", value: setup.binding.universalRouterAddress
+                    ),
+                    WalletTypedArgument(
+                        type: "uint160", value: setup.approvalAmountBaseUnits
+                    ),
+                    WalletTypedArgument(
+                        type: "uint48", value: setup.binding.route.deadlineUnixSeconds
+                    ),
+                ]
+            )
+        }
+    }
+
+    private static func normalizedUnsigned(_ value: String) -> String? {
+        guard !value.isEmpty, value.count <= 78,
+              value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        let trimmed = value.drop(while: { $0 == "0" })
+        return trimmed.isEmpty ? "0" : String(trimmed)
+    }
+}
+
 struct WalletUniversalRouterV2Swap: Equatable, Sendable {
     let protocolVersion: WalletUniversalRouterSwapProtocol
     let inputAssetID: String
@@ -618,12 +1064,75 @@ struct WalletUniversalRouterV2Swap: Equatable, Sendable {
     let amountIn: String
     let minimumAmountOut: String
     let recipient: String
+    let pathAssetIDs: [String]
+    let feeTiers: [UInt32]
+    let minimumHopPriceX36: [String]
+    let deadlineUnixSeconds: String
 }
 
 enum WalletUniversalRouterSwapProtocol: String, Codable, Equatable, Sendable {
     case v2
     case v3
 }
+
+enum WalletReviewedUniswapContractRole: String, Codable, CaseIterable, Sendable {
+    case v2Router = "v2_router"
+    case v2Factory = "v2_factory"
+    case v3Factory = "v3_factory"
+    case v3QuoterV2 = "v3_quoter_v2"
+    case universalRouter = "universal_router"
+    case permit2
+}
+
+struct WalletReviewedUniswapContractIdentity: Codable, Equatable, Sendable {
+    let role: WalletReviewedUniswapContractRole
+    let address: String
+    let runtimeCodeHash: String
+}
+
+struct WalletReviewedUniswapPoolIdentity: Codable, Equatable, Sendable {
+    let protocolVersion: WalletUniversalRouterSwapProtocol
+    let address: String
+    let runtimeCodeHash: String
+    let token0AssetID: String
+    let token1AssetID: String
+    let feeTier: UInt32?
+}
+
+/// Every address which can influence quote or settlement is attributable to a
+/// signed review manifest. Only acyclic all-V2 or all-V3 paths are enumerable.
+struct WalletReviewedUniswapConfiguration: Codable, Equatable, Sendable {
+    let networkID: String
+    let universalRouterContractID: String
+    let permit2ContractID: String
+    let contracts: [WalletReviewedUniswapContractIdentity]
+    let pools: [WalletReviewedUniswapPoolIdentity]
+    let allowedIntermediaryAssetIDs: Set<String>
+    let allowedFeeTiers: Set<UInt32>
+    let maximumHops: Int
+    let zeroFirstApprovalAssetIDs: Set<String>
+
+    func contract(_ role: WalletReviewedUniswapContractRole)
+        -> WalletReviewedUniswapContractIdentity? {
+        contracts.first { $0.role == role }
+    }
+}
+
+extension WalletReviewedUniswapConfiguration {
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(networkID, forKey: .networkID)
+        try values.encode(universalRouterContractID, forKey: .universalRouterContractID)
+        try values.encode(permit2ContractID, forKey: .permit2ContractID)
+        try values.encode(contracts, forKey: .contracts)
+        try values.encode(pools, forKey: .pools)
+        try values.encode(allowedIntermediaryAssetIDs.sorted(), forKey: .allowedIntermediaryAssetIDs)
+        try values.encode(allowedFeeTiers.sorted(), forKey: .allowedFeeTiers)
+        try values.encode(maximumHops, forKey: .maximumHops)
+        try values.encode(zeroFirstApprovalAssetIDs.sorted(), forKey: .zeroFirstApprovalAssetIDs)
+    }
+}
+
 
 enum WalletUniversalRouterV2Adapter {
     /// Decodes one Universal Router v2 `V2_SWAP_EXACT_IN` command. Composite
@@ -674,7 +1183,12 @@ enum WalletUniversalRouterV2Adapter {
             protocolVersion: .v2,
             inputAssetID: "\(networkID)/erc20:\(path[0].lowercased())",
             outputAssetID: "\(networkID)/erc20:\(path[path.count - 1].lowercased())",
-            amountIn: amountIn, minimumAmountOut: minimumOut, recipient: recipient
+            amountIn: amountIn, minimumAmountOut: minimumOut,
+            recipient: recipient,
+            pathAssetIDs: path.map {
+                "\(networkID)/erc20:\($0.lowercased())"
+            }, feeTiers: [], minimumHopPriceX36: [],
+            deadlineUnixSeconds: String(deadline)
         )
     }
 
@@ -783,7 +1297,14 @@ enum WalletUniversalRouterV2V3Adapter {
                 quotedOutput, multiplier: 10_000 - route.slippageBPS,
                 addend: 0
               ),
-              decimalLessThanOrEqual(requiredScaled, minimumScaled),
+              let nextMinimum = multiplyAndAdd(
+                minimumOut, multiplier: 1, addend: 1
+              ),
+              let nextMinimumScaled = multiplyAndAdd(
+                nextMinimum, multiplier: 10_000, addend: 0
+              ),
+              decimalLessThanOrEqual(minimumScaled, requiredScaled),
+              !decimalLessThanOrEqual(nextMinimumScaled, requiredScaled),
               let deadline = normalizedDecimal(route.deadlineUnixSeconds),
               deadline == route.deadlineUnixSeconds else { return nil }
 
@@ -920,6 +1441,7 @@ enum WalletUniversalRouterV2V3Adapter {
         }
 
         let route: [String]
+        let routeFees: [UInt32]
         let hopCount: Int
         let priceWordIndex: Int
         switch protocolVersion {
@@ -931,6 +1453,7 @@ enum WalletUniversalRouterV2V3Adapter {
                 .compactMap(address(fromABIWord:))
             guard parsed.count == pathCount else { return nil }
             route = parsed
+            routeFees = []
             hopCount = pathCount - 1
             priceWordIndex = 7 + pathCount
         case .v3:
@@ -953,7 +1476,8 @@ enum WalletUniversalRouterV2V3Adapter {
             guard let parsed = v3Route(path, hopCount: hopCount) else {
                 return nil
             }
-            route = parsed
+            route = parsed.addresses
+            routeFees = parsed.fees
             priceWordIndex = 7 + pathWords
         }
         guard pricesOffset == priceWordIndex * 32,
@@ -962,12 +1486,13 @@ enum WalletUniversalRouterV2V3Adapter {
               let priceCount = Int(priceCountText),
               priceCount == 0 || priceCount == hopCount,
               words.count == priceWordIndex + 1 + priceCount else { return nil }
+        let prices: [String]
         if priceCount > 0 {
-            let prices = words[(priceWordIndex + 1)...]
+            prices = words[(priceWordIndex + 1)...]
                 .compactMap(decimal(fromABIWord:))
             guard prices.count == priceCount,
                   prices.allSatisfy({ $0 != "0" }) else { return nil }
-        }
+        } else { prices = [] }
         guard route.count == hopCount + 1,
               Set(route.map { $0.lowercased() }).count == route.count,
               zip(route, route.dropFirst()).allSatisfy({ pair in
@@ -980,7 +1505,11 @@ enum WalletUniversalRouterV2V3Adapter {
             inputAssetID: "\(networkID)/erc20:\(route[0].lowercased())",
             outputAssetID: "\(networkID)/erc20:\(route[route.count - 1].lowercased())",
             amountIn: amountIn, minimumAmountOut: minimumOut,
-            recipient: recipient
+            recipient: recipient,
+            pathAssetIDs: route.map {
+                "\(networkID)/erc20:\($0.lowercased())"
+            }, feeTiers: routeFees, minimumHopPriceX36: prices,
+            deadlineUnixSeconds: String(deadline)
         )
     }
 
@@ -994,7 +1523,9 @@ enum WalletUniversalRouterV2V3Adapter {
         }
     }
 
-    private static func v3Route(_ path: String, hopCount: Int) -> [String]? {
+    private static func v3Route(
+        _ path: String, hopCount: Int
+    ) -> (addresses: [String], fees: [UInt32])? {
         guard path.count == (20 + hopCount * 23) * 2 else { return nil }
         var cursor = path.startIndex
         func take(_ count: Int) -> String? {
@@ -1006,14 +1537,16 @@ enum WalletUniversalRouterV2V3Adapter {
         }
         guard let first = take(40), isRawAddress(first) else { return nil }
         var route = ["0x" + first.lowercased()]
+        var fees: [UInt32] = []
         for _ in 0..<hopCount {
             guard let feeHex = take(6),
                   let fee = UInt32(feeHex, radix: 16),
                   fee > 0, fee <= 1_000_000,
                   let token = take(40), isRawAddress(token) else { return nil }
+            fees.append(fee)
             route.append("0x" + token.lowercased())
         }
-        return cursor == path.endIndex ? route : nil
+        return cursor == path.endIndex ? (route, fees) : nil
     }
 
     private static func singleBytesArray(_ value: String) -> String? {
@@ -1407,6 +1940,15 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     let error: String
 }
 
+#if !LOCUS_APP_STORE
+struct WalletReleaseActivationStatus: Codable, Equatable, Sendable {
+    let revision: Int
+    let envelopeSHA256: String
+    let expiresAt: Date
+    let enabledNetworkIDs: Set<String>
+}
+#endif
+
 /// Code-signing requirements enforced by NSXPCConnection before either side
 /// accepts privileged wallet messages. Foundation performs this check from the
 /// connection's audit token, so sandboxed helpers never need to open and
@@ -1414,6 +1956,9 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
 enum WalletXPCCodeSigningRequirement {
     static let hostApplication = requirement(identifier: "io.sparktales.locus")
     static let signerService = requirement(identifier: "io.sparktales.locus.WalletSigner")
+    static let connectionService = requirement(
+        identifier: "io.sparktales.locus.WalletConnections"
+    )
     static let recoveryApplication = requirement(identifier: "io.sparktales.locus.WalletRecovery")
     static let signerBootstrapClient: String = {
         #if DEBUG
@@ -1551,9 +2096,15 @@ struct WalletRecoveryProcessFrameDecoder {
 /// selector spelling and allowed classes cannot silently widen the protocol.
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
+    #if !LOCUS_APP_STORE
+    func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void)
+    func releaseAuthorityStatus(reply: @escaping (Data) -> Void)
+    func applyReleaseHistory(_ request: Data, reply: @escaping (Data) -> Void)
+    #endif
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)
+    func signStructuredAuthorization(_ request: Data, reply: @escaping (Data) -> Void)
     func prepareEVM(_ request: Data, reply: @escaping (Data) -> Void)
     func simulateEVM(_ request: Data, reply: @escaping (Data) -> Void)
     func confirmEVM(_ request: Data, reply: @escaping (Data) -> Void)

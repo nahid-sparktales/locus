@@ -1,0 +1,111 @@
+name: Wallet coverage-guided fuzzing
+on:
+  pull_request:
+    paths: ["Locus/**", "LocusTests/Wallet*", "WalletSignerCore/**", "WalletSignerService/**", "WalletConnectionsRuntime/**", "WalletConnectionsWeb/**", "Vendor/**", "Config/**", "FuzzCorpus/**", "Tools/*Wallet*", "agent/tests/test_wallet_fuzz*", "agent/tests/test_wallet_test_execution.py", "project.yml", "Locus.xcodeproj/**", ".github/workflows/wallet-fuzz.yml"]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      chunk_wall_seconds:
+        description: "Wall-time budget per target chunk (CPU evidence is measured separately)"
+        type: choice
+        default: "1800"
+        options: ["60", "1800", "14400"]
+
+permissions:
+  contents: read
+
+# A new PR revision invalidates the old revision's candidate evidence. Do not
+# cancel nightly or explicitly dispatched campaign chunks; each has its own ID.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  inputs:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install reviewed wallet JavaScript toolchain
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.20.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install reviewed wallet npm resolver
+        run: |
+          npm install --prefix "$RUNNER_TEMP/locus-wallet-npm" --no-save --package-lock=false --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org npm@11.8.0
+          echo "$RUNNER_TEMP/locus-wallet-npm/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify exact wallet JavaScript toolchain
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v24.20.0"
+          test "$(npm --version)" = "11.8.0"
+      - name: Review dependency identities and unresolved licenses before fuzz builds
+        run: |
+          python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/signer.cdx.json"
+          python3 Tools/WalletConnectionsSBOM.py Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved project.yml "$RUNNER_TEMP/connections.cdx.json"
+          cd WalletConnectionsWeb
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --audit-level=high
+  rust:
+    needs: inputs
+    runs-on: macos-15
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [evm_ffi, solana_ffi, sui_ffi, authorization_ffi, calldata_ffi]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install pinned fuzz tooling
+        run: |
+          rustup toolchain install nightly-2026-09-01 --profile minimal
+          cargo +1.97.1 install cargo-fuzz --version 0.13.2 --locked
+      - name: Replay corpus and run production signer under ASan and checked arithmetic
+        env:
+          LOCUS_FUZZ_TARGET: ${{ matrix.target }}
+          LOCUS_FUZZ_SECONDS: ${{ inputs.chunk_wall_seconds || (github.event_name == 'pull_request' && '60' || '1800') }}
+          LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-rust
+        run: Tools/RunWalletRustFuzz.sh
+      - name: Keep minimized candidates and completion logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-fuzz-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wallet-fuzz-rust/runs
+          if-no-files-found: error
+          retention-days: 90
+  swift:
+    needs: inputs
+    runs-on: macos-15
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [evm_decoder, solana_decoder, sui_decoder, connections, namespaces, authorization, metadata, quote_math]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install reviewed test-only fuzz runtime
+        run: brew install xcodegen llvm@21
+      - name: Generate source graph
+        run: |
+          xcodegen generate
+          git diff --exit-code -- Locus.xcodeproj/project.pbxproj
+      - name: Replay corpora and fuzz production Swift with ASan and boundary UBSan
+        env:
+          LOCUS_FUZZ_TARGET: ${{ matrix.target }}
+          LOCUS_FUZZ_SECONDS: ${{ inputs.chunk_wall_seconds || (github.event_name == 'pull_request' && '60' || '1800') }}
+          LOCUS_FUZZ_OUTPUT: ${{ runner.temp }}/wallet-fuzz-swift
+        run: |
+          export LOCUS_FUZZ_LLVM_PREFIX="$(brew --prefix llvm@21)"
+          python3 Tools/RunWalletSwiftFuzz.py
+      - name: Keep crash inputs, receipts, and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swift-fuzz-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wallet-fuzz-swift/runs
+          if-no-files-found: error
+          retention-days: 90

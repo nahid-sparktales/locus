@@ -1,6 +1,20 @@
 import Combine
 import Foundation
 
+/// A divider tracks the width that is actually on screen, which may be smaller
+/// than the saved preference in a compact window. Capture it once per gesture
+/// so subsequent layout updates cannot compound the pointer translation.
+struct InspectorResizeDrag {
+    private var startWidth: CGFloat?
+
+    mutating func width(renderedWidth: CGFloat, translation: CGFloat, zoomed: Bool) -> CGFloat {
+        if startWidth == nil { startWidth = renderedWidth }
+        return (startWidth ?? renderedWidth) + (zoomed ? translation : -translation)
+    }
+
+    mutating func end() { startWidth = nil }
+}
+
 enum InspectorTab: String, CaseIterable, Identifiable {
     case plan
     /// The persistent-agent overview. Session-scoped like Overview, so it is
@@ -176,7 +190,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .agents: "Profiles, teams, routing, and evaluation"
         case .knowledge: "Workspace memory, indexing, and handoffs"
         case .browser: "Built-in browsing, input, and privacy"
-        case .wallet: "Locus Vault, transaction policies, and external approval wallets"
+        case .wallet: "Your vault, connected accounts, and transaction approvals"
         case .extensions: "Skills and MCP integrations"
         case .permissions: "Agent authority and macOS access"
         case .network: "Proxy routing and connection security"

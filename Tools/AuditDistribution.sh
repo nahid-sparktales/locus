@@ -185,6 +185,20 @@ do
 done
 
 skills_root="${runtime}/source/ollama_code/builtin_skills"
+[[ ! -e "${skills_root}/task-observer" \
+    && ! -e "${resources}/ThirdPartyLicenses/builtin-skills-task-observer" ]] || {
+    echo "error: removed Task Observer skill is still bundled" >&2
+    exit 1
+}
+python3 - "${skills_root}" <<'PY'
+import json
+import pathlib
+import sys
+
+for source in pathlib.Path(sys.argv[1]).glob("*/SOURCE.json"):
+    if json.loads(source.read_text()).get("activation") != "explicit":
+        raise SystemExit("error: a bundled skill can activate without explicit user selection")
+PY
 for skill in \
     frontend-design \
     vercel-react-best-practices \
@@ -202,7 +216,6 @@ for pin in \
     f17010c9bb483898c1d9c9f42dde2b3a98889434 \
     7c180d9044c9ae2b442b567aad4e42a28dd5ed62 \
     b36e0829c6d0140e93cfef2ca599b1b07d4a7797 \
-    281f13466cd3a73e9ebc9d210907748e1941a3dd \
     bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815 \
     068b6e0c62393147daf03530149cdce209c93da8
 do
@@ -308,16 +321,47 @@ if [[ "${sandboxed}" == "1" ]]; then
         echo "error: the Mac App Store build contains WalletSigner.xpc" >&2
         exit 1
     }
+    [[ ! -e "${app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
+        echo "error: the Mac App Store build contains obsolete WalletConnections.xpc" >&2
+        exit 1
+    }
     [[ ! -e "${wallet_recovery}" ]] || {
         echo "error: the Mac App Store build contains WalletRecovery.app" >&2
         exit 1
     }
     unexpected_wallet_helper="$(/usr/bin/find "${app}/Contents" \
-        \( -name WalletSigner.xpc -o -name WalletRecovery.app \) -print -quit)"
+        \( -name WalletSigner.xpc -o -name WalletConnections.xpc \
+            -o -name WalletRecovery.app \) -print -quit)"
     [[ -z "${unexpected_wallet_helper}" ]] || {
         echo "error: the Mac App Store build contains wallet helper ${unexpected_wallet_helper}" >&2
         exit 1
     }
+    unexpected_connector_resource="$(/usr/bin/find "${resources}" \
+        \( -name 'WalletConnections*' -o -name 'LocusReownSwift_*' \
+            -o -name 'ReownSwift*' -o -iname '*wallet*activation*' \
+            -o -iname '*wallet*authority*' -o -iname '*wallet*admission*' -o -iname '*wallet*ceiling*' \
+            -o -name 'WalletSignerSBOM*' -o -name 'phantom-wallet-sdk-*.LICENSE' \
+            -o -name 'eyes-0.1.8.LICENSE' -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) -print -quit)"
+    [[ -z "${unexpected_connector_resource}" ]] || {
+        echo "error: the Mac App Store build contains Direct-only connector resource ${unexpected_connector_resource}" >&2
+        exit 1
+    }
+    ! /usr/bin/plutil -p "${info_plist}" | /usr/bin/grep -Eq \
+        'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' || {
+        echo "error: the Mac App Store build contains connector configuration keys" >&2
+        exit 1
+    }
+    mas_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
+        "${entitlements}" 2>/dev/null || true)"
+    [[ "${mas_access_group}" != "4X4RJA7GMD.io.sparktales.locus" ]] || {
+        echo "error: the Mac App Store build contains the Direct connector access group" >&2
+        exit 1
+    }
+    if /usr/bin/grep -a -Fq 'LocusWalletConnectPrivateBindingsV1' \
+        "${app}/Contents/MacOS/Locus"; then
+        echo "error: the Mac App Store executable contains the Direct WalletConnect runtime" >&2
+        exit 1
+    fi
     [[ ! -e "${simulator_touch}" && ! -e "${simulator_tree}" ]] || {
         echo "error: the Mac App Store build contains a Simulator bridge helper" >&2
         exit 1
@@ -350,6 +394,53 @@ else
         echo "error: the direct-download build is missing WalletSigner.xpc" >&2
         exit 1
     }
+    [[ ! -e "${app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
+        echo "error: the obsolete WalletConnections.xpc is still packaged" >&2
+        exit 1
+    }
+    for connector_resource in \
+        WalletConnections.html WalletConnections.css WalletConnections.bundle.js \
+        WalletConnectionsNotices.md LICENSE
+    do
+        [[ -f "${resources}/${connector_resource}" ]] || {
+            echo "error: direct-download build is missing ${connector_resource}" >&2
+            exit 1
+        }
+    done
+    connector_bundle_sha="$(/usr/bin/shasum -a 256 \
+        "${resources}/WalletConnections.bundle.js" | /usr/bin/awk '{print $1}')"
+    [[ "${connector_bundle_sha}" == "09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf" ]] || {
+        echo "error: packaged wallet connector bundle does not match its reviewed digest" >&2
+        exit 1
+    }
+    reown_license_sha="$(/usr/bin/shasum -a 256 \
+        "${resources}/LICENSE" | /usr/bin/awk '{print $1}')"
+    [[ "${reown_license_sha}" == "e30bbba6782f025ba0b6ced7d36840ac8587073d8df06a21be369a5cfcfc5830" ]] || {
+        echo "error: packaged Reown license does not match the reviewed release" >&2
+        exit 1
+    }
+    /usr/bin/grep -Fq 'Portions © 2025 Reown, Inc. All Rights Reserved' \
+        "${resources}/WalletConnectionsNotices.md" || {
+        echo "error: packaged wallet connector notices omit Reown attribution" >&2
+        exit 1
+    }
+    for reown_resource in \
+        LocusReownSwift_WalletConnectRelay.bundle \
+        LocusReownSwift_WalletConnectPairing.bundle \
+        LocusReownSwift_WalletConnectSign.bundle \
+        LocusReownSwift_WalletConnectVerify.bundle
+    do
+        [[ -d "${resources}/${reown_resource}" ]] || {
+            echo "error: direct-download build is missing reviewed Reown resource ${reown_resource}" >&2
+            exit 1
+        }
+    done
+    direct_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
+        "${entitlements}" 2>/dev/null || true)"
+    [[ "${direct_access_group}" == "4X4RJA7GMD.io.sparktales.locus" ]] || {
+        echo "error: direct-download app is missing its connector session access group" >&2
+        exit 1
+    }
     [[ -x "${wallet_recovery}/Contents/MacOS/WalletRecovery" ]] || {
         echo "error: the direct-download build is missing WalletRecovery.app" >&2
         exit 1
@@ -370,6 +461,20 @@ else
     [[ "$(/usr/bin/plutil -extract bomFormat raw -o - "${wallet_sbom}" 2>/dev/null || true)" \
         == "CycloneDX" ]] || {
         echo "error: WalletSigner SBOM is not valid CycloneDX JSON" >&2
+        exit 1
+    }
+    connections_sbom="${resources}/WalletConnectionsSBOM.cdx.json"
+    [[ -f "${connections_sbom}" ]] || {
+        echo "error: direct-download build is missing the WalletConnections SBOM" >&2
+        exit 1
+    }
+    [[ "$(/usr/bin/plutil -extract bomFormat raw -o - \
+        "${connections_sbom}" 2>/dev/null || true)" == "CycloneDX" ]] || {
+        echo "error: WalletConnections SBOM is not valid CycloneDX JSON" >&2
+        exit 1
+    }
+    /usr/bin/grep -Fq '"value": "true-direct-only"' "${connections_sbom}" || {
+        echo "error: WalletConnections SBOM does not identify the Direct-only runtime" >&2
         exit 1
     }
     [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - \
@@ -567,6 +672,18 @@ else
         "${simulator_provenance}")"
     expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
         "${simulator_provenance}")"
+    expected_touch_unsigned="$(/usr/bin/awk -F= '$1 == "touch_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+    expected_tree_unsigned="$(/usr/bin/awk -F= '$1 == "tree_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+    if [[ -n "${expected_touch_unsigned}" && -n "${expected_tree_unsigned}" ]]; then
+        # Xcode export can replace a signing timestamp or certificate without
+        # changing code. The pre-seal unsigned digest survives that operation.
+        [[ "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_touch}")" \
+            == "${expected_touch_unsigned}" \
+            && "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_tree}")" \
+            == "${expected_tree_unsigned}" ]] || {
+            echo "error: Simulator helper executable content differs from build provenance" >&2; exit 1
+        }
+    else
     [[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
         == "${expected_touch_sha}" ]] || {
         echo "error: Simulator touch helper checksum does not match provenance" >&2
@@ -577,6 +694,7 @@ else
         echo "error: Simulator tree helper checksum does not match provenance" >&2
         exit 1
     }
+    fi
     expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
         "${simulator_provenance}")"
     [[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
@@ -683,4 +801,41 @@ for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
 done
 fi
 
-echo "Distribution audit passed: wallet boundary and notices verified; gdbm and tkinter absent."
+# Audit the main executable and every embedded Mach-O. Signer-core exports may
+# exist only in the two audited WalletSigner executables; the App Store artifact
+# may contain neither those exports nor statically linked Direct connector code.
+wallet_macho_count=0
+mas_connector_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
+mas_connector_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
+mas_connector_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
+mas_connector_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
+while IFS= read -r candidate
+do
+    [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
+    (( wallet_macho_count += 1 ))
+    if [[ "${candidate}" != "${wallet_signer}/Contents/MacOS/WalletSigner" \
+        && "${candidate}" != "${wallet_recovery_signer}/Contents/MacOS/WalletSigner" ]]
+    then
+        unexpected="$(/usr/bin/nm -gU "${candidate}" 2>/dev/null \
+            | /usr/bin/awk '$NF ~ /^_locus_wallet_/ { print $NF }')"
+        [[ -z "${unexpected}" ]] || {
+            echo "error: non-signer executable links signer-core exports: ${candidate}" >&2
+            exit 1
+        }
+    fi
+    if [[ "${sandboxed}" == "1" ]] \
+        && { /usr/bin/nm "${candidate}" 2>/dev/null \
+                | /usr/bin/grep -Eq "${mas_connector_forbidden}" \
+            || /usr/bin/strings "${candidate}" \
+                | /usr/bin/grep -Eq "${mas_connector_forbidden}"; }
+    then
+        echo "error: Mac App Store executable contains Direct connector code or credentials: ${candidate}" >&2
+        exit 1
+    fi
+done < <(/usr/bin/find "${app}/Contents" -type f -print)
+(( wallet_macho_count > 0 )) || {
+    echo "error: distribution executable inventory was empty" >&2
+    exit 1
+}
+
+echo "Distribution audit passed: ${wallet_macho_count} Mach-O files and wallet boundary verified; gdbm and tkinter absent."

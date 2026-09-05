@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "sourceRevision": "",
+  "artifactIdentity": {
+    "archiveSHA256": "",
+    "bundleVersion": "",
+    "outerAppCodeDirectoryHash": "",
+    "signerCodeDirectoryHash": ""
+  },
+  "phase": "pre_canary_rehearsal",
+  "candidateID": "",
+  "authoritySHA256": "",
+  "events": []
+}

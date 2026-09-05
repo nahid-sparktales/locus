@@ -1452,7 +1452,10 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 920, height: 680)
+        .frame(
+            minWidth: 640, idealWidth: 920, maxWidth: 920,
+            minHeight: 480, idealHeight: 680, maxHeight: 680
+        )
         .background(LocusTheme.panel)
         .onAppear {
             draft = model.settings
@@ -1617,9 +1620,11 @@ struct SettingsView: View {
                 LazyVStack(alignment: .leading, spacing: 3) {
                     ForEach(SettingsNavigationGroup.allCases) { group in
                         Text(group.rawValue.uppercased())
-                            .font(.system(.caption2, design: .default, weight: .semibold))
+                            .font(.system(.caption, design: .default, weight: .semibold))
                             .tracking(0.8)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(LocusTheme.textSecondary)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("settings.group.\(group.rawValue.lowercased())")
                             .padding(.horizontal, 11)
                             .padding(.top, 11)
                             .padding(.bottom, 3)
@@ -1691,7 +1696,7 @@ struct SettingsView: View {
                     ? model.settingsPage.subtitle
                     : "Choose a result to open the matching control.")
                     .font(.system(.callout, design: .default))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .accessibilityIdentifier("settings.subtitle")
             }
             Spacer()
@@ -2373,9 +2378,10 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.worktreeRetentionLimit")
 
                 Text("Events for one chat wait in arrival order. Choose 1 for fully sequential processing. Different chats share this limit; worktrees isolate concurrent edits in the same Git repository.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.maximumActiveChats.explanation")
                 }
                 .id("settings.maximumActiveChats")
 
@@ -2383,9 +2389,10 @@ struct SettingsView: View {
                 Toggle("Launch Locus at login", isOn: $draft.launchAtLogin)
                     .accessibilityIdentifier("settings.launchAtLogin")
                 Text("Locus starts in the menu bar so schedules can run even when no window is open.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.launchAtLogin.explanation")
                 if let error = model.launchAtLoginError {
                     Text(error)
                         .font(.locus(size: 9))

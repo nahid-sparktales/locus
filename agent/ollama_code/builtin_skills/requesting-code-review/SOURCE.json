@@ -5,5 +5,5 @@
   "upstream_path": "skills/requesting-code-review",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic"
+  "activation": "explicit"
 }

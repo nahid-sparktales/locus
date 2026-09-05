@@ -232,6 +232,35 @@ actor WalletSepoliaRPCClient {
             amount = "0"
             input = encodedContract.input
             observedRuntimeCodeHash = currentCodeHash
+        case .swapAllowanceSetup:
+            guard let contract, let encodedContract,
+                  contract.networkID == request.networkID,
+                  request.action.contractID == contract.id,
+                  request.action.swapAllowanceSetup != nil,
+                  [WalletReviewedAdapters.erc20,
+                   WalletReviewedAdapters.uniswapPermit2AllowanceSetup]
+                    .contains(WalletReviewedAdapters.validatedID(for: contract)),
+                  Self.isAddress(contract.checksumAddress),
+                  encodedContract.input.hasPrefix("0x"),
+                  encodedContract.input.count >= 10 else {
+                throw WalletGateway.Error.invalidArguments(
+                    "The allowance setup is missing its exact reviewed adapter."
+                )
+            }
+            let currentCodeHash = try await runtimeCodeHash(
+                address: contract.checksumAddress
+            )
+            guard currentCodeHash.caseInsensitiveCompare(
+                contract.runtimeCodeHash
+            ) == .orderedSame else {
+                throw WalletGateway.Error.policyDenied(
+                    "The allowance contract runtime code changed after registry approval."
+                )
+            }
+            recipient = contract.checksumAddress
+            amount = "0"
+            input = encodedContract.input
+            observedRuntimeCodeHash = currentCodeHash
         case .reviewedCall, .standardizedSignIn,
              .reviewedTypedAuthorization:
             throw WalletGateway.Error.invalidArguments(
@@ -674,6 +703,7 @@ actor WalletSepoliaRPCClient {
     func publicRead(method: String, params: [Any]) async throws -> Any {
         let allowed = Set([
             "eth_blockNumber", "eth_getBalance", "eth_getCode",
+            "eth_getBlockByNumber",
             "eth_getTransactionByHash", "eth_getTransactionReceipt",
             "eth_call", "eth_estimateGas", "eth_gasPrice", "eth_feeHistory",
         ])
@@ -684,7 +714,7 @@ actor WalletSepoliaRPCClient {
         return try await rpc(method: method, params: params)
     }
 
-    private func runtimeCodeHash(address: String) async throws -> String {
+    func runtimeCodeHash(address: String) async throws -> String {
         let code = try await stringResult(method: "eth_getCode", params: [address, "latest"])
         guard code != "0x", code != "0x0" else {
             throw WalletGateway.Error.invalidArguments("No runtime bytecode exists at that network address.")

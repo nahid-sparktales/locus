@@ -127,6 +127,30 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(compact.midY, display.midY)
     }
 
+    func testCompactUIFixtureUsesWholeWindowSizeWithoutAContentHeightFloor() {
+        let frame = LocusWindowSizing.uiTestFrame(
+            in: NSRect(x: 0, y: 0, width: 1_600, height: 1_000),
+            environment: [
+                "LOCUS_UI_TESTING_WINDOW_WIDTH": "720",
+                "LOCUS_UI_TESTING_WINDOW_HEIGHT": "620",
+            ]
+        )
+        XCTAssertEqual(frame.size, NSSize(width: 720, height: 620))
+        let fixtureMinimum = LocusWindowSizing.minimumContentSize(isUITesting: true)
+        XCTAssertEqual(fixtureMinimum, NSSize(width: 680, height: 0))
+        // Native chrome differs between supported macOS releases. None of
+        // these insets may turn the requested whole-frame height into a
+        // minimum content height and enlarge the acceptance window.
+        for titlebarHeight: CGFloat in [28, 32, 40] {
+            XCTAssertLessThanOrEqual(fixtureMinimum.height, frame.height - titlebarHeight)
+        }
+        XCTAssertEqual(
+            LocusWindowSizing.minimumContentSize(isUITesting: false),
+            NSSize(width: 720, height: 620),
+            "UI fixtures must not change normal user window minimums."
+        )
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)
@@ -1578,6 +1602,22 @@ final class FeatureLogicTests: XCTestCase {
             AgentInstructionsStarter.boundaries.appending(to: ""),
             AgentInstructionsStarter.boundaries.document
         )
+    }
+
+    func testInspectorResizeStartsFromRenderedWidthAndDoesNotCompoundTranslation() {
+        var drag = InspectorResizeDrag()
+        // The saved expanded-chat preference is 420, but only 396 fits beside
+        // the inspector in a 720-point window. The first point must move it.
+        XCTAssertEqual(drag.width(renderedWidth: 396, translation: -1, zoomed: true), 395)
+        XCTAssertEqual(drag.width(renderedWidth: 395, translation: -20, zoomed: true), 376)
+        XCTAssertEqual(drag.width(renderedWidth: 376, translation: -10, zoomed: true), 386)
+        drag.end()
+        XCTAssertEqual(drag.width(renderedWidth: 386, translation: 1, zoomed: true), 387)
+        drag.end()
+        // The normal inspector contracts on a rightward drag; its saved width
+        // can also exceed the available space and must not create a dead zone.
+        XCTAssertEqual(drag.width(renderedWidth: 316, translation: 1, zoomed: false), 315)
+        XCTAssertEqual(drag.width(renderedWidth: 315, translation: -10, zoomed: false), 326)
     }
 
     func testInspectorWidthIsClampedToTheUsableRange() {

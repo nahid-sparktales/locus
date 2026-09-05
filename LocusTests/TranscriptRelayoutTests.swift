@@ -158,6 +158,121 @@ final class TranscriptRelayoutTests: XCTestCase {
         XCTAssertEqual(summary.finalWidth, 1_184)
     }
 
+    func testResizeSamplerCapturesReadyInputWithoutASleepWakeCycle() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.entry, at: 10)
+        sampler.observe(.beforeSources, at: 10.002)
+        sampler.observe(.exit, at: 10.006)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 6, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerExcludesSleepAndDoesNotRestartAnOpenInterval() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.beforeTimers, at: 10)
+        sampler.observe(.beforeSources, at: 10.001)
+        sampler.observe(.entry, at: 10.002) // Nested entry must not erase prior work.
+        sampler.observe(.beforeWaiting, at: 10.003)
+        sampler.observe(.afterWaiting, at: 20)
+        sampler.observe(.beforeSources, at: 20.001)
+        sampler.observe(.exit, at: 20.004)
+        sampler.observe(.exit, at: 20.005)
+        sampler.finish(at: 21)
+        XCTAssertEqual(sampler.samples.count, 2)
+        XCTAssertEqual(sampler.samples[0], 3, accuracy: 0.0001)
+        XCTAssertEqual(sampler.samples[1], 4, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerCannotManufactureWorkFromAnEmptySession() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.finish(at: 10)
+        sampler.observe(.exit, at: 11)
+        XCTAssertTrue(sampler.samples.isEmpty)
+        sampler.observe(.beforeSources, at: 12)
+        sampler.finish(at: 12.002)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 2, accuracy: 0.0001)
+    }
+
+    func testCompactComposerWrapsEveryControlInsideItsActualWorkspaceWidth() {
+        let controls: [CGSize] = [
+            CGSize(width: 72, height: 30), // Context.
+            CGSize(width: 30, height: 30), // Attachment.
+            CGSize(width: 68, height: 30), // Permission, never hidden.
+            CGSize(width: 38, height: 24), // Plan.
+            CGSize(width: 38, height: 24), // Grill.
+            CGSize(width: 108, height: 24), // Selected team.
+            CGSize(width: 142, height: 32), // Voice and primary action.
+        ]
+        let available = CGFloat(360 - 48 - 20) // Workspace, card and toolbar padding.
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: available)
+        XCTAssertEqual(result.size.width, available)
+        XCTAssertEqual(result.size.height, 68)
+        XCTAssertEqual(result.frames.count, controls.count)
+        for (index, frame) in result.frames.enumerated() {
+            XCTAssertEqual(frame.size, controls[index], "No control may be shrunk or dropped to fit")
+            XCTAssertGreaterThanOrEqual(frame.minX, 0)
+            XCTAssertLessThanOrEqual(frame.maxX, available)
+            XCTAssertGreaterThanOrEqual(frame.minY, 0)
+            XCTAssertLessThanOrEqual(frame.maxY, result.size.height)
+            for other in result.frames.dropFirst(index + 1) {
+                XCTAssertFalse(frame.intersects(other), "Wrapping controls must never overlap")
+            }
+        }
+        XCTAssertEqual(result.frames.last?.maxX, available, "Send/Stop stays at the trailing edge")
+    }
+
+    func testWideComposerKeepsOneRowAndTrailingActionWithoutReordering() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: 672)
+        XCTAssertEqual(result.size, CGSize(width: 672, height: 32))
+        XCTAssertEqual(result.frames.map(\.midY), [16, 16, 16])
+        XCTAssertEqual(result.frames.map(\.minX), [0, 78, 530])
+    }
+
+    func testComposerReproposesLongTeamNamesAndHandlesUnboundedMeasurementProbes() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 2_000, height: 24),
+                        CGSize(width: 142, height: 32)]
+        for proposal: CGFloat? in [292, 0, nil, .infinity, -.infinity, .nan] {
+            var remeasuredIndices: [Int] = []
+            let result = ComposerActionMetrics.measure(
+                idealSizes: controls, minimumWidth: 142, proposedWidth: proposal
+            ) { index, width in
+                remeasuredIndices.append(index)
+                XCTAssertEqual(index, 1, "Only the long team label needs a narrower proposal")
+                return CGSize(width: width, height: controls[index].height)
+            }
+            XCTAssertEqual(remeasuredIndices, [1])
+            XCTAssertTrue(result.size.width.isFinite)
+            XCTAssertTrue(result.size.height.isFinite)
+            XCTAssertGreaterThanOrEqual(result.size.width, 142)
+            XCTAssertEqual(result.frames.first?.minX, 0)
+            XCTAssertEqual(result.frames.last?.maxX, result.size.width)
+            XCTAssertEqual(result.frames.last?.size, controls.last, "Voice and Send/Stop remain a group")
+            XCTAssertEqual(result.frames.count, controls.count)
+            for frame in result.frames {
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertLessThanOrEqual(frame.maxX, result.size.width)
+            }
+        }
+    }
+
+    func testComposerWrappingMirrorsGeometryButKeepsControlIdentityOrder() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let leftToRight = ComposerActionMetrics.arrange(sizes: controls, width: 292)
+        let rightToLeft = ComposerActionMetrics.arrange(sizes: controls, width: 292, rightToLeft: true)
+        XCTAssertEqual(leftToRight.size, rightToLeft.size)
+        for index in controls.indices {
+            XCTAssertEqual(rightToLeft.frames[index].size, leftToRight.frames[index].size)
+            XCTAssertEqual(rightToLeft.frames[index].minX, 292 - leftToRight.frames[index].maxX)
+            XCTAssertEqual(rightToLeft.frames[index].minY, leftToRight.frames[index].minY)
+        }
+        XCTAssertEqual(rightToLeft.frames.last?.minX, 0)
+        XCTAssertEqual(ComposerActionMetrics.arrange(sizes: [], width: 292).size.height, 0)
+    }
+
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
         let initial = MarkdownNativeText.plain(
             Self.longProse,
@@ -205,19 +320,38 @@ final class TranscriptRelayoutTests: XCTestCase {
         pump()
         parkTranscriptAtTop(in: live)
         let dragged = try XCTUnwrap(snapshot(live))
+        let draggedGeometry = snapshotGeometry(in: live, image: dragged)
 
         // The same model state, laid out from scratch, is the answer the
         // dragged transcript has to agree with.
         let rebuilt = mount(makeModel(inspectorWidth: endWidth), size: size)
         parkTranscriptAtTop(in: rebuilt)
         let reference = try XCTUnwrap(snapshot(rebuilt))
+        let referenceGeometry = snapshotGeometry(in: rebuilt, image: reference)
+        let difference = differingFraction(dragged, reference)
+        let sameDimensions = dragged.pixelsWide == reference.pixelsWide
+            && dragged.pixelsHigh == reference.pixelsHigh
+        if !sameDimensions || difference >= 0.01 {
+            attachSnapshot(dragged, name: "Dragged transcript")
+            attachSnapshot(reference, name: "Rebuilt transcript")
+            let geometry = XCTAttachment(string: """
+                differingFraction=\(difference)
+                Dragged snapshot:\n\(draggedGeometry)
+                Rebuilt snapshot:\n\(referenceGeometry)
+                """)
+            geometry.name = "Transcript relayout geometry"
+            geometry.lifetime = .keepAlways
+            add(geometry)
+        }
+        XCTAssertEqual(dragged.pixelsWide, reference.pixelsWide, "Snapshot widths must match exactly")
+        XCTAssertEqual(dragged.pixelsHigh, reference.pixelsHigh, "Snapshot heights must match exactly")
 
         // A few tenths of a percent of drift is the scroll anchor settling in
         // a different place between the two mounts. The defect this guards
         // against moves ~4.5% of the window, so the bar sits well between the
         // two rather than at either edge.
         XCTAssertLessThan(
-            differingFraction(dragged, reference), 0.01,
+            difference, 0.01,
             "The transcript kept row heights from the previous column width"
         )
     }
@@ -345,6 +479,60 @@ final class TranscriptRelayoutTests: XCTestCase {
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep
+    }
+
+    /// Read immediately after each image, without forcing another layout or
+    /// reading text, accessibility values, or responder descriptions. Bound
+    /// traversal and row output so failures retain useful, finite diagnostics.
+    private func snapshotGeometry(in root: NSView, image: NSBitmapImageRep) -> String {
+        var lines = [
+            "uptime=\(ProcessInfo.processInfo.systemUptime)",
+            "imagePixels=\(image.pixelsWide)x\(image.pixelsHigh) rootBounds=\(NSStringFromRect(root.bounds))",
+            "appActive=\(NSApp.isActive) appearance=\(root.effectiveAppearance.name.rawValue)"
+        ]
+        if let window = root.window {
+            let responderType = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+            lines.append("windowFrame=\(NSStringFromRect(window.frame)) contentLayout=\(NSStringFromRect(window.contentLayoutRect)) scale=\(window.backingScaleFactor)")
+            lines.append("windowKey=\(window.isKeyWindow) main=\(window.isMainWindow) visible=\(window.isVisible) responderType=\(responderType.prefix(128)) mouse=\(NSStringFromPoint(window.mouseLocationOutsideOfEventStream))")
+        } else {
+            lines.append("window=nil")
+        }
+        guard let scroll = transcriptScrollView(in: root) else {
+            return (lines + ["transcriptScrollView=nil"]).joined(separator: "\n")
+        }
+        let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: root)
+        lines.append("scrollFrame=\(NSStringFromRect(scroll.convert(scroll.bounds, to: root))) clipBounds=\(NSStringFromRect(scroll.contentView.bounds)) viewport=\(NSStringFromRect(viewport))")
+        if let document = scroll.documentView {
+            lines.append("documentFrame=\(NSStringFromRect(document.frame)) documentBounds=\(NSStringFromRect(document.bounds)) flipped=\(document.isFlipped)")
+        }
+        var pending: [NSView] = [scroll]
+        var visited = 0
+        var rowCount = 0
+        while visited < 512, rowCount < 24, let view = pending.popLast() {
+            visited += 1
+            if let text = view as? ResponseSelectableTextView {
+                let frame = text.convert(text.bounds, to: root)
+                if !text.isHiddenOrHasHiddenAncestor, frame.intersects(viewport) {
+                    lines.append("visibleText[\(rowCount)] frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(text.bounds)) container=\(NSStringFromSize(text.textContainer?.containerSize ?? .zero)) measurements=\(text.textLayoutMeasurementCount) cacheEntries=\(text.measurementCacheEntryCount)")
+                    rowCount += 1
+                }
+            }
+            pending.append(contentsOf: view.subviews.reversed())
+        }
+        lines.append("visitedViews=\(visited) visibleTextRows=\(rowCount) traversalTruncated=\(!pending.isEmpty)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func attachSnapshot(_ image: NSBitmapImageRep, name: String) {
+        let attachment: XCTAttachment
+        if let png = image.representation(using: .png, properties: [:]) {
+            attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        } else {
+            attachment = XCTAttachment(string: "Snapshot PNG encoding failed")
+        }
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func differingFraction(_ lhs: NSBitmapImageRep, _ rhs: NSBitmapImageRep) -> Double {

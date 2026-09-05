@@ -128,7 +128,7 @@ bundle_codex_helper() {
     local identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
     if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${identity}" ]]; then
         local hardened=()
-        [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]] && hardened=(--options runtime)
+        [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]] && hardened=(--options runtime --timestamp)
         local sealed_helper identifier
         for sealed_helper in "${helper}" "${code_mode_host_helper}"; do
             identifier="io.sparktales.locus.${sealed_helper:t}"
@@ -263,7 +263,7 @@ sign_runtime_if_needed() {
     #   mapping process and mapped file (non-platform) have different Team IDs
     local hardened=()
     if [[ "${ENABLE_HARDENED_RUNTIME:-NO}" == "YES" ]]; then
-        hardened=(--options runtime)
+        hardened=(--options runtime --timestamp)
     fi
 
     local helper_entitlements="${repo_root}/Config/AgentRuntime.entitlements"
@@ -330,3 +330,4 @@ if ! bundle_standalone; then
     exit 1
 fi
 bundle_codex_helper
+"${script_dir}/PrepareWalletArchive.sh"

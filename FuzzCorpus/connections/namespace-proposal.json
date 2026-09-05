@@ -1,0 +1,8 @@
+[
+  {
+    "events": ["accounts_changed", "network_changed", "disconnected"],
+    "methods": ["list_accounts", "send_transaction", "sign_in_with_ethereum"],
+    "namespace": "eip155",
+    "networkIDs": ["eip155:11155111"]
+  }
+]

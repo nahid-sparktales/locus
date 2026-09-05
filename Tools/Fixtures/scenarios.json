@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "evidenceStatus": "not-run-by-this-catalog",
+  "scenarios": [
+    {"id":"evm.native.lifecycle","implementation":"implemented","test":"WalletAnvilIntegrationTests/testPinnedSignerCoreBroadcastReplayRecheckAndRecoveryOnAnvil","proof":"native transaction, replay, receipt lookup; no process crash"},
+    {"id":"evm.calldata.noop-rejection","implementation":"implemented","test":"WalletAnvilIntegrationTests/testReviewedCalldataBroadcastsButNoOpContractsCannotProveSettlement","proof":"reviewed calldata and rejection of success-only contract receipts"},
+    {"id":"evm.quote.v2.boundaries","implementation":"implemented","test":"WalletAnvilIntegrationTests/testDualProviderV2QuoteBindsBlockRouteFloorsAndCodeIdentity","proof":"constant quote oracle; same chain endpoint for both roles"},
+    {"id":"evm.allowance.finite-storage","implementation":"implemented","test":"WalletAnvilIntegrationTests/testFiniteERC20AndPermit2AllowanceSetupChangesOnlyReviewedState","proof":"finite unkeyed storage; not real Permit2 settlement"},
+    {"id":"evm.receipt.exact-effects","implementation":"implemented","test":"WalletEVMReceiptReconciliationTests","proof":"deterministic receipt fixtures, not live chain execution"},
+    {"id":"evm.erc20.stateful","implementation":"missing","required":"compile locked StatefulAssets source; verify exact balances and receipt events"},
+    {"id":"evm.erc721.stateful","implementation":"missing","required":"ownership, receiver rejection, substituted ID and receipt reconciliation"},
+    {"id":"evm.erc1155.stateful","implementation":"missing","required":"single quantity, owner balances, receiver rejection and reconciliation"},
+    {"id":"evm.uniswap.v2.one-and-multihop","implementation":"missing","required":"pinned actual V2, Universal Router and Permit2 deployments; settlement and pool events"},
+    {"id":"evm.uniswap.v3.one-and-multihop","implementation":"missing","required":"pinned actual V3/QuoterV2, Universal Router and Permit2; settlement and pool events"},
+    {"id":"evm.allowance.keyed-zero-first-expiry","implementation":"missing","required":"owner/token/spender isolation, finite amount, zero-first, expired approval and insufficient allowance"},
+    {"id":"evm.quote.liquidity-slippage-code-drift","implementation":"missing","required":"change actual pool liquidity after quote, on-chain global/per-hop revert, changed code"},
+    {"id":"evm.broadcast.crash-restart","implementation":"missing","required":"accepted broadcast response loss, subprocess crash, persisted intent and reconciliation without duplicate broadcast"},
+    {"id":"solana.native.lifecycle","implementation":"implemented","test":"WalletSolanaIntegrationTests/testPinnedValidatorNativeTransferSigningBroadcastAndReconciliation","proof":"production RPC and native signer-core reconstruction"},
+    {"id":"solana.identity-and-malformed-bytes","implementation":"implemented","test":"WalletSolanaIntegrationTests/testLocalValidatorIdentityMalformedSignatureAndProductionTransportFailClosed"},
+    {"id":"solana.spl.existing-new-ata","implementation":"missing","required":"pinned SPL/ATA programs, funded mint/source, existing and absent recipient ATA"},
+    {"id":"solana.token2022.allowed-extensions","implementation":"missing","required":"pinned program; only metadataPointer/tokenMetadata mint and immutableOwner account positive paths"},
+    {"id":"solana.core.plugin-free","implementation":"missing","required":"pinned Core executable, standalone AssetV1 creation, owner transition and plugin/collection rejection"},
+    {"id":"solana.stale-and-substituted-state","implementation":"missing","required":"expired blockhash, program/mint/token-account substitution, extra signer, simulation failure"},
+    {"id":"solana.broadcast.crash-restart","implementation":"missing","required":"response loss, actual process/store restart, exact native/token/Core effects and no duplicate broadcast"},
+    {"id":"sui.graphql.native-local-signer","implementation":"implemented","test":"WalletSuiIntegrationTests/testIndependentFixtureSignerGraphQLNativeTransferAndClientReconciliation","proof":"independent local fixture signer, Swift BCS, GraphQL; live run still required"},
+    {"id":"sui.graphql.loopback-boundary","implementation":"implemented","test":"WalletSuiIntegrationTests/testLoopbackBoundaryAndProductionHTTPSOnly"},
+    {"id":"sui.coin.stateful","implementation":"missing","required":"compile/publish pinned Move fixture; exact Coin<T> asset and separate gas effects"},
+    {"id":"sui.object.stateful","implementation":"missing","required":"exact public-transfer object, owner/type/version/digest binding"},
+    {"id":"sui.fragmentation-stale-substitution","implementation":"missing","required":"multiple insufficient coins, stale checkpoint/object, substituted gas/type/owner, failed simulation"},
+    {"id":"sui.broadcast.crash-restart","implementation":"missing","required":"GraphQL accepted mutation response loss, process/store restart, finalized effects and no duplicate mutation"}
+  ]
+}

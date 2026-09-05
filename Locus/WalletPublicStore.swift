@@ -14,19 +14,6 @@ struct WalletContact: Codable, Equatable, Identifiable, Sendable {
     let createdAt: Date
     let updatedAt: Date
 }
-struct WalletConnectionRecord: Codable, Equatable, Identifiable, Sendable {
-    let id: String
-    let kind: String
-    let peerName: String
-    let peerURL: String?
-    let networkIDs: Set<String>
-    let methods: Set<String>
-    let accountIDs: Set<String>
-    let createdAt: Date
-    let expiresAt: Date
-    let disconnectedAt: Date?
-}
-
 enum WalletPublicStoreError: LocalizedError {
     case open(String)
     case statement(String)
@@ -49,7 +36,7 @@ enum WalletPublicStoreError: LocalizedError {
 /// representing entropy, phrases, private keys, signer sessions, signed bytes,
 /// or policy secrets. The signer and recovery services never open this file.
 final class WalletPublicStore: @unchecked Sendable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     private let lock = NSLock()
     private var database: OpaquePointer?
@@ -222,11 +209,57 @@ final class WalletPublicStore: @unchecked Sendable {
     }
 
     func upsertConnection(_ connection: WalletConnectionRecord) throws {
-        try upsertPayload(
-            table: "connections", id: connection.id,
-            networkID: connection.networkIDs.sorted().joined(separator: ","),
-            sortText: connection.peerName, timestamp: Date(), value: connection
-        )
+        let payload = try encoder.encode(connection)
+        try locked {
+            let statement = try prepare(
+                """
+                INSERT INTO connections(
+                    id, network_id, peer_name, updated_at, payload,
+                    direction, connector_id, state, expires_at, revoked_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    network_id = excluded.network_id,
+                    peer_name = excluded.peer_name,
+                    updated_at = excluded.updated_at,
+                    payload = excluded.payload,
+                    direction = excluded.direction,
+                    connector_id = excluded.connector_id,
+                    state = excluded.state,
+                    expires_at = excluded.expires_at,
+                    revoked_at = excluded.revoked_at
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind(connection.id, at: 1, in: statement)
+            try bind(
+                connection.networkIDs.sorted().joined(separator: ","),
+                at: 2,
+                in: statement
+            )
+            try bind(connection.peerName, at: 3, in: statement)
+            guard sqlite3_bind_double(
+                statement, 4, connection.updatedAt.timeIntervalSince1970
+            ) == SQLITE_OK,
+            payload.withUnsafeBytes({ bytes in
+                sqlite3_bind_blob(
+                    statement, 5, bytes.baseAddress, Int32(bytes.count), walletSQLiteTransient
+                )
+            }) == SQLITE_OK else { throw bindError() }
+            try bind(connection.direction.rawValue, at: 6, in: statement)
+            try bind(connection.connector.rawValue, at: 7, in: statement)
+            try bind(connection.state.rawValue, at: 8, in: statement)
+            guard sqlite3_bind_double(
+                statement, 9, connection.expiresAt.timeIntervalSince1970
+            ) == SQLITE_OK else { throw bindError() }
+            if let revokedAt = connection.revokedAt {
+                guard sqlite3_bind_double(
+                    statement, 10, revokedAt.timeIntervalSince1970
+                ) == SQLITE_OK else { throw bindError() }
+            } else if sqlite3_bind_null(statement, 10) != SQLITE_OK {
+                throw bindError()
+            }
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw stepError() }
+        }
     }
 
     func deleteConnection(id: String) throws { try delete(table: "connections", id: id) }
@@ -299,6 +332,25 @@ final class WalletPublicStore: @unchecked Sendable {
                 )
                 try execute("DELETE FROM wallet_schema")
                 try execute("INSERT INTO wallet_schema(version) VALUES(1)")
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+        if current < 2 {
+            try execute("BEGIN IMMEDIATE")
+            do {
+                try execute("ALTER TABLE connections ADD COLUMN direction TEXT")
+                try execute("ALTER TABLE connections ADD COLUMN connector_id TEXT")
+                try execute("ALTER TABLE connections ADD COLUMN state TEXT")
+                try execute("ALTER TABLE connections ADD COLUMN expires_at REAL")
+                try execute("ALTER TABLE connections ADD COLUMN revoked_at REAL")
+                try execute(
+                    "CREATE INDEX connections_lifecycle ON connections(state, expires_at)"
+                )
+                try execute("DELETE FROM wallet_schema")
+                try execute("INSERT INTO wallet_schema(version) VALUES(2)")
                 try execute("COMMIT")
             } catch {
                 try? execute("ROLLBACK")

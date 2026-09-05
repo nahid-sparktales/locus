@@ -1,0 +1,9 @@
+[package]
+name = "LocusLocalFixture"
+edition = "2024"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "46f18562f1f5af2438d35828e8b62d5e0b972db7" }
+
+[addresses]
+local_fixture = "0x0"

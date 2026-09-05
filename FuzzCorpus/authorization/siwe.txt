@@ -1,0 +1,14 @@
+app.example wants you to sign in with your Ethereum account:
+0x1111111111111111111111111111111111111111
+
+Sign in to the test application
+
+URI: https://app.example/session
+Version: 1
+Chain ID: 11155111
+Nonce: aB123456
+Issued At: 2033-05-18T03:32:00.000Z
+Expiration Time: 2033-05-18T03:42:00.000Z
+Request ID: login-1
+Resources:
+- https://app.example/terms

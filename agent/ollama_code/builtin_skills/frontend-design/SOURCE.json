@@ -6,5 +6,5 @@
   "upstream_path": "skills/frontend-design",
   "license": "Apache-2.0",
   "license_file": "LICENSE.txt",
-  "activation": "automatic"
+  "activation": "explicit"
 }

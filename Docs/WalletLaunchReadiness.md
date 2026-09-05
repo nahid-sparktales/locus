@@ -4,14 +4,87 @@ This is the authoritative release checklist. A checked box requires an
 attributable artifact in the release evidence index; prose or a manually edited
 manifest is not evidence. The checked-in state is intentionally incomplete.
 
+## Public GA scope contract
+
+The GA action surface is intentionally narrow: native transfers, curated
+fungible transfers, ERC-721/1155 transfers, standalone plugin-free Metaplex
+Core transfers, publicly transferable Sui objects, Universal Router V2/V3
+exact-input swaps, and canonical SIWE/SIWS. Locus Vault may serve embedded-
+browser and WalletConnect dapps. MetaMask, Phantom, and Slush accounts may be
+used without importing recovery material. Agents may initiate the same actions
+as people. MetaMask and Slush retain wallet-owned confirmation after exact
+Locus review; Phantom's connector-managed embedded account requires exact
+Locus review but no second wallet prompt. Collectibles and finite allowance
+setup always require exact confirmation, and only signer-owned
+native/fungible/Uniswap rules can execute automatically.
+
+The following are explicitly deferred and are not GA requirements: advanced
+Token-2022 behavior, programmable or compressed NFT transfers, Core collection
+and plugin variants, Sui batching or gRPC migration, Uniswap V4, Jupiter or
+Cetus swaps, arbitrary messages or broad typed data, Sui personal-message
+signing, and remote collectible media. Their adapters and methods must remain
+absent from release manifests.
+
 ## Engineering implementation
 
+Checked implementation entries identify source and fixture coverage, not release
+approval. Every execution result must be repeated and attributed to the final
+clean candidate revision before canary activation.
+
 - [x] Isolated branch/worktree from recorded `origin/main` commit.
-- [x] Signer protocol v2 and canonical Ethereum/Solana/Sui network identities.
+- [x] Signer protocol v3 and canonical Ethereum/Solana/Sui network identities.
+- [x] Schema-v2 public connection records with account ownership, connection
+  direction, connector, network/method grants, lifecycle, expiry, and
+  revocation; relay keys, vendor tokens, signed bytes, and policy authority are
+  excluded.
+- [x] One semantic request router binds origin/peer, connection, account,
+  network, method, action, and expiry, rejects replay/substitution, and cancels
+  pending authority on lock, signer loss, disablement, navigation, disconnect,
+  account/network change, or expiry.
+- [x] Direct-only connector runtime with a dedicated persistent WebKit store,
+  isolated content world, strict CSP and navigation allowlist, bounded reply
+  messages, disabled developer extras, and no arbitrary-page loading. The
+  accepted boundary places SDK sessions in the unsandboxed Direct app; its
+  Swift, JavaScript, Reown code, resources, and credentials are compile- and
+  package-excluded from the Mac App Store target.
+- [x] Structured SIWE/SIWS signer path reconstructs the canonical message,
+  binds domain/origin/chain/account/nonce/timestamps/resources, requires device
+  owner approval, consumes the nonce before signing, and exposes no arbitrary
+  message or broad typed-data endpoint. The embedded EIP-1193 provider accepts
+  `personal_sign` only when its UTF-8 payload parses and round-trips as the
+  exact reviewed canonical SIWE form; all other message content still rejects.
+- [x] Schema-v3 capability manifests grant capabilities per network and gate
+  exact connector/direction/method tuples. Schema-v2 review manifests pin
+  connector versions/digests, sign-in adapters, and program/code identities;
+  emergency updates remain intersection-only.
 - [x] Network-disabled recovery window and one-time authenticated signer channel.
 - [x] Preview-vault rotation and recovery-only retention.
 - [x] Public SQLite store and network-scoped browser grants.
-- [x] Evidence-bound canary/GA manifest and default-deny packaging.
+- [x] Evidence-bound canary/GA capability manifest and default-deny packaging.
+- [ ] Post-package activation, signer-owned rollback protection, signed finite
+  canary limits, exact connector ownership/configuration, and reviewed provider
+  identity gates pass the integrated candidate regression suite.
+- [ ] Schema-v2 hash-linked activation history, non-activating review ceiling,
+  installation-bound admission, unchanged-authority renewal, permanent
+  restriction preservation, and same-archive GA promotion pass independent
+  app/signer and real signed-executable identity verification. Native unit
+  fixtures and release-tool tests are implementation checks, not this approval.
+- [ ] The checked-in local-chain scenario catalog has no missing, pending, or
+  skipped required scenario. Two local provider fault paths are not labeled
+  independent production-provider evidence. Independent Sui fixture signing
+  must not widen the production signer chain allowlist.
+- [ ] All 48 OS/UI profiles (macOS 14/15/26 × 16 profiles), the complete UI suite,
+  keyboard-only checks, and attributable VoiceOver reviews pass. The matrix
+  runner rejects missing/skipped tests and actual OS/accessibility mismatches.
+- [ ] All eight Swift and five Rust fuzz targets have clean corpus replay and
+  at least 24 measured target-process CPU-hours each on one clean candidate
+  identity. Unique immutable receipts, actual coverage instrumentation, and
+  supported platform leak checks are independently verified. Build or idle
+  wall time is never credited toward the 312 CPU-hour minimum.
+- [ ] Dormant archive/export packaging passes on the release-signing Mac and an
+  independent clean Mac. `Tools/ArchiveWalletRelease.sh` uses Xcode Developer ID
+  export with the nested signer provisioning profiles; exported-artifact
+  packaging performs no plist/resource/signature rewriting.
 - [x] Signed review manifests for curated assets, exact EVM contracts,
   explorers, and compiled adapters, with intersection-only emergency updates.
 - [x] Indexed Ethereum inbound/outbound activity reconciliation and quarantine
@@ -137,79 +210,132 @@ manifest is not evidence. The checked-in state is intentionally incomplete.
   input ABI, the current account as literal recipient and payer, a deadline no
   more than 20 minutes away, 1-3 acyclic hops, a nonzero global minimum output,
   canonical dynamic offsets/padding, and either an empty per-hop price array or
-  one nonzero floor per hop. The protocol-v2 semantic preparation path now also
+  one nonzero floor per hop. The protocol-v3 semantic preparation path now also
   requires a signed router and complete curated-token route, quoted output,
   slippage bound, minimum output, deadline, and per-hop floors. The isolated
   signer—not the main process—materializes the sole permitted command, encodes
   it through the Rust ABI boundary, decodes it again, and binds the verified
   runtime code hash and RPC simulation. Autonomous eligibility additionally
   requires a signer-owned exact-input policy with router, adapter, input asset,
-  recipient, amount, fee, slippage, minimum-output, and expiry bounds. V4,
-  Permit2 forms, native wrapping, sub-plans, live quote acquisition, Swap UI,
-  and Anvil execution fixtures remain incomplete.
-- [ ] Ethereum sandboxed collectible metadata/media rendering complete. Curated
-  token/NFT transfers, metadata-free ERC-20/721/1155 holdings, and indexed
-  transfer-based quarantine are implemented.
-- [ ] Solana transfer-altering Token-2022 extensions, Core collection/plugin
-  variants, Token Metadata/programmable NFT transfers, and compressed-
-  collectible transfer implementation complete. The standalone plugin-free
-  Core subset is implemented but not mainnet-enabled. Finalized legacy/v0/v1
-  activity indexing and reviewed legacy-transfer priority fees are implemented;
-  versioned-message signing remains closed.
-- [ ] Sui gRPC execution migration, multi-object Coin merge/object batching,
-  and localnet coverage complete. The
-  exact native, single-object curated Coin, and publicly transferable object
-  GraphQL subsets are implemented but not mainnet-enabled.
-- [ ] Uniswap v2/v3/v4, Jupiter `/build`, and Cetus V3 reviewed swap subsets
-  complete. Universal Router V2/V3 decoding is implemented as described above;
-  its semantic preparation, signer reconstruction, and RPC simulation path is
-  implemented, while live quotes, UI, V4, and independent local-chain execution
-  coverage remain closed.
-- [ ] MetaMask, Phantom, Slush, Wallet Standards, and Reown WalletKit lifecycle complete.
-- [ ] Sandboxed remote collectible-media fetch and rendering complete.
+  recipient, amount, fee, slippage, minimum-output, and expiry bounds. Native
+  dual-provider on-chain V2/V3 quote reproduction, 60-second evidence, 500-bps
+  maximum slippage, the Swap UI, exact finite ERC-20/Permit2 setup, dapp
+  `needsAllowance`, and post-submit semantic reconciliation are implemented.
+  V4, native wrapping, and sub-plans remain unavailable. The remaining
+  stateful Anvil settlement and failure fixtures are tracked as unchecked
+  engineering gates below.
+- [x] MetaMask, Phantom, Slush, embedded EIP-1193/EIP-6963, Solana/Sui Wallet
+  Standard, and WalletConnect runtime/lifecycle paths are present behind exact
+  signed connector gates. Reown Swift 2.3.2 is vendored from its exact archive,
+  patched only for the audited Foundation import, and links the Sign product;
+  Pay and Yttrium products are omitted. Missing release configuration or
+  identity evidence remains fail-closed.
+
+## Deferred non-GA backlog
+
+These items are deliberately outside the GA contract and are not launch
+blockers: remote collectible media; transfer-altering Token-2022 behavior;
+Core collection/plugin variants; Token Metadata, programmable, or compressed
+NFT transfers; Solana v1 signing; Sui gRPC migration, Coin merging, and
+batching; Uniswap V4; Jupiter; and Cetus.
 
 ## Automated and adversarial verification
 
 - [x] Deterministic EVM/Solana/Sui derivation fixture in the signer core.
 - [ ] Fixture independently reproduced by three external implementations.
-- [ ] Anvil native/token/NFT/swap/rejection/expiry/crash/finality suite.
-- [ ] Solana local-validator equivalent suite.
-- [ ] Sui localnet equivalent suite using the production gRPC/GraphQL path.
-- [ ] Fuzz corpora for calldata, instructions, BCS, messages, metadata, providers,
-  WalletConnect payloads, and quotes.
-- [ ] Browser fixtures for EIP-1193/EIP-6963, Solana Wallet Standard, Sui Wallet
-  Standard, and WalletConnect lifecycle/revocation.
-- [ ] Release binary, entitlement, identity, symbol, SBOM, advisory, and
-  reproducibility audit green from a clean branch.
+- [x] Pinned Anvil signer/provider fixtures cover native, ERC-20, ERC-721,
+  ERC-1155, and reviewed Universal Router calldata preparation, Rust encoding
+  and signing, broadcast, receipt/input reconciliation, nonce replay,
+  simulation rejection, changed runtime code, finality, and receipt recovery.
+- [x] Anvil fixtures exercise dual-provider on-chain V2 quote reproduction at a
+  common block, checked slippage and per-hop floors, quote/pool code-identity
+  drift rejection, and exact finite ERC-20 and Permit2 allowance state
+  transitions through production adapters and signer-generated transactions.
+  Expired quote evidence is rejected before allowance reads or signer
+  preparation.
+- [ ] Stateful V2/V3 pool settlement, on-chain slippage failure, and crash
+  injection are complete.
+- [x] Pinned Agave `solana-test-validator` native-transfer suite covers exact
+  local genesis binding, production preparation and simulation, signer-core
+  reconstruction/signing, broadcast, finality, sender/recipient reconciliation,
+  malformed signatures, wrong-chain substitution, and HTTPS-only production
+  transport. Stateful SPL/Core fixtures remain part of the unchecked full
+  local-chain matrix below.
+- [ ] Solana local-validator SPL and standalone Core state-transition fixtures
+  cover every enabled fungible and collectible path.
+- [ ] Sui `testnet-v1.79.0` localnet equivalent suite using the production
+  GraphQL path and Debug-only loopback initialization. gRPC migration is deferred.
+- [x] Checked-in deterministic fuzz-smoke corpora mutate EVM calldata, Solana
+  messages/instructions, Sui BCS, connection metadata, namespace proposals,
+  provider envelopes, canonical sign-in, quote arithmetic, and Rust FFI
+  requests with bounded inputs and responses on every CI run.
+- [ ] Continuous sanitizer-backed fuzz campaigns and their release-duration
+  evidence are complete: PR corpus replay and 60 seconds/target, nightly
+  30 minutes/target, and 24 clean CPU-hours/target on the exact canary revision.
+- [x] Connector-driver fixtures cover approval, rejection, timeout/vendor
+  failure, missing configuration, restore, account/network change, disconnect,
+  expiry, and suspend/reconnect behavior.
+- [x] WebKit fixtures cover EIP-1193/EIP-6963 plus the exact Solana and Sui
+  Wallet Standard registration surfaces; typed driver fixtures cover
+  WalletConnect proposal approval/rejection, lifecycle, and revocation.
+- [x] Connection SDK source pins, lockfile integrity, deterministic bundle
+  digest, licenses, patched Reown tree/archive digests, enabled-runtime SBOM,
+  zero-vulnerability npm audit, and Direct/Mac-App-Store target boundary gates
+  are recorded and checked. Reviewed transitive overrides keep Axios at
+  `1.20.0`, affected UUID consumers at `11.1.1`, and Solana's Jayson dependency
+  at `4.1.3` without changing the approved connector SDK versions.
+- [ ] Release binary, entitlement, identity, symbol, full enabled-runtime SBOM,
+  advisory, legal-license, and reproducibility audit green from a clean branch.
 
 ## Invited mainnet canary evidence
 
 - [ ] Independent cryptography/signer audit: zero unresolved critical/high.
 - [ ] Separate application/dapp penetration test: zero unresolved critical/high.
 - [ ] Counsel-approved regional capability matrix.
+- [ ] Counsel approves Reown terms and Phantom embedded-wallet beta terms.
+- [ ] `derivation_reproduction`: three independently maintained stacks reproduce
+  the public derivation fixture with attributable source/library identities.
+- [ ] `release_candidate_build`: the exact dormant export, CodeDirectory
+  identities, archive hash, and source revision are approved after packaging.
 - [ ] Provider capacity, identity, disagreement, and failover load test.
 - [ ] Incident drill: disable one chain/adapter, revoke sessions, ship signed
   update, restore on a clean Mac, and prove funds remain recoverable.
 - [ ] Notarized canary artifact and stapled-ticket verification.
 - [ ] Signed update feed verification.
 
-Only after these artifacts exist may a schema-v2 `invited_canary` manifest be
-signed. Canary distribution remains invited and limited-fund.
+Only after these artifacts exist may the post-package activation envelope for
+the schema-v3 `invited_canary` capability manifest be signed and published.
+Ethereum, Solana, and Sui activate together. Every enabled asset/action and
+ownership model requires signed finite per-action and cumulative limits;
+collectibles are restricted to explicitly reviewed low-value identities.
+The soak begins only when the exact notarized build, activation revision, and
+invited cohort are simultaneously available.
 
 ## Public GA evidence
 
 - [ ] At least 30 days of invited release-candidate soak.
 - [ ] At least 25 external testers.
 - [ ] At least 100 successful transactions per chain covering every supported
-  action and connection path.
+  action and connection path, with explicit connector/direction/method coverage
+  rather than an inferred global capability cross-product.
 - [ ] Zero unauthorized signing, secret exposure, unrecoverable vault,
   unresolved broadcast ambiguity, or loss-producing decoder discrepancy.
 - [ ] Wallet terms, privacy, recovery, provider disclosures, support, security
   contact, incident response, and funded reward program approved for publication.
 - [ ] Support and security response staffed for the published service levels.
+- [ ] Attributable `release_candidate_soak`, `publication_disclosures`, and
+  `support_security_readiness` approvals accompany schema-v2 launch evidence.
 - [ ] All CI/release gates green from a clean branch.
 - [ ] Final notarized artifact and signed update feed independently verified.
 
-The signing tool enforces the numeric soak thresholds and binds the evidence
-index hash into a `general_availability` manifest. Packaging rejects a GA build
-whose signed manifest has another stage.
+The signing tool enforces the numeric soak thresholds and binds the schema-v2
+evidence index hash into a `general_availability` manifest. Both canary and GA
+artifacts are packaged dormant; their post-package activation binds the exact
+exported identities, archive hash, source revision, release stage, issue/expiry
+times, and monotonic revision. See [WalletReleasePackaging.md](WalletReleasePackaging.md).
+
+Any security-boundary, dependency, decoder, preparer, signer, manifest, or
+connector change after activation invalidates downstream evidence and restarts
+the soak. A defined security-loss event requires a new candidate. Reports,
+credentials, provider contracts, tester identities, and staffing evidence remain
+outside the repository and are never completed automatically by these tools.

@@ -55,6 +55,7 @@ from .continuity import (
 )
 from .core import AgentCore
 from .evaluation_runtime import EvaluationTeamRunner
+from .http_limits import RequestBodyLimitMiddleware
 from .knowledge import KnowledgeError, KnowledgeStore
 from .knowledge_runtime import knowledge_store as _domain_knowledge_store
 from .memory import MemoryError, format_memory_results
@@ -221,13 +222,6 @@ async def block_browser_origins(request: Request, call_next):
     token = str(getattr(request.app.state, "auth_token", "") or "")
     if token and request.headers.get("x-locus-token") != token:
         return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > MAX_HTTP_BODY_BYTES:
-                return JSONResponse({"detail": "request body is too large"}, status_code=413)
-        except ValueError:
-            return JSONResponse({"detail": "invalid content-length"}, status_code=400)
     with request_service_context(getattr(request.app.state, "service", None)):
         return await call_next(request)
 
@@ -2325,6 +2319,7 @@ def create_app(
         else _run_team_turn
     )
     application.state.chat_message_handler = _handle_client_message
+    application.add_middleware(RequestBodyLimitMiddleware, max_bytes=MAX_HTTP_BODY_BYTES)
     application.middleware("http")(block_browser_origins)
     application.include_router(api)
     return application

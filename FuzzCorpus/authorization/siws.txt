@@ -1,0 +1,11 @@
+app.example wants you to sign in with your Solana account:
+3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx
+
+Sign in to the test application
+
+URI: https://app.example/session
+Version: 1
+Chain ID: devnet
+Nonce: aB123456
+Issued At: 2033-05-18T03:32:00.000Z
+Expiration Time: 2033-05-18T03:42:00.000Z

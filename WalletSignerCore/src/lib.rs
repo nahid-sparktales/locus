@@ -11,9 +11,9 @@ use alloy::dyn_abi::{JsonAbiExt, Specifier};
 use alloy::eips::eip2718::Encodable2718;
 use alloy::json_abi::JsonAbi;
 use alloy::network::TxSignerSync;
-use alloy::primitives::{Address, Bytes, TxKind, U256, keccak256};
-use alloy::signers::local::MnemonicBuilder;
+use alloy::primitives::{Address, Bytes, TxKind, U256, eip191_hash_message, keccak256};
 use alloy::signers::local::coins_bip39::English;
+use alloy::signers::{SignerSync, local::MnemonicBuilder};
 use base64::Engine;
 use bip39::{Language, Mnemonic};
 use ed25519_dalek::{Signer, SigningKey};
@@ -49,6 +49,8 @@ struct DerivedAccount {
     id: &'static str,
     chain: &'static str,
     address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_key_base64: Option<String>,
     label: &'static str,
     network_ids: Vec<&'static str>,
 }
@@ -82,6 +84,22 @@ struct SignedEvmTransaction {
     digest: String,
     raw_transaction: String,
     transaction_hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StructuredAuthorizationSigningRequest {
+    format: String,
+    canonical_message: String,
+    expected_address: String,
+}
+
+#[derive(Serialize)]
+struct SignedStructuredAuthorization {
+    address: String,
+    message_digest: String,
+    signature: String,
+    signature_encoding: &'static str,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1387,6 +1405,79 @@ pub extern "C" fn locus_wallet_sign_evm_transaction_json(
     }
 }
 
+/// Sign only a signer-reconstructed SIWE or SIWS message. The Swift signer
+/// validates every structured field before constructing this internal JSON;
+/// this core independently limits the format, message size, and derived
+/// account so the FFI cannot become an arbitrary-message signing surface.
+///
+/// # Safety
+/// Both arguments must point to live NUL-terminated strings for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn locus_wallet_sign_structured_authorization_json(
+    entropy_hex: *const c_char,
+    request_json: *const c_char,
+) -> *mut c_char {
+    let Ok((mnemonic, mut entropy)) = mnemonic_from_entropy_hex(entropy_hex) else {
+        return json_pointer(&ErrorResponse {
+            error: "invalid BIP-39 entropy",
+        });
+    };
+    let result = (|| {
+        if request_json.is_null() {
+            return Err("missing structured authorization");
+        }
+        // SAFETY: Callers provide a live NUL-terminated CString for the
+        // duration of this synchronous FFI call.
+        let request: StructuredAuthorizationSigningRequest =
+            serde_json::from_slice(unsafe { CStr::from_ptr(request_json) }.to_bytes())
+                .map_err(|_| "invalid structured authorization JSON")?;
+        let message = request.canonical_message.as_bytes();
+        if message.is_empty() || message.len() > 16 * 1024 {
+            return Err("structured authorization message has an invalid size");
+        }
+        match request.format.as_str() {
+            "siwe" => {
+                let signer = evm_signer(&mnemonic)?;
+                if signer.address().to_string().to_lowercase()
+                    != request.expected_address.to_lowercase()
+                {
+                    return Err("structured authorization account mismatch");
+                }
+                let signature = signer
+                    .sign_message_sync(message)
+                    .map_err(|_| "SIWE signing failed")?;
+                Ok(SignedStructuredAuthorization {
+                    address: signer.address().to_string(),
+                    message_digest: eip191_hash_message(message).to_string(),
+                    signature: signature.to_string(),
+                    signature_encoding: "eip191_hex",
+                })
+            }
+            "siws" => {
+                let signing_key = solana_signing_key(&mnemonic);
+                let address =
+                    Pubkey::new_from_array(signing_key.verifying_key().to_bytes()).to_string();
+                if address != request.expected_address {
+                    return Err("structured authorization account mismatch");
+                }
+                let signature = signing_key.sign(message).to_bytes();
+                Ok(SignedStructuredAuthorization {
+                    address,
+                    message_digest: solana_message_digest(message),
+                    signature: bs58::encode(signature).into_string(),
+                    signature_encoding: "base58",
+                })
+            }
+            _ => Err("unsupported structured authorization format"),
+        }
+    })();
+    entropy.zeroize();
+    match result {
+        Ok(value) => json_pointer(&value),
+        Err(error) => json_pointer(&ErrorResponse { error }),
+    }
+}
+
 /// Independently rebuild one reviewed legacy System Program transfer and
 /// return its exact message digest. No caller-supplied instructions or message
 /// bytes cross this boundary.
@@ -1835,7 +1926,10 @@ pub extern "C" fn locus_wallet_derive_accounts_json(entropy_hex: *const c_char) 
 
     let mut sui_secret = derive_ed25519_private_key(&seed, &[44, 784, 0, 0, 0]);
     let sui_private = Ed25519PrivateKey::new(sui_secret);
-    let sui_address = sui_private.public_key().derive_address().to_string();
+    let sui_public = sui_private.public_key();
+    let sui_address = sui_public.derive_address().to_string();
+    let sui_public_key_base64 =
+        base64::engine::general_purpose::STANDARD.encode(AsRef::<[u8]>::as_ref(&sui_public));
 
     let result = DerivedAccounts {
         accounts: vec![
@@ -1843,6 +1937,7 @@ pub extern "C" fn locus_wallet_derive_accounts_json(entropy_hex: *const c_char) 
                 id: "locus-vault-evm-0",
                 chain: "evm",
                 address: evm_signer.address().to_string(),
+                public_key_base64: None,
                 label: "Locus Vault EVM",
                 network_ids: vec!["eip155:1", "eip155:11155111"],
             },
@@ -1850,6 +1945,7 @@ pub extern "C" fn locus_wallet_derive_accounts_json(entropy_hex: *const c_char) 
                 id: "locus-vault-solana-0",
                 chain: "solana",
                 address: solana_address,
+                public_key_base64: None,
                 label: "Locus Vault Solana",
                 network_ids: vec!["solana:mainnet-beta", "solana:devnet"],
             },
@@ -1857,6 +1953,7 @@ pub extern "C" fn locus_wallet_derive_accounts_json(entropy_hex: *const c_char) 
                 id: "locus-vault-sui-0",
                 chain: "sui",
                 address: sui_address,
+                public_key_base64: Some(sui_public_key_base64),
                 label: "Locus Vault Sui",
                 network_ids: vec!["sui:mainnet", "sui:testnet"],
             },
@@ -1887,6 +1984,7 @@ pub unsafe extern "C" fn locus_wallet_string_free(value: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signature as Ed25519Signature, Verifier};
 
     #[test]
     fn generated_vault_has_256_bit_entropy_and_24_words() {
@@ -3096,6 +3194,77 @@ mod tests {
     }
 
     #[test]
+    fn structured_authorization_signs_only_the_expected_chain_account() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let (mnemonic, mut entropy_bytes) = mnemonic_from_entropy_hex(entropy.as_ptr()).unwrap();
+        let evm = evm_signer(&mnemonic).unwrap();
+        let message = "example.com wants you to sign in with your Ethereum account";
+        let request = CString::new(format!(
+            r#"{{"format":"siwe","canonical_message":"{message}","expected_address":"{}"}}"#,
+            evm.address()
+        ))
+        .unwrap();
+        let pointer = unsafe {
+            locus_wallet_sign_structured_authorization_json(entropy.as_ptr(), request.as_ptr())
+        };
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let signature =
+            alloy::primitives::Signature::from_str(value["signature"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            signature.recover_address_from_msg(message).unwrap(),
+            evm.address()
+        );
+
+        let solana_key = solana_signing_key(&mnemonic);
+        let solana_address =
+            Pubkey::new_from_array(solana_key.verifying_key().to_bytes()).to_string();
+        let request = CString::new(format!(
+            r#"{{"format":"siws","canonical_message":"solana.example sign-in","expected_address":"{solana_address}"}}"#
+        )).unwrap();
+        let pointer = unsafe {
+            locus_wallet_sign_structured_authorization_json(entropy.as_ptr(), request.as_ptr())
+        };
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let bytes = bs58::decode(value["signature"].as_str().unwrap())
+            .into_vec()
+            .unwrap();
+        let signature = Ed25519Signature::from_bytes(&bytes.try_into().unwrap());
+        solana_key
+            .verifying_key()
+            .verify(b"solana.example sign-in", &signature)
+            .unwrap();
+        entropy_bytes.zeroize();
+    }
+
+    #[test]
+    fn structured_authorization_rejects_account_substitution() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let request = CString::new(
+            r#"{"format":"siwe","canonical_message":"hello","expected_address":"0x1111111111111111111111111111111111111111"}"#
+        ).unwrap();
+        let pointer = unsafe {
+            locus_wallet_sign_structured_authorization_json(entropy.as_ptr(), request.as_ptr())
+        };
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { locus_wallet_string_free(pointer) };
+        assert!(json.contains("structured authorization account mismatch"));
+    }
+
+    #[test]
     fn registered_abi_call_is_encoded_from_typed_arguments() {
         let request = CString::new(
             r#"{"normalized_abi":"[{\"type\":\"function\",\"name\":\"transfer\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"to\",\"type\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}]}]","function":"transfer(address,uint256)","arguments":[{"type":"address","value":"0x1111111111111111111111111111111111111111"},{"type":"uint256","value":"42"}]}"#,
@@ -3139,5 +3308,50 @@ mod tests {
             .into_owned();
         unsafe { locus_wallet_string_free(pointer) };
         assert!(json.contains("typed argument does not match"));
+    }
+
+    #[test]
+    fn fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json() {
+        let entropy =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
+        let seeds = [
+            include_bytes!("../../FuzzCorpus/rust-ffi/evm-transaction.json").as_slice(),
+            br#"{"normalized_abi":"[{\"type\":\"function\",\"name\":\"transfer\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"type\":\"address\"},{\"type\":\"uint256\"}],\"outputs\":[]}]","function":"transfer(address,uint256)","arguments":[{"type":"address","value":"0x1111111111111111111111111111111111111111"},{"type":"uint256","value":"1"}]}"#,
+            br#"{"format":"siwe","canonical_message":"app.example sign in","expected_address":"0x1111111111111111111111111111111111111111"}"#,
+        ];
+        let mut state = 0x4c6f_6375_7352_7573_u64;
+        for iteration in 0..384 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let seed = seeds[iteration % seeds.len()];
+            let mut mutated = seed.to_vec();
+            let index = (state as usize) % mutated.len();
+            mutated[index] ^= 1 << ((state >> 32) & 7);
+            for byte in &mut mutated {
+                if *byte == 0 {
+                    *byte = b'?';
+                }
+            }
+            let request = CString::new(mutated).unwrap();
+            let pointer = match iteration % seeds.len() {
+                0 => locus_wallet_prepare_evm_transaction_json(entropy.as_ptr(), request.as_ptr()),
+                1 => unsafe { locus_wallet_encode_contract_call_json(request.as_ptr()) },
+                _ => unsafe {
+                    locus_wallet_sign_structured_authorization_json(
+                        entropy.as_ptr(),
+                        request.as_ptr(),
+                    )
+                },
+            };
+            assert!(!pointer.is_null());
+            let json = unsafe { CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { locus_wallet_string_free(pointer) };
+            assert!(json.len() <= 16 * 1024);
+            assert!(serde_json::from_str::<serde_json::Value>(&json).is_ok());
+        }
     }
 }

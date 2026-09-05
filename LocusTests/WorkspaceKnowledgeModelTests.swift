@@ -60,6 +60,49 @@ final class WorkspaceKnowledgeModelTests: XCTestCase {
     }
 
     func testRefreshFansOutToAllSevenKnowledgeEndpoints() async throws {
+        // An error in the first awaited async-let cancels its siblings, whose
+        // URLProtocol requests might not have started yet. Make every earlier
+        // response valid and fail only the last awaited endpoint, so returning
+        // from refresh proves all seven requests completed without a timing wait.
+        BackendStub.respond(toPath: "/api/knowledge/status") { _ in
+            [
+                "workspace": "/tmp/knowledge-tests",
+                "enabled": true,
+                "embedding_model": "fixture-embedding",
+                "ollama_host": "http://127.0.0.1:11434",
+                "vector_generation": 0,
+                "document_count": 0,
+                "chunk_count": 0,
+                "memory_count": 0,
+                "vector_available": false,
+                "vector_backend": "fixture",
+            ]
+        }
+        BackendStub.respond(toPath: "/api/memory") { _ in ["memories": []] }
+        BackendStub.respond(toPath: "/api/memory/status") { _ in
+            [
+                "encrypted": true,
+                "cipher": "fixture",
+                "approved_count": 0,
+                "candidate_count": 0,
+                "candidate_ttl_days": 30,
+            ]
+        }
+        BackendStub.respond(toPath: "/api/memory/diagnostics") { _ in
+            [
+                "approved_count": 0,
+                "candidate_count": 0,
+                "indexed_files": 0,
+                "search_chunks": 0,
+                "embedding_model": "fixture-embedding",
+                "embedding_error": "",
+                "history_available": false,
+                "events": [],
+                "counts": [:],
+            ]
+        }
+        BackendStub.respond(toPath: "/api/context-snapshots") { _ in ["snapshots": []] }
+        // /api/skill-observations remains an intentional 404.
         let model = makeModel()
         await model.refreshWorkspaceKnowledge()
         let paths = Set(BackendStub.requestPaths)
@@ -72,7 +115,7 @@ final class WorkspaceKnowledgeModelTests: XCTestCase {
             "/api/skill-observations",
         ])
         XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/memory" }.count, 2)
-        XCTAssertEqual(toasts.count, 1, "an unstubbed fan-out must surface one load failure toast")
+        XCTAssertEqual(toasts.count, 1, "the failed final endpoint must surface one load failure toast")
     }
 
     func testDeleteSkillObservationSendsWorkspaceScopedDelete() async throws {

@@ -1207,15 +1207,12 @@ class ExtensionManager:
                 provenance = _read_json(metadata_path, 64_000) \
                     if metadata_path.is_file() else {}
                 parsed["provenance"] = provenance
-                # Startup activation is a trusted built-in capability. User,
-                # workspace, and plugin skills may shadow a built-in but never
-                # inherit the right to enter every development prompt.
-                activation = str(provenance.get("activation") or parsed["activation"])
-                parsed["activation"] = activation \
-                    if activation in {"startup", "automatic", "explicit"} \
-                    else parsed["activation"]
-                if parsed["activation"] == "explicit":
-                    parsed["allow_implicit_invocation"] = False
+                # Bundled skills are an optional catalog, never a default
+                # workflow. Ignore stale startup/automatic provenance so an
+                # upgrade cannot restore silent activation. User-owned skill
+                # policies above remain unchanged.
+                parsed["activation"] = "explicit"
+                parsed["allow_implicit_invocation"] = False
                 records.append(parsed)
             except ExtensionError as exc:
                 errors.append(self._skill_error(skill_file.parent.name, "builtin", str(exc)))
@@ -1295,20 +1292,8 @@ class ExtensionManager:
         return "\n".join(lines) if len(lines) > 1 else ""
 
     def startup_skills(self, workspace: str = "") -> list[dict[str, Any]]:
-        """Return enabled trusted startup skills in deterministic policy order."""
-        return sorted(
-            (
-                item for item in self.skills(workspace)
-                if item.get("enabled")
-                and not item.get("error")
-                and item.get("builtin") is True
-                and item.get("activation") == "startup"
-            ),
-            key=lambda item: (
-                int((item.get("provenance") or {}).get("startup_order") or 1_000),
-                str(item.get("id") or ""),
-            ),
-        )
+        """Compatibility surface: Locus no longer injects startup skills."""
+        return []
 
     def explicit_skill_ids(self, text: str, workspace: str = "") -> list[str]:
         enabled = [item for item in self.skills(workspace) if item.get("enabled")]
