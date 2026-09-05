@@ -1604,6 +1604,22 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    func testInspectorResizeStartsFromRenderedWidthAndDoesNotCompoundTranslation() {
+        var drag = InspectorResizeDrag()
+        // The saved expanded-chat preference is 420, but only 396 fits beside
+        // the inspector in a 720-point window. The first point must move it.
+        XCTAssertEqual(drag.width(renderedWidth: 396, translation: -1, zoomed: true), 395)
+        XCTAssertEqual(drag.width(renderedWidth: 395, translation: -20, zoomed: true), 376)
+        XCTAssertEqual(drag.width(renderedWidth: 376, translation: -10, zoomed: true), 386)
+        drag.end()
+        XCTAssertEqual(drag.width(renderedWidth: 386, translation: 1, zoomed: true), 387)
+        drag.end()
+        // The normal inspector contracts on a rightward drag; its saved width
+        // can also exceed the available space and must not create a dead zone.
+        XCTAssertEqual(drag.width(renderedWidth: 316, translation: 1, zoomed: false), 315)
+        XCTAssertEqual(drag.width(renderedWidth: 315, translation: -10, zoomed: false), 326)
+    }
+
     func testInspectorWidthIsClampedToTheUsableRange() {
         XCTAssertEqual(AppSettings.clampInspectorWidth(0), 280)
         XCTAssertEqual(AppSettings.clampInspectorWidth(9999), 520)

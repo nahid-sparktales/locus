@@ -67,6 +67,41 @@ final class LocusUITests: XCTestCase {
         app.descendants(matching: .any)[identifier].firstMatch
     }
 
+    /// Compact windows intentionally present the sidebar on demand. Navigate
+    /// through the visible workspace control instead of assuming it is docked;
+    /// keep this local to tests that actually use the sidebar.
+    private func revealSidebarForNavigation(file: StaticString = #filePath, line: UInt = #line) {
+        let sidebar = anyElement("sidebar.newSession")
+        let restore = anyElement("workspace.showSidebar")
+        XCTAssertTrue(waitUntil { sidebar.exists || restore.exists }, file: file, line: line)
+        if !sidebar.exists {
+            XCTAssertTrue(waitUntilHittable(restore), file: file, line: line)
+            restore.click()
+        }
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 3), file: file, line: line)
+    }
+
+    /// Settings forms expose only visible rows on some macOS releases. Stop
+    /// at the requested control, not at a fixed scroll offset tied to one
+    /// window height, and retain an exact visible/hittable requirement.
+    private func revealSettingsControl(
+        _ target: XCUIElement,
+        in scroll: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(scroll.waitForExistence(timeout: 3), file: file, line: line)
+        for _ in 0..<16 {
+            let viewport = scroll.frame
+            if target.exists, viewport.contains(target.frame), target.isHittable { return }
+            let scrollUp = target.exists && target.frame.minY < viewport.minY
+            scroll.scroll(byDeltaX: 0, deltaY: scrollUp ? 100 : -100)
+        }
+        XCTAssertTrue(waitUntilHittable(target), file: file, line: line)
+        XCTAssertTrue(scroll.frame.contains(target.frame),
+            "The requested settings control must be fully inside its viewport", file: file, line: line)
+    }
+
     /// SwiftUI menu commands arrive as menu items on macOS 26 but can retain
     /// their underlying button or checkbox role on macOS 15. Match every role
     /// by either the stable identifier or native title; older AppKit can append
@@ -704,6 +739,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testClearSessionsPreservesTheActiveJob() {
+        revealSidebarForNavigation()
         anyElement("sidebar.more").click()
         let clearSessions = menuItem(
             "sidebar.clearSessions",
@@ -990,6 +1026,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSessionOrganizerMenus() {
+        revealSidebarForNavigation()
         let workspace = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@",
             "workspace.group.",
@@ -1027,11 +1064,13 @@ final class LocusUITests: XCTestCase {
     }
 
     func testArchivedSessionsFilter() {
+        revealSidebarForNavigation()
         app.typeKey("a", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
 
     func testSidebarCollapsesAndRestoresFromWorkspaceHeader() {
+        revealSidebarForNavigation()
         let collapse = anyElement("sidebar.collapse")
         XCTAssertTrue(collapse.waitForExistence(timeout: 3))
         collapse.click()
@@ -1045,6 +1084,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarDragAndDoubleClickResetItsWidth() {
+        revealSidebarForNavigation()
         let handle = anyElement("sidebar.resize")
         XCTAssertTrue(handle.waitForExistence(timeout: 3))
         let initialEdge = handle.frame.midX
@@ -1074,6 +1114,7 @@ final class LocusUITests: XCTestCase {
             "the workspace header should stay inside the compact unified title-bar band"
         )
 
+        revealSidebarForNavigation()
         let workspaceMenu = anyElement("sidebar.workspaceMenu")
         XCTAssertTrue(workspaceMenu.waitForExistence(timeout: 3))
         workspaceMenu.click()
@@ -1081,6 +1122,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["tmp"].exists)
         app.typeKey(.escape, modifierFlags: [])
 
+        if anyElement("workspace.showSidebar").exists {
+            // Put away the compact overlay before interacting with the chat
+            // underneath it; a docked sidebar remains untouched.
+            anyElement("sidebar.collapse").click()
+        }
         let composer = app.textViews["composer.input"]
         XCTAssertTrue(composer.exists)
         composer.click()
@@ -1568,12 +1614,13 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(developerPage.waitForExistence(timeout: 3))
         let browserPage = anyElement("settings.page.browser")
         browserPage.click()
-        anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -620)
+        let browserForm = anyElement("settings.browser.root")
         let browserControls = anyElement("settings.browser.advanced")
+        revealSettingsControl(browserControls, in: browserForm)
         XCTAssertTrue(browserControls.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntilHittable(browserControls))
         browserControls.click()
-        anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -420)
+        revealSettingsControl(anyElement("settings.browser.webInspector"), in: browserForm)
         XCTAssertTrue(anyElement("settings.browser.webInspector").waitForExistence(timeout: 3))
         anyElement("settings.navigation").scroll(byDeltaX: 0, deltaY: -900)
         XCTAssertTrue(waitUntilHittable(developerPage))
@@ -1622,6 +1669,7 @@ final class LocusUITests: XCTestCase {
         for (index, manager) in managers.enumerated() {
             if index > 0 { openBrowserSettings() }
             let link = anyElement("settings.browser.manager.\(manager.route)")
+            revealSettingsControl(link, in: anyElement("settings.browser.root"))
             XCTAssertTrue(link.waitForExistence(timeout: 3))
             XCTAssertTrue(waitUntilHittable(link))
             link.click()
@@ -1722,6 +1770,7 @@ final class LocusUITests: XCTestCase {
             anyElement("workspace.workStatus").exists,
             "idle operational status should stay out of the transcript"
         )
+        revealSidebarForNavigation()
         XCTAssertTrue(anyElement("sidebar.agentStatus").exists)
         XCTAssertFalse(anyElement("workspace.agentStatus").exists)
         XCTAssertFalse(anyElement("workspace.modelStatus").exists)
@@ -2023,6 +2072,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarPlacesAgentWorkAndCreationControlsBelowTheBrand() {
+        revealSidebarForNavigation()
         let brand = anyElement("sidebar.brand")
         let destination = anyElement("sidebar.destination")
         let ask = app.buttons["sidebar.mode.ask"]
@@ -2076,6 +2126,7 @@ final class LocusUITests: XCTestCase {
 
     func testAgentDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         let identity = anyElement("agentOverview.identity")
         XCTAssertTrue(identity.waitForExistence(timeout: Self.launchContentTimeout))
@@ -2178,6 +2229,7 @@ final class LocusUITests: XCTestCase {
 
     func testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet() {
         relaunchWithAgentFixture("fleet")
+        revealSidebarForNavigation()
 
         // The schedule's dedicated chat groups under the schedule like any agent.
         let group = anyElement("agent.seed-schedule")
@@ -2232,6 +2284,7 @@ final class LocusUITests: XCTestCase {
 
     func testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet() {
         relaunchWithAgentFixture("fleet")
+        revealSidebarForNavigation()
 
         // The fixture's third agent was switched off by Locus after a failure.
         let stopped = anyElement("agent.seed-stopped-agent")
@@ -2263,6 +2316,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testAgentAndWorkDestinationsKeepConversationWorkControlsAvailable() {
+        revealSidebarForNavigation()
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
         XCTAssertTrue(ask.waitForExistence(timeout: 3))
@@ -2340,6 +2394,7 @@ final class LocusUITests: XCTestCase {
         app.menuItems["inspector.rail.menu.agents"].click()
         XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
 
+        revealSidebarForNavigation()
         let settingsMenu = anyElement("sidebar.more")
         XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
         settingsMenu.click()
@@ -2497,32 +2552,36 @@ final class LocusUITests: XCTestCase {
 
         let originalDividerX = handle.frame.midX
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // Compact layouts begin at the maximum available chat width. First
+        // move inward, then reverse within that space; do not demand travel
+        // beyond the inspector's minimum width.
         start.press(
             forDuration: 0.1,
-            thenDragTo: start.withOffset(CGVector(dx: 60, dy: 0))
-        )
-        let dividerMovedRight = NSPredicate { candidate, _ in
-            guard let element = candidate as? XCUIElement else { return false }
-            return element.frame.midX > originalDividerX + 20
-        }
-        expectation(for: dividerMovedRight, evaluatedWith: handle)
-        waitForExpectations(timeout: 3)
-
-        let rightwardDividerX = handle.frame.midX
-        let secondStart = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        secondStart.press(
-            forDuration: 0.1,
-            thenDragTo: secondStart.withOffset(CGVector(dx: -30, dy: 0))
+            thenDragTo: start.withOffset(CGVector(dx: -30, dy: 0))
         )
         let dividerMovedLeft = NSPredicate { candidate, _ in
             guard let element = candidate as? XCUIElement else { return false }
-            return element.frame.midX < rightwardDividerX - 10
+            return element.frame.midX < originalDividerX - 20
         }
         expectation(for: dividerMovedLeft, evaluatedWith: handle)
+        waitForExpectations(timeout: 3)
+
+        let leftwardDividerX = handle.frame.midX
+        let secondStart = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        secondStart.press(
+            forDuration: 0.1,
+            thenDragTo: secondStart.withOffset(CGVector(dx: 20, dy: 0))
+        )
+        let dividerMovedRight = NSPredicate { candidate, _ in
+            guard let element = candidate as? XCUIElement else { return false }
+            return element.frame.midX > leftwardDividerX + 10
+        }
+        expectation(for: dividerMovedRight, evaluatedWith: handle)
         waitForExpectations(timeout: 3)
         let persistedDividerX = handle.frame.midX
 
         zoom.click()
+        revealSidebarForNavigation()
         XCTAssertTrue(anyElement("sidebar.brand").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("browser.url").exists)
         XCTAssertEqual(handle.label, "Inspector width")
@@ -2636,6 +2695,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarSearchIsRevealedFromTheWorkspacesHeader() {
+        revealSidebarForNavigation()
         let toggle = anyElement("sidebar.search.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 3))
         // The field is put away until asked for; the sidebar no longer spends
@@ -2992,6 +3052,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testNotebookOpensFromTheSidebarMenuAndListsStoredNotes() throws {
+        revealSidebarForNavigation()
         anyElement("sidebar.more").click()
         let item = menuItem("sidebar.notebook", title: "Notebook")
         XCTAssertTrue(item.waitForExistence(timeout: 3))
@@ -3626,6 +3687,7 @@ final class LocusUITests: XCTestCase {
 
     func testActivityDestinationShowsBackgroundRunAndReturnsToChat() {
         relaunchWithRunFixture("activity")
+        revealSidebarForNavigation()
 
         let destination = anyElement("sidebar.activity")
         let newChat = anyElement("sidebar.newSession")
@@ -3679,6 +3741,7 @@ final class LocusUITests: XCTestCase {
 
     func testOrphanedRecoveryOffersIndividualAndBulkClear() {
         relaunchWithRunFixture("orphaned-activity")
+        revealSidebarForNavigation()
 
         let destination = anyElement("sidebar.activity")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
@@ -3696,6 +3759,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
+        revealSidebarForNavigation()
         let configureAgent = anyElement("sidebar.configureAgent")
         XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))
         configureAgent.click()
@@ -3738,6 +3802,7 @@ final class LocusUITests: XCTestCase {
 
     func testSavedConfigurationsLiveOnTheAgentsTab() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
@@ -3753,6 +3818,7 @@ final class LocusUITests: XCTestCase {
 
     func testAgentEventQueueFanOutAndSharedLimitAreVisible() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
@@ -3775,6 +3841,7 @@ final class LocusUITests: XCTestCase {
         composer.click()
         composer.typeText("When bitcoin hits 100k run the safety plan")
 
+        revealSidebarForNavigation()
         anyElement("sidebar.configureAgent").click()
 
         XCTAssertTrue(anyElement("configureAgent.draftSuggestion").waitForExistence(timeout: 3))
@@ -3795,6 +3862,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testConfigureAgentCreationCardsOpenChildSheetsAndReturnToHub() {
+        revealSidebarForNavigation()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
 

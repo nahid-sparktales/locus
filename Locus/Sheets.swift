@@ -2378,9 +2378,10 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.worktreeRetentionLimit")
 
                 Text("Events for one chat wait in arrival order. Choose 1 for fully sequential processing. Different chats share this limit; worktrees isolate concurrent edits in the same Git repository.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.maximumActiveChats.explanation")
                 }
                 .id("settings.maximumActiveChats")
 

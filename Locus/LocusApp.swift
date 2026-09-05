@@ -763,7 +763,8 @@ struct RootView: View {
                     .ignoresSafeArea(.container, edges: .top)
 
                     if docksInspector {
-                        InspectorView()
+                        InspectorView(resizeWidth: model.inspectorZoomed
+                            ? zoomedWorkspaceWidth : dockedInspectorWidth)
                             .frame(
                                 minWidth: model.inspectorZoomed
                                     ? minimumInspectorWidth
@@ -787,7 +788,7 @@ struct RootView: View {
                 }
 
                 if inspectorOpen && !docksInspector {
-                    InspectorView()
+                    InspectorView(resizeWidth: min(model.inspectorWidth, proxy.size.width - railWidth))
                         .frame(width: min(model.inspectorWidth, proxy.size.width - railWidth))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                         .padding(.trailing, railWidth)
