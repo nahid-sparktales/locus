@@ -208,6 +208,81 @@ final class WalletEVMReceiptReconciliationTests: XCTestCase {
         }
     }
 
+    func testSettlementCodeSelectionIgnoresMoreThanSixteenUnrelatedPoolIdentities() throws {
+        for version in [WalletUniversalRouterSwapProtocol.v2, .v3] {
+            let fixture = try swapFixture(version, multiple: true)
+            // All these pools mention route tokens, so the old any-token-pair
+            // filter wrongly counted them toward the 16-code-identity ceiling.
+            // Their unrelated hashes must never participate in this settlement.
+            let differentHash = "0x" + String(repeating: "d", count: 64)
+            var irrelevant = (1...15).map { tier in
+                WalletReviewedUniswapPoolIdentity(protocolVersion: .v3,
+                    address: numberedAddress(100 + tier), runtimeCodeHash: differentHash,
+                    token0AssetID: asset(token), token1AssetID: asset(output), feeTier: UInt32(tier))
+            }
+            irrelevant.append(.init(protocolVersion: .v2, address: numberedAddress(200),
+                runtimeCodeHash: differentHash, token0AssetID: asset(token), token1AssetID: asset(output), feeTier: nil))
+            for (index, adjacent) in fixture.configuration.pools.enumerated() {
+                irrelevant.append(.init(protocolVersion: version == .v2 ? .v3 : .v2,
+                    address: numberedAddress(210 + index), runtimeCodeHash: differentHash,
+                    token0AssetID: adjacent.token0AssetID, token1AssetID: adjacent.token1AssetID,
+                    feeTier: version == .v2 ? 3000 : nil))
+            }
+            XCTAssertGreaterThan(irrelevant.count, 16)
+            let configuration = replacingPools(fixture.configuration,
+                pools: irrelevant + fixture.configuration.pools.reversed())
+            let selected = try WalletSubmittedTransactionReconciler.reviewedSettlementPools(
+                for: fixture.action, configuration: configuration)
+            XCTAssertEqual(selected, fixture.configuration.pools)
+            XCTAssertEqual(selected.count, 2)
+            XCTAssertTrue(selected.allSatisfy { $0.runtimeCodeHash == transactionHash })
+            XCTAssertEqual(try reconcile(fixture.action, transaction: fixture.transaction,
+                receipt: receipt(to: router, logs: fixture.logs), configuration: configuration),
+                .confirmed(blockNumber: "0x5", finalized: false))
+        }
+    }
+
+    func testSettlementCodeSelectionRejectsMissingAmbiguousAndWrongFeeHops() throws {
+        let fixture = try swapFixture(.v3, multiple: true)
+        let first = try XCTUnwrap(fixture.configuration.pools.first)
+        let wrongTier = WalletReviewedUniswapPoolIdentity(protocolVersion: .v3,
+            address: numberedAddress(300), runtimeCodeHash: transactionHash,
+            token0AssetID: first.token0AssetID, token1AssetID: first.token1AssetID, feeTier: 500)
+        let ambiguous = WalletReviewedUniswapPoolIdentity(protocolVersion: .v3,
+            address: numberedAddress(301), runtimeCodeHash: transactionHash,
+            token0AssetID: first.token0AssetID, token1AssetID: first.token1AssetID, feeTier: 3000)
+        let cases = [
+            Array(fixture.configuration.pools.dropFirst()),
+            [wrongTier] + fixture.configuration.pools.dropFirst(),
+            fixture.configuration.pools + [ambiguous],
+        ]
+        for pools in cases {
+            let configuration = replacingPools(fixture.configuration, pools: pools)
+            XCTAssertThrowsError(try WalletSubmittedTransactionReconciler.reviewedSettlementPools(
+                for: fixture.action, configuration: configuration))
+            assertFailed(try reconcile(fixture.action, transaction: fixture.transaction,
+                receipt: receipt(to: router, logs: fixture.logs), configuration: configuration))
+        }
+        let withUnusedTier = replacingPools(fixture.configuration, pools: [wrongTier] + fixture.configuration.pools)
+        XCTAssertEqual(try WalletSubmittedTransactionReconciler.reviewedSettlementPools(
+            for: fixture.action, configuration: withUnusedTier), fixture.configuration.pools)
+    }
+
+    private func numberedAddress(_ value: Int) -> String {
+        let hex = String(value, radix: 16)
+        return "0x" + String(repeating: "0", count: 40 - hex.count) + hex
+    }
+
+    private func replacingPools(_ configuration: WalletReviewedUniswapConfiguration,
+                                pools: [WalletReviewedUniswapPoolIdentity]) -> WalletReviewedUniswapConfiguration {
+        WalletReviewedUniswapConfiguration(networkID: configuration.networkID,
+            universalRouterContractID: configuration.universalRouterContractID,
+            permit2ContractID: configuration.permit2ContractID, contracts: configuration.contracts,
+            pools: pools, allowedIntermediaryAssetIDs: configuration.allowedIntermediaryAssetIDs,
+            allowedFeeTiers: Set([3000] + (1...15).map(UInt32.init)), maximumHops: configuration.maximumHops,
+            zeroFirstApprovalAssetIDs: configuration.zeroFirstApprovalAssetIDs)
+    }
+
     private var fixtureAccount: WalletAccount {
         WalletAccount(id: "external", chain: .evm, address: owner, label: "Fixture",
             networkIDs: [network.id], ownership: .external(connectorID: .metamask))

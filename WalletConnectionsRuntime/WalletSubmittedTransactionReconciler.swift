@@ -125,8 +125,7 @@ enum WalletSubmittedTransactionReconciler {
                 guard let reviewedSwapConfiguration else {
                     throw WalletRPCError.invalidResponse("Reviewed swap settlement identities are unavailable.")
                 }
-                for pool in reviewedSwapConfiguration.pools where route.pathAssetIDs.contains(pool.token0AssetID)
-                    && route.pathAssetIDs.contains(pool.token1AssetID) {
+                for pool in try reviewedSettlementPools(for: expectedAction, configuration: reviewedSwapConfiguration) {
                     identities[pool.address.lowercased()] = pool.runtimeCodeHash
                 }
             }
@@ -551,6 +550,47 @@ enum WalletSubmittedTransactionReconciler {
         return (true, magnitude)
     }
 
+    /// Both mined-code checks and pool events must resolve precisely the same
+    /// adjacent hops. Unused protocols, fee tiers and token pairs confer no
+    /// settlement authority and must not affect a successful route's checks.
+    static func reviewedSettlementPools(
+        for action: WalletSemanticAction,
+        configuration: WalletReviewedUniswapConfiguration
+    ) throws -> [WalletReviewedUniswapPoolIdentity] {
+        guard action.type == .exactInputSwap, let route = action.swapRoute,
+              configuration.universalRouterContractID == action.contractID,
+              (2...4).contains(route.pathAssetIDs.count),
+              (1...3).contains(configuration.maximumHops),
+              route.pathAssetIDs.count - 1 <= configuration.maximumHops,
+              configuration.pools.count <= 512,
+              Set(route.pathAssetIDs).count == route.pathAssetIDs.count,
+              route.protocolVersion == .v2 ? route.feeTiers.isEmpty : route.feeTiers.count == route.pathAssetIDs.count - 1 else {
+            throw WalletRPCError.invalidResponse("The reviewed settlement route is malformed.")
+        }
+        let identities = route.pathAssetIDs.compactMap(WalletEVMAssetIdentity.parse)
+        guard identities.count == route.pathAssetIDs.count,
+              identities.allSatisfy({ $0.networkID == configuration.networkID && $0.standard == .erc20 }) else {
+            throw WalletRPCError.invalidResponse("The settlement route does not match its reviewed network and token identities.")
+        }
+        var selected: [WalletReviewedUniswapPoolIdentity] = []
+        var addresses: Set<String> = []
+        for hop in 0..<(route.pathAssetIDs.count - 1) {
+            let pair = Set([route.pathAssetIDs[hop], route.pathAssetIDs[hop + 1]])
+            let candidates = configuration.pools.filter { pool in
+                pool.protocolVersion == route.protocolVersion
+                    && Set([pool.token0AssetID, pool.token1AssetID]) == pair
+                    && (route.protocolVersion == .v2 ? pool.feeTier == nil : pool.feeTier == route.feeTiers[hop])
+            }
+            guard candidates.count == 1, let pool = candidates.first,
+                  abiAddressWord(pool.address) != nil, isHash(pool.runtimeCodeHash),
+                  addresses.insert(pool.address.lowercased()).inserted else {
+                throw WalletRPCError.invalidResponse("A settlement hop is missing, ambiguous or reuses a pool identity.")
+            }
+            selected.append(pool)
+        }
+        return selected
+    }
+
     private static func swapEffectsMatch(
         _ logs: [EVMLog], account: String, action: WalletSemanticAction,
         router: String, configuration: WalletReviewedUniswapConfiguration?
@@ -564,18 +604,9 @@ enum WalletSubmittedTransactionReconciler {
               route.protocolVersion == .v2 ? route.feeTiers.isEmpty : route.feeTiers.count == route.pathAssetIDs.count - 1,
               let amount = action.amountBaseUnits, let minimum = action.minimumOutputBaseUnits,
               let recipient = action.recipient?.lowercased() else { return false }
-        var pools: [WalletReviewedUniswapPoolIdentity] = []
         let tokens = route.pathAssetIDs.compactMap { WalletEVMAssetIdentity.parse($0)?.contractAddress.lowercased() }
-        guard tokens.count == route.pathAssetIDs.count else { return false }
-        for hop in 0..<(tokens.count - 1) {
-            let candidates = configuration.pools.filter {
-                $0.protocolVersion == route.protocolVersion
-                    && Set([$0.token0AssetID, $0.token1AssetID]) == Set([route.pathAssetIDs[hop], route.pathAssetIDs[hop + 1]])
-                    && (route.protocolVersion == .v2 || $0.feeTier == route.feeTiers[hop])
-            }
-            guard candidates.count == 1, let pool = candidates.first else { return false }
-            pools.append(pool)
-        }
+        guard tokens.count == route.pathAssetIDs.count,
+              let pools = try? reviewedSettlementPools(for: action, configuration: configuration) else { return false }
         let swaps = logs.filter { $0.topics.first == v2SwapEvent || $0.topics.first == v3SwapEvent }
         guard swaps.count == pools.count else { return false }
         var expectedMovements: [TokenMovement] = []
