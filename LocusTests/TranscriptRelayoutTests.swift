@@ -194,6 +194,85 @@ final class TranscriptRelayoutTests: XCTestCase {
         XCTAssertEqual(sampler.samples[0], 2, accuracy: 0.0001)
     }
 
+    func testCompactComposerWrapsEveryControlInsideItsActualWorkspaceWidth() {
+        let controls: [CGSize] = [
+            CGSize(width: 72, height: 30), // Context.
+            CGSize(width: 30, height: 30), // Attachment.
+            CGSize(width: 68, height: 30), // Permission, never hidden.
+            CGSize(width: 38, height: 24), // Plan.
+            CGSize(width: 38, height: 24), // Grill.
+            CGSize(width: 108, height: 24), // Selected team.
+            CGSize(width: 142, height: 32), // Voice and primary action.
+        ]
+        let available = CGFloat(360 - 48 - 20) // Workspace, card and toolbar padding.
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: available)
+        XCTAssertEqual(result.size.width, available)
+        XCTAssertEqual(result.size.height, 68)
+        XCTAssertEqual(result.frames.count, controls.count)
+        for (index, frame) in result.frames.enumerated() {
+            XCTAssertEqual(frame.size, controls[index], "No control may be shrunk or dropped to fit")
+            XCTAssertGreaterThanOrEqual(frame.minX, 0)
+            XCTAssertLessThanOrEqual(frame.maxX, available)
+            XCTAssertGreaterThanOrEqual(frame.minY, 0)
+            XCTAssertLessThanOrEqual(frame.maxY, result.size.height)
+            for other in result.frames.dropFirst(index + 1) {
+                XCTAssertFalse(frame.intersects(other), "Wrapping controls must never overlap")
+            }
+        }
+        XCTAssertEqual(result.frames.last?.maxX, available, "Send/Stop stays at the trailing edge")
+    }
+
+    func testWideComposerKeepsOneRowAndTrailingActionWithoutReordering() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: 672)
+        XCTAssertEqual(result.size, CGSize(width: 672, height: 32))
+        XCTAssertEqual(result.frames.map(\.midY), [16, 16, 16])
+        XCTAssertEqual(result.frames.map(\.minX), [0, 78, 530])
+    }
+
+    func testComposerReproposesLongTeamNamesAndHandlesUnboundedMeasurementProbes() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 2_000, height: 24),
+                        CGSize(width: 142, height: 32)]
+        for proposal: CGFloat? in [292, 0, nil, .infinity, -.infinity, .nan] {
+            var remeasuredIndices: [Int] = []
+            let result = ComposerActionMetrics.measure(
+                idealSizes: controls, minimumWidth: 142, proposedWidth: proposal
+            ) { index, width in
+                remeasuredIndices.append(index)
+                XCTAssertEqual(index, 1, "Only the long team label needs a narrower proposal")
+                return CGSize(width: width, height: controls[index].height)
+            }
+            XCTAssertEqual(remeasuredIndices, [1])
+            XCTAssertTrue(result.size.width.isFinite)
+            XCTAssertTrue(result.size.height.isFinite)
+            XCTAssertGreaterThanOrEqual(result.size.width, 142)
+            XCTAssertEqual(result.frames.first?.minX, 0)
+            XCTAssertEqual(result.frames.last?.maxX, result.size.width)
+            XCTAssertEqual(result.frames.last?.size, controls.last, "Voice and Send/Stop remain a group")
+            XCTAssertEqual(result.frames.count, controls.count)
+            for frame in result.frames {
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertLessThanOrEqual(frame.maxX, result.size.width)
+            }
+        }
+    }
+
+    func testComposerWrappingMirrorsGeometryButKeepsControlIdentityOrder() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let leftToRight = ComposerActionMetrics.arrange(sizes: controls, width: 292)
+        let rightToLeft = ComposerActionMetrics.arrange(sizes: controls, width: 292, rightToLeft: true)
+        XCTAssertEqual(leftToRight.size, rightToLeft.size)
+        for index in controls.indices {
+            XCTAssertEqual(rightToLeft.frames[index].size, leftToRight.frames[index].size)
+            XCTAssertEqual(rightToLeft.frames[index].minX, 292 - leftToRight.frames[index].maxX)
+            XCTAssertEqual(rightToLeft.frames[index].minY, leftToRight.frames[index].minY)
+        }
+        XCTAssertEqual(rightToLeft.frames.last?.minX, 0)
+        XCTAssertEqual(ComposerActionMetrics.arrange(sizes: [], width: 292).size.height, 0)
+    }
+
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
         let initial = MarkdownNativeText.plain(
             Self.longProse,

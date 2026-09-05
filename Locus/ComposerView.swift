@@ -111,6 +111,120 @@ private struct ComposerEditorLayout: Layout {
     }
 }
 
+/// Shared pure geometry for the toolbar's measured controls. A narrow workspace
+/// adds rows instead of allowing the controls' summed ideal width to resize the
+/// editor. Source order is retained for keyboard and accessibility navigation.
+enum ComposerActionMetrics {
+    struct Arrangement {
+        let size: CGSize
+        let frames: [CGRect]
+    }
+
+    static func measure(
+        idealSizes: [CGSize],
+        minimumWidth: CGFloat,
+        proposedWidth: CGFloat?,
+        rightToLeft: Bool = false,
+        remeasure: (Int, CGFloat) -> CGSize
+    ) -> Arrangement {
+        // SwiftUI probes zero, nil and infinity. Report the widest control's
+        // minimum, not the sum of every control, and never return infinity.
+        // 720 is the maximum 740-point card minus its toolbar's side padding.
+        let idealWidth = idealSizes.reduce(CGFloat(0)) { total, size in
+            min(total + (size.width.isFinite ? max(size.width, 0) : 720) + 6, 726)
+        } - (idealSizes.isEmpty ? 0 : 6)
+        let finiteProposal = proposedWidth.flatMap { $0.isFinite ? $0 : nil }
+        let minimum = minimumWidth.isFinite ? max(minimumWidth, 0) : 0
+        let width = max(finiteProposal ?? idealWidth, minimum, 0)
+        let sizes = idealSizes.enumerated().map { index, ideal in
+            ideal.width.isFinite && ideal.width <= width
+                ? ideal : remeasure(index, width)
+        }
+        return arrange(sizes: sizes, width: width, rightToLeft: rightToLeft)
+    }
+
+    static func arrange(
+        sizes: [CGSize],
+        width: CGFloat,
+        spacing: CGFloat = 6,
+        pinsLastToTrailing: Bool = true,
+        rightToLeft: Bool = false
+    ) -> Arrangement {
+        let availableWidth = max(width, 0)
+        guard !sizes.isEmpty else {
+            return Arrangement(size: CGSize(width: availableWidth, height: 0), frames: [])
+        }
+        var frames: [CGRect] = []
+        var rowStart = 0
+        var rowHeight: CGFloat = 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+
+        func alignRow(endingAt end: Int) {
+            for index in rowStart..<end {
+                frames[index].origin.y += (rowHeight - frames[index].height) / 2
+            }
+        }
+
+        for size in sizes {
+            if x > 0, x + size.width > availableWidth {
+                alignRow(endingAt: frames.count)
+                y += rowHeight + spacing
+                rowStart = frames.count
+                rowHeight = 0
+                x = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        alignRow(endingAt: frames.count)
+        if pinsLastToTrailing {
+            let last = frames.count - 1
+            frames[last].origin.x = max(frames[last].minX, availableWidth - frames[last].width)
+        }
+        if rightToLeft {
+            for index in frames.indices {
+                frames[index].origin.x = availableWidth - frames[index].maxX
+            }
+        }
+        return Arrangement(
+            size: CGSize(width: availableWidth, height: y + rowHeight),
+            frames: frames
+        )
+    }
+}
+
+private struct ComposerActionLayout: Layout {
+    let rightToLeft: Bool
+
+    private func arrangement(subviews: Subviews, width: CGFloat?) -> ComposerActionMetrics.Arrangement {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        let minimumWidth = subviews.map { $0.sizeThatFits(.zero).width }.max() ?? 0
+        return ComposerActionMetrics.measure(
+            idealSizes: ideal, minimumWidth: minimumWidth, proposedWidth: width,
+            rightToLeft: rightToLeft
+        ) { index, availableWidth in
+            subviews[index].sizeThatFits(ProposedViewSize(width: availableWidth, height: nil))
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(subviews: subviews, width: proposal.width).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let layout = arrangement(subviews: subviews, width: bounds.width)
+        for (index, frame) in layout.frames.enumerated() {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(frame.size)
+            )
+        }
+    }
+}
+
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var composerState: ComposerStateModel
@@ -125,6 +239,7 @@ struct ComposerView: View {
     @Environment(\.locusCommandRouter) private var commandRouter
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.layoutDirection) private var layoutDirection
     @State private var contextPresented = false
     @State private var permissionModesPresented = false
     @State private var teamPickerPresented = false
@@ -683,7 +798,7 @@ struct ComposerView: View {
     }
 
     private var modeControls: some View {
-        HStack(spacing: 3) {
+        Group {
             ForEach([WorkMode.plan, WorkMode.grill]) { mode in
                 Button {
                     model.selectedMode = model.selectedMode == mode ? .work : mode
@@ -701,7 +816,6 @@ struct ComposerView: View {
                 .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
             }
-            Divider().frame(height: 16).padding(.horizontal, 4)
             Button {
                 teamPickerPresented.toggle()
             } label: {
@@ -719,7 +833,7 @@ struct ComposerView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .buttonStyle(.locus())
-            .fixedSize()
+            .fixedSize(horizontal: false, vertical: true)
             .popover(isPresented: $teamPickerPresented, arrowEdge: .bottom) {
                 ComposerTeamPickerPopover(
                     dismiss: { teamPickerPresented = false },
@@ -744,7 +858,7 @@ struct ComposerView: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 6) {
+        ComposerActionLayout(rightToLeft: layoutDirection == .rightToLeft) {
             if model.justChatEnabled {
                 Button {
                     contextPresented.toggle()
@@ -829,17 +943,20 @@ struct ComposerView: View {
                     .disabled(true)
                     .help("iOS Simulator control is unavailable in Just Chat")
             } else {
-                Divider()
-                    .frame(height: 17)
-                    .padding(.horizontal, 1)
                 modeControls
-                    .fixedSize()
-                    .layoutPriority(2)
                     .transition(LocusMotion.transition(edge: .leading, reduceMotion: reduceMotion))
             }
 
-            Spacer()
+            primaryActionControls
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
 
+    /// Keep the primary action visible next to voice controls on every row.
+    /// This is one stable subtree, not duplicated alternatives in ViewThatFits.
+    private var primaryActionControls: some View {
+        HStack(spacing: 6) {
             if model.settings.voiceControlsEnabled {
                 VoiceComposerButtons(voice: voiceControl)
                     .environmentObject(model)
@@ -953,8 +1070,6 @@ struct ComposerView: View {
                 .accessibilityIdentifier("composer.send")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
     }
 
     /// Always-visible reminder of what the agent may do without asking, and
