@@ -4,11 +4,13 @@ import XCTest
 private final class OrchestrationURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var recordedURLs: [URL] = []
+    private static var requestObserver: ((URL) -> Void)?
     static var responseDelay: (URL) -> TimeInterval = { _ in 0 }
 
     static func reset() {
         lock.lock()
         recordedURLs = []
+        requestObserver = nil
         responseDelay = { _ in 0 }
         lock.unlock()
     }
@@ -19,6 +21,16 @@ private final class OrchestrationURLProtocol: URLProtocol {
         return recordedURLs
     }
 
+    static func observeRequests(_ observer: ((URL) -> Void)?) {
+        lock.lock()
+        requestObserver = observer
+        let existing = recordedURLs
+        lock.unlock()
+        // Registration and the snapshot are atomic with request recording, so
+        // a request cannot fall between the already-seen and future sets.
+        if let observer { existing.forEach(observer) }
+    }
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -27,7 +39,9 @@ private final class OrchestrationURLProtocol: URLProtocol {
         Self.lock.lock()
         Self.recordedURLs.append(url)
         let delay = Self.responseDelay(url)
+        let observer = Self.requestObserver
         Self.lock.unlock()
+        observer?(url)
 
         let complete = { [weak self] in
             guard let self else { return }
@@ -229,6 +243,30 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    private func waitForOrchestrationRefresh(
+        runID: String = "run-1"
+    ) async {
+        // session_info also starts unrelated metadata requests. A total request
+        // count can reach three before the incremental events fetch has begun.
+        var pendingPaths: Set<String> = [
+            "/api/orchestrations",
+            "/api/orchestrations/\(runID)",
+            "/api/orchestrations/\(runID)/events",
+        ]
+        let requested = expectation(description: "All three orchestration refresh endpoints requested")
+        requested.expectedFulfillmentCount = pendingPaths.count
+        let observationLock = NSLock()
+        OrchestrationURLProtocol.observeRequests { url in
+            observationLock.lock()
+            let isFirstRequest = pendingPaths.remove(url.path) != nil
+            observationLock.unlock()
+            if isFirstRequest { requested.fulfill() }
+        }
+        defer { OrchestrationURLProtocol.observeRequests(nil) }
+        await fulfillment(of: [requested], timeout: 1)
+    }
+
+    @MainActor
     func testDuplicateSessionInfoAndCompletionPerformOneIncrementalRefresh() async throws {
         let model = orchestrationModel()
         await model.loadOrchestrationRun("run-1")
@@ -248,9 +286,7 @@ final class AppModelTests: XCTestCase {
         model.handleEventForTesting(completed)
         model.handleEventForTesting(completed)
 
-        for _ in 0..<50 where OrchestrationURLProtocol.requests.count < 3 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        await waitForOrchestrationRefresh()
         let urls = OrchestrationURLProtocol.requests
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
@@ -332,9 +368,7 @@ final class AppModelTests: XCTestCase {
         model.openTeamRun("run-1")
         model.openTeamRun("run-1")
 
-        for _ in 0..<50 where OrchestrationURLProtocol.requests.count < 3 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        await waitForOrchestrationRefresh()
         let urls = OrchestrationURLProtocol.requests
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations" }.count, 1)
         XCTAssertEqual(urls.filter { $0.path == "/api/orchestrations/run-1" }.count, 1)
