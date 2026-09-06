@@ -2547,7 +2547,13 @@ private struct ConversationView: View {
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
-                .background { TranscriptSelectionScope() }
+                .background {
+                    // AppKit's pass-through overrides do not exclude the
+                    // representable's SwiftUI host from hit testing.
+                    TranscriptSelectionScope()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 // Like the selection scope, the bridge must live inside the
                 // scroll content: from the ScrollView's own background the
                 // anchor is a sibling of the platform scroll view, so
@@ -2566,6 +2572,8 @@ private struct ConversationView: View {
                         },
                         realizePredecessor: realizePredecessor
                     )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                     #else
                     TranscriptScrollBridge(
                         coordinator: scrollCoordinator,
@@ -2577,6 +2585,8 @@ private struct ConversationView: View {
                         },
                         realizePredecessor: realizePredecessor
                     )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                     #endif
                 }
                 .frame(maxWidth: 780)
@@ -2672,8 +2682,12 @@ private struct ConversationView: View {
             .background {
                 if item.id == token.tailID {
                     TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .content)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 } else if row.index == transcript.items.count - 2 {
                     TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .predecessor)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
         return VStack(alignment: .leading, spacing: 0) {
@@ -2755,6 +2769,8 @@ private struct ConversationView: View {
             .id(id)
             .background {
                 TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .end)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
     }
 
