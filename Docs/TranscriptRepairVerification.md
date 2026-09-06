@@ -4,6 +4,40 @@ Engineering checkpoint, 2026-09-06. This focused repair does not activate wallet
 authority, satisfy wallet GA evidence, or constitute a release approval.
 The original `/Users/nahid/Documents/locus` checkout remains untouched.
 
+## Latest checkpoint
+
+Clean `def243c31453ef53ed77bccbf3c934359f73eab6` passed the complete local native
+inventory: 1,308 tests executed once, zero failures, skips, missing cases or
+duplicates. The two macOS viewport/glyph calibration regressions also passed
+in a separate identified execution; they are not added to that suite's count.
+This is local macOS 26 evidence, not a hosted macOS 15 or full UI-matrix pass.
+
+The preceding hosted PR merge `961f139d52c05244b08fdf44fa8fe60e4d2d500f`
+(head `c1c4653ba84406bf0c9562c2c1b7034f58ce43b7`) passed 1,306 of 1,308 native
+tests. Its two failures were fixture measurements: legacy scrollers reserve
+part of the fixed transcript column, and a guessed point missed the selected
+text before the overlay was installed. `def243c` measures the actual viewport
+and selected glyph, preserving actual visibility and exact control ownership
+requirements. Fresh hosted results must verify these corrections.
+
+The local full UI attempt on clean `c1c4653` built successfully but executed
+zero tests: macOS required authentication to enable the automation writer
+daemon. That failed result is retained. No permission bypass or alternate
+runner identity was used, and the successful earlier targeted UI3 is not
+substituted for the missing full suite.
+
+The completed hosted UI run on PR merge `961f139` passed all 142 requested
+tests once, with zero failures, skips or retries. Its verified native profile
+is macOS 15 `compact-light-motion`; the invoked configuration remained unchanged
+and all result extractions succeeded. This is the complete suite for that
+profile, not the entire cross-OS/accessibility matrix.
+
+Hosted Python, mobile, signer/dependency checks and all five Rust fuzz targets
+passed on the preceding PR merge. All eight Swift fuzz targets failed replay;
+their retained failures remain blocking. Skipped native-job downstream
+chain/release steps are not passes. The PR must
+remain unmerged until the final revision has all required passing results.
+
 ## Changes
 
 - Conversation identity and message snapshots commit together. Internal
@@ -34,6 +68,12 @@ The original `/Users/nahid/Documents/locus` checkout remains untouched.
   in the same frame. An inspector's Stop button cannot satisfy the transcript
   test. The six original follow-test bodies and three-second deadlines remain
   unchanged. Diagnostics are bounded and fixture-only, without message content.
+- Invisible selection, scrolling and tail-measurement representable hosts are
+  excluded from SwiftUI hit testing and accessibility. Their native callbacks
+  still run; actual transcript text and controls remain interactive. Native
+  pass-through overrides alone did not exclude the enclosing SwiftUI hosts.
+  The unchanged normal-view click/selection UI3 verifies this correction with
+  diagnostic hit probes disabled.
 - Compact sidebar hosting preserves the native observation/focus environment.
   The optional decorative diagnostic view no longer intercepts accessibility or
   pointer hits and is absent unless explicitly enabled in a fixture. Search and
