@@ -3121,6 +3121,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private var selectionViewportOwnership: SelectionViewportOwnership?
+    private var isRestoringSelectionViewport = false
     private weak var scrollView: NSScrollView?
     private weak var documentView: NSView?
     private var observers: [NSObjectProtocol] = []
@@ -3463,6 +3464,17 @@ final class TranscriptScrollCoordinator: ObservableObject {
             object: candidate.contentView,
             queue: .main
         ) { [weak self] _ in
+            // Reader-owned glyphs must not visibly move while a queued
+            // container acknowledgement waits behind native scroll anchoring.
+            // Admit only the measured selection correction synchronously;
+            // ordinary observable state publication remains deferred below.
+            MainActor.assumeIsolated {
+                guard let self, self.attachmentRevision == attachment,
+                      let token = self.renderToken else { return }
+                self.restoreSelectionViewportAfterLayout(
+                    token: token, attachment: attachment, publishDerivedState: false
+                )
+            }
             Task { @MainActor [weak self] in
                 guard let self, self.attachmentRevision == attachment else { return }
                 self.boundsChanged()
@@ -3607,7 +3619,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
         )
     }
 
-    private func restoreSelectionViewportAfterLayout(token: TranscriptRenderToken, attachment: UInt64) {
+    private func restoreSelectionViewportAfterLayout(
+        token: TranscriptRenderToken, attachment: UInt64, publishDerivedState: Bool = true
+    ) {
+        guard !isRestoringSelectionViewport else { return }
         guard var ownership = selectionViewportOwnership,
               ownership.generation == token.sessionGeneration,
               ownership.attachment == attachment, ownership.readerRevision == readerIntentRevision,
@@ -3642,13 +3657,15 @@ final class TranscriptScrollCoordinator: ObservableObject {
         guard target.y.isFinite, target != clip.bounds.origin else { return }
         ownership.lastRestoredGeometry = geometry
         selectionViewportOwnership = ownership
+        isRestoringSelectionViewport = true
+        defer { isRestoringSelectionViewport = false }
         #if DEBUG
         recordGeometry("selection.restoreMeasuredGlyph", target: target)
         #endif
         clip.scroll(to: target)
         scrollView.reflectScrolledClipView(clip)
         lastOriginY = clip.bounds.origin.y
-        updateNearBottom()
+        if publishDerivedState { updateNearBottom() }
     }
 
     func jumpToLatest(animated: Bool = false) {

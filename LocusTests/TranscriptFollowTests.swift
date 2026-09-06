@@ -350,6 +350,7 @@ final class TranscriptFollowTests: XCTestCase {
 
         let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
         fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        fixture.leaf.needsLayout = true
         scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
         fixture.leaf.setFrameOrigin(NSPoint(x: fixture.leaf.frame.minX, y: fixture.leaf.frame.minY + 37))
         scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 67))
@@ -359,6 +360,7 @@ final class TranscriptFollowTests: XCTestCase {
         fixture.coordinator.renderContainerDidLayout(token: current, attachment: attachment &+ 1, from: fixture.bridge)
         XCTAssertEqual(scroll.contentView.bounds.origin, displaced, "Stale token/attachment evidence cannot restore a selection")
 
+        fixture.leaf.layoutSubtreeIfNeeded()
         acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
         let currentGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
         XCTAssertEqual(currentGlyph.minY - scroll.contentView.bounds.minY, originalOffset, accuracy: 1,
@@ -380,12 +382,12 @@ final class TranscriptFollowTests: XCTestCase {
         let originalOffset = originalGlyph.minY - scroll.contentView.bounds.minY
         let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
         fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        fixture.leaf.needsLayout = true
         scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
         fixture.leaf.setFrameOrigin(NSPoint(x: fixture.leaf.frame.minX, y: fixture.leaf.frame.minY + 37))
         scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 67))
         let displaced = scroll.contentView.bounds.origin
 
-        fixture.leaf.needsLayout = true
         acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
         XCTAssertTrue(fixture.leaf.needsLayout, "The bridge acknowledgement must precede the selected leaf's layout")
         XCTAssertEqual(scroll.contentView.bounds.origin, displaced, "Incomplete glyph geometry cannot authorize a correction")
@@ -406,9 +408,9 @@ final class TranscriptFollowTests: XCTestCase {
         let scroll = fixture.scroll
         let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
         fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        fixture.leaf.needsLayout = true
         scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
         scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
-        fixture.leaf.needsLayout = true
         acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
         let ownedOrigin = scroll.contentView.bounds.origin
 
@@ -430,6 +432,7 @@ final class TranscriptFollowTests: XCTestCase {
             let scroll = fixture.scroll
             var current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
             fixture.coordinator.installRenderTarget(current, realizeTail: {})
+            fixture.leaf.needsLayout = true
             scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
             scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
             var bridge = fixture.bridge
@@ -452,10 +455,43 @@ final class TranscriptFollowTests: XCTestCase {
                 fixture.coordinator.attach(from: bridge)
             }
             let ownedOrigin = scroll.contentView.bounds.origin
+            fixture.leaf.layoutSubtreeIfNeeded()
             acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: bridge)
             XCTAssertEqual(scroll.contentView.bounds.origin, ownedOrigin,
                 "A selection anchor must not survive \(invalidation)")
         }
+    }
+
+    func testSelectedGlyphCorrectionFinishesInsideNativeBoundsNotificationWithoutPublishing() throws {
+        let fixture = try makeSelectionViewportFixture()
+        defer { fixture.coordinator.detachAll() }
+        let scroll = fixture.scroll
+        let originalGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        let originalOffset = originalGlyph.minY - scroll.contentView.bounds.minY
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+        fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+        fixture.leaf.setFrameOrigin(NSPoint(x: fixture.leaf.frame.minX, y: fixture.leaf.frame.minY + 37))
+        fixture.leaf.layoutSubtreeIfNeeded()
+        let currentGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        let expectedOrigin = currentGlyph.minY - originalOffset
+        var publications = 0
+        let observation = fixture.coordinator.objectWillChange.sink { publications += 1 }
+        defer { observation.cancel() }
+
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 67))
+        // No run-loop pumping or container acknowledgement: the selected
+        // glyph must already be restored when native bounds mutation returns.
+        XCTAssertEqual(scroll.contentView.bounds.minY, expectedOrigin, accuracy: 1)
+        XCTAssertEqual(publications, 0, "The synchronous native correction must not publish SwiftUI state")
+        XCTAssertTrue(fixture.store.hasLiveSelection)
+        XCTAssertFalse(fixture.coordinator.followState.permitsAutomaticScroll)
+
+        let repeatedOrigin = expectedOrigin - 20
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: repeatedOrigin))
+        XCTAssertEqual(scroll.contentView.bounds.minY, repeatedOrigin, accuracy: 1,
+            "Identical layout geometry must not cause recursive or repeated scroll correction")
+        XCTAssertEqual(publications, 0)
     }
 
     func testSelectionEdgeDragReleasesViewportAnchorWithoutDiscardingSelection() throws {
