@@ -155,6 +155,59 @@ def test_command(configuration: Path, results: Path) -> list[str]:
     ]
 
 
+def retain_invoked_configuration(configuration: Path, run: Path) -> str:
+    """Keep exact bytes without rebasing the configuration actually invoked."""
+    retained = run / "invoked.xctestrun"
+    with retained.open("xb") as stream:
+        stream.write(configuration.read_bytes())
+        stream.flush()
+        os.fsync(stream.fileno())
+    identity = sha256(retained)
+    immutable_json(run / "invocation.json", {
+        "schemaVersion": 1,
+        "invokedPath": str(configuration),
+        "relativePathBase": str(configuration.parent),
+        "retainedConfiguration": retained.name,
+        "xctestrunSHA256": identity,
+        "testCommand": test_command(configuration, run / "results.xcresult"),
+    })
+    return identity
+
+
+def retain_result_details(run: Path) -> tuple[dict, dict]:
+    """Extract each available result independently, including failed runs."""
+    bundle = run / "results.xcresult"
+    if not bundle.is_dir():
+        return {}, {"resultBundle": "No UI result bundle was produced"}
+    results, errors = {}, {}
+    for name in ("summary", "tests"):
+        try:
+            value = json.loads(run_locked(
+                ["xcrun", "xcresulttool", "get", "test-results", name,
+                 "--path", str(bundle), "--compact"],
+                check=True, capture_output=True, text=True,
+            ).stdout)
+            if not isinstance(value, dict):
+                raise TypeError("Expected an xcresult JSON object")
+            immutable_json(run / f"{name}.json", value)
+            results[name] = value
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as failure:
+            errors[name] = str(failure)
+    return results, errors
+
+
+def observed_counts(results: dict) -> dict | None:
+    """Reported diagnostics only; strict validation still decides acceptance."""
+    summary = results.get("summary")
+    if summary is None:
+        return None
+    keys = ("totalTestCount", "passedTests", "failedTests", "skippedTests", "expectedFailures")
+    return {
+        key: summary[key] if type(summary.get(key)) is int and summary[key] >= 0 else None
+        for key in keys
+    }
+
+
 def validate_results(
     summary: dict, tree: dict, requested: list[str], os_major: int
 ) -> dict:
@@ -232,20 +285,24 @@ def main():
             "UI source inventory unexpectedly shrank below the full-suite floor"
         )
     with execution_lock(timeout=600):
-        actual = json.loads(
-            run_locked(
-                ["xcrun", "swift", "Tools/LocusUITestEnvironment.swift"],
-                cwd=ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-        )
-        profile_name = args.profile or native_profile(config, args.native_profile, actual)
-        profile = profiles(config)[profile_name]
+        actual = {}
+        profile_name = args.profile or f"{args.native_profile}-unresolved"
         try:
+            actual = json.loads(
+                run_locked(
+                    ["xcrun", "swift", "Tools/LocusUITestEnvironment.swift"],
+                    cwd=ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+            )
+            if not isinstance(actual, dict):
+                raise TypeError("Expected a native UI environment JSON object")
+            profile_name = args.profile or native_profile(config, args.native_profile, actual)
+            profile = profiles(config)[profile_name]
             validate_environment(actual, profile, args.os_major, config)
-        except ValueError as failure:
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as failure:
             run = retain_preflight_failure(args.output, actual=actual,
                 profile_name=profile_name, os_major=args.os_major, tests=tests,
                 error=str(failure))
@@ -313,6 +370,11 @@ def main():
         )
         status, error, result, counts = "failed", None, -1, None
         configured = None
+        configuration_identity = None
+        configuration_unchanged = None
+        results, extraction_errors = {}, {}
+        extraction_attempted = False
+        test_invocation_attempted = False
         registered_app = None
         try:
             with (run / "build.log").open("x") as log:
@@ -347,6 +409,7 @@ def main():
             configured = generated[0].parent / f"locus-ui-{run.name}.xctestrun"
             with configured.open("xb") as stream:
                 plistlib.dump(configuration, stream)
+            configuration_identity = retain_invoked_configuration(configured, run)
             app = derived / "Build/Products/Debug/Locus.app"
             products = derived / "Build/Products/Debug"
             runner = products / "LocusUITests-Runner.app"
@@ -362,7 +425,7 @@ def main():
             immutable_json(
                 run / "build-identity.json",
                 {
-                    "xctestrunSHA256": sha256(configured),
+                    "xctestrunSHA256": configuration_identity,
                     "binaries": binary,
                     "sourceBefore": source,
                     "sourceAfterBuild": source_identity(),
@@ -382,7 +445,10 @@ def main():
                 check=True,
             )
             registered_app = app
+            if sha256(configured) != configuration_identity:
+                raise ValueError("UI configuration changed before invocation")
             with (run / "test.log").open("x") as log:
+                test_invocation_attempted = True
                 result = run_locked(
                     test_command(configured, run / "results.xcresult"),
                     cwd=ROOT,
@@ -390,28 +456,15 @@ def main():
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 ).returncode
+            extraction_attempted = True
+            results, extraction_errors = retain_result_details(run)
+            configuration_unchanged = configured.is_file() and sha256(configured) == configuration_identity
             if result != 0:
                 raise ValueError(f"UI test process exited with status {result}; see test.log")
-            results = {}
-            for name in ("summary", "tests"):
-                results[name] = json.loads(
-                    run_locked(
-                        [
-                            "xcrun",
-                            "xcresulttool",
-                            "get",
-                            "test-results",
-                            name,
-                            "--path",
-                            str(run / "results.xcresult"),
-                            "--compact",
-                        ],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    ).stdout
-                )
-                immutable_json(run / f"{name}.json", results[name])
+            if extraction_errors:
+                raise ValueError("UI result extraction is incomplete; see resultExtractionErrors")
+            if not configuration_unchanged:
+                raise ValueError("UI configuration changed during invocation")
             counts = validate_results(
                 results["summary"], results["tests"], tests, args.os_major
             )
@@ -425,6 +478,8 @@ def main():
         except (OSError, ValueError, subprocess.SubprocessError) as failure:
             error = str(failure)
         finally:
+            if not extraction_attempted:
+                results, extraction_errors = retain_result_details(run)
             if configured is not None:
                 configured.unlink(missing_ok=True)
             if registered_app is not None:
@@ -446,6 +501,11 @@ def main():
                 "profile": profile_name,
                 "osMajor": args.os_major,
                 "counts": counts,
+                "observedCounts": observed_counts(results),
+                "resultExtractionErrors": extraction_errors,
+                "xctestrunSHA256": configuration_identity,
+                "configurationUnchanged": configuration_unchanged,
+                "testInvocationAttempted": test_invocation_attempted,
                 "source": source,
                 "startedAt": started_at,
                 "endedAt": utc_now(),
