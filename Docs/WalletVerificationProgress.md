@@ -6,6 +6,10 @@ approval or an independent penetration test.
 
 ## Outcome
 
+The focused transcript repair and subsequent CI verification are tracked in
+[TranscriptRepairVerification.md](TranscriptRepairVerification.md). The older
+results below remain historical evidence and are not relabeled as new passes.
+
 The implementation is committed and pushed on `codex/wallet-integration-ga` in
 [draft PR #70](https://github.com/nahid-sparktales/locus/pull/70). It is **not ready
 to merge, sign for distribution, activate a canary, or promote to GA**. The

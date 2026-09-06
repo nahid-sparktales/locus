@@ -2513,9 +2513,6 @@ private struct ConversationView: View {
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    #if DEBUG
-    @Environment(\.transcriptFirstRowDiagnosticReplacement) private var firstRowDiagnosticReplacement
-    #endif
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -2678,21 +2675,7 @@ private struct ConversationView: View {
                 }
             }
         return VStack(alignment: .leading, spacing: 0) {
-            #if DEBUG
-            if row.index == 0, firstRowDiagnosticReplacement == .measuredTallPlanPlaceholder,
-               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-                // Isolates the measured 719-point card height from its subtree in
-                // one explicit native diagnostic. Not a product alternative.
-                Rectangle()
-                    .fill(Color.gray.opacity(0.15))
-                    .frame(height: 719)
-                    .accessibilityHidden(true)
-            } else {
-                content
-            }
-            #else
             content
-            #endif
             if item.id == token.tailID {
                 transcriptEnd(token: token, id: .end(token.sessionGeneration))
             }
@@ -3138,21 +3121,6 @@ private enum TranscriptScrollTarget: Hashable {
 }
 
 #if DEBUG
-enum TranscriptFirstRowDiagnosticReplacement: Equatable, Sendable {
-    case measuredTallPlanPlaceholder
-}
-
-private struct TranscriptFirstRowDiagnosticReplacementKey: EnvironmentKey {
-    static let defaultValue: TranscriptFirstRowDiagnosticReplacement? = nil
-}
-
-extension EnvironmentValues {
-    var transcriptFirstRowDiagnosticReplacement: TranscriptFirstRowDiagnosticReplacement? {
-        get { self[TranscriptFirstRowDiagnosticReplacementKey.self] }
-        set { self[TranscriptFirstRowDiagnosticReplacementKey.self] = newValue }
-    }
-}
-
 @MainActor
 private enum TranscriptRowGeometryDiagnostics {
     static let enabled = {
