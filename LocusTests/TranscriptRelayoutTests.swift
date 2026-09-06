@@ -67,6 +67,30 @@ final class TranscriptRelayoutTests: XCTestCase {
         )
     }
 
+    func testCachedWrappedProposalRestoresNativeLineLayout() throws {
+        let suffix = "The final line must use the restored wide layout."
+        let text = String(repeating: "A wrapped transcript paragraph has several words. ", count: 100) + suffix
+        let view = makeTextView(text: text, wraps: true)
+        let container = try XCTUnwrap(view.textContainer)
+        let layout = try XCTUnwrap(view.layoutManager)
+        let suffixRange = (text as NSString).range(of: suffix)
+
+        let wide = view.measuredSize(for: 520, wraps: true)
+        let wideGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let wideSuffix = layout.boundingRect(forGlyphRange: wideGlyphs, in: container)
+        let narrow = view.measuredSize(for: 310, wraps: true)
+        XCTAssertGreaterThan(narrow.height, wide.height)
+
+        XCTAssertEqual(view.measuredSize(for: 520, wraps: true), wide)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 2, "Reuse the cached size without measuring again")
+        XCTAssertEqual(container.containerSize.width, 520, "The cached size must describe the active native layout")
+        layout.ensureLayout(for: container)
+        let restoredGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let restoredSuffix = layout.boundingRect(forGlyphRange: restoredGlyphs, in: container)
+        XCTAssertEqual(restoredSuffix, wideSuffix, "Drawing, selection and accessibility must use the restored line breaks")
+        XCTAssertLessThanOrEqual(restoredSuffix.maxY, wide.height)
+    }
+
     func testLiveResizeUsesConservativeFourPointBucketsAndBoundedLRU() {
         let view = makeTextView(text: Self.longProse, wraps: true)
         view.setLiveResizeMeasurementActive(true)

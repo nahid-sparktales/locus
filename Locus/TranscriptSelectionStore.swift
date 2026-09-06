@@ -704,6 +704,10 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
             wraps: wraps,
             effectiveWidth: effectiveWidth
         )
+        // The cache contains sizes, not TextKit layout state. SwiftUI can
+        // propose A, then B, then A again; a cached A must restore A's native
+        // line breaks for drawing, selection and accessibility as well.
+        setTextContainerWidthIfNeeded(effectiveWidth)
         if let cached = measurementCache.value(for: key) { return cached }
 
         guard let container = textContainer, let layoutManager else {
@@ -715,7 +719,6 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
             id: signpostID,
             "width=\(effectiveWidth, format: .fixed(precision: 1))"
         )
-        setTextContainerWidthIfNeeded(effectiveWidth)
         layoutManager.ensureLayout(for: container)
         let usedRect = layoutManager.usedRect(for: container)
         locusPerformanceSignposter.endInterval("Measure Text Leaf", interval)
