@@ -34,10 +34,16 @@ rechecked on their own revision; passing results are not silently relabeled.
 | Complete UI suite | **111 passed, 30 failed**, zero skips, all 141 tests requested, macOS 26 / compact-light-standard at `7f2ae0a`. Failed result bundles are retained. Subsequent targeted fixes are not a replacement for rerunning the complete 48-profile matrix. |
 | Focused UI regressions | On clean `3dbca50`, **24 passed, 6 failed**, zero skips, all 30 prior failures selected once. Wallet Hub navigation, narrow composer/team-plan flow, inspector resizing and resize sampling pass in this subset. Remaining failures cover Appearance settings visibility, three sidebar interactions, Startup help contrast, and a blank dispatcher transcript. Counts from different runs are not combined into a full-profile pass. |
 | Follow-up UI startup | The 15-case `3f60ca4` focused attempt times out enabling macOS automation before executing any test. All 15 remain missing; it earns no coverage. The failed result bundle and request are retained. |
-| Latest hosted UI suite | **132 passed, 9 failed**, zero skips, all 141 tests requested, macOS 15.7.9 / compact-light-native with Xcode 16.4. PR head `1dbc3c3` was tested as merge `f2a879443f7202b1ac847295b06018802ad3956a`. Five sidebar hit/interaction failures, two composer-bottom assertions, the Review and Land heading, and user-bubble width remain. This is one failed profile, not a complete cross-OS matrix. |
+| Latest hosted UI suite | **135 passed, 6 failed**, zero skips, all 141 tests requested, macOS 15.7.9 / compact-light-native with Xcode 16.4. PR head `8d01f31` was tested as merge `e8b85ad0a617ddbd27a899f94d99ce16304f4677`. The five sidebar hit/interaction failures persist; dispatcher visibility also fails. The two composer-bottom, Review and Land navigation and user-bubble measurement cases now pass. The prior `1dbc3c3` attempt was 132 passed / 9 failed. Neither is a complete cross-OS matrix. |
 | Focused clean-checkout verification | **5 passed, 0 failed, 0 skipped** on clean `05525f3ee3dcfe620fe15840f889a2548dfa82a6`: two orchestration request/cursor cases and three compact-sidebar focus cases. Build and test processes both exit zero; source is clean before and after, and the exact generated test artifact is recorded. This excludes the discarded transcript experiments and is not a full-suite or release pass. |
-| Compact sidebar follow-up | `63d1045` adds a compact-only native hosting boundary and three focus regressions, verified in the clean five-case run above. The separate eight-case UI attempt builds but times out enabling macOS automation before executing any requested case; no actual sidebar AX/click coverage is credited. |
-| UI measurement follow-up | `05525f3` corrects composer/bubble measurements and Review & Land viewport navigation from retained hosted AX/video evidence. Full UI-file typechecking and the design-system source audit pass. No new full-profile execution is claimed. |
+| Latest hosted native suite | PR head `8d01f31`, tested as merge `e8b85ad0a617ddbd27a899f94d99ce16304f4677`: **1,199 passed, 3 failed**, zero skips, 1,202 tests. Six failing assertions cover dispatcher visibility, append/session replacement, and an account-event fixture that guessed scheduler progress using eight yields. The two exact-endpoint orchestration cases now pass. Downstream chain/release steps remain skipped. |
+| Reviewed connector/TextKit fixes | **15 passed, 0 failed, 0 skipped** with the exact patches subsequently committed as `3107f7e` and `a6d0d4a`, against `8d01f31`. Twelve connector lifecycle cases and three native size/layout cases pass. Source/patch and generated-artifact hashes are retained. This dirty-patch engineering comparison is not clean-candidate evidence. An earlier 14-case run passed all nine then-current connector and three text cases, but both actual transcript visibility tests still failed. |
+| Credential isolation | **62 passed, 0 failed, 0 skipped** in 11.327 seconds against `8d01f31` plus the exact 28-file patch committed as `6baaa29`. The former blocked OAuth registration case passes using injected memory storage. Per-instance file/cache/salvage, provider routing, browser vault and MCP handoff/sweep assertions remain active. The subsequent clean full-run results are recorded below; no real Keychain approval or credential-file backup is substituted for a fixture. |
+| Clean integrated native attempt | Clean `93ff2d3` builds, but execution was stopped when a background `EventAutomationModel` refresh reached the separate event-connector Keychain store. The currently waiting GitHub device fixture was not the source of the Keychain call. Partial results: **560 passed, 1 canceled/failed, 0 skipped**, 561 of 1,218 expected methods; 657 remain unexecuted. The inventory gate rejects this run. Only the identified harness test process was interrupted; no Keychain prompt was approved. Source, binaries, partial results and the read-only stack sample are retained. |
+| Event-connector isolation | **36 passed, 0 failed, 0 skipped** in 4.767 seconds on `93ff2d3` plus the exact 11-file patch committed as `ada2fc0`. Every expected method executed once; source/patch and generated binary hashes match before/after. All event-automation cases, credential-save semantics, online-seeded fixture restart checks and both previously affected sign-in cases pass without a Keychain pause. This is focused dirty-patch engineering evidence, not a full clean-candidate pass. |
+| Latest clean complete native suite | On clean `ada2fc07080b5da0afefe934b1b2ef59f5486f07`: **1,221 passed, 2 failed, 0 skipped**, all 1,223 expected tests executed once in 152.295 seconds. Four failing assertions cover compact dispatcher content and newest-text realization after append/session replacement. The connector event/lifecycle, native width-cache and previously paused OAuth cases pass. No Keychain pause or retry occurred. Source and exact generated host/debug-code/test artifacts are unchanged before/after; no methods are missing or duplicated. Build exits zero; test exits 65. This is a complete failed native run, not a release or full UI pass. |
+| Compact sidebar follow-up | `63d1045` adds a compact-only native hosting boundary and three focus regressions, verified in the clean five-case run above. The separate eight-case local UI attempt never reaches execution. Hosted `8d01f31` now proves that all five actual sidebar AX/click failures persist despite those native focus passes; this change does not close the interaction gate. |
+| UI measurement follow-up | `05525f3` corrects composer/bubble measurements and Review & Land viewport navigation from retained hosted AX/video evidence. All four affected cases pass in the complete hosted `8d01f31` profile. The other six failed methods still block that profile. |
 | Solana local-validator smoke | **5 passed, 0 failed, 0 skipped** on clean `79b0270`, with Agave 4.1.2 (`182084b8`). The native-transfer case finalized and passed exact wire/signature/slot, fee and transaction-specific balance checks in 15.94 seconds. The validator executable SHA-256 is `aa0fd7ccc9300a29e5bea0a4bc65b9de5a103b111bc09c654983494040e8eaf8`; the downloaded archive was independently checked against the pinned CI digest. This is unsigned Debug smoke verification, not the full token/collectible, production reconciler, crash/restart or real-connector matrix. |
 | Debug build | Passed with local ad-hoc signing, not Developer ID signing. |
 | Direct Release and ReleaseMAS | Both full standalone-backend builds passed in separate DerivedData directories. Distribution signing was disabled. |
@@ -47,10 +53,10 @@ rechecked on their own revision; passing results are not silently relabeled.
 | License inventory | Signer SBOM covers 351 locked components; connector SBOM covers Reown and 292 npm entries, with zero unresolved npm license declarations. Vendor service/beta terms still need counsel. |
 | npm advisory audit | Zero reported advisories, including development dependencies, on the audited unchanged lock. |
 | Rust advisory audit | Zero reported vulnerabilities, but `derivative 2.2.0` / `RUSTSEC-2024-0388` and `paste 1.0.15` / `RUSTSEC-2024-0436` are unmaintained. Strict local `--deny warnings` exits 1; neither finding was waived in this report. Hosted CI permits these warnings, so its success is not a strict-audit pass. RustSec revision: `5a0ebedfe8bdd2e295b171f4162f8c977bcad9a5`. |
-| Hosted Rust fuzz replay | All five targets failed seed replay with LeakSanitizer reporting 56 bytes in two allocations in fuzz-driver/libc++ thread setup. This recurred for `1dbc3c3`, tested as merge `f2a8794`, after the earlier `a35aad5` / `3ce39c7` attempt. Stacks suggest a driver-lifetime issue, not a proven signer leak; the finding remains blocking. No timed mutation phase or clean CPU hours are credited. |
-| Hosted Swift fuzz replay | All eight latest hosted jobs failed. The downloaded Solana replay at `f2a8794` confirms the earlier pre-XCTest-bootstrap failure: LLVM 21 libFuzzer rejects `trace-pc-guard` instrumentation. Its receipt correctly records zero executed units, coverage and CPU credit. The separate normal-runtime-exit completion defect also remains; compiling the harness is not a working fuzz campaign. |
+| Hosted Rust fuzz replay | All five targets again failed seed replay on `8d01f31` / merge `e8b85ad`, with LeakSanitizer reporting fuzz-driver/libc++ thread setup allocations. Earlier runs reported the same 56 bytes in two allocations. Stacks suggest a driver-lifetime issue, not a proven signer leak; the finding remains blocking. All five current process logs and receipts are retained. No timed mutation phase or clean CPU hours are credited. |
+| Hosted Swift fuzz replay | All eight jobs again failed on `8d01f31` / merge `e8b85ad`. Each downloaded process log confirms LLVM 21 libFuzzer rejects `trace-pc-guard` instrumentation before XCTest bootstrap. The Solana receipt records zero executed units, coverage and CPU credit. The separate normal-runtime-exit completion defect also remains; compiling the harness is not a working fuzz campaign. |
 | Installed-code identity | App/signer API and command-line 40-character CDHashes agreed on actual ad-hoc signed `7997de9` Debug executables. This is not notarization or release identity approval. |
-| Secret scan | A full-history redacted scan passed for **396 commits / 23.02 MB** through the `1dbc3c3` engineering checkpoint. Follow-ups require their own scan. No private release credentials were used. |
+| Secret scan | A full-history redacted scan passed for **405 commits / 23.10 MB** through `ada2fc0`, with zero findings. Follow-ups require their own scan. No private release credentials were used. |
 
 Complete local logs and dependency reports are retained outside the checkout at
 `/Users/nahid/Documents/locus-wallet-evidence-20260904.EbK9iQ`. Native/UI result
@@ -115,6 +121,44 @@ release receipts or externally attributable wallet evidence.
   one-second deadline, exact request counts and cursor assertions remain.
   Both focused methods pass. An initial predicate-polling attempt timed out at
   that same deadline and was replaced, not accepted as a pass.
+- `6baaa29` gives nonpersistent app models their own provider, MCP and browser
+  credential stores. Provider reads, readiness, routing and deletion all use the
+  same injected store. The production file facade retains its original path,
+  permissions, corruption handling and cache behavior; the Keychain query bodies
+  are unchanged. Corruption fixtures now own temporary files instead of moving
+  the user's `auth.json`. OAuth fixtures no longer perform real Keychain writes
+  or orphan sweeps. Compatibility production defaults still require explicit
+  injection in future tests; this is not an audit of all non-credential user
+  persistence. `93ff2d3` also gives the persistent browser-profile fixture an
+  identity derived from its owned unique temporary directory, so it cannot
+  reuse a fixed workspace's WebKit session.
+- `ada2fc0` closes the separate event-connector credential path found by the
+  clean integrated attempt. A nonpersistent app model owns one in-memory store
+  shared by its event model, client and webhook server. Production retains the
+  original Keychain service, queries, authentication and save behavior; its
+  immutable adapter and callbacks now have checked concurrency conformance.
+  Test-created models no longer automatically launch/recover the backend after
+  backend, proxy or workspace changes, including a disconnect from a projected
+  online state or an unexpected child exit. Explicit lifecycle APIs and positive
+  event refresh/dispatch/retry/acknowledgement remain available. Direct event
+  fixtures stop their own models. The existing production dispatcher/poll tasks
+  retain their model until stopped; that separate lifecycle design was not
+  refactored as part of credential isolation.
+- `3107f7e` fixes an independently reproduced native text-layout defect: a
+  wide/narrow/cached-wide proposal sequence returned the wide height with narrow
+  native line breaks. Before the fix the final glyph exceeded that height
+  (2,157 versus 1,290 points). A cached answer now restores its container width;
+  suffix geometry, size-cache reuse and bounded resize-cache tests pass. This
+  does **not** fix the separately missing dispatcher/append transcript views.
+- `a6d0d4a` binds lifecycle events to the owning connector, ignores terminal
+  callbacks, publishes early-return revocation to consumers, and stores exact
+  narrowed network grants. Cancellation is published before vendor cleanup;
+  late review/SDK completion cannot restore authority. Suspension blocks fresh
+  pairing and invalidates stale restoration across await boundaries. Fixtures
+  use acknowledged projection events and controlled continuations rather than
+  yield counts, and assert vendor approval/connect counts as well as records
+  and public account projections. No signer, signing policy, release manifest
+  grant, or production network identity is expanded.
 - Composer actions now wrap within narrow chat panes, preserving the same
   permission/mode/team controls and keeping Voice/Send/Stop together. Pure
   geometry tests cover compact widths, long labels, RTL, and non-finite probes;
@@ -145,8 +189,8 @@ release receipts or externally attributable wallet evidence.
   remembers a shared field editor's owning control rather than the reusable
   editor, preserves drafts, refuses removed-window controls, and does not steal
   focus that the user moved elsewhere. The Apple design guidance informed this
-  visible-layer/input-ownership relationship. Native focus tests pass; the actual
-  sidebar click/AX improvement still requires UI execution.
+  visible-layer/input-ownership relationship. Native focus tests pass, but the
+  subsequent hosted run proves the five actual sidebar click/AX failures remain.
 - `05525f3` measures the final composer action after wrapping, with the same
   8–28-point bottom bounds and containment checks, and measures the user bubble
   against the actual transcript reading column with the unchanged 0.84 ceiling.
@@ -158,6 +202,11 @@ release receipts or externally attributable wallet evidence.
   can disagree with the actual logical footer by 55 points even when that footer
   is aligned; separately, the dispatcher really has no realized final text.
   These are distinct remaining issues, not a reason to relax visibility tests.
+  The subsequent constant-child row-wrapper comparison used clean `6baaa29`
+  and byte-identical tests: baseline **3 passed / 3 failed**, wrapper **4 passed /
+  2 failed**, no skips. The dispatcher and native-tail failures persisted; the
+  variable-height case passed only in that one wrapper execution. The experiment
+  was removed, both receipts retained, and no wrapper change was committed.
 - The Solana native smoke now uses a monotonic acceptance deadline with bounded
   idle/total-resource timeouts, and rejects a successful response arriving too
   late. Its finalized receipt must match submitted wire bytes, signature, slot,
@@ -187,9 +236,16 @@ release receipts or externally attributable wallet evidence.
    dispatcher/team-plan fixtures showed a blank transcript and overflowing composer;
    the team-plan flow now passes, but dispatcher content still disappears. Its
    diagnostic snapshot retains three items and an attached native scroll view,
-   while the lazy transcript has no visible rows after an absolute bottom jump.
-   A logical scroll-target correction requires execution, followed by fresh
-   complete profiles. Keyboard-only,
+   while the lazy transcript has no visible final rows with bottom-follow active.
+   The logical scroll-target and native text-cache corrections alone do not
+   resolve those failures. A controlled fixture with only its run card removed
+   passes; the eagerly mounted card measures 312 by 350 points, but this does
+   not prove the lazy-composition cause. Fresh complete profiles remain required.
+   Clean `ada2fc0` again fails both actual dispatcher and append/replacement
+   visibility methods. The separate follow-after-send native-tail case passes
+   in this full run; that one execution does not establish why it failed in
+   the isolated baseline/wrapper comparison.
+   Keyboard-only,
    VoiceOver, QR/privacy, real connector approval/restart, and complete swap
    correction flows remain separate unfulfilled gates.
 4. **CI:** the first PR run failed because npm 10.9.8 interpreted the lock
@@ -213,8 +269,10 @@ release receipts or externally attributable wallet evidence.
    `SecItemAdd`; a one-second stack sample also showed browser-key reads waiting
    inside Keychain. It subsequently completed with the five failures recorded
    above. No permission was auto-approved or credential printed/exported; the
-   two premature host exits remain unexplained, not waived. Test storage still
-   needs deliberate isolation from the user's Keychain.
+   two premature host exits remain unexplained, not waived. The subsequent
+   credential-isolation patches and their focused passes are recorded above.
+   Clean `ada2fc0` now executes the complete native inventory without a Keychain
+   pause, but two transcript methods fail, so the verification gate remains open.
    Hosted run `33947113589` at merge `f2a8794` passed Python, mobile and signer
    jobs, but failed native and UI verification. Native failures include the
    dispatcher/append/replacement regressions and a test that counted unrelated
@@ -222,6 +280,15 @@ release receipts or externally attributable wallet evidence.
    Swift smoke and release build steps were skipped after the native failure.
    The separate local five-case Solana pass does not convert those skipped
    hosted steps into successful evidence.
+   A clean integrated `93ff2d3` attempt exposed another asynchronous credential
+   path: `EventAutomationModel.start` / `refresh` / capability publication reads
+   `ConnectorCredentialStore` through Keychain. Provider/MCP/browser isolation
+   did not cover this separate event-connector store. The run was stopped and
+   remains incomplete. `ada2fc0` adds explicit fixture storage and lifecycle
+   isolation; both its 36-case focused verification and the credential cases in
+   its clean complete run pass. The two remaining full-run transcript failures
+   are recorded above. Neither this result nor the focused pass replaces the
+   retained earlier failed/incomplete attempt.
 5. **Release operations:** cold-start history currently has a 64-transition
    bound; longer-lineage paging is not implemented. Admission signing validates
    individual finite allocations, but does not supply the independently
