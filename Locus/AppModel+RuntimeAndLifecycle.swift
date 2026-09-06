@@ -342,9 +342,11 @@ extension AppModel {
         taskWorkers.removeAll()
         syncBrowserProtectedSessions()
         backend.disconnect()
-        Task { [backendProcess] in
-            await backendProcess.stopAndWait()
-            await self.bootstrap()
+        if persistenceEnabled {
+            Task { [backendProcess] in
+                await backendProcess.stopAndWait()
+                await self.bootstrap()
+            }
         }
     }
 

@@ -420,7 +420,7 @@ final class AppModel: ObservableObject {
     let computerControl = ComputerControlService()
     let applicationContext = ApplicationContextService()
     let simulatorControl = SimulatorControlService()
-    let eventAutomations = EventAutomationModel()
+    let eventAutomations: EventAutomationModel
     private var applicationContextCapabilityObservation: AnyCancellable?
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
@@ -627,7 +627,8 @@ final class AppModel: ObservableObject {
         providerCredentialWriter: ((String, String) -> Bool)? = nil,
         credentialStore: (any CredentialStoring)? = nil,
         mcpCredentialStore: (any MCPCredentialStoring)? = nil,
-        browserAutofillVault: BrowserAutofillVault? = nil
+        browserAutofillVault: BrowserAutofillVault? = nil,
+        connectorCredentialStore: (any ConnectorCredentialStoring)? = nil
     ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
@@ -645,6 +646,8 @@ final class AppModel: ObservableObject {
             ? KeychainMCPCredentialStore() : InMemoryMCPCredentialStore()))
         browser = BrowserService(autofillVault: browserAutofillVault ?? (persistenceEnabled
             ? BrowserAutofillVault() : BrowserAutofillVault(inMemory: ())))
+        eventAutomations = EventAutomationModel(credentials: connectorCredentialStore ?? (persistenceEnabled
+            ? ConnectorCredentialStore.shared : InMemoryConnectorCredentialStore()))
         let launchJournal = lifecycleJournal ?? AppLifecycleJournal()
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
@@ -899,7 +902,9 @@ final class AppModel: ObservableObject {
                 } else if self.agentRuntimePhase.isOnline, !self.isShuttingDown {
                     self.agentRuntimePhase = .recovering("Reconnecting to the local agent…")
                     self.recoverFromLostConnection()
-                    self.scheduleRuntimeRecovery(reason: "The local agent connection was lost.")
+                    if self.persistenceEnabled {
+                        self.scheduleRuntimeRecovery(reason: "The local agent connection was lost.")
+                    }
                 }
             }
         }
@@ -1171,7 +1176,9 @@ final class AppModel: ObservableObject {
                     ? "The local agent exited with status \(code)."
                     : String(detail.suffix(1_000))
                 self.agentRuntimePhase = .recovering("Restarting the local agent…")
-                self.scheduleRuntimeRecovery(reason: "The local agent stopped unexpectedly.")
+                if self.persistenceEnabled {
+                    self.scheduleRuntimeRecovery(reason: "The local agent stopped unexpectedly.")
+                }
             }
         }
 

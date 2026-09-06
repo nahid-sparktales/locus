@@ -1914,6 +1914,82 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNonpersistentSettingsChangesDoNotStartBackendOrEventPolling() async {
+        BackendStub.reset()
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer { model.eventAutomations.stop() }
+        let unexpectedTraffic = expectation(description: "No automatic runtime traffic for an inert model")
+        unexpectedTraffic.isInverted = true
+        BackendStub.respond(whenPathHasPrefix: "/") { _ in
+            unexpectedTraffic.fulfill()
+            return ["error": "Unexpected fixture startup"]
+        }
+        // UI fixtures seed this phase without a live process. Disconnecting
+        // their transport must not promote that projection into real startup.
+        model.agentRuntimePhase = .online
+        var changed = model.settings
+        changed.backendURL = "http://127.0.0.1:9"
+        changed.proxyModeRaw = ProxyMode.manual.rawValue
+        changed.proxyHost = "fixture.invalid"
+        changed.proxyPort = 3128
+        model.applySettings(changed, showConfirmation: false)
+        XCTAssertEqual(model.settings.backendURL, changed.backendURL)
+        XCTAssertEqual(ProxyRuntime.shared.current?.host, "fixture.invalid")
+        XCTAssertFalse(model.backendProcess.isRunning)
+        XCTAssertNil(model.runtimeRecoveryTask)
+
+        var cleared = model.settings
+        cleared.proxyModeRaw = ProxyMode.off.rawValue
+        model.applySettings(cleared, showConfirmation: false)
+        await fulfillment(of: [unexpectedTraffic], timeout: 0.2)
+        XCTAssertTrue(BackendStub.requests.isEmpty)
+        XCTAssertFalse(model.backendProcess.isRunning)
+        XCTAssertNil(model.runtimeRecoveryTask)
+        XCTAssertFalse(model.eventAutomations.hasLoaded)
+        XCTAssertNil(ProxyRuntime.shared.current)
+    }
+
+    @MainActor
+    func testNonpersistentPendingProxyRestartDoesNotScheduleRuntimeRecovery() async {
+        BackendStub.reset()
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer { model.eventAutomations.stop() }
+        let unexpectedTraffic = expectation(description: "No recovery traffic from a fixture proxy restart")
+        unexpectedTraffic.isInverted = true
+        BackendStub.respond(whenPathHasPrefix: "/") { _ in
+            unexpectedTraffic.fulfill()
+            return ["error": "Unexpected fixture recovery"]
+        }
+        model.agentRuntimePhase = .online
+        model.proxyRouteRestartPending = true
+        model.applyPendingProxyRouteRestartIfPossible()
+        await fulfillment(of: [unexpectedTraffic], timeout: 0.2)
+        XCTAssertFalse(model.proxyRouteRestartPending)
+        XCTAssertTrue(BackendStub.requests.isEmpty)
+        XCTAssertNil(model.runtimeRecoveryTask)
+        XCTAssertFalse(model.backendProcess.isRunning)
+        XCTAssertFalse(model.eventAutomations.hasLoaded)
+    }
+
+    @MainActor
+    func testAppModelUsesItsInjectedEventConnectorCredentials() throws {
+        let store = InMemoryConnectorCredentialStore()
+        let model = AppModel(startImmediately: false, connectorCredentialStore: store)
+        defer { model.eventAutomations.stop() }
+        try store.save(["access_token": "fixture-only"], for: "fixture")
+        model.eventAutomations.seedForUITesting(connections: [ConnectorConnection(
+            id: "fixture", kind: .gmail, displayName: "Synthetic", publicConfig: [:], cursor: [:],
+            enabled: true, health: "connected", createdAt: 1, updatedAt: 1
+        )], triggers: [], deliveries: [])
+        XCTAssertEqual(
+            model.eventAutomations.connectorCapability()["connections"] as? [[String: String]],
+            [["id": "fixture", "kind": "gmail"]]
+        )
+        try store.delete(for: "fixture")
+        XCTAssertEqual(model.eventAutomations.connectorCapability()["connections"] as? [[String: String]], [])
+    }
+
+    @MainActor
     func testProviderRequestBodyCarriesTheAccountCredentials() {
         let model = AppModel(startImmediately: false)
         let account = seedAccount(

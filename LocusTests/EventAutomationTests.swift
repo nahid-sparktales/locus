@@ -24,6 +24,30 @@ private actor EventDispatchGate {
 }
 
 final class EventAutomationTests: XCTestCase {
+    @MainActor
+    func testConnectorCapabilityReadsOnlyTheInjectedStoreAndExposesNoSecrets() throws {
+        let firstStore = InMemoryConnectorCredentialStore()
+        let secondStore = InMemoryConnectorCredentialStore()
+        try firstStore.save(["access_token": "fixture-only", "refresh_token": "native-only"], for: "fixture")
+        let first = EventAutomationModel(credentials: firstStore)
+        let second = EventAutomationModel(credentials: secondStore)
+        defer { first.stop(); second.stop() }
+        let connection = ConnectorConnection(
+            id: "fixture", kind: .gmail, displayName: "Synthetic", publicConfig: [:], cursor: [:],
+            enabled: true, health: "connected", createdAt: 1, updatedAt: 1
+        )
+        first.seedForUITesting(connections: [connection], triggers: [], deliveries: [])
+        second.seedForUITesting(connections: [connection], triggers: [], deliveries: [])
+        let capability = first.connectorCapability()
+        XCTAssertEqual(capability["connections"] as? [[String: String]], [["id": "fixture", "kind": "gmail"]])
+        XCTAssertEqual(second.connectorCapability()["connections"] as? [[String: String]], [])
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: capability), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("fixture-only"))
+        XCTAssertFalse(encoded.contains("native-only"))
+        try firstStore.delete(for: "fixture")
+        XCTAssertEqual(first.connectorCapability()["connections"] as? [[String: String]], [])
+    }
+
     private func deliveryPayload(
         id: String,
         triggerID: String,
@@ -157,7 +181,8 @@ final class EventAutomationTests: XCTestCase {
         BackendStub.respond(toPath: "/api/event-deliveries") { _ in
             ["deliveries": []]
         }
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
         var announcementCount = 0
         model.configure(
             backend: stubbedBackendService(),
@@ -194,7 +219,8 @@ final class EventAutomationTests: XCTestCase {
                 ),
             ]
         }
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
         var resolvedRunIDs: [String?] = []
         model.seedForUITesting(
             connections: [],
@@ -246,7 +272,8 @@ final class EventAutomationTests: XCTestCase {
         BackendStub.respond(toPath: "/api/event-deliveries/failed/acknowledge") { _ in
             self.triggerPayload(id: "trigger-a", enabled: false, lastError: nil)
         }
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
         var resolvedRunIDs: [String?] = []
         model.seedForUITesting(
             connections: [],
@@ -301,7 +328,8 @@ final class EventAutomationTests: XCTestCase {
         let warningTrigger = decode(EventTrigger.self, from: triggerPayload(
             id: "trigger-a", enabled: false, lastError: "worker stopped"
         ))!
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
         var messages: [String] = []
         var resolvedRunIDs: [String?] = []
         model.seedForUITesting(
@@ -374,7 +402,7 @@ final class EventAutomationTests: XCTestCase {
             )
         }
         let gate = EventDispatchGate()
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
         model.configure(
             backend: stubbedBackendService(),
             onQueuedRun: { run in await gate.arrive(run.id) },
@@ -532,7 +560,8 @@ final class EventAutomationTests: XCTestCase {
 
     @MainActor
     func testNewEventAgentDefaultsToDedicatedChatWithStableCreationID() {
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
 
         model.presentEditor(targetSessionID: "template-chat", triggerKind: .event)
         let draft = model.editorDraft
@@ -544,7 +573,8 @@ final class EventAutomationTests: XCTestCase {
 
     @MainActor
     func testEditingDedicatedAgentRepairsItsStableTarget() {
-        let model = EventAutomationModel()
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
         let trigger = EventTrigger(
             id: "weather-agent",
             name: "Weather",

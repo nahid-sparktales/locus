@@ -192,9 +192,13 @@ extension AppModel {
             // The old child must have released the port before bootstrap
             // relaunches, but that wait may not block the main thread — a
             // stubborn child used to beachball Save for up to four seconds.
-            Task { [backendProcess] in
-                await backendProcess.stopAndWait()
-                await self.bootstrap()
+            // Updating a fixture's settings must not turn an inert model into
+            // a live backend and event-connector runtime after the test ends.
+            if persistenceEnabled {
+                Task { [backendProcess] in
+                    await backendProcess.stopAndWait()
+                    await self.bootstrap()
+                }
             }
         } else {
             if providerChanged {
