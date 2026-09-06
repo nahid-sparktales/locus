@@ -6,17 +6,17 @@
         "envelope": {
           "admissionGeneration": 0,
           "archiveSHA256": "822c1ba2302bbebf607e9e196b56bd20bd509071c99ff979d91b5bae3d3f8c1c",
-          "authoritySHA256": "3764647f9a7b631b9cac107b00927a272dc671954586c4745dce551c9ef4430f",
+          "authoritySHA256": "bf058133a26d2506ee9a0284c5b99cf2c535509737e71732dbbc58ac0d4fddb7",
           "bundleVersion": "fixture-1",
-          "candidateID": "37e17697ba2684caa1980c90cd0e6dd701b3a3b9d50d8782fbf2f43c922a4f2a",
+          "candidateID": "728ac6e7b1a9db5b7f5d88191282cbc9a82d5bf42ad9a365dc7b574c3b52a916",
           "capabilityManifest": {
             "manifest": {
               "approvedRegions": [],
               "canaryLimits": [],
               "completedApprovals": [],
               "evidenceIndexSHA256": "",
-              "expiresAt": "2026-09-06T09:35:47Z",
-              "issuedAt": "2026-09-06T08:34:47Z",
+              "expiresAt": "2026-09-06T09:45:56Z",
+              "issuedAt": "2026-09-06T08:44:56Z",
               "networkGrants": [
                 {
                   "capabilities": [
@@ -24,21 +24,35 @@
                   ],
                   "connectors": [],
                   "networkID": "eip155:1"
+                },
+                {
+                  "capabilities": [
+                    "native_transfer"
+                  ],
+                  "connectors": [],
+                  "networkID": "solana:mainnet-beta"
+                },
+                {
+                  "capabilities": [
+                    "native_transfer"
+                  ],
+                  "connectors": [],
+                  "networkID": "sui:mainnet"
                 }
               ],
               "releaseStage": "experimental_mainnet",
               "revision": 7,
               "schemaVersion": 3
             },
-            "signatureBase64": "Kui7OhF4r+qTiVUIdi+syJBYCcIbcPQmj8wjkc8Cm6/y6xIMGlIjOLx/Dbrd1a9fulfQYtmUv2B0dEs7zvDRAw=="
+            "signatureBase64": "4LKj8H5OsLv2TQ3LE5KvnNsN24SS/5+jsZHZe1zF9I7Xdze7R2rVosVZhrg3bvr1m+M4kCsnLaE6hXvwSOK7BQ=="
           },
-          "expiresAt": "2026-09-06T09:35:47Z",
-          "issuedAt": "2026-09-06T08:34:47Z",
+          "expiresAt": "2026-09-06T09:45:56Z",
+          "issuedAt": "2026-09-06T08:44:56Z",
           "outerAppCodeDirectoryHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "permanentLimits": [],
           "purpose": "experimental_mainnet",
           "releaseStage": "experimental_mainnet",
-          "reviewCeilingSHA256": "8a92cf1d67f11e738d73f46011308827d307dc6de3125a66d905422a7d694290",
+          "reviewCeilingSHA256": "c2e3c39da91e7d0e5f55b22747a7fcca1e19d2d9fd7fca9f4d1906fa905ba2b0",
           "reviewRestriction": {
             "manifest": {
               "adapterIDs": [],
@@ -53,13 +67,35 @@
                   "networkID": "eip155:1",
                   "symbol": "TEST",
                   "trust": "curated"
+                },
+                {
+                  "canonicalID": "solana:mainnet-beta/slip44:501",
+                  "chain": "solana",
+                  "decimals": 9,
+                  "kind": "native",
+                  "manifestRevision": 7,
+                  "name": "Synthetic Native",
+                  "networkID": "solana:mainnet-beta",
+                  "symbol": "TEST",
+                  "trust": "curated"
+                },
+                {
+                  "canonicalID": "sui:mainnet/coin:0x2::sui::SUI",
+                  "chain": "sui",
+                  "decimals": 9,
+                  "kind": "native",
+                  "manifestRevision": 7,
+                  "name": "Synthetic Native",
+                  "networkID": "sui:mainnet",
+                  "symbol": "TEST",
+                  "trust": "curated"
                 }
               ],
               "connectors": [],
               "evmContracts": [],
-              "expiresAt": "2026-09-06T09:35:47Z",
+              "expiresAt": "2026-09-06T09:45:56Z",
               "explorerTemplates": {},
-              "issuedAt": "2026-09-06T08:34:47Z",
+              "issuedAt": "2026-09-06T08:44:56Z",
               "programIdentities": [],
               "providerIdentities": [
                 {
@@ -81,6 +117,46 @@
                   },
                   "networkID": "eip155:1",
                   "provider": "quicknode"
+                },
+                {
+                  "configurationID": "alchemy:solana:mainnet-beta",
+                  "endpointSHA256": "b5ca950826bd3d093e7c76a9581b9c93bbf9cae1c5f35323c0dd223741e8d4f6",
+                  "expectedIdentity": {
+                    "kind": "solana_genesis_hash",
+                    "value": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2d"
+                  },
+                  "networkID": "solana:mainnet-beta",
+                  "provider": "alchemy"
+                },
+                {
+                  "configurationID": "quicknode:solana:mainnet-beta",
+                  "endpointSHA256": "6a86a676f703998cfc4f708b061e820d1be26b90613ffa0cf0405fa9ec94c6e1",
+                  "expectedIdentity": {
+                    "kind": "solana_genesis_hash",
+                    "value": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2d"
+                  },
+                  "networkID": "solana:mainnet-beta",
+                  "provider": "quicknode"
+                },
+                {
+                  "configurationID": "alchemy:sui:mainnet",
+                  "endpointSHA256": "ded5808d4358c418766fe47558c7e35bce2367b44d0e81fcf6f677fca6f58054",
+                  "expectedIdentity": {
+                    "kind": "sui_chain_identifier",
+                    "value": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+                  },
+                  "networkID": "sui:mainnet",
+                  "provider": "alchemy"
+                },
+                {
+                  "configurationID": "quicknode:sui:mainnet",
+                  "endpointSHA256": "091f58d4868e5fcea19377dae83bfdff308422004f5daa4abe1bd52d0bacdb7f",
+                  "expectedIdentity": {
+                    "kind": "sui_chain_identifier",
+                    "value": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+                  },
+                  "networkID": "sui:mainnet",
+                  "provider": "quicknode"
                 }
               ],
               "revision": 7,
@@ -88,7 +164,7 @@
               "signInAdapters": [],
               "uniswapConfigurations": []
             },
-            "signatureBase64": "s0y5nQBetB/VgKyOmJigbDyC5R66Z0BQvzrf1L239X7d8hxPrfU+MqN5s2nLjtZsi5iIiuQICoz4bk7yPj6IBg=="
+            "signatureBase64": "DBBt2Ammr/jXtreyxt4j+kApH7yf/xU8f/3/6+sqEAXdwID5W8FiNQJqjacD5oNlFebpw6pT6iqVjDmCECgMCQ=="
           },
           "revision": 7,
           "revokedAdmissionSerials": [],
@@ -97,7 +173,7 @@
           "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "transition": "initial"
         },
-        "signatureBase64": "RZq/W6XhxVFwHxNDdwath+PohghtndqpFKa/8pG50AVshBKJHJXiLi42ju0Jw+sNovz9EeePu/yj57kJS2JlDg=="
+        "signatureBase64": "5iat2iBgIR+9cgoLwubhbSLNLlF2bGMaP+IMPHDXXXAiZL3ks36z3dgS2PLCbQ/EJG/JOgdsJwGxfj/lTE4CCw=="
       }
     ]
   },
@@ -107,12 +183,12 @@
     "signerCodeDirectoryHash": "cccccccccccccccccccccccccccccccccccccccc",
     "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
-  "publicKeyBase64": "OE7DVBzNmCrB+rQd5jLpDwl9cWsbd3OLTdwejlAl5Q8=",
+  "publicKeyBase64": "pgcCIy6t5V5o6cQ9Y+kAXACpM9nvbAAXLzVKSg6dVV4=",
   "signedCeiling": {
     "ceiling": {
       "domain": "locus-wallet-review-ceiling-v1",
       "reviewRevision": 1,
-      "reviewedAt": "2026-09-06T08:34:47Z",
+      "reviewedAt": "2026-09-06T08:44:56Z",
       "schemaVersion": 1,
       "scope": {
         "adapterIDs": [],
@@ -125,6 +201,28 @@
             "manifestRevision": 1,
             "name": "Synthetic Ether",
             "networkID": "eip155:1",
+            "symbol": "TEST",
+            "trust": "curated"
+          },
+          {
+            "canonicalID": "solana:mainnet-beta/slip44:501",
+            "chain": "solana",
+            "decimals": 9,
+            "kind": "native",
+            "manifestRevision": 1,
+            "name": "Synthetic Native",
+            "networkID": "solana:mainnet-beta",
+            "symbol": "TEST",
+            "trust": "curated"
+          },
+          {
+            "canonicalID": "sui:mainnet/coin:0x2::sui::SUI",
+            "chain": "sui",
+            "decimals": 9,
+            "kind": "native",
+            "manifestRevision": 1,
+            "name": "Synthetic Native",
+            "networkID": "sui:mainnet",
             "symbol": "TEST",
             "trust": "curated"
           }
@@ -145,6 +243,26 @@
             "provider": "alchemy"
           },
           {
+            "configurationID": "alchemy:solana:mainnet-beta",
+            "endpointSHA256": "b5ca950826bd3d093e7c76a9581b9c93bbf9cae1c5f35323c0dd223741e8d4f6",
+            "expectedIdentity": {
+              "kind": "solana_genesis_hash",
+              "value": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2d"
+            },
+            "networkID": "solana:mainnet-beta",
+            "provider": "alchemy"
+          },
+          {
+            "configurationID": "alchemy:sui:mainnet",
+            "endpointSHA256": "ded5808d4358c418766fe47558c7e35bce2367b44d0e81fcf6f677fca6f58054",
+            "expectedIdentity": {
+              "kind": "sui_chain_identifier",
+              "value": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+            },
+            "networkID": "sui:mainnet",
+            "provider": "alchemy"
+          },
+          {
             "configurationID": "quicknode:eip155:1",
             "endpointSHA256": "f28ac15851f918a3c9178e4fc7d7cc810c77e0d6aad6edddc85069abc599570b",
             "expectedIdentity": {
@@ -153,13 +271,33 @@
             },
             "networkID": "eip155:1",
             "provider": "quicknode"
+          },
+          {
+            "configurationID": "quicknode:solana:mainnet-beta",
+            "endpointSHA256": "6a86a676f703998cfc4f708b061e820d1be26b90613ffa0cf0405fa9ec94c6e1",
+            "expectedIdentity": {
+              "kind": "solana_genesis_hash",
+              "value": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2d"
+            },
+            "networkID": "solana:mainnet-beta",
+            "provider": "quicknode"
+          },
+          {
+            "configurationID": "quicknode:sui:mainnet",
+            "endpointSHA256": "091f58d4868e5fcea19377dae83bfdff308422004f5daa4abe1bd52d0bacdb7f",
+            "expectedIdentity": {
+              "kind": "sui_chain_identifier",
+              "value": "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+            },
+            "networkID": "sui:mainnet",
+            "provider": "quicknode"
           }
         ],
         "signInAdapters": [],
         "uniswapConfigurations": []
       }
     },
-    "signatureBase64": "GYNZmlYKeTqvtkgg46zg72x7KzavFw1dk6vjy2PSILFvRfQJ/WoKtj7UsSLqL84g8eb+6ZKbfvsMsFzgWl6gDA=="
+    "signatureBase64": "MNjINwVMJ+jV/YWGfKphAZ+0zCzzCx75v6+xQcwszrgsoFzZ6rcmqDA7xay4EKGNj/HCvVx3e0mfHEQSogepBQ=="
   },
-  "verificationTimeISO8601": "2026-09-06T08:34:48Z"
+  "verificationTimeISO8601": "2026-09-06T08:44:57Z"
 }

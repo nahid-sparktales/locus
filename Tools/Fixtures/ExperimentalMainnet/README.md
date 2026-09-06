@@ -6,6 +6,11 @@ revision, CodeDirectory hashes, provider identities, native asset label, archive
 contents and signing key are disposable test data, not release or wallet data.
 The private key is not included. The shipped issuer has no synthetic mode.
 
+The public fixture comes from the successful
+`test_synthetic_all_three_mainnets_remain_explicit` CLI case: Ethereum, Solana
+and Sui each have one explicit native-transfer grant and both synthetic provider
+identities. It has no connector, automation, collectible or swap grants.
+
 The public fixture preserves actual CLI-produced signatures and digests. Test
 the runtime verifier using its recorded `verificationTimeISO8601`, which lies
 inside its fixed lease, and its explicit synthetic installed identity. This is
