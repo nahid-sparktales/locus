@@ -330,7 +330,13 @@ do {
     try exactKeys(cap, ["schemaVersion", "revision", "releaseStage", "evidenceIndexSHA256", "issuedAt", "expiresAt", "networkGrants", "approvedRegions", "completedApprovals", "canaryLimits"])
     let revision = try integer(cap, "revision"), issued = try string(cap, "issuedAt"), expires = try string(cap, "expiresAt")
     let formatter = ISO8601DateFormatter()
-    guard let issueDate = formatter.date(from: issued), let expiry = formatter.date(from: expires) else { throw InputError.invalid("invalid authority dates") }
+    guard let issueDate = formatter.date(from: issued), let expiry = formatter.date(from: expires),
+          let reviewedAt = formatter.date(from: try string(ceiling, "reviewedAt")) else {
+        throw InputError.invalid("invalid authority dates")
+    }
+    // The runtime uses the ceiling's review date as the earliest admissible
+    // authority proof time. Reject unusable output before signing anything.
+    try require(issueDate >= reviewedAt, "authority issue date predates the bundled review ceiling")
     try require(formatter.string(from: issueDate) == issued && formatter.string(from: expiry) == expires
         && issueDate <= Date() && expiry > Date() && expiry > issueDate && expiry.timeIntervalSince(issueDate) <= 31 * 86_400,
         "authority requires canonical current dates and a lease of at most 31 days")

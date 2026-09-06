@@ -426,6 +426,17 @@ def test_signature_tamper_is_rejected(issuer_case):
     assert_rejected(issuer_case, prepare_inputs=False)
 
 
+def test_authority_cannot_predate_its_valid_signed_ceiling(issuer_case):
+    # Both documents are independently current and correctly signed. Only the
+    # cross-document proof-time ordering is invalid; runtime rejects it too.
+    issued = datetime.fromisoformat(issuer_case["cap"]["issuedAt"].replace("Z", "+00:00"))
+    issuer_case["ceiling"]["reviewedAt"] = (
+        (issued + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    )
+    result = assert_rejected(issuer_case)
+    assert "predates the bundled review ceiling" in result.stderr
+
+
 def test_synthetic_all_three_mainnets_remain_explicit(issuer_case):
     case = issuer_case
     for network, name, chain, reference, identity in (
