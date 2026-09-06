@@ -2541,8 +2541,6 @@ private struct ConversationView: View {
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Conversation transcript")
                 .background { TranscriptSelectionScope() }
                 // Like the selection scope, the bridge must live inside the
                 // scroll content: from the ScrollView's own background the
@@ -2578,6 +2576,10 @@ private struct ConversationView: View {
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
             }
+            // The native scroll area is the transcript's accessibility
+            // container. An additional lazy-stack wrapper must not substitute
+            // for that viewport or its realized interactive descendants.
+            .accessibilityLabel("Conversation transcript")
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
