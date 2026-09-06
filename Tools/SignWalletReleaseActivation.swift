@@ -18,11 +18,50 @@ func loadObject(_ path: String) -> [String: Any] {
     } catch { fail("cannot read \(path): \(error.localizedDescription)") }
 }
 
+/// Match the runtime's JSONEncoder ordering and escaping. Never round integer
+/// JSON through Double: adjacent 64-bit values must retain distinct signatures.
+struct CanonicalJSON: Encodable {
+    let value: Any
+
+    func encode(to encoder: Encoder) throws {
+        var output = encoder.singleValueContainer()
+        switch value {
+        case is NSNull:
+            try output.encodeNil()
+        case let text as String:
+            try output.encode(text)
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                try output.encode(number.boolValue)
+            } else if let integer = Int64(number.stringValue) {
+                try output.encode(integer)
+            } else if let integer = UInt64(number.stringValue) {
+                try output.encode(integer)
+            } else if let decimal = number as? NSDecimalNumber {
+                try output.encode(decimal.decimalValue)
+            } else {
+                guard number.doubleValue.isFinite else {
+                    throw EncodingError.invalidValue(value, .init(codingPath: encoder.codingPath,
+                        debugDescription: "Non-finite JSON number"))
+                }
+                try output.encode(number.doubleValue)
+            }
+        case let items as [Any]:
+            try output.encode(items.map { CanonicalJSON(value: $0) })
+        case let fields as [String: Any]:
+            try output.encode(fields.mapValues { CanonicalJSON(value: $0) })
+        default:
+            throw EncodingError.invalidValue(value, .init(codingPath: encoder.codingPath,
+                debugDescription: "Unsupported JSON value"))
+        }
+    }
+}
+
 func canonical(_ object: Any) -> Data {
     do {
-        return try JSONSerialization.data(
-            withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]
-        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(CanonicalJSON(value: object))
     } catch { fail("the activation input is not canonical JSON") }
 }
 

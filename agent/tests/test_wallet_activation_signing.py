@@ -68,7 +68,30 @@ def activation_tools(tmp_path_factory):
         pytest.skip("the release activation CLI requires macOS CryptoKit and Swift")
     directory = tmp_path_factory.mktemp("wallet-activation-cli")
     helper_source = directory / "fixture-signing.swift"
-    helper_source.write_text(SWIFT_HELPER, encoding="utf-8")
+    review_source = (ROOT / "Tools/SignWalletReviewManifest.swift").read_text()
+    start = review_source.index("struct CanonicalJSON:")
+    end = review_source.index("\nfunc canonicalObject(", start)
+    # Fixtures must sign the single runtime encoding, not retain acceptance of
+    # the former JSONSerialization ordering. Independent typed parity is tested
+    # in test_wallet_review_canonical_encoding.py.
+    helper_body = SWIFT_HELPER.replace(
+        "try JSONSerialization.data(withJSONObject: object,\n"
+        "            options: [.sortedKeys, .withoutEscapingSlashes])",
+        "try runtimeCanonical(object)",
+    ).replace(
+        'try JSONSerialization.data(withJSONObject: object["envelope"]!,\n'
+        "            options: [.sortedKeys, .withoutEscapingSlashes])",
+        'try runtimeCanonical(object["envelope"]!)',
+    )
+    helper_source.write_text(
+        "import Foundation\n" + review_source[start:end]
+        + "\nfunc runtimeCanonical(_ value: Any) throws -> Data {\n"
+        "    let encoder = JSONEncoder()\n"
+        "    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]\n"
+        "    return try encoder.encode(CanonicalJSON(value: value))\n}\n"
+        + helper_body,
+        encoding="utf-8",
+    )
     helper = directory / "fixture-signing"
     cli = directory / "sign-activation"
     for source, binary in [
