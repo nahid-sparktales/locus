@@ -999,6 +999,142 @@ final class TranscriptFollowTests: XCTestCase {
             "A previously settled projection cannot certify a new revision without its layout")
     }
 
+    func testRenderTargetRejectsOlderAndConflictingInstallsWithoutChangingCurrentOwnership() throws {
+        let scroll = mountNativeScroll()
+        let otherScroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        let anchor = NSView(frame: .zero)
+        let staleAnchor = NSView(frame: .zero)
+        document.addSubview(anchor)
+        try XCTUnwrap(otherScroll.documentView).addSubview(staleAnchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: .block(UUID()))
+        var currentAlignments = 0
+        var rejectedCallbacks = 0
+        XCTAssertTrue(coordinator.installRenderTarget(
+            token, realizeTail: {}, scrollToBottom: { currentAlignments += 1 }
+        ))
+        coordinator.attach(from: anchor, expectedToken: token)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 41, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 0, width: 300, height: 41), in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        coordinator.detach()
+        let attachment = coordinator.layoutAttachmentRevision
+        let invalid = [
+            TranscriptRenderToken(sessionGeneration: 1, contentRevision: 99, tailID: token.tailID),
+            TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: token.tailID),
+            TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: .block(UUID())),
+            TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: nil),
+        ]
+        for stale in invalid {
+            XCTAssertFalse(coordinator.installRenderTarget(
+                stale, realizeTail: { rejectedCallbacks += 1 },
+                realizePredecessor: { rejectedCallbacks += 1 },
+                scrollToBottom: { rejectedCallbacks += 1 }
+            ))
+            coordinator.attach(from: staleAnchor, expectedToken: stale)
+            XCTAssertEqual(coordinator.layoutAttachmentRevision, attachment)
+            XCTAssertTrue(coordinator.followState.isNearBottom, "A rejected install cannot erase measured current geometry")
+        }
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput, "A stale generation must not re-arm default following")
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 200, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 159, width: 300, height: 41), in: scroll)
+        coordinator.jumpToLatest()
+        pump()
+        XCTAssertEqual(currentAlignments, 1, "The current callback must survive every rejected replacement")
+        XCTAssertEqual(rejectedCallbacks, 0)
+    }
+
+    func testRenderTargetSameTokenRefreshesAllCallbacksWithoutResettingReaderOrGeometry() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var oldCalls = 0
+        var refreshed: [String] = []
+        XCTAssertTrue(coordinator.installRenderTarget(
+            token, realizeTail: { oldCalls += 1 }, realizePredecessor: { oldCalls += 1 },
+            scrollToBottom: { oldCalls += 1 }
+        ))
+        coordinator.attach(from: anchor, expectedToken: token)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        let attachment = coordinator.layoutAttachmentRevision
+        XCTAssertTrue(coordinator.installRenderTarget(
+            token, realizeTail: { refreshed.append("tail") },
+            realizePredecessor: { refreshed.append("predecessor") },
+            scrollToBottom: { refreshed.append("align") }
+        ))
+        pump()
+        XCTAssertEqual(refreshed, ["predecessor"], "An equal-token refresh retains current native readiness")
+        coordinator.tailDidLayout(token: token, kind: .predecessor, rect: NSRect(x: 0, y: 600, width: 300, height: 40), in: scroll)
+        pump()
+        XCTAssertEqual(refreshed, ["predecessor", "tail"])
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 800, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 759, width: 300, height: 41), in: scroll)
+        pump()
+        XCTAssertEqual(refreshed, ["predecessor", "tail", "align"])
+        XCTAssertEqual(oldCalls, 0)
+        coordinator.detach()
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 41, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 0, width: 300, height: 41), in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        XCTAssertTrue(coordinator.installRenderTarget(token, realizeTail: { oldCalls += 1 }))
+        pump()
+        XCTAssertEqual(coordinator.layoutAttachmentRevision, attachment)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput, "Refreshing a proxy is not a new conversation")
+        XCTAssertEqual(oldCalls, 0)
+    }
+
+    func testRenderTargetAdmitsNewRevisionsGenerationsAndExactTokenReattachment() throws {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let current = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: .block(UUID()))
+        XCTAssertTrue(coordinator.installRenderTarget(current, realizeTail: {}))
+        coordinator.attach(from: anchor, expectedToken: current)
+        acknowledgeContainerLayout(coordinator, token: current, anchor: anchor)
+        pump()
+        coordinator.detach()
+        let attachment = coordinator.layoutAttachmentRevision
+        let revised = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 4, tailID: .block(UUID()))
+        XCTAssertTrue(coordinator.installRenderTarget(revised, realizeTail: {}))
+        pump()
+        XCTAssertEqual(coordinator.layoutAttachmentRevision, attachment)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        coordinator.detachAll()
+        let detachedAttachment = coordinator.layoutAttachmentRevision
+        XCTAssertTrue(coordinator.installRenderTarget(revised, realizeTail: {}))
+        coordinator.attach(from: anchor, expectedToken: revised)
+        acknowledgeContainerLayout(coordinator, token: revised, anchor: anchor)
+        pump()
+        XCTAssertGreaterThan(coordinator.layoutAttachmentRevision, detachedAttachment)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput, "Exact-token native reattachment preserves reading state")
+
+        // Generation is the primary identity; revision ordering is scoped to
+        // an unchanged generation, not used to reject a new conversation.
+        let replacement = TranscriptRenderToken(sessionGeneration: 3, contentRevision: 1, tailID: nil)
+        XCTAssertTrue(coordinator.installRenderTarget(replacement, realizeTail: {}))
+        coordinator.attach(from: anchor, expectedToken: replacement)
+        acknowledgeContainerLayout(coordinator, token: replacement, anchor: anchor)
+        pump()
+        XCTAssertTrue(coordinator.followState.isFollowingOutput)
+        XCTAssertFalse(coordinator.installRenderTarget(revised, realizeTail: {}))
+    }
+
     func testTailProbeLateOlderRegistrationCannotReplaceCurrentGeometry() throws {
         let scroll = mountNativeScroll()
         let anchor = NSView(frame: .zero)

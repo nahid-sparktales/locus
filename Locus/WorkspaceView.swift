@@ -3353,16 +3353,22 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
     /// Installing a projection is not a layout acknowledgment. The two probes
     /// below must report matching, attached native geometry before it can settle.
+    @discardableResult
     func installRenderTarget(
         _ token: TranscriptRenderToken,
         realizeTail: @escaping () -> Void,
         realizePredecessor: (() -> Void)? = nil,
         scrollToBottom: (() -> Void)? = nil
-    ) {
+    ) -> Bool {
+        // A superseded representable must not replace current callbacks,
+        // invalidate geometry, or re-arm a conversation's default following.
+        guard admitsRenderToken(token) else { return false }
         realizeTailTarget = realizeTail
         realizePredecessorTarget = realizePredecessor
         scrollToBottomTarget = scrollToBottom
-        guard renderToken != token else { return }
+        // Same-projection updates may carry a fresh ScrollViewReader proxy.
+        // Refresh its callbacks without treating that as a new projection.
+        guard renderToken != token else { return true }
         let previousGeneration = renderToken?.sessionGeneration
         let changedSession = previousGeneration != token.sessionGeneration
         if changedSession {
@@ -3410,6 +3416,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
             self.updateNearBottom()
             self.contentMayHaveChanged()
         }
+        return true
     }
 
     func registerTailProbe(_ view: TranscriptTailLayoutView) {
@@ -3417,7 +3424,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         // A reused representable has only its newest registration. Removing
         // an old key must not remove a different view at the current key.
         tailProbeRegistrations.removeAll { $0.view === view }
-        guard let token = view.token, admitsTailProbeToken(token) else { return }
+        guard let token = view.token, admitsRenderToken(token) else { return }
         tailProbeRegistrations.removeAll { $0.token == token && $0.kind == view.kind }
         tailProbeRegistrations.append(TailProbeRegistration(view: view, token: token, kind: view.kind))
     }
@@ -3431,7 +3438,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         // schedule a replacement scroll from this cleanup callback.
     }
 
-    private func admitsTailProbeToken(_ token: TranscriptRenderToken) -> Bool {
+    private func admitsRenderToken(_ token: TranscriptRenderToken) -> Bool {
         guard let current = renderToken else { return true }
         if token.sessionGeneration != current.sessionGeneration {
             return token.sessionGeneration > current.sessionGeneration
@@ -3445,7 +3452,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private func pruneTailProbeRegistrations() {
         tailProbeRegistrations.removeAll {
             guard let view = $0.view else { return true }
-            return view.token != $0.token || view.kind != $0.kind || !admitsTailProbeToken($0.token)
+            return view.token != $0.token || view.kind != $0.kind || !admitsRenderToken($0.token)
         }
     }
 
@@ -4241,11 +4248,13 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     let realizePredecessor: (() -> Void)?
 
     func makeNSView(context: Context) -> TranscriptScrollAnchorView {
-        coordinator.installRenderTarget(token, realizeTail: realizeTail, realizePredecessor: realizePredecessor)
+        let view = TranscriptScrollAnchorView(frame: .zero)
+        guard coordinator.installRenderTarget(
+            token, realizeTail: realizeTail, realizePredecessor: realizePredecessor
+        ) else { return view }
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
-        let view = TranscriptScrollAnchorView(frame: .zero)
         view.transcriptCoordinator = coordinator
         view.renderToken = token
         DispatchQueue.main.async { [weak view, weak coordinator] in
@@ -4257,8 +4266,10 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     }
 
     func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
+        guard coordinator.installRenderTarget(
+            token, realizeTail: realizeTail, realizePredecessor: realizePredecessor
+        ) else { return }
         let needsCurrentLayout = view.renderToken != token
-        coordinator.installRenderTarget(token, realizeTail: realizeTail, realizePredecessor: realizePredecessor)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
