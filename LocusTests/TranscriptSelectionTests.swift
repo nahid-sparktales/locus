@@ -60,8 +60,15 @@ final class TranscriptSelectionTests: XCTestCase {
         let buttonPoint = NSPoint(x: button.frame.midX, y: button.frame.midY)
         let textPoint = NSPoint(x: text.frame.minX + 10, y: text.frame.midY)
         func accessibilityTarget(at point: NSPoint) -> NSObject? {
-            let screenPoint = window.convertPoint(toScreen: document.convert(point, to: nil))
-            return document.accessibilityHitTest(screenPoint) as? NSObject
+            // A plain ignored document view's accessibilityHitTest resolves
+            // its unignored scroll ancestor, not the frontmost native child.
+            // AppKit first narrows the native hit, then lets that receiver
+            // resolve any finer accessibility target (for example, a cell).
+            guard let root = window.contentView else { return nil }
+            let windowPoint = document.convert(point, to: nil)
+            let rootPoint = root.superview?.convert(windowPoint, from: nil) ?? windowPoint
+            guard let hit = root.hitTest(rootPoint) else { return nil }
+            return hit.accessibilityHitTest(window.convertPoint(toScreen: windowPoint)) as? NSObject
         }
         let originalButtonTarget = try XCTUnwrap(accessibilityTarget(at: buttonPoint))
         let originalTextTarget = try XCTUnwrap(accessibilityTarget(at: textPoint))
