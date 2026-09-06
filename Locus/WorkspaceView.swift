@@ -2540,6 +2540,10 @@ private struct ConversationView: View {
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
+                // Identify the repeating outer rows as the scroll targets,
+                // including those that the lazy layout has not realized yet.
+                // Nested cards and the terminal spacer are not separate rows.
+                .scrollTargetLayout()
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
                 .background { TranscriptSelectionScope() }
