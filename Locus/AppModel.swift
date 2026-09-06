@@ -105,6 +105,11 @@ final class AppModel: ObservableObject {
     let extensionsModel: ExtensionsModel
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
+    /// Compatibility notification for an AppModel-owned identity transition,
+    /// after the transcript's identity and rows have committed together. This
+    /// is not a subscription to child publications: content and streaming
+    /// changes remain isolated in TranscriptPresentationModel.
+    @Published private var transcriptSessionTransitionRevision: UInt64 = 0
     enum TranscriptInputState: Equatable {
         case ready
         case loading
@@ -134,8 +139,9 @@ final class AppModel: ObservableObject {
             guard currentSessionID != newValue else { return }
             invalidatePendingTranscriptTransition()
             if transcriptInputState == .loading { transcriptInputState = .unavailable }
-            objectWillChange.send()
-            transcriptPresentation.beginSession(newValue)
+            commitTranscriptIdentityTransition {
+                transcriptPresentation.beginSession(newValue)
+            }
         }
     }
     @Published var chatSplitRestoration = ChatSplitRestoration.empty  // internal(for: AppModel extension files)
@@ -184,23 +190,26 @@ final class AppModel: ObservableObject {
     func installTranscriptSession(
         _ sessionID: String, blocks: [ChatBlock], forceNewGeneration: Bool = false
     ) {
-        if currentSessionID != sessionID { objectWillChange.send() }
-        transcriptPresentation.installSession(
-            sessionID, blocks: blocks, forceNewGeneration: forceNewGeneration
-        )
+        commitTranscriptIdentityTransition {
+            transcriptPresentation.installSession(
+                sessionID, blocks: blocks, forceNewGeneration: forceNewGeneration
+            )
+        }
     }
 
     func rekeyTranscriptSession(to sessionID: String) {
         guard currentSessionID != sessionID else { return }
-        objectWillChange.send()
-        transcriptPresentation.rekeySession(from: currentSessionID, to: sessionID)
+        commitTranscriptIdentityTransition {
+            transcriptPresentation.rekeySession(from: currentSessionID, to: sessionID)
+        }
     }
 
     func beginTranscriptSessionLoad(_ sessionID: String) -> TranscriptSessionLoadToken {
         invalidatePendingTranscriptTransition()
         transcriptInputState = .loading
-        if currentSessionID != sessionID { objectWillChange.send() }
-        return transcriptPresentation.beginSessionLoad(sessionID)
+        return commitTranscriptIdentityTransition {
+            transcriptPresentation.beginSessionLoad(sessionID)
+        }
     }
 
     @discardableResult
@@ -209,8 +218,20 @@ final class AppModel: ObservableObject {
     ) -> Bool {
         guard transcriptPresentation.ownsSessionLoad(token),
               transcriptPresentation.loadingSessionID != nil else { return false }
-        if currentSessionID != sessionID { objectWillChange.send() }
-        return transcriptPresentation.completeSessionLoad(token, sessionID: sessionID, blocks: blocks)
+        return commitTranscriptIdentityTransition {
+            transcriptPresentation.completeSessionLoad(token, sessionID: sessionID, blocks: blocks)
+        }
+    }
+
+    /// Notify compatibility consumers only for an identity change that this
+    /// synchronous orchestration operation actually committed. Observers read
+    /// the already-coherent child snapshot; no identity or row copy is stored
+    /// here, and rejected/no-op/content-only mutations publish nothing.
+    private func commitTranscriptIdentityTransition<Result>(_ mutation: () -> Result) -> Result {
+        let previousID = currentSessionID
+        let result = mutation()
+        if currentSessionID != previousID { transcriptSessionTransitionRevision &+= 1 }
+        return result
     }
 
     /// Loading the rows alone is insufficient: the send path also snapshots
