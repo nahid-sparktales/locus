@@ -12,6 +12,9 @@ configs:
   # Store build, sandboxed and entitled.
   Debug: debug
   Release: release
+  # Explicit personal mainnet channel. It retains release compilation and XPC
+  # authentication; it is not a Debug, canary, or App Store configuration.
+  ReleaseExperimental: release
   ReleaseMAS: release
 settings:
   base:
@@ -45,6 +48,14 @@ settings:
       ENABLE_APP_SANDBOX: NO
       # Required for notarization, and safe here: every Mach-O in the bundled
       # runtime is signed with this same team, so library validation passes.
+      ENABLE_HARDENED_RUNTIME: YES
+    ReleaseExperimental:
+      ARCHS: arm64
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "Apple Development"
+      DEVELOPMENT_TEAM: 4X4RJA7GMD
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+      ENABLE_APP_SANDBOX: NO
       ENABLE_HARDENED_RUNTIME: YES
     ReleaseMAS:
       ARCHS: arm64
@@ -140,6 +151,11 @@ targets:
           DEVELOPMENT_TEAM: 4X4RJA7GMD
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
+        ReleaseExperimental:
+          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_IDENTITY: "Apple Development"
+          ENABLE_APP_SANDBOX: YES
+          ENABLE_HARDENED_RUNTIME: YES
     dependencies:
       - target: WalletSignerService
         embed: true
@@ -209,6 +225,13 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: "$(LOCUS_WALLET_SIGNER_PROVISIONING_PROFILE_SPECIFIER)"
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
+        ReleaseExperimental:
+          INFOPLIST_FILE: Config/WalletSignerExperimental-Info.plist
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_EXPERIMENTAL_MAINNET"
+          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_IDENTITY: "Apple Development"
+          ENABLE_APP_SANDBOX: YES
+          ENABLE_HARDENED_RUNTIME: YES
   Locus:
     templates:
       - LocusApplication
@@ -248,6 +271,14 @@ targets:
         LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL: ""
         LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL: ""
         LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL: ""
+      configs:
+        ReleaseExperimental:
+          PRODUCT_NAME: Locus Experimental
+          PRODUCT_MODULE_NAME: Locus
+          EXECUTABLE_NAME: Locus
+          INFOPLIST_FILE: Config/LocusExperimental-Info.plist
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_EXPERIMENTAL_MAINNET"
+          LOCUS_WALLET_RELEASE_ACTIVATION_URL: ""
     dependencies:
       - target: WalletRecoveryApplication
         embed: true
@@ -337,6 +368,14 @@ targets:
         TEST_TARGET_NAME: LocusMAS
         GENERATE_INFOPLIST_FILE: YES
 schemes:
+  LocusExperimental:
+    build:
+      targets:
+        Locus: all
+    run:
+      config: ReleaseExperimental
+    archive:
+      config: ReleaseExperimental
   WalletChainIntegration:
     build:
       targets:

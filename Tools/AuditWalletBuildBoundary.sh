@@ -112,6 +112,7 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
         -o -name 'LocusReownSwift_*' -o -name 'ReownSwift*' \
         -o -iname '*wallet*activation*' -o -iname '*wallet*authority*' \
         -o -iname '*wallet*admission*' -o -iname '*wallet*ceiling*' -o -name 'WalletSignerSBOM*' \
+        -o -iname '*wallet*experimental*' -o -name 'LocusExperimental*' \
         -o -name 'phantom-wallet-sdk-*.LICENSE' -o -name 'eyes-0.1.8.LICENSE' \
         -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) \
     -print -quit)"
@@ -121,7 +122,7 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
 }
 
 wallet_audit_reject_matching_output \
-    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' \
+    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL|WalletExperimentalMainnetEnabled)' \
     'Mac App Store Info.plist contains connector configuration' \
     /usr/bin/plutil -p "${mas_app}/Contents/Info.plist"
 
@@ -129,6 +130,7 @@ mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriv
 mas_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
 mas_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
 mas_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
+mas_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
 direct_macho_count=0
 mas_macho_count=0
 

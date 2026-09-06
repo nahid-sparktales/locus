@@ -2393,6 +2393,50 @@
 			};
 			name = Debug;
 		};
+		079DF4A2E10845A0F5DC5D87 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_DIRECT_ENTITLEMENTS)";
+				COMBINE_HIDPI_IMAGES = YES;
+				EXECUTABLE_NAME = Locus;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/LocusExperimental-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LOCUS_CANARY_UPDATE_FEED_URL = "";
+				LOCUS_DIRECT_ENTITLEMENTS = Config/LocusDirect.entitlements;
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
+				LOCUS_GOOGLE_OAUTH_CLIENT_ID = "976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov.apps.googleusercontent.com";
+				LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID = "com.googleusercontent.apps.976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov";
+				LOCUS_PHANTOM_APP_ID = "";
+				LOCUS_PHANTOM_REDIRECT_URL = "";
+				LOCUS_REOWN_PROJECT_ID = "";
+				LOCUS_WALLETCONNECT_REDIRECT_URL = "";
+				LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SOLANA_DEVNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_CANDIDATE_ARCHIVE_URL = "";
+				LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_ETHEREUM_SEPOLIA_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SOLANA_DEVNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SOLANA_MAINNET_RPC_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL = "";
+				LOCUS_WALLET_RELEASE_ACTIVATION_URL = "";
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
+				PRODUCT_MODULE_NAME = Locus;
+				PRODUCT_NAME = "Locus Experimental";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_EXPERIMENTAL_MAINNET";
+			};
+			name = ReleaseExperimental;
+		};
 		082494569F30E2D73B3FF4B4 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2579,6 +2623,25 @@
 			};
 			name = Release;
 		};
+		361C7BC684BEDE9C5C775B92 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release";
+				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
+				PRODUCT_BUNDLE_IDENTIFIER = "io.sparktales.locus.wallet-chain-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Locus.app/Contents/MacOS/Locus";
+			};
+			name = ReleaseExperimental;
+		};
 		40DF6543F8F34CC978A2FF4F /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2657,6 +2720,23 @@
 			};
 			name = Release;
 		};
+		55136C48FFE5FC0565A6E5E3 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "io.sparktales.locus.mas-ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = LocusMAS;
+			};
+			name = ReleaseExperimental;
+		};
 		62E499A0631B39F5CA491C08 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2725,6 +2805,27 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Locus.app/Contents/MacOS/Locus";
 			};
 			name = ReleaseMAS;
+		};
+		76DE74F0A0C63035A3A2E96D /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/LocusMAS-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
+				LOCUS_GOOGLE_OAUTH_CLIENT_ID = "976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov.apps.googleusercontent.com";
+				LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID = "com.googleusercontent.apps.976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov";
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
+				PRODUCT_MODULE_NAME = Locus;
+				PRODUCT_NAME = Locus;
+				SDKROOT = macosx;
+			};
+			name = ReleaseExperimental;
 		};
 		7B4DBD51B7454F2B14275303 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -2993,6 +3094,73 @@
 			};
 			name = Debug;
 		};
+		9D535DC0E9D530246222B841 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 24;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4X4RJA7GMD;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCUS_SOURCE_REVISION = "";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 2.4.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = ReleaseExperimental;
+		};
 		A04AECD7AA141A3068BB6922 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -3028,6 +3196,39 @@
 			};
 			name = Release;
 		};
+		BA7E95EC655BB7DA8713B0E8 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_WALLET_SIGNER_ENTITLEMENTS)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/WalletSignerExperimental-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release";
+				LOCUS_SOURCE_REVISION = "$(LOCUS_SOURCE_REVISION)";
+				LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64 = "";
+				LOCUS_WALLET_CAPABILITY_PUBLIC_KEY = "";
+				LOCUS_WALLET_REVIEW_CEILING_BASE64 = "";
+				LOCUS_WALLET_REVIEW_MANIFEST_BASE64 = "";
+				LOCUS_WALLET_SIGNER_ENTITLEMENTS = Config/WalletSigner.entitlements;
+				OTHER_LDFLAGS = "$(inherited) -llocus_wallet_signer_core";
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletSigner;
+				PRODUCT_NAME = WalletSigner;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) LOCUS_EXPERIMENTAL_MAINNET";
+			};
+			name = ReleaseExperimental;
+		};
 		BC388FAE8A56E67403A13E4B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -3044,6 +3245,24 @@
 				TEST_TARGET_NAME = Locus;
 			};
 			name = Debug;
+		};
+		CF38443520724412FF9639EC /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.tests;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) LOCUS_DIRECT_DOWNLOAD";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Locus.app/Contents/MacOS/Locus";
+			};
+			name = ReleaseExperimental;
 		};
 		D13CD8F99B877F1A2E36D592 /* ReleaseMAS */ = {
 			isa = XCBuildConfiguration;
@@ -3066,6 +3285,31 @@
 				SKIP_INSTALL = YES;
 			};
 			name = ReleaseMAS;
+		};
+		D25DD9997B05C995B0138638 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = NO;
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/WalletRecovery.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WalletRecoveryService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus.WalletRecovery;
+				PRODUCT_NAME = WalletRecovery;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = ReleaseExperimental;
 		};
 		EC219525ECF2D2F87B9312BB /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -3127,6 +3371,23 @@
 			};
 			name = ReleaseMAS;
 		};
+		F1D85626BE9915FB906A2423 /* ReleaseExperimental */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "io.sparktales.locus.ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Locus;
+			};
+			name = ReleaseExperimental;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -3135,6 +3396,7 @@
 			buildConfigurations = (
 				0306EFA1CE0152B3C697CC8C /* Debug */,
 				B3342ABAAF2B03E13123490C /* Release */,
+				CF38443520724412FF9639EC /* ReleaseExperimental */,
 				F1994F7FAFBB7F0B8F3A5DC3 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3145,6 +3407,7 @@
 			buildConfigurations = (
 				BC388FAE8A56E67403A13E4B /* Debug */,
 				14F24361BAF1BF5528F22776 /* Release */,
+				F1D85626BE9915FB906A2423 /* ReleaseExperimental */,
 				497B443C29DBF1DB7EAAB2FC /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3155,6 +3418,7 @@
 			buildConfigurations = (
 				EC219525ECF2D2F87B9312BB /* Debug */,
 				7FE184EA7F574C71EE5B684D /* Release */,
+				079DF4A2E10845A0F5DC5D87 /* ReleaseExperimental */,
 				40DF6543F8F34CC978A2FF4F /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3165,6 +3429,7 @@
 			buildConfigurations = (
 				01F2B024B519671691A1A75E /* Debug */,
 				63C06ABECE545F35587BEF57 /* Release */,
+				D25DD9997B05C995B0138638 /* ReleaseExperimental */,
 				D13CD8F99B877F1A2E36D592 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3175,6 +3440,7 @@
 			buildConfigurations = (
 				89F5AB675D7C0E63ADE7226A /* Debug */,
 				34130EDEFF2C83EB257640A9 /* Release */,
+				55136C48FFE5FC0565A6E5E3 /* ReleaseExperimental */,
 				A04AECD7AA141A3068BB6922 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3185,6 +3451,7 @@
 			buildConfigurations = (
 				99E7112DC3789C83E2A09317 /* Debug */,
 				28BC1FD1E1ADCF31A64625B3 /* Release */,
+				9D535DC0E9D530246222B841 /* ReleaseExperimental */,
 				082494569F30E2D73B3FF4B4 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3195,6 +3462,7 @@
 			buildConfigurations = (
 				8F6191110A0C8F8A09EECC46 /* Debug */,
 				936917943599EF7112927359 /* Release */,
+				76DE74F0A0C63035A3A2E96D /* ReleaseExperimental */,
 				62E499A0631B39F5CA491C08 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3205,6 +3473,7 @@
 			buildConfigurations = (
 				7C5BF544B2264FB9C0F0B6CF /* Debug */,
 				7B4DBD51B7454F2B14275303 /* Release */,
+				BA7E95EC655BB7DA8713B0E8 /* ReleaseExperimental */,
 				9783779C70CC7DFCA8AFF5B4 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -3215,6 +3484,7 @@
 			buildConfigurations = (
 				18075A865F562F7E9E7F60A5 /* Debug */,
 				4C351A3662994069966F2BF7 /* Release */,
+				361C7BC684BEDE9C5C775B92 /* ReleaseExperimental */,
 				75994370E6DB55C689B57EC7 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;

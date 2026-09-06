@@ -44,6 +44,16 @@ wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc
 licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 info_plist="${app}/Contents/Info.plist"
 
+for authority_plist in "${info_plist}" "${wallet_signer}/Contents/Info.plist" \
+    "${wallet_recovery_signer}/Contents/Info.plist"
+do
+    if [[ "$(/usr/bin/plutil -extract LocusWalletExperimentalMainnetEnabled raw -o - \
+        "${authority_plist}" 2>/dev/null || true)" == "true" ]]; then
+        echo "error: a personal experimental wallet build is not a production distribution" >&2
+        exit 1
+    fi
+done
+
 github_client_id="$(/usr/bin/plutil -extract LocusGitHubOAuthClientID raw -o - \
     "${info_plist}" 2>/dev/null || true)"
 if [[ -z "${github_client_id}" || "${github_client_id}" == *'$('* ]]; then
@@ -368,6 +378,7 @@ if [[ "${sandboxed}" == "1" ]]; then
         \( -name 'WalletConnections*' -o -name 'LocusReownSwift_*' \
             -o -name 'ReownSwift*' -o -iname '*wallet*activation*' \
             -o -iname '*wallet*authority*' -o -iname '*wallet*admission*' -o -iname '*wallet*ceiling*' \
+            -o -iname '*wallet*experimental*' -o -name 'LocusExperimental*' \
             -o -name 'WalletSignerSBOM*' -o -name 'phantom-wallet-sdk-*.LICENSE' \
             -o -name 'eyes-0.1.8.LICENSE' -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) -print -quit)"
     [[ -z "${unexpected_connector_resource}" ]] || {
@@ -375,7 +386,7 @@ if [[ "${sandboxed}" == "1" ]]; then
         exit 1
     }
     wallet_audit_reject_matching_output \
-        'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' \
+        'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL|WalletExperimentalMainnetEnabled)' \
         'the Mac App Store build contains connector configuration keys' \
         /usr/bin/plutil -p "${info_plist}"
     mas_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
@@ -835,6 +846,7 @@ mas_connector_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletCon
 mas_connector_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
 mas_connector_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
 mas_connector_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
+mas_connector_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
 while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue

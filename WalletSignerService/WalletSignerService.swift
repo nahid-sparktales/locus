@@ -737,7 +737,8 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
                 let accepted = try WalletSignerReleaseAuthorityStore.load()
                 let installation = try WalletSignerReleaseAuthorityStore.installationID()
                 let verified = try WalletReleaseHistoryVerifier.verify(signed, ceiling: ceiling,
-                    key: publicKey, identity: identity, previous: accepted, installationID: installation)
+                    key: publicKey, identity: identity, previous: accepted, installationID: installation,
+                    allowExperimentalMainnet: WalletExperimentalMainnetBuild.isEnabled())
                 try WalletSignerReleaseAuthorityStore.store(verified.checkpoint)
                 let admitted = (try? verified.requireAdmission(installationID: installation)) != nil
                 self.launchGate = admitted ? verified.launchGate : nil
@@ -3453,11 +3454,11 @@ final class WalletSignerService: NSObject, WalletSignerXPCProtocol, WalletRecove
     }
 
     private func validatePolicy(_ policy: WalletSessionPolicy) throws {
-        try authorizeNetwork(policy.networkID, capability: .autonomousPolicy)
-        let accounts = try store.accounts()
         guard let descriptor = WalletNetworkCatalog.descriptor(id: policy.networkID) else {
             throw signerError("The policy network is not recognized.")
         }
+        try authorizeNetwork(policy.networkID, chain: descriptor.chain, capability: .autonomousPolicy)
+        let accounts = try store.accounts()
         let validRecipient: (String) -> Bool = switch descriptor.chain {
         case .evm: Self.isEVMAddress
         case .solana: Self.isSolanaAddress
