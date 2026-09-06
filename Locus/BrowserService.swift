@@ -142,11 +142,13 @@ final class BrowserService: NSObject, ObservableObject {
         fileprivate var navigationSource: BrowserVisitSource = .user
         fileprivate var agentInteractionUntil = Date.distantPast
         fileprivate var pendingUserDownload = false
+        #if LOCUS_WALLET
         fileprivate var walletOrigin: String?
         fileprivate var walletNetworkID = WalletGateway.sepoliaNetworkID
         fileprivate var walletPendingRequestIDs: Set<String> = []
         fileprivate var walletRequestTimes: [Date] = []
 
+        #endif
         init(id: String, host: OffscreenWebHost, ownerSessionID: String) {
             self.id = id
             self.host = host
@@ -268,7 +270,9 @@ final class BrowserService: NSObject, ObservableObject {
     var pageAppearance: BrowserPageAppearance = .automatic
     /// Surfaced as a toast by AppModel — download completions and the like.
     var onUserNotice: ((String) -> Void)?
+    #if LOCUS_WALLET
     private weak var walletGateway: WalletGateway?
+    #endif
 
     // FIFO admission. Concurrent workers queue instead of being refused, so a
     // background agent's call is never dropped just because the foreground one
@@ -331,6 +335,7 @@ final class BrowserService: NSObject, ObservableObject {
         super.init()
     }
 
+    #if LOCUS_WALLET
     func configureWalletGateway(_ gateway: WalletGateway) {
         walletGateway = gateway
         gateway.onBrowserGrantsRevoked = { [weak self] origin in
@@ -357,6 +362,7 @@ final class BrowserService: NSObject, ObservableObject {
         }
     }
 
+    #endif
     /// Point the browser at a workspace's profile. Ephemeral by default; the
     /// opt-in persistent store is keyed per **workspace** — session ids are
     /// re-keyed by worker processes and recycled by chat deletion's Undo, so
@@ -443,7 +449,7 @@ final class BrowserService: NSObject, ObservableObject {
     static func profileIdentifier(for workspacePath: String) -> UUID {
         let canonical = URL(fileURLWithPath: workspacePath)
             .standardizedFileURL.resolvingSymlinksInPath().path
-        let digest = SHA256.hash(data: Data(canonical.utf8))
+        let digest = SHA256.hash(data: Data(AppEdition.current.browserProfileKey(for: canonical).utf8))
         let bytes = Array(digest.prefix(16))
         return UUID(uuid: (
             bytes[0], bytes[1], bytes[2], bytes[3],
@@ -1938,12 +1944,14 @@ final class BrowserService: NSObject, ObservableObject {
             contentWorld: BrowserBridge.readerWorld,
             name: BrowserBridge.autofillHandlerName
         )
+        #if LOCUS_WALLET
         if walletGateway?.browserProviderEnabled == true {
             configuration.userContentController.add(
                 WeakScriptMessageHandler(self),
                 name: BrowserBridge.walletHandlerName
             )
         }
+        #endif
         // Agent clicks carry no user gesture, so this blocks programmatic
         // window.open; links and user-gestured popups route through
         // createWebViewWith into a managed tab.
@@ -1970,9 +1978,11 @@ final class BrowserService: NSObject, ObservableObject {
         controller.addUserScript(BrowserBridge.readerScript())
         controller.addUserScript(BrowserBridge.autofillScript())
         controller.addUserScript(BrowserBridge.captureScript())
+        #if LOCUS_WALLET
         if walletGateway?.browserProviderEnabled == true {
             controller.addUserScript(BrowserBridge.walletProviderScript())
         }
+        #endif
         if emulatingDevice {
             controller.addUserScript(BrowserBridge.deviceScript())
         }
@@ -2445,7 +2455,7 @@ extension BrowserService: WKNavigationDelegate {
             return
         }
         guard let scheme = url.scheme?.lowercased(),
-              !["file", "data", "javascript", "blob", "locus"].contains(scheme)
+              !["file", "data", "javascript", "blob", "locus", "locusx"].contains(scheme)
         else {
             decisionHandler(.cancel, preferences)
             return
@@ -2469,12 +2479,14 @@ extension BrowserService: WKNavigationDelegate {
         if let tab = tab(owning: webView) {
             tab.gate?.settle(.finished)
             if let url = webView.url {
+                #if LOCUS_WALLET
                 let nextOrigin = Self.walletOrigin(for: url)
                 if let previous = tab.walletOrigin, previous != nextOrigin {
                     walletGateway?.revokeBrowserOrigin(previous, reason: .navigation)
                     tab.walletNetworkID = WalletGateway.sepoliaNetworkID
                 }
                 tab.walletOrigin = nextOrigin
+                #endif
                 activityStore.recordVisit(
                     url: url,
                     title: webView.title ?? "",
@@ -2834,7 +2846,7 @@ extension BrowserService: WKDownloadDelegate {
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first else { return nil }
-        let directory = base.appendingPathComponent("Locus/Downloads", isDirectory: true)
+        let directory = AppEdition.current.supportDirectory(in: base).appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
@@ -3246,10 +3258,12 @@ extension BrowserService: WKScriptMessageHandler {
               let webView = message.webView,
               let tab = tab(owning: webView)
         else { return }
+        #if LOCUS_WALLET
         if message.name == BrowserBridge.walletHandlerName {
             handleWalletMessage(payload, tab: tab, webView: webView, message: message)
             return
         }
+        #endif
         if message.name == BrowserBridge.autofillHandlerName {
             handleAutofillMessage(payload, tab: tab, webView: webView)
             return
@@ -3260,6 +3274,7 @@ extension BrowserService: WKScriptMessageHandler {
         }
     }
 
+    #if LOCUS_WALLET
     private func handleWalletMessage(
         _ payload: [String: Any],
         tab: Tab,
@@ -3519,6 +3534,7 @@ extension BrowserService: WKScriptMessageHandler {
         return "\(scheme)://\(securityOrigin.host.lowercased())\(standard ? "" : ":\(securityOrigin.port)")"
     }
 
+    #endif
     private func handleAutofillMessage(
         _ payload: [String: Any],
         tab: Tab,

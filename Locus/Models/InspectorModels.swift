@@ -126,7 +126,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case agents = "Agents & Teams"
     case knowledge = "Memory & Knowledge"
     case browser = "Browser"
+    #if LOCUS_WALLET
     case wallet = "Wallets"
+    #endif
     case extensions = "Extensions"
     case permissions = "Permissions"
     case network = "Network"
@@ -143,7 +145,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .chat: "bubble.left.and.bubble.right"
         case .network: "network"
         case .browser: "globe"
+        #if LOCUS_WALLET
         case .wallet: "wallet.bifold"
+        #endif
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
         case .knowledge: "books.vertical.fill"
@@ -169,7 +173,10 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general, .appearance, .chat: .app
         case .accounts, .agents, .knowledge: .models
-        case .browser, .wallet, .extensions, .permissions, .network: .tools
+        case .browser, .extensions, .permissions, .network: .tools
+        #if LOCUS_WALLET
+        case .wallet: .tools
+        #endif
         case .developer, .updates, .shortcuts: .system
         }
     }
@@ -190,7 +197,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .agents: "Profiles, teams, routing, and evaluation"
         case .knowledge: "Workspace memory, indexing, and handoffs"
         case .browser: "Built-in browsing, input, and privacy"
+        #if LOCUS_WALLET
         case .wallet: "Your vault, connected accounts, and transaction approvals"
+        #endif
         case .extensions: "Skills and MCP integrations"
         case .permissions: "Agent authority and macOS access"
         case .network: "Proxy routing and connection security"
@@ -248,10 +257,6 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
             keywords: ["microphone", "speech", "push to talk", "transcription", "spoken replies", "OpenAI audio"]
         ),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
-        .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "account", "lock", "unlock"]),
-        .init("settings.wallet.connectors", page: .wallet, title: "External wallets", keywords: ["Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),
-        .init("settings.wallet.rpc-url", page: .wallet, title: "Wallet network connection", keywords: ["Sepolia", "RPC", "endpoint"], isAdvanced: true),
-        .init("settings.wallet.policies", page: .wallet, title: "Wallet budgets and contracts", keywords: ["ABI", "registry", "policy"], isAdvanced: true),
         .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], isAdvanced: true),
         .init("settings.agents.primary", page: .agents, title: "Primary agent", keywords: ["behavior", "model"]),
         .init("settings.agents.quickTeam", page: .agents, title: "Create a quick team", keywords: ["dispatcher", "specialist"]),
@@ -278,7 +283,18 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         .init("settings.backendURL", page: .developer, title: "Local agent runtime", keywords: ["backend", "diagnostics"], isAdvanced: true),
         .init("settings.automaticUpdateChecks", page: .updates, title: "Software updates", keywords: ["automatic", "version"]),
         .init("settings.shortcuts", page: .shortcuts, title: "Keyboard shortcuts", keywords: ["commands", "hotkeys"]),
+    ] + editionDescriptors
+
+    #if LOCUS_WALLET
+    private static let editionDescriptors: [SettingsSearchDescriptor] = [
+        .init("settings.wallet.status", page: .wallet, title: "Locus Vault", keywords: ["crypto", "account", "lock", "unlock"]),
+        .init("settings.wallet.connectors", page: .wallet, title: "External wallets", keywords: ["Phantom", "MetaMask", "Slush", "Sui", "Solana", "EVM"]),
+        .init("settings.wallet.rpc-url", page: .wallet, title: "Wallet network connection", keywords: ["Sepolia", "RPC", "endpoint"], isAdvanced: true),
+        .init("settings.wallet.policies", page: .wallet, title: "Wallet budgets and contracts", keywords: ["ABI", "registry", "policy"], isAdvanced: true),
     ]
+    #else
+    private static let editionDescriptors: [SettingsSearchDescriptor] = []
+    #endif
 }
 
 enum LocusProjectKind: String, Equatable {

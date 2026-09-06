@@ -62,11 +62,13 @@ extension AppModel {
         let terminalChanged = settings.terminalShell != newSettings.terminalShell
             || settings.terminalLoginShell != newSettings.terminalLoginShell
         let browserEnabledChanged = settings.browserEnabled != newSettings.browserEnabled
+        #if LOCUS_WALLET
         let walletRPCChanged = settings.walletSepoliaRPCURL != newSettings.walletSepoliaRPCURL
         let walletFeatureAccessChanged = settings.walletAlphaEnabled
             != newSettings.walletAlphaEnabled
             || settings.walletBrowserProviderEnabled
                 != newSettings.walletBrowserProviderEnabled
+        #endif
         let browserHistoryAccessChanged = settings.browserHistoryAccessRaw
             != newSettings.browserHistoryAccessRaw
         let browserAutofillAccessChanged = settings.browserAgentPasswordsEnabled
@@ -127,6 +129,7 @@ extension AppModel {
         }
         browser.defaultViewport = newSettings.resolvedBrowserViewport.size
         applyBrowserSettings(newSettings)
+        #if LOCUS_WALLET
         if walletRPCChanged {
             walletGateway.configureRPCURL(newSettings.walletSepoliaRPCURL)
         }
@@ -139,6 +142,7 @@ extension AppModel {
             refreshWalletCapabilities()
         }
 
+        #endif
         if browserEnabledChanged || browserHistoryAccessChanged || browserAutofillAccessChanged {
             announceBrowserCapability()
             if !newSettings.browserEnabled { browser.cancelPendingActions() }

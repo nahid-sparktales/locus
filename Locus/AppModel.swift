@@ -524,7 +524,9 @@ final class AppModel: ObservableObject {
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
     let browser: BrowserService
+    #if LOCUS_WALLET
     lazy var walletGateway = WalletGateway()
+    #endif
     let streamingReply = StreamingReplyState()
     /// Provider-neutral, event-sourced state consumed by the Overview inspector.
     let sessionOverview = SessionStateEmitter()
@@ -870,10 +872,15 @@ final class AppModel: ObservableObject {
 
         let migrateLegacyBuildMode = !loadedSettings.adaptiveWorkMigrationCompleted
         loadedSettings.adaptiveWorkMigrationCompleted = true
+        #if LOCUS_WALLET
         let migrateLegacyWalletFeatureAccess = loadedSettings.migrateLegacyWalletFeatureAccess(
             environment: ProcessInfo.processInfo.environment
         )
-        if (migrateLegacyBuildMode || migrateLegacyWalletFeatureAccess), persistenceEnabled,
+        let needsSettingsMigration = migrateLegacyBuildMode || migrateLegacyWalletFeatureAccess
+        #else
+        let needsSettingsMigration = migrateLegacyBuildMode
+        #endif
+        if needsSettingsMigration, persistenceEnabled,
            let data = try? JSONEncoder().encode(loadedSettings)
         {
             defaults.set(data, forKey: "Locus.settings")
@@ -1003,7 +1010,9 @@ final class AppModel: ObservableObject {
                     self.applyBrowserSettings(self.settings)
                     self.announceBrowserCapability()
                     self.sendNotesCapability(to: self.backend)
+                    #if LOCUS_WALLET
                     self.sendWalletCapability(to: self.backend)
+                    #endif
                     self.sendConnectorCapability(to: self.backend)
                     self.syncPreferredPermissionMode(to: self.backend)
                     if let runID = self.orchestrationRunID {
@@ -1339,6 +1348,7 @@ final class AppModel: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor in await self?.schedule.processDueSchedules() }
             }
+            #if LOCUS_WALLET
             let workspaceNotifications = NSWorkspace.shared.notificationCenter
             privacyLockObservers = [
                 NSWorkspace.willSleepNotification,
@@ -1356,6 +1366,7 @@ final class AppModel: ObservableObject {
                     }
                 }
             }
+            #endif
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await companionGateway.configure(
@@ -1381,6 +1392,7 @@ final class AppModel: ObservableObject {
             scheduleProxyHealthMonitoring()
         }
 
+        #if LOCUS_WALLET
         walletGateway.configureRPCURL(loadedSettings.walletSepoliaRPCURL)
         walletGateway.applyFeatureAccess(
             walletEnabled: loadedSettings.walletAlphaEnabled,
@@ -1390,6 +1402,7 @@ final class AppModel: ObservableObject {
         walletGateway.onBrowserAuthorizationNeeded = { [weak self] in
             self?.presentSettings(.wallet)
         }
+        #endif
     }
 
     var workspacePath: String {

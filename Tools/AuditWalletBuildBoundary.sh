@@ -48,8 +48,8 @@ wallet_audit_reject_fuzz_host_resources() {
 }
 # END wallet_audit_fuzz_host_exclusions
 
-direct_app="${1:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
-mas_app="${2:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
+direct_app="${1:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <MAS Locus.app>}"
+mas_app="${2:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <MAS Locus.app>}"
 repo_root="${0:A:h:h}"
 
 [[ -d "${direct_app}" && -d "${mas_app}" ]] || {
@@ -57,7 +57,8 @@ repo_root="${0:A:h:h}"
     exit 1
 }
 
-direct_main="${direct_app}/Contents/MacOS/Locus"
+direct_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${direct_app}/Contents/Info.plist")"
+direct_main="${direct_app}/Contents/MacOS/${direct_executable}"
 mas_main="${mas_app}/Contents/MacOS/Locus"
 direct_signer="${direct_app}/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
 recovery_signer="${direct_app}/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
@@ -161,7 +162,7 @@ do
     (( direct_macho_count += 1 ))
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
         "Direct executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
-        /usr/bin/nm "${candidate}"
+        python3 "${repo_root}/Tools/WalletFuzzSymbolInventory.py" "${candidate}"
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
         "Direct executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
         /usr/bin/strings "${candidate}"
@@ -183,7 +184,7 @@ do
     (( mas_macho_count += 1 ))
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
         "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
-        /usr/bin/nm "${candidate}"
+        python3 "${repo_root}/Tools/WalletFuzzSymbolInventory.py" "${candidate}"
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
         "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
         /usr/bin/strings "${candidate}"

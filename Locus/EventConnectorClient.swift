@@ -38,7 +38,7 @@ struct GmailOAuthConfiguration: Equatable {
         let cleanClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanClientID.isEmpty else {
             throw EventConnectorClientError.unavailable(
-                "This build has no Google OAuth client ID. Set LOCUS_GOOGLE_OAUTH_CLIENT_ID before building."
+                "Google sign-in is not configured for this \(AppEdition.current.displayName) build."
             )
         }
         guard cleanClientID.hasSuffix(".apps.googleusercontent.com") else {

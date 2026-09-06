@@ -88,6 +88,8 @@ class LocusSelectionTextView: NSTextView {
     /// Declared optional with a default so this class adds no designated
     /// initialiser and every subclass keeps inheriting `init(frame:textContainer:)`.
     private var locusRetainedStorage: NSTextStorage?
+    private var selectionWashSignature: NSColor?
+    private var appliedSelectionAttributes: [NSAttributedString.Key: Any] = [:]
 
     /// Builds the TextKit 1 stack a subclass should be constructed against.
     /// Pair with `adoptTextKit1(storage:)` once the view exists.
@@ -134,12 +136,30 @@ class LocusSelectionTextView: NSTextView {
         needsDisplay = true
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshSelectionWash()
+        needsDisplay = true
+    }
+
     /// Re-resolved rather than cached: the wash follows the accent, and the
     /// accent can change while this view is alive.
     func refreshSelectionWash() {
         let isKey = window?.isKeyWindow ?? true
-        selectedTextAttributes = [
-            .backgroundColor: LocusTheme.selectionWash(forKeyWindow: isKey)
-        ]
+        let dynamicColor = LocusTheme.selectionWash(forKeyWindow: isKey)
+        var color = dynamicColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = dynamicColor.usingColorSpace(.deviceRGB) ?? dynamicColor
+        }
+        // AppKit invalidates glyph layout when this setter runs, even if the
+        // selection appearance has not changed during a transcript update.
+        if selectionWashSignature?.isEqual(color) == true,
+           (selectedTextAttributes as NSDictionary).isEqual(to: appliedSelectionAttributes) { return }
+        let attributes: [NSAttributedString.Key: Any] = [.backgroundColor: dynamicColor]
+        selectionWashSignature = color
+        appliedSelectionAttributes = attributes
+        // Keep the assigned color dynamic so streaming text also follows an
+        // accent change before its next representable update.
+        selectedTextAttributes = attributes
     }
 }

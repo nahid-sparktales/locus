@@ -4670,16 +4670,25 @@ def test_notes_tools_require_the_native_broker_and_respect_read_only_agents(tmp_
     assert not core.tool_registry.notes_tool_allowed("notes_update")
 
 
+def _install_locusx_feature(core):
+    from ollama_code._locusx.wallet import WalletFeature
+
+    feature = WalletFeature(core.tool_registry)
+    core.tool_registry.product_features = feature
+    return feature
+
+
 def test_wallet_tools_require_a_native_signer_and_keep_read_only_agents_read_only(tmp_path):
     core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+    _install_locusx_feature(core)
 
     def names():
         return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
 
-    assert core.tool_registry.wallet_enabled is False
+    assert core.tool_registry.product_features.enabled is False
     assert "wallet_list_accounts" not in names()
 
-    assert core.tool_registry.configure_wallet_capability({
+    assert core.tool_registry.product_features.configure_capability({
         "protocol_version": 1,
         "signer_state": "unlocked",
         "session_id": "session-1",
@@ -4696,7 +4705,7 @@ def test_wallet_tools_require_a_native_signer_and_keep_read_only_agents_read_onl
     assert "wallet_list_accounts" in names()
     assert "wallet_get_balance" in names()
     assert "wallet_prepare_transaction" not in names()
-    assert not core.tool_registry.wallet_tool_allowed("wallet_execute_transaction")
+    assert not core.tool_registry.product_features.tool_allowed("wallet_execute_transaction")
 
 
 def test_wallet_tool_reaches_the_native_policy_bridge(tmp_path):
@@ -4707,7 +4716,8 @@ def test_wallet_tool_reaches_the_native_policy_bridge(tmp_path):
         ChatResponse(content_parts=["done"], done=True),
     ]
     core = _core(tmp_path, responses)
-    core.tool_registry.configure_wallet_capability({
+    _install_locusx_feature(core)
+    core.tool_registry.product_features.configure_capability({
         "protocol_version": 1,
         "signer_state": "unlocked",
         "session_id": "session-1",
@@ -4715,7 +4725,7 @@ def test_wallet_tool_reaches_the_native_policy_bridge(tmp_path):
         "allowed_operations": ["wallet_list_accounts"],
     })
     calls = []
-    core.wallet_executor = lambda name, args, request_id: calls.append((name, args)) or "account-1"
+    core.tool_registry.product_features.executor = lambda name, args, request_id: calls.append((name, args)) or "account-1"
 
     core.run_turn("list my Locus Vault accounts")
 
@@ -5217,6 +5227,8 @@ def test_notes_bridge_round_trips_one_result_per_request(client):
 
 
 def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(client):
+    service = client.app.state.service
+    _install_locusx_feature(service.core).bind(service)
     with client.websocket_connect("/ws/chat") as ws:
         assert ws.receive_json()["type"] == "session_info"
         ws.send_json({
@@ -5239,7 +5251,7 @@ def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(c
         completed: list[str] = []
         thread = threading.Thread(
             target=lambda: completed.append(
-                service.execute_wallet("wallet_list_accounts", {}, "wallet-req-1")
+                service.core.tool_registry.product_features.execute("wallet_list_accounts", {}, "wallet-req-1")
             )
         )
         thread.start()
@@ -5254,7 +5266,7 @@ def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(c
         thread.join(timeout=3)
 
         assert completed == ["Locus Vault · evm · 0x123"]
-        assert service.pending_wallet_actions == {}
+        assert service.core.tool_registry.product_features.pending_actions == {}
         # A duplicate/late answer is intentionally ignored.
         ws.send_json({
             "type": "wallet_action_result",
@@ -5265,6 +5277,8 @@ def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(c
 
 
 def test_wallet_capability_rejects_stale_boolean_and_limits_operations(client):
+    service = client.app.state.service
+    _install_locusx_feature(service.core).bind(service)
     with client.websocket_connect("/ws/chat") as ws:
         assert ws.receive_json()["type"] == "session_info"
         ws.send_json({"type": "set_wallet_control", "enabled": True})
@@ -5274,7 +5288,7 @@ def test_wallet_capability_rejects_stale_boolean_and_limits_operations(client):
             for event in events
         )
         registry = client.app.state.service.core.tool_registry
-        assert not registry.wallet_enabled
+        assert not registry.product_features.enabled
 
         ws.send_json({
             "type": "set_wallet_control",
@@ -5287,8 +5301,8 @@ def test_wallet_capability_rejects_stale_boolean_and_limits_operations(client):
             },
         })
         drain(ws)
-        assert registry.wallet_tool_allowed("wallet_list_accounts")
-        assert not registry.wallet_tool_allowed("wallet_execute_transaction")
+        assert registry.product_features.tool_allowed("wallet_list_accounts")
+        assert not registry.product_features.tool_allowed("wallet_execute_transaction")
 
 
 def test_dev_server_permission_posture():

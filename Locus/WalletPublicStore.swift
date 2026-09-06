@@ -50,7 +50,7 @@ final class WalletPublicStore: @unchecked Sendable {
             throw WalletPublicStoreError.open("Application Support is unavailable")
         }
         let directory = base
-            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
             .appendingPathComponent("Wallet", isDirectory: true)
         try fileManager.createDirectory(
             at: directory, withIntermediateDirectories: true,

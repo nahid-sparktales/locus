@@ -88,9 +88,9 @@ if [[ -n "${LOCUS_ASC_KEY_PATH:-}" ]]; then
         -authenticationKeyID "${LOCUS_ASC_KEY_ID:?}"
         -authenticationKeyIssuerID "${LOCUS_ASC_ISSUER_ID:?}")
 fi
-archive="${artifact_dir}/Locus.xcarchive"
+archive="${artifact_dir}/LocusX.xcarchive"
 export_dir="${artifact_dir}/export"
-xcodebuild -quiet -project "${repo_root}/Locus.xcodeproj" -scheme Locus \
+xcodebuild -quiet -project "${repo_root}/Locus.xcodeproj" -scheme LocusX \
     -configuration Release -destination 'generic/platform=macOS' \
     -archivePath "${archive}" -derivedDataPath "${artifact_dir}/DerivedData-Release" \
     -allowProvisioningUpdates "${auth[@]}" "${settings[@]}" archive
@@ -101,10 +101,10 @@ xcodebuild -quiet -project "${repo_root}/Locus.xcodeproj" -scheme Locus \
 xcodebuild -quiet -exportArchive -archivePath "${archive}" -exportPath "${export_dir}" \
     -exportOptionsPlist "${export_options}" -allowProvisioningUpdates "${auth[@]}"
 python3 "${repo_root}/Tools/WalletExportProvenance.py" record "${archive}" \
-    "${export_dir}/Locus.app" "${export_options}" "${artifact_dir}/WalletExportProvenance.json" \
+    "${export_dir}/LocusX.app" "${export_options}" "${artifact_dir}/WalletExportProvenance.json" \
     --channel "${channel}"
 LOCUS_WALLET_RELEASE_CHANNEL="${channel}" \
-    "${repo_root}/Tools/VerifyDormantWalletArtifact.sh" "${export_dir}/Locus.app"
-"${repo_root}/Tools/AuditDistribution.sh" "${export_dir}/Locus.app"
-echo "Dormant Developer ID export verified: ${export_dir}/Locus.app"
+    "${repo_root}/Tools/VerifyDormantWalletArtifact.sh" "${export_dir}/LocusX.app"
+"${repo_root}/Tools/AuditDistribution.sh" "${export_dir}/LocusX.app"
+echo "Dormant Developer ID export verified: ${export_dir}/LocusX.app"
 echo "Package it with LOCUS_WALLET_EXPORT_PROVENANCE=${artifact_dir}/WalletExportProvenance.json."

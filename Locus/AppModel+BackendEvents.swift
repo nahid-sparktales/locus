@@ -572,6 +572,7 @@ extension AppModel {
                 showToast("Notes are unavailable from the native broker")
             }
 
+        #if LOCUS_WALLET
         case "wallet_action_request":
             runWalletAction(event, on: conversationBackend)
 
@@ -583,6 +584,7 @@ extension AppModel {
                 showToast("The Locus Vault signer is unavailable")
             }
 
+        #endif
         case "connector_action_request":
             eventAutomations.handleAction(
                 event, workspacePath: workspacePath, on: conversationBackend

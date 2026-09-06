@@ -71,7 +71,7 @@ enum WalletPolicyAccountEligibility {
     }
 }
 
-#if LOCUS_DIRECT_DOWNLOAD
+#if LOCUS_WALLET
 #if DEBUG
 /// Explicit in-process XCTest injection only; no preference, environment,
 /// public bridge, Release, or App Store activation override exists.
@@ -652,7 +652,7 @@ protocol WalletSignerClient: AnyObject {
     var sessionID: String? { get }
     var invalidationHandler: (() -> Void)? { get set }
     func signerStatus() async throws -> WalletSignerStatus
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     func applyReleaseActivation(
         _ envelope: WalletSignedReleaseActivationEnvelope
     ) async throws -> WalletReleaseActivationStatus
@@ -691,7 +691,7 @@ protocol WalletSignerClient: AnyObject {
 }
 
 extension WalletSignerClient {
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus {
         throw WalletGateway.Error.signerUnavailable
     }
@@ -715,7 +715,7 @@ final class UnavailableWalletSignerClient: WalletSignerClient {
     let sessionID: String? = nil
     var invalidationHandler: (() -> Void)?
     func signerStatus() async throws -> WalletSignerStatus { throw WalletGateway.Error.signerUnavailable }
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     func applyReleaseActivation(
         _ envelope: WalletSignedReleaseActivationEnvelope
     ) async throws -> WalletReleaseActivationStatus {
@@ -859,7 +859,7 @@ final class WalletGateway: ObservableObject {
     private let publicStore: WalletPublicStore?
     private var launchGate: WalletLaunchGate
     private var reviewRegistry: WalletReviewRegistry?
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     private let bundledReviewCeiling: WalletReviewRegistry?
     private let immutableReviewCeiling: WalletSignedReviewCeiling?
     private var verifiedReleaseAuthority: WalletVerifiedReleaseAuthority? {
@@ -937,7 +937,7 @@ final class WalletGateway: ObservableObject {
         let bundledReview = reviewRegistry ?? Self.loadBundledReviewRegistry()
         self.launchGate = launchGate ?? (try! WalletLaunchGate())
         self.reviewRegistry = bundledReview
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         bundledReviewCeiling = bundledReview
         immutableReviewCeiling = WalletSignedReviewCeiling.loadBundled()
         activationPublicKey = Self.loadBundledActivationPublicKey()
@@ -1039,7 +1039,7 @@ final class WalletGateway: ObservableObject {
         #if DEBUG
         configureUIFixture(environment: environment)
         #endif
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         if usesBundledReleaseActivation {
             WalletCandidateUpdateAuthority.source = { [weak self] in
                 guard let self, let authority = self.verifiedReleaseAuthority,
@@ -1072,7 +1072,7 @@ final class WalletGateway: ObservableObject {
 
     deinit {
         idleLockTimer?.invalidate()
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         activationRefreshTimer?.invalidate()
         activationRefreshTask?.cancel()
         activationExpiryTask?.cancel()
@@ -1097,7 +1097,7 @@ final class WalletGateway: ObservableObject {
         return try? WalletPublicStore(url: url)
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     private static func loadBundledLaunchGate(bundle: Bundle = .main) -> WalletLaunchGate? {
         let signerURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
@@ -1125,7 +1125,7 @@ final class WalletGateway: ObservableObject {
     private static func loadBundledReviewRegistry(
         bundle: Bundle = .main
     ) -> WalletReviewRegistry? {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         let signerURL = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("XPCServices", isDirectory: true)
@@ -1154,7 +1154,7 @@ final class WalletGateway: ObservableObject {
         #endif
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     private static func loadBundledActivationPublicKey(
         bundle: Bundle = .main
     ) -> Curve25519.Signing.PublicKey? {
@@ -1293,14 +1293,14 @@ final class WalletGateway: ObservableObject {
     }
 
     func refreshStatus() async {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         await refreshReleaseActivation()
         #endif
         await refreshStatus(clearErrorOnSuccess: true)
         await refreshConnections(clearErrorOnSuccess: false)
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     private func refreshReleaseActivation() async {
         if let activationRefreshTask {
             await activationRefreshTask.value
@@ -1628,7 +1628,7 @@ final class WalletGateway: ObservableObject {
     #endif
 
     private func authorizeProviderBindings(networkID: String) throws {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         guard usesBundledReleaseActivation,
               let network = WalletNetworkCatalog.descriptor(id: networkID),
               network.environment == .mainnet else { return }
@@ -1835,7 +1835,7 @@ final class WalletGateway: ObservableObject {
 
     @discardableResult
     func beginWalletConnectPairing(uri: String) async -> Bool {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         let pairingURI: String
         let pairingDigest: String
         do {
@@ -1918,7 +1918,7 @@ final class WalletGateway: ObservableObject {
 
     @discardableResult
     func beginWalletConnectPairing(deepLink: URL) async -> Bool {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         do {
             return await beginWalletConnectPairing(
                 uri: try WalletPairingURIIntake.pairingURI(fromDeepLink: deepLink)
@@ -2255,7 +2255,7 @@ final class WalletGateway: ObservableObject {
                 guard let chain = WalletNetworkCatalog.descriptor(
                     id: original.networkID
                 )?.chain else { continue }
-                #if LOCUS_DIRECT_DOWNLOAD
+                #if LOCUS_WALLET
                 if let action = original.expectedAction,
                    let semanticDigest = original.semanticDigest,
                    let account = accounts.first(where: {
@@ -3772,7 +3772,7 @@ final class WalletGateway: ObservableObject {
     #endif
 
     func lock() {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         cancelExperimentalMainnetActivationReview()
         #endif
         cancelActiveRecoveryCeremony()
@@ -3797,7 +3797,7 @@ final class WalletGateway: ObservableObject {
     }
 
     private func handleSignerInvalidation() {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         cancelExperimentalMainnetActivationReview()
         #endif
         connectionIntentBindings.removeAll()
@@ -5900,7 +5900,7 @@ final class WalletGateway: ObservableObject {
         _ prepare: WalletPrepareRequest
     ) async throws -> [String: Any] {
         try authorizeProviderBindings(networkID: prepare.networkID)
-        #if !LOCUS_DIRECT_DOWNLOAD
+        #if !LOCUS_WALLET
         _ = prepare
         throw Error.connectionHelperUnavailable
         #else

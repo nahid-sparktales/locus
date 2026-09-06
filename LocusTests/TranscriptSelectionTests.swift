@@ -8,6 +8,31 @@ import XCTest
 /// dragging through it.
 final class TranscriptSelectionTests: XCTestCase {
     @MainActor
+    func testSelectionWashSkipsUnchangedUpdatesAndRetainsDynamicAppearance() throws {
+        let view = ResponseSelectableTextView.make()
+        let light = try XCTUnwrap(NSAppearance(named: .aqua))
+        let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        view.appearance = light
+        view.refreshSelectionWash()
+        let color = try XCTUnwrap(view.selectedTextAttributes[.backgroundColor] as? NSColor)
+
+        for _ in 0..<20 { view.refreshSelectionWash() }
+        XCTAssertTrue((view.selectedTextAttributes[.backgroundColor] as? NSColor) === color,
+            "An unchanged update must retain the installed color instead of invalidating text layout")
+
+        var lightAlpha: CGFloat = 0
+        var darkAlpha: CGFloat = 0
+        light.performAsCurrentDrawingAppearance { lightAlpha = color.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0 }
+        dark.performAsCurrentDrawingAppearance { darkAlpha = color.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0 }
+        XCTAssertNotEqual(lightAlpha, darkAlpha, "The installed color must remain appearance-aware")
+
+        view.appearance = dark
+        view.viewDidChangeEffectiveAppearance()
+        let changed = try XCTUnwrap(view.selectedTextAttributes[.backgroundColor] as? NSColor)
+        XCTAssertFalse(changed === color, "An appearance change must refresh the resolved signature")
+    }
+
+    @MainActor
     func testDecoratedLocusCardKeepsItsMeasuredButtonCenterAccessible() throws {
         let identifier = "fixture.card.button"
         let content = VStack(spacing: 0) {

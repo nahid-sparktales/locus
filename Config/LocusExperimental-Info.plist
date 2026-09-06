@@ -2,12 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>LocusWalletExperimentalMainnetEnabled</key>
-	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Locus Experimental</string>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,20 +24,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>io.sparktales.locus.mcp-oauth</string>
+			<string>io.sparktales.locusx.mcp-oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>locus</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLName</key>
-			<string>io.sparktales.locus.google-oauth</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
+				<string>locusx</string>
 			</array>
 		</dict>
 		<dict>
@@ -62,7 +50,7 @@
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan a WalletConnect QR code selected by you. Locus does not record camera images.</string>
+	<string>Locus uses the camera only when you allow a website to access it.</string>
 	<key>LocusComponentFeedURL</key>
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
 	<key>LocusSourceRevision</key>
@@ -126,8 +114,6 @@
 	</array>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Locus uses the camera only when you allow a website to access it.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Locus needs access to save browser downloads and open files or projects you choose from Downloads.</string>
 	<key>NSHumanReadableCopyright</key>
@@ -146,8 +132,6 @@
 	<false/>
 	<key>SUEnableSystemProfiling</key>
 	<false/>
-	<key>SUFeedURL</key>
-	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4=</string>
 	<key>SURequireSignedFeed</key>
@@ -157,6 +141,12 @@
 	<key>SUScheduledImpatientCheckInterval</key>
 	<integer>604800</integer>
 	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>LocusEdition</key>
+	<string>locusx</string>
+	<key>LocusUpdateMode</key>
+	<string>manual</string>
+	<key>LocusWalletExperimentalMainnetEnabled</key>
 	<true/>
 </dict>
 </plist>

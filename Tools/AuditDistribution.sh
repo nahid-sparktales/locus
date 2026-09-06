@@ -61,6 +61,10 @@ wallet_recovery="${app}/Contents/Helpers/WalletRecovery.app"
 wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc"
 licenses="${resources}/ThirdPartyLicenses/python-build-standalone-20260728"
 info_plist="${app}/Contents/Info.plist"
+edition="$(/usr/bin/plutil -extract LocusEdition raw -o - "${info_plist}" 2>/dev/null || true)"
+[[ "${edition}" == "locus" || "${edition}" == "locusx" ]] || {
+    echo "error: missing or invalid app edition" >&2; exit 1
+}
 
 for authority_plist in "${info_plist}" "${wallet_signer}/Contents/Info.plist" \
     "${wallet_recovery_signer}/Contents/Info.plist"
@@ -71,6 +75,8 @@ do
         exit 1
     fi
 done
+
+python3 "${repo_root}/Tools/AuditAppEdition.py" "${app}" --edition "${edition}"
 
 github_client_id="$(/usr/bin/plutil -extract LocusGitHubOAuthClientID raw -o - \
     "${info_plist}" 2>/dev/null || true)"
@@ -455,6 +461,7 @@ if [[ "${sandboxed}" == "1" ]]; then
         exit 1
     }
 else
+    if [[ "${edition}" == "locusx" ]]; then
     [[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
         echo "error: the direct-download build is missing WalletSigner.xpc" >&2
         exit 1
@@ -709,6 +716,7 @@ else
         echo "error: the host and recovery WalletSigner executables differ" >&2
         exit 1
     }
+    fi # LocusX wallet security checks
     simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
     [[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
         echo "error: direct-download Simulator bridge helpers are missing" >&2
@@ -794,6 +802,11 @@ else
             exit 1
         }
     done
+    if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}")" == "manual" ]]; then
+        [[ -z "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${info_plist}" 2>/dev/null || true)" ]] || {
+            echo "error: local edition must not register an update feed" >&2; exit 1
+        }
+    else
     expected_feed="https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml"
     [[ "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${app}/Contents/Info.plist")" \
         == "${expected_feed}" ]] || {
@@ -828,6 +841,7 @@ else
         echo "error: direct-download updater must check every 24 hours" >&2
         exit 1
     }
+    fi
     /usr/bin/codesign --verify --deep --strict "${sparkle}" || {
         echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
         exit 1
@@ -881,7 +895,7 @@ do
     (( wallet_macho_count += 1 ))
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
         "distribution executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
-        /usr/bin/nm "${candidate}"
+        python3 "${repo_root}/Tools/WalletFuzzSymbolInventory.py" "${candidate}"
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
         "distribution executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
         /usr/bin/strings "${candidate}"

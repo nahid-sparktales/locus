@@ -55,7 +55,7 @@ actor OutputsLibraryStore {
     init(directory: URL? = nil) {
         self.directory = directory ?? FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!.appendingPathComponent("Locus/Library", isDirectory: true)
+        ).first!.appendingPathComponent("\(AppEdition.current.displayName)/Library", isDirectory: true)
     }
     deinit { if let database { sqlite3_close(database) } }
 

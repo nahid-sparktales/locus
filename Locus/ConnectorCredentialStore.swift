@@ -28,7 +28,7 @@ protocol ConnectorCredentialStoring: Sendable {
 /// and authentication behavior. Security framework access is thread-safe.
 final class ConnectorCredentialStore: ConnectorCredentialStoring {
     static let shared = ConnectorCredentialStore()
-    private let service = "io.sparktales.locus.connector"
+    private let service = AppEdition.current.keychainService("connector")
     private let updateItem: @Sendable (CFDictionary, CFDictionary) -> OSStatus
     private let addItem: @Sendable (CFDictionary) -> OSStatus
 

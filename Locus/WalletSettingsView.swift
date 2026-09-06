@@ -165,7 +165,7 @@ struct WalletSettingsView: View {
             }
         }
         .onChange(of: rpcURL) { _, value in gateway.configureRPCURL(value) }
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         .onChange(of: gateway.experimentalMainnetActivationPreview?.id) { _, _ in
             experimentalRiskAcknowledged = false
         }
@@ -299,7 +299,7 @@ struct WalletSettingsView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(gateway.hubState == .ready ? LocusTheme.success : LocusTheme.warning)
                 .accessibilityIdentifier("settings.wallet.status")
-            #if LOCUS_DIRECT_DOWNLOAD
+            #if LOCUS_WALLET
             if gateway.experimentalMainnetBuildEnabled {
                 Text(gateway.experimentalMainnetActive ? "Experimental Mainnet" : "Experimental build")
                     .font(.caption.weight(.semibold))
@@ -317,7 +317,7 @@ struct WalletSettingsView: View {
     }
 
     private var mainnetAccessNotice: String {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         if gateway.experimentalMainnetBuildEnabled {
             return "Experimental Mainnet requires a separate signed-file review and explicit opt-in. It is not an audited public release."
         }
@@ -367,7 +367,7 @@ struct WalletSettingsView: View {
             spendingRulesCard
         case .security:
             accountCard
-            #if LOCUS_DIRECT_DOWNLOAD
+            #if LOCUS_WALLET
             if gateway.experimentalMainnetBuildEnabled {
                 experimentalMainnetAccessCard
             } else {
@@ -1221,7 +1221,7 @@ struct WalletSettingsView: View {
             Text("Paste a WalletConnect link or scan its QR code. Review the dapp, accounts, networks, and permissions before connecting.")
                 .font(.callout)
                 .foregroundStyle(LocusTheme.textSecondary)
-            #if LOCUS_DIRECT_DOWNLOAD
+            #if LOCUS_WALLET
             HStack {
                 Button("Choose QR Image…") { chooseWalletConnectQRImage() }
                     .disabled(!gateway.connectionHelperAvailable || connectionOperationInProgress)
@@ -1352,7 +1352,7 @@ struct WalletSettingsView: View {
         }
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     private var experimentalMainnetAccessCard: some View {
         WalletSectionCard(title: "Experimental Mainnet", symbol: "exclamationmark.shield") {
             VStack(alignment: .leading, spacing: 12) {
@@ -3057,7 +3057,7 @@ private struct WalletTransactionConfirmationSheet: View {
                             .background(LocusTheme.accentAction.opacity(0.14))
                             .clipShape(Capsule())
                     }
-                    #if LOCUS_DIRECT_DOWNLOAD
+                    #if LOCUS_WALLET
                     if gateway.experimentalMainnetActive,
                        WalletNetworkCatalog.descriptor(id: transaction.networkID)?.environment == .mainnet {
                         Label("Experimental Mainnet · real funds · not an audited public release", systemImage: "exclamationmark.shield")

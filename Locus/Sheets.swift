@@ -1203,7 +1203,7 @@ private struct MCPServerEditorView: View {
                             "token_endpoint": tokenEndpoint,
                             "client_id": clientID,
                             "scopes": scopes.split(separator: " ").map(String.init),
-                            "redirect_uri": "locus://mcp/oauth",
+                            "redirect_uri": AppEdition.current.mcpRedirectURI,
                         ]
                     }
                     Task { await extensionsModel.saveMCPServer(body) }
@@ -1729,6 +1729,7 @@ struct SettingsView: View {
                 case .chat: chatPage
                 case .network: networkPage
                 case .browser: browserPage
+                #if LOCUS_WALLET
                 case .wallet:
                     WalletSettingsView(
                         gateway: model.walletGateway,
@@ -1736,6 +1737,7 @@ struct SettingsView: View {
                         alphaEnabled: $draft.walletAlphaEnabled,
                         browserEnabled: $draft.walletBrowserProviderEnabled
                     )
+                #endif
                 case .accounts: accountsPage
                 case .agents:
                     AgentTeamsSettingsView(advancedExpanded: advancedBinding(for: .agents))
@@ -1871,7 +1873,7 @@ struct SettingsView: View {
     }
 
     private var immediateDraftSignature: String {
-        [
+        let values = [
             draft.appearanceRaw,
             draft.accentPresetRaw, draft.customAccentHex,
             draft.showTeamProgressInHeader.description,
@@ -1904,10 +1906,17 @@ struct SettingsView: View {
             draft.browserUploadPermissionRaw, draft.browserPopupPermissionRaw,
             draft.browserExternalPermissionRaw, draft.browserCameraPermissionRaw,
             draft.browserMicrophonePermissionRaw,
+        ]
+        #if LOCUS_WALLET
+        let editionValues = [
             draft.walletSepoliaRPCURL,
             draft.walletAlphaEnabled.description,
             draft.walletBrowserProviderEnabled.description,
-        ].joined(separator: "\u{1F}")
+        ]
+        return (values + editionValues).joined(separator: "\u{1F}")
+        #else
+        return values.joined(separator: "\u{1F}")
+        #endif
     }
 
     private func applyImmediateDraft() {
@@ -2698,7 +2707,7 @@ struct SettingsView: View {
     private var updatesPage: some View {
         Form {
             Section("Installed version") {
-                LabeledContent("Locus") {
+                LabeledContent(AppEdition.current.displayName) {
                     Text(updates.versionLabel)
                         .accessibilityIdentifier("settings.updateVersion")
                 }
@@ -2733,7 +2742,7 @@ struct SettingsView: View {
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                } else {
+                } else if updates.distribution == .appStore {
                     Label(
                         "Updates are installed through the Mac App Store.",
                         systemImage: "shippingbox.fill"
@@ -2742,6 +2751,14 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.appStoreUpdates")
 
                     Text("Keep automatic updates enabled in the App Store to receive new Locus releases without downloading them manually.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Label("Updates are installed manually for this local build.", systemImage: "shippingbox")
+                        .font(.locus(size: 10))
+                        .accessibilityIdentifier("settings.manualUpdates")
+                    Text("Install a newer build of \(AppEdition.current.displayName) when one is provided.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)

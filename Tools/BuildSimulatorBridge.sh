@@ -3,7 +3,8 @@
 # Mac App Store target must never contain either helper or its private schemas.
 set -euo pipefail
 
-if [[ "${TARGET_NAME:-}" != "Locus" || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
+if [[ ( "${TARGET_NAME:-}" != "Locus" && "${TARGET_NAME:-}" != "LocusX" ) \
+    || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
     exit 0
 fi
 

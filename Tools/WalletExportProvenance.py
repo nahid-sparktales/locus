@@ -161,7 +161,7 @@ def snapshot(app: Path) -> dict:
     source, version = source_identity(app)
     outer = signature(app)
     require(
-        outer["Identifier"] == "io.sparktales.locus",
+        outer["Identifier"] == "io.sparktales.locusx",
         "unexpected outer application identifier",
     )
     # Require Apple's Developer ID certificate class, not just a same-team
@@ -267,7 +267,7 @@ def main() -> None:
         and options.get("signingStyle") == "automatic",
         "unexpected export options",
     )
-    archived = args.archive / "Products/Applications/Locus.app"
+    archived = args.archive / "Products/Applications/LocusX.app"
     require(
         source_identity(archived) == source_identity(args.app),
         "archive/export source or version differs",

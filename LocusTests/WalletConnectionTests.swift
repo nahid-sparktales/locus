@@ -5,6 +5,17 @@ import XCTest
 
 @MainActor
 final class WalletConnectionTests: XCTestCase {
+    func testSignerAllowsOnlyWalletEditionAndRecoveryHostIdentities() {
+        let walletHost = "identifier \"io.sparktales.locusx\""
+        let standardHost = "identifier \"io.sparktales.locus\""
+        let recoveryHost = "identifier \"io.sparktales.locus.WalletRecovery\""
+        XCTAssertTrue(WalletXPCCodeSigningRequirement.hostApplication.contains(walletHost))
+        XCTAssertFalse(WalletXPCCodeSigningRequirement.hostApplication.contains(standardHost))
+        XCTAssertTrue(WalletXPCCodeSigningRequirement.signerBootstrapClient.contains(walletHost))
+        XCTAssertTrue(WalletXPCCodeSigningRequirement.signerBootstrapClient.contains(recoveryHost))
+        XCTAssertFalse(WalletXPCCodeSigningRequirement.signerBootstrapClient.contains(standardHost))
+    }
+
     func testDormantWalletConnectCanSuspendRepeatedlyWithoutInitializingSDK() async {
         let driver = WalletConnectDriver(bundle: Bundle(for: Self.self), environment: [:])
         XCTAssertFalse(driver.isConfigured)

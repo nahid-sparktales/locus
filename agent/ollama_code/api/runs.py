@@ -295,7 +295,7 @@ def orchestration_pause(service: ServiceDependency, run_id: str) -> dict[str, An
     svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_all_notes_actions()
-    svc.cancel_all_wallet_actions()
+    svc.core.tool_registry.product_features.cancel_pending()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
     svc.emit(
@@ -332,7 +332,7 @@ def orchestration_cancel(service: ServiceDependency, run_id: str) -> dict[str, A
     svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
     svc.cancel_all_notes_actions()
-    svc.cancel_all_wallet_actions()
+    svc.core.tool_registry.product_features.cancel_pending()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
     svc.run_store.set_state(run_id, "cancelled", recoverable=False)

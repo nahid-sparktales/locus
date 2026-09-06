@@ -50,9 +50,22 @@ paid route.
 - **Works from your phone.** The optional [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile) companion for iOS and Android pairs directly over your LAN or Tailscale, with no Locus cloud relay.
 - **Supports local and hosted models.** Use Ollama, a ChatGPT plan, OpenAI, Anthropic Claude, Moonshot Kimi, or an OpenAI-compatible endpoint.
 - **Stores work locally by default.** Sessions, run records, and encrypted memory live on your Mac. Hosted providers receive prompts only when you select them.
-- **Experiments with guarded wallet actions.** Direct-download builds can enable a separate, limited-fund multichain Locus Vault in Settings. Recovery runs in a network-disabled helper, signing stays isolated, and mainnet capabilities remain default-denied behind signed release gates.
+- **Keeps the editions separate.** Locus is wallet-free. The optional LocusX edition adds guarded wallet actions and has its own chats, settings, credentials, and browser profile. See [the editions guide](Docs/Editions.md).
 
 ![Scheduled tasks in the Locus Activity Center](Docs/locus-schedules-dark.png)
+
+## Locus and LocusX
+
+| Edition | Wallet | Profile |
+| --- | --- | --- |
+| Locus | No wallet code, tools, connectors, or helpers | Keeps the existing Locus workspace |
+| LocusX | Optional guarded multichain wallet | Independent chats, accounts, browser data, and settings |
+
+Both editions retain the regular direct-download desktop features. The Mac App
+Store target is also wallet-free. Local builds install updates manually; public
+release feeds for the split editions are not configured yet. LocusX Google
+sign-in requires its own OAuth registration. Existing wallet files are left
+untouched, with no automatic import or migration.
 
 ## Agents and automations
 

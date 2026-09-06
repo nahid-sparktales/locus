@@ -31,14 +31,25 @@ final class AppUpdateController: ObservableObject {
         case appStore
     }
 
+    enum UpdateMode: String {
+        case automatic
+        case manual
+
+        static func configured(bundleValue: String?) -> UpdateMode {
+            // New local builds must never fall back to the legacy wallet feed.
+            UpdateMode(rawValue: bundleValue ?? "") ?? .manual
+        }
+    }
+
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var automaticallyChecksForUpdates = false
     @Published private(set) var automaticallyDownloadsUpdates = false
 
     let distribution: Distribution
+    let updateMode: UpdateMode
     private let driver: AppUpdateDriving
 
-    var isAvailable: Bool { distribution == .directDownload }
+    var isAvailable: Bool { distribution == .directDownload && updateMode == .automatic }
 
     var versionLabel: String {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -50,6 +61,7 @@ final class AppUpdateController: ObservableObject {
     init(
         startImmediately: Bool = true,
         distribution: Distribution? = nil,
+        updateMode: UpdateMode? = nil,
         driver: AppUpdateDriving? = nil
     ) {
         #if LOCUS_DIRECT_DOWNLOAD
@@ -58,12 +70,16 @@ final class AppUpdateController: ObservableObject {
         let resolvedDistribution = distribution ?? .appStore
         #endif
         self.distribution = resolvedDistribution
+        let resolvedMode = updateMode ?? .configured(
+            bundleValue: Bundle.main.object(forInfoDictionaryKey: "LocusUpdateMode") as? String
+        )
+        self.updateMode = resolvedMode
 
         if let driver {
             self.driver = driver
         } else {
             #if LOCUS_DIRECT_DOWNLOAD
-            if resolvedDistribution == .directDownload {
+            if resolvedDistribution == .directDownload && resolvedMode == .automatic {
                 self.driver = SparkleUpdateDriver(startImmediately: startImmediately)
             } else {
                 self.driver = AppStoreUpdateDriver()
@@ -128,8 +144,10 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     private var canCheckObservation: AnyCancellable?
     private var automaticCheckObservation: AnyCancellable?
     private var automaticDownloadObservation: AnyCancellable?
+    #if LOCUS_WALLET
     private var candidateAuthorityObservation: AnyCancellable?
     private var requestedSafetyUpdate = false
+    #endif
 
     init(startImmediately: Bool) {
         super.init()
@@ -149,9 +167,11 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
         automaticDownloadObservation = updater.publisher(for: \.automaticallyDownloadsUpdates)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.stateDidChange?() }
+        #if LOCUS_WALLET
         candidateAuthorityObservation = NotificationCenter.default.publisher(for: WalletCandidateUpdateAuthority.changed)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.stateDidChange?() }
+        #endif
     }
 
     var canCheckForUpdates: Bool {
@@ -169,6 +189,7 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     }
 
     func checkForUpdates() {
+        #if LOCUS_WALLET
         if WalletCandidateUpdateAuthority.isCandidate() {
             let alert = NSAlert()
             alert.messageText = "Check for an update outside this wallet candidate?"
@@ -178,9 +199,11 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             requestedSafetyUpdate = true
         }
+        #endif
         controller.checkForUpdates(nil)
     }
 
+    #if LOCUS_WALLET
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
         if WalletCandidateUpdateAuthority.isCandidate(), !requestedSafetyUpdate,
            WalletCandidateUpdateAuthority.selection() == nil {
@@ -226,6 +249,7 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         requestedSafetyUpdate = false
     }
+    #endif
 
     func updater(
         _ updater: SPUUpdater,

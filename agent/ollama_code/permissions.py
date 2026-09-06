@@ -186,7 +186,7 @@ _BROWSER_SAFE_SCHEMES = {"http", "https", "about"}
 #: Schemes written without `//`. Needed because a bare `localhost:3000` is a
 #: host and a port, not a scheme, and treating it as one would put a
 #: confirmation in front of the most common address anyone types here.
-_BROWSER_COLON_SCHEMES = {"about", "javascript", "data", "mailto", "blob", "locus"}
+_BROWSER_COLON_SCHEMES = {"about", "javascript", "data", "mailto", "blob", "locus", "locusx"}
 
 
 def _browser_scheme(raw: str) -> str:

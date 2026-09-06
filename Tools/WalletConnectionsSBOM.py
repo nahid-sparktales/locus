@@ -140,9 +140,18 @@ def verify_reown(root: Path, project: str) -> dict:
         r"- package: ReownSwift\s*\n\s*product: WalletConnect\b", project
     ):
         fail("the Direct target no longer links the reviewed WalletConnect product")
-    mas_block = project.split("  LocusMAS:", 1)[1].split("  LocusTests:", 1)[0]
-    if "ReownSwift" in mas_block or "WalletConnectionsRuntime" in mas_block:
-        fail("the Mac App Store target references the connector runtime")
+    def target_block(name: str) -> str:
+        match = re.search(rf"^  {re.escape(name)}:\n(.*?)(?=^  \w+:|^schemes:|\Z)", project, re.M | re.S)
+        if not match:
+            fail(f"missing {name} target")
+        return match.group(1)
+
+    for name in ("Locus", "LocusMAS"):
+        block = target_block(name)
+        if any(value in block for value in ("ReownSwift", "WalletConnectionsRuntime", "LocusWalletSwiftSources", "target: WalletSignerService")):
+            fail(f"the {name} target references wallet components")
+    if "LocusWalletSwiftSources" not in target_block("LocusX"):
+        fail("LocusX no longer includes the reviewed wallet source template")
     return evidence
 
 

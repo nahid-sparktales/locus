@@ -437,7 +437,7 @@ def main_locked() -> None:
         "YES",
         "CODE_SIGN_IDENTITY=-",
         "DEVELOPMENT_TEAM=",
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET_FUZZ_HOST",
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET LOCUS_WALLET_FUZZ_HOST",
         f"OTHER_SWIFT_FLAGS=$(inherited) {SWIFT_COVERAGE}",
         f"OTHER_LDFLAGS=$(inherited) {runtimes[0]} -lc++",
     ]

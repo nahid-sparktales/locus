@@ -770,6 +770,10 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
         let stack = LocusSelectionTextView.makeTextKit1Stack()
         let view = ResponseSelectableTextView(frame: .zero, textContainer: stack.container)
         view.adoptTextKit1(storage: stack.storage)
+        // SwiftUI owns the leaf's frame. If TextKit resizes it during a
+        // measurement, width tracking restores the old frame width and can
+        // invalidate the layout whose height is about to be cached.
+        view.isVerticallyResizable = false
         return view
     }
 
@@ -999,7 +1003,6 @@ struct ResponseSelectableText: NSViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.heightTracksTextView = false
-        view.isVerticallyResizable = true
         update(view)
         return view
     }

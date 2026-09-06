@@ -153,7 +153,9 @@ extension AppModel {
             )
             self.sendBrowserCapability(to: runtime.service)
             self.sendNotesCapability(to: runtime.service)
+            #if LOCUS_WALLET
             self.sendWalletCapability(to: runtime.service)
+            #endif
             runtime.needsConnectorCapabilitySync = !self.sendConnectorCapability(
                 to: runtime.service
             )
@@ -248,7 +250,9 @@ extension AppModel {
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendBrowserCapability(to: runtime.service)
         sendNotesCapability(to: runtime.service)
+        #if LOCUS_WALLET
         sendWalletCapability(to: runtime.service)
+        #endif
         runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
             to: runtime.service
         )
@@ -527,9 +531,11 @@ extension AppModel {
                 on: runtime.service
             )
         }
+        #if LOCUS_WALLET
         if type == "wallet_action_request" {
             runWalletAction(event, on: runtime.service)
         }
+        #endif
         if type == "connector_action_request" {
             eventAutomations.handleAction(
                 event, workspacePath: runtime.workspacePath, on: runtime.service

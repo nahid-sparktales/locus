@@ -1954,7 +1954,7 @@ struct WalletReleaseActivationStatus: Codable, Equatable, Sendable {
 /// connection's audit token, so sandboxed helpers never need to open and
 /// inspect a peer executable by PID.
 enum WalletXPCCodeSigningRequirement {
-    static let hostApplication = requirement(identifier: "io.sparktales.locus")
+    static let hostApplication = requirement(identifier: "io.sparktales.locusx")
     static let signerService = requirement(identifier: "io.sparktales.locus.WalletSigner")
     static let connectionService = requirement(
         identifier: "io.sparktales.locus.WalletConnections"
@@ -1962,9 +1962,9 @@ enum WalletXPCCodeSigningRequirement {
     static let recoveryApplication = requirement(identifier: "io.sparktales.locus.WalletRecovery")
     static let signerBootstrapClient: String = {
         #if DEBUG
-        return "(identifier \"io.sparktales.locus\" or identifier \"io.sparktales.locus.WalletRecovery\")"
+        return "(identifier \"io.sparktales.locusx\" or identifier \"io.sparktales.locus.WalletRecovery\")"
         #else
-        return "(identifier \"io.sparktales.locus\" or identifier \"io.sparktales.locus.WalletRecovery\") "
+        return "(identifier \"io.sparktales.locusx\" or identifier \"io.sparktales.locus.WalletRecovery\") "
             + "and anchor apple generic and certificate leaf[subject.OU] = \"4X4RJA7GMD\""
         #endif
     }()

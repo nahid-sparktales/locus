@@ -1902,16 +1902,39 @@ final class FeatureLogicTests: XCTestCase {
             SettingsPage.allCases.filter { $0.navigationGroup == .models },
             [.accounts, .agents, .knowledge]
         )
+        #if LOCUS_WALLET
         XCTAssertEqual(
             SettingsPage.allCases.filter { $0.navigationGroup == .tools },
             [.browser, .wallet, .extensions, .permissions, .network]
         )
+        #else
+        XCTAssertEqual(
+            SettingsPage.allCases.filter { $0.navigationGroup == .tools },
+            [.browser, .extensions, .permissions, .network]
+        )
+        #endif
         XCTAssertEqual(
             SettingsPage.allCases.filter { $0.navigationGroup == .system },
             [.developer, .updates, .shortcuts]
         )
         XCTAssertTrue(SettingsPage.allCases.contains(.developer))
     }
+
+    #if !LOCUS_WALLET
+    func testStandardEditionIgnoresLegacyWalletSettings() throws {
+        let restored = try JSONDecoder().decode(AppSettings.self, from: Data(
+            #"{"browserEnabled":true,"walletAlphaEnabled":true,"walletBrowserProviderEnabled":true,"walletSepoliaRPCURL":"https://rpc.example.com","walletFeatureAccessMigrated":true}"#.utf8
+        ))
+        XCTAssertTrue(restored.browserEnabled)
+        let encoded = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(restored)) as? [String: Any]
+        )
+        XCTAssertFalse(encoded.keys.contains { $0.hasPrefix("wallet") })
+        XCTAssertNil(SettingsPage(rawValue: "Wallets"))
+        XCTAssertFalse(SettingsSearchDescriptor.all.contains { $0.id.hasPrefix("settings.wallet.") })
+        XCTAssertTrue(SettingsSearchDescriptor.all.filter { $0.matches("wallet") }.isEmpty)
+    }
+    #endif
 
     func testSettingsSearchMetadataIsUniqueAndIndexesAdvancedControls() {
         let descriptors = SettingsSearchDescriptor.all
@@ -5246,7 +5269,7 @@ final class FeatureLogicTests: XCTestCase {
              "oauth_strategy":"github_device",
              "oauth":{"authorization_endpoint":"","token_endpoint":"",
                       "client_id":"public-github-client","scopes":[],
-                      "redirect_uri":"locus://mcp/oauth"}}
+                      "redirect_uri":"\#(AppEdition.current.mcpRedirectURI)"}}
             """#.utf8)
         )
         let codeShown = expectation(description: "device code shown")
@@ -5377,7 +5400,7 @@ final class FeatureLogicTests: XCTestCase {
                 return (200, ["Content-Type": "application/json"], try json([
                     "client_id": "https://client.test/locus.json",
                     "client_name": "Locus",
-                    "redirect_uris": ["locus://mcp/oauth"],
+                    "redirect_uris": [AppEdition.current.mcpRedirectURI],
                 ]))
             default:
                 throw NSError(
@@ -5394,7 +5417,7 @@ final class FeatureLogicTests: XCTestCase {
              "url":"https://mcp.test/mcp","auth":"auto",
              "oauth":{"authorization_endpoint":"","token_endpoint":"",
                       "client_id":"https://client.test/locus.json","scopes":[],
-                      "redirect_uri":"locus://mcp/oauth"}}
+                      "redirect_uri":"\#(AppEdition.current.mcpRedirectURI)"}}
             """#.utf8)
         )
 

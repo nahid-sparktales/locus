@@ -24,7 +24,7 @@ protocol WalletConnectionsClient: AnyObject {
 @MainActor
 enum WalletConnectionsClientFactory {
     static func make() -> WalletConnectionsClient {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         DirectWalletConnectionsClient()
         #else
         UnavailableWalletConnectionsClient()

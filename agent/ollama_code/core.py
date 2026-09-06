@@ -479,7 +479,6 @@ class AgentCore:
         self.simulator_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
-        self.wallet_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.connector_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
@@ -691,7 +690,7 @@ class AgentCore:
             "tools list containing exact tool names from your active tool surface. If tools is omitted, "
             "the worker inherits every delegable tool and the current permission mode; an empty list "
             "creates a model-only worker. Use the smallest sufficient list when practical. Workers can "
-            "request the same workspace, shell, web, MCP, browser, computer, simulator, Notes, or wallet "
+            "request the same workspace, shell, web, MCP, browser, computer, simulator, or native app "
             "tools you can currently use, but every call still passes through the user's capability "
             "settings, hard safety checks, and normal permission prompt. Workers cannot recursively "
             "delegate or control the root conversation, plan, todos, memory, or skill observations. "
@@ -3545,15 +3544,10 @@ class AgentCore:
                         result = "Error: Notes are unavailable."
                     else:
                         result = self.notes_executor(tc.name, tc.arguments, call_id)
-                elif info.get("origin") == "wallet":
-                    # Schema omission is not the security boundary: a guessed tool
-                    # name must still pass the native-broker and access-ceiling gate.
-                    if not self.tool_registry.wallet_tool_allowed(tc.name):
-                        result = "Error: this agent cannot use that wallet tool."
-                    elif self.wallet_executor is None:
-                        result = "Error: the Locus Vault is unavailable."
-                    else:
-                        result = self.wallet_executor(tc.name, tc.arguments, call_id)
+                elif self.tool_registry.product_features.owns(tc.name):
+                    result = self.tool_registry.product_features.execute(
+                        tc.name, tc.arguments, call_id
+                    )
                 elif info.get("origin") == "connector":
                     connection_id = str(tc.arguments.get("connection_id") or "")
                     if not self.tool_registry.connector_tool_allowed(tc.name, connection_id):

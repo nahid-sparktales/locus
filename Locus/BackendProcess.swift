@@ -39,8 +39,11 @@ final class BackendProcess {
             return .running(url)
         }
 
-        let launch = bundledRuntime() ?? externalRuntime(root: root)
+        let launch = Self.resolvedRuntime(root: root, resources: Bundle.main.resourceURL)
         guard let launch else {
+            if AppEdition.current == .locusX {
+                return .failed("LocusX requires its bundled agent runtime. Rebuild LocusX with agent runtime bundling enabled.")
+            }
             return .failed("Could not find the bundled agent runtime or a development runtime at \(root).")
         }
         guard let port = Self.resolvedLaunchPort(preferred: preferredPort),
@@ -90,26 +93,22 @@ final class BackendProcess {
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        var profileEnvironment: [String: String] = [:]
         if let support = FileManager.default.urls(
                for: .applicationSupportDirectory,
                in: .userDomainMask
            ).first
         {
-            let locusSupport = support.appending(path: "Locus", directoryHint: .isDirectory)
-            let agentHome = locusSupport.appending(path: "Agent", directoryHint: .isDirectory)
-            let codexHome = locusSupport.appending(path: "Codex", directoryHint: .isDirectory)
-            try? FileManager.default.createDirectory(
-                at: agentHome,
-                withIntermediateDirectories: true
+            profileEnvironment = AppEdition.current.backendHomes(
+                in: support, sandboxed: WorkspaceAccess.isSandboxed
             )
-            try? FileManager.default.createDirectory(
-                at: codexHome,
-                withIntermediateDirectories: true
-            )
-            if WorkspaceAccess.isSandboxed {
-                environment["OLLAMA_CODE_HOME"] = agentHome.path
+            for path in profileEnvironment.values {
+                try? FileManager.default.createDirectory(
+                    atPath: path, withIntermediateDirectories: true
+                )
             }
-            environment["LOCUS_CODEX_HOME"] = codexHome.path
+        } else if AppEdition.current == .locusX {
+            return .failed("Could not locate LocusX's independent app data folder.")
         }
         // Bundled inside the App Store build; downloaded as a signed component
         // by the direct-download build. The path is exported even when nothing
@@ -136,6 +135,10 @@ final class BackendProcess {
                 environment[key] = value
             }
         }
+        // An inherited shell or proxy overlay must not move LocusX into the
+        // other edition's profile. Locus keeps its existing direct CLI home.
+        environment.merge(profileEnvironment) { _, profileValue in profileValue }
+        environment["LOCUS_EDITION"] = AppEdition.current.rawValue
         // The proxy password is deliberately absent here. unsetenv in the child
         // only edits its in-memory copy: KERN_PROCARGS2 — what `ps -E` reads —
         // keeps the exec-time block for the life of the process, so anything
@@ -279,8 +282,20 @@ final class BackendProcess {
         }
     }
 
-    private func bundledRuntime() -> RuntimeLaunch? {
-        guard let resources = Bundle.main.resourceURL else { return nil }
+    /// Source-tree Python always selects the standard product. A missing X
+    /// bundle must not silently launch that different backend implementation.
+    static func resolvedRuntime(
+        root: String,
+        resources: URL?,
+        edition: AppEdition = .current
+    ) -> RuntimeLaunch? {
+        if let bundled = bundledRuntime(resources: resources) { return bundled }
+        guard edition == .locus else { return nil }
+        return externalRuntime(root: root)
+    }
+
+    private static func bundledRuntime(resources: URL?) -> RuntimeLaunch? {
+        guard let resources else { return nil }
         let runtime = resources.appending(path: "AgentRuntime", directoryHint: .isDirectory)
         let source = runtime.appending(path: "source", directoryHint: .isDirectory)
         let packages = runtime.appending(path: "site-packages", directoryHint: .isDirectory)
@@ -293,7 +308,7 @@ final class BackendProcess {
         return RuntimeLaunch(python: python, source: source, packages: packages)
     }
 
-    private func externalRuntime(root: String) -> RuntimeLaunch? {
+    private static func externalRuntime(root: String) -> RuntimeLaunch? {
         let source = URL(fileURLWithPath: root).standardizedFileURL
         let python = source.appending(path: ".venv/bin/python")
         guard FileManager.default.isExecutableFile(atPath: python.path),
@@ -381,7 +396,7 @@ final class BackendProcess {
     }
 }
 
-private struct RuntimeLaunch {
+struct RuntimeLaunch {
     let python: URL
     let source: URL
     let packages: URL?

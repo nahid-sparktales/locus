@@ -34,7 +34,7 @@ codex_cache="${LOCUS_CODEX_CACHE:-${repo_root}/.codex-app-server}"
 # produce a sandboxed app that can neither bundle nor download them.
 if [[ -z "${LOCUS_BUNDLE_CODEX:-}" \
     && "${CONFIGURATION:-}" == "Release" \
-    && "${TARGET_NAME:-}" == "Locus" ]]; then
+    && ( "${TARGET_NAME:-}" == "Locus" || "${TARGET_NAME:-}" == "LocusX" ) ]]; then
     LOCUS_BUNDLE_CODEX="component"
 fi
 
@@ -166,7 +166,16 @@ bundle_codex_helper() {
 bundle_source() {
     /bin/rm -rf "${runtime}"
     /bin/mkdir -p "${runtime}/source"
-    copy_without_extended_metadata "${source_package}" "${runtime}/source/ollama_code"
+    # The edition factory is part of the sealed build, never a runtime toggle.
+    local edition="${LOCUS_EDITION:-locus}"
+    case "${TARGET_NAME:-}" in
+        LocusX) [[ "${edition}" == "locusx" ]] || return 1 ;;
+        Locus|LocusMAS) [[ "${edition}" == "locus" ]] || return 1 ;;
+        *) echo "error: unsupported backend application target" >&2; return 1 ;;
+    esac
+    python3 "${script_dir}/StageBackendEdition.py" \
+        --source "${source_package}" --destination "${runtime}/source/ollama_code" \
+        --edition "${edition}"
     if [[ "${TARGET_NAME:-}" == "LocusMAS" || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
         # The App Store runtime must not even contain Simulator tool schemas.
         # Keep the registry's empty variables so shared lookup code imports,
@@ -330,4 +339,6 @@ if ! bundle_standalone; then
     exit 1
 fi
 bundle_codex_helper
-"${script_dir}/PrepareWalletArchive.sh"
+if [[ "${LOCUS_EDITION:-locus}" == "locusx" ]]; then
+    "${script_dir}/PrepareWalletArchive.sh"
+fi

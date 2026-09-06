@@ -20,7 +20,8 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
         }
     }
 
-    private var drivers: [WalletConnectionConnector: WalletConnectorDriver]
+    private var drivers: [WalletConnectionConnector: WalletConnectorDriver] = [:]
+    private var pendingDriverFactory: (@MainActor () -> [WalletConnectorDriver])?
     private var connections: [String: WalletConnectionRecord] = [:]
     private var accounts: [String: WalletAccount] = [:]
     private var eventTasks: [WalletConnectionConnector: Task<Void, Never>] = [:]
@@ -31,15 +32,34 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
     init(
         drivers: [WalletConnectorDriver]? = nil,
         bundle: Bundle = .main,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        driverFactory: (@MainActor () -> [WalletConnectorDriver])? = nil
     ) {
-        let resolved = drivers ?? WalletConnectorDriverFactory.make(
-            bundle: bundle, environment: environment
-        )
+        if let drivers {
+            installDrivers(drivers)
+        } else {
+            // AppModel owns a gateway even when the wallet is disabled. Keep
+            // the connector web view and vendor SDKs dormant until first use.
+            pendingDriverFactory = driverFactory ?? {
+                WalletConnectorDriverFactory.make(bundle: bundle, environment: environment)
+            }
+        }
+    }
+
+    private func initializeDriversIfNeeded() {
+        guard let factory = pendingDriverFactory else { return }
+        pendingDriverFactory = nil
+        installDrivers(factory())
+    }
+
+    private func installDrivers(_ resolved: [WalletConnectorDriver]) {
         self.drivers = Dictionary(uniqueKeysWithValues: resolved.map {
             ($0.connector, $0)
         })
         for driver in resolved {
+            if let dappRequestHandler {
+                driver.dappRequestHandler = dappRequestHandler
+            }
             eventTasks[driver.connector] = Task { [weak self, weak driver] in
                 guard let driver else { return }
                 for await event in driver.events {
@@ -213,6 +233,7 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
     private func restoreIfNeeded() async throws {
         guard !didRestore else { return }
         guard suspensionCount == 0 else { throw WalletConnectorRuntimeError.sessionNotFound }
+        initializeDriversIfNeeded()
         let revision = suspensionRevision
         didRestore = true
         do {

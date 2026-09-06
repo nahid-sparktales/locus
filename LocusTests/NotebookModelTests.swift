@@ -23,7 +23,7 @@ final class NotebookModelTests: XCTestCase {
         styled: NSAttributedString? = nil
     ) throws -> NotesDocumentID {
         let directory = support
-            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
             .appendingPathComponent(NotesStore.directoryName(for: scope), isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if let text {
@@ -253,7 +253,7 @@ final class NotebookModelTests: XCTestCase {
         let support = root.appendingPathComponent("Application Support", isDirectory: true)
         try write("Real", scope: .workspace, digest: String(repeating: "1", count: 64), in: support)
 
-        let locus = support.appendingPathComponent("Locus", isDirectory: true)
+        let locus = support.appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
         // An abandoned notes format left this folder behind; nothing reads it.
         let legacy = locus.appendingPathComponent("Notes", isDirectory: true)
         try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)

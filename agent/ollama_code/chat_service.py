@@ -44,7 +44,6 @@ BROWSER_DEFAULT_BUDGET_MS = 60_000
 BROWSER_TOOL_BUDGET_MS = {"browser_navigate": 120_000}
 BROWSER_TIMEOUT_SLACK_SECONDS = 8
 NOTES_BUDGET_MS = 15_000
-WALLET_BUDGET_MS = 60_000
 _UNTRUSTED_BROWSER_TOOLS = {
     "browser_read_page", "browser_get_text", "browser_find",
     "browser_console", "browser_network", "browser_javascript",
@@ -141,7 +140,6 @@ class ChatService:
         self.pending_simulator_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_browser_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_notes_actions: dict[str, Future[dict[str, Any]]] = {}
-        self.pending_wallet_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_connector_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_questions: dict[str, Future[dict[str, Any]]] = {}
         self._pending_questions_guard = RLock()
@@ -192,6 +190,7 @@ class ChatService:
         # `AgentCore`, which the CLI and every evaluation core also build.
         self.core.tool_ctx.ask_question = self.ask_user_question
         self.core.tool_registry.set_ask_question_enabled(True)
+        self.core.tool_registry.product_features.bind(self)
 
     @property
     def codex(self) -> Any:
@@ -370,11 +369,12 @@ class ChatService:
             "permission_resolved", "computer_action_resolved",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "simulator_action_request",
-            "browser_action_request", "notes_action_request", "wallet_action_request",
+            "browser_action_request", "notes_action_request",
             "workspace_changed", "note", "error", "dispatch_plan", "run_started",
             "turn_done", "session_handoff", "task_ready", "task_applied",
             "orchestration_checkpoint", "dispatch_plan_ready", "dispatcher_plan_rejected",
         }
+        persisted_types.update(self.core.tool_registry.product_features.persisted_event_types)
         durable_agent_event = (
             event_type.startswith("agent_job_") and event_type != "agent_job_stream"
         )
@@ -758,39 +758,6 @@ class ChatService:
         text = str(result.get("text") or "")
         return truncate_output(text) if text else "Notes action completed."
 
-    def execute_wallet(
-        self,
-        tool: str,
-        arguments: dict[str, Any],
-        request_id: str,
-    ) -> str:
-        """Bridge a capability-gated wallet call to the native policy gateway."""
-        if not self.core.tool_registry.wallet_enabled:
-            return "Error: the Locus Vault is unavailable."
-        if not self.core.tool_registry.wallet_tool_allowed(tool):
-            return "Error: this wallet operation is not present in the active signer capability."
-        future: Future[dict[str, Any]] = Future()
-        self.pending_wallet_actions[request_id] = future
-        self.emit({
-            "type": "wallet_action_request",
-            "request_id": request_id,
-            "tool": tool,
-            "arguments": arguments,
-            "timeout_ms": WALLET_BUDGET_MS,
-            "session_id": self.core.session.session_id,
-        })
-        try:
-            result = future.result(timeout=WALLET_BUDGET_MS / 1000 + 2)
-        except FutureTimeout:
-            return "Error: the Locus Vault did not answer within 60 seconds."
-        finally:
-            self.pending_wallet_actions.pop(request_id, None)
-        error = str(result.get("error") or "").strip()
-        if error:
-            return f"Error: {error}"
-        text = str(result.get("text") or "")
-        return truncate_output(text) if text else "Wallet action completed."
-
     def execute_connector(
         self,
         tool: str,
@@ -1016,18 +983,6 @@ class ChatService:
 
     def cancel_all_notes_actions(self) -> None:
         for future in list(self.pending_notes_actions.values()):
-            if not future.done():
-                future.set_result({"error": "cancelled by the user"})
-
-    def answer_wallet(self, request_id: str, result: dict[str, Any]) -> bool:
-        future = self.pending_wallet_actions.get(request_id)
-        if future is None or future.done():
-            return False
-        future.set_result(result)
-        return True
-
-    def cancel_all_wallet_actions(self) -> None:
-        for future in list(self.pending_wallet_actions.values()):
             if not future.done():
                 future.set_result({"error": "cancelled by the user"})
 

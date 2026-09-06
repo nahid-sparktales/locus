@@ -39,18 +39,22 @@ if is_test_action; then
     exit 0
 fi
 
-expected_plugins="Locus.app/Contents/PlugIns"
-if [[ "${CONFIGURATION:-}" == "ReleaseExperimental" && "${TARGET_NAME:-}" == "Locus" \
-    && "${FULL_PRODUCT_NAME:-}" == "Locus Experimental.app" ]]; then
-    expected_plugins="Locus Experimental.app/Contents/PlugIns"
-fi
+# These are generated products only. Keep the containment/symlink checks below.
+case "${TARGET_NAME:-}:${FULL_PRODUCT_NAME:-}" in
+    Locus:Locus.app|LocusMAS:Locus.app)
+        test_bundle_name="LocusTests.xctest" ;;
+    LocusX:LocusX.app|LocusX:LocusX\ Experimental.app)
+        test_bundle_name="LocusXTests.xctest" ;;
+    *) echo "error: Refusing to clean an unknown app build product." >&2; exit 1 ;;
+esac
+expected_plugins="${FULL_PRODUCT_NAME}/Contents/PlugIns"
 if [[ "${TARGET_BUILD_DIR:-}" != /* || "${TARGET_BUILD_DIR:-}" == "/" \
     || ! -d "${TARGET_BUILD_DIR:-}" || "${PLUGINS_FOLDER_PATH:-}" != "${expected_plugins}" ]]; then
     echo "error: Refusing to clean a test bundle outside the exact Locus build product." >&2
     exit 1
 fi
 build_root="${TARGET_BUILD_DIR:A}"
-stale_test_bundle="${build_root}/${expected_plugins}/LocusTests.xctest"
+stale_test_bundle="${build_root}/${expected_plugins}/${test_bundle_name}"
 # A symlinked app, plug-in directory, or test bundle must not redirect cleanup
 # outside the build output. Child symlinks are not followed by rm -r.
 if [[ "${stale_test_bundle:A}" != "${stale_test_bundle}" ]]; then

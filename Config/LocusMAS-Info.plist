@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Locus</string>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -58,7 +58,7 @@
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Locus uses the camera only when you allow a website to access it.</string>
+	<string>Allow websites you approve in the Locus browser to use the camera.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Locus needs access to save browser downloads and open files or projects you choose from Downloads.</string>
 	<key>NSHumanReadableCopyright</key>
@@ -73,5 +73,9 @@
 	<array>
 		<string>_locus-remote._tcp</string>
 	</array>
+	<key>LocusEdition</key>
+	<string>locus</string>
+	<key>LocusUpdateMode</key>
+	<string>appStore</string>
 </dict>
 </plist>

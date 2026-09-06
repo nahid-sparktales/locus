@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from artifact_fixtures import make_synthetic_app, write_info
 
 ROOT = Path(__file__).resolve().parents[2]
 FLAG = "LocusWalletExperimentalMainnetEnabled"
@@ -43,24 +44,24 @@ def test_experimental_configuration_preserves_release_compilation_and_signing_bo
     assert MACRO not in global_settings
     assert MACRO not in block(source, "targetTemplates:")
     scheme = block(block(source, "schemes:"), "  LocusExperimental:")
-    assert "Locus: all" in scheme
+    assert "LocusX: all" in scheme
     assert scheme.count("config: ReleaseExperimental") == 2
 
 
 def test_only_direct_and_signer_targets_receive_experimental_opt_in():
     targets = block((ROOT / "project.yml").read_text(), "targets:")
-    direct = block(targets, "  Locus:")
+    direct = block(targets, "  LocusX:")
     signer = block(targets, "  WalletSignerService:")
-    for name in ("LocusMAS", "WalletRecoveryApplication", "LocusTests", "LocusUITests"):
+    for name in ("Locus", "LocusMAS", "WalletRecoveryApplication", "LocusTests", "LocusUITests"):
         assert MACRO not in block(targets, f"  {name}:")
     assert targets.count(MACRO) == 2
     app_settings = block(direct, "        ReleaseExperimental:")
     signer_settings = block(signer, "        ReleaseExperimental:")
     assert MACRO in app_settings and MACRO in signer_settings
     assert "LOCUS_DIRECT_DOWNLOAD" in app_settings
-    assert "PRODUCT_NAME: Locus Experimental" in app_settings
+    assert "PRODUCT_NAME: LocusX Experimental" in app_settings
     assert "PRODUCT_MODULE_NAME: Locus" in app_settings
-    assert "EXECUTABLE_NAME: Locus" in app_settings
+    assert "EXECUTABLE_NAME: LocusX" in app_settings
     assert "INFOPLIST_FILE: Config/LocusExperimental-Info.plist" in app_settings
     assert "INFOPLIST_FILE: Config/WalletSignerExperimental-Info.plist" in signer_settings
     assert 'LOCUS_WALLET_RELEASE_ACTIVATION_URL: ""' in app_settings
@@ -70,7 +71,7 @@ def test_only_direct_and_signer_targets_receive_experimental_opt_in():
 @pytest.mark.parametrize(
     "base,experimental,is_app",
     [
-        ("Locus/Info.plist", "Config/LocusExperimental-Info.plist", True),
+        ("Config/LocusX-Info.plist", "Config/LocusExperimental-Info.plist", True),
         ("WalletSignerService/Info.plist", "Config/WalletSignerExperimental-Info.plist", False),
     ],
 )
@@ -80,7 +81,6 @@ def test_experimental_plist_has_only_explicit_channel_differences(base, experime
     assert FLAG not in expected
     assert actual.pop(FLAG) is True
     if is_app:
-        expected["CFBundleDisplayName"] = "Locus Experimental"
         for key in ("SUAllowsAutomaticUpdates", "SUAutomaticallyUpdate", "SUEnableAutomaticChecks"):
             expected[key] = False
     assert actual == expected
@@ -145,10 +145,13 @@ def test_mas_audits_forbid_experimental_configuration_resources_and_code(script)
 def test_production_distribution_audit_rejects_an_experimental_app_before_other_checks(
     tmp_path, relative
 ):
-    app = tmp_path / "Locus Experimental.app"
+    app, info = make_synthetic_app(tmp_path, "locusx")
     plist = app / relative
-    plist.parent.mkdir(parents=True)
-    plist.write_bytes(plistlib.dumps({FLAG: True}))
+    if relative == "Contents/Info.plist":
+        info[FLAG] = True
+        write_info(app, info)
+    else:
+        plist.write_bytes(plistlib.dumps({FLAG: True}))
     result = subprocess.run(
         ["/bin/zsh", str(ROOT / "Tools/AuditDistribution.sh"), str(app)],
         capture_output=True,

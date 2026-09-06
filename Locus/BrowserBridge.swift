@@ -15,7 +15,9 @@ enum BrowserBridge {
     /// Name of the message handler the page-world capture posts to.
     static let captureHandlerName = "locusBrowserCapture"
     static let autofillHandlerName = "locusBrowserAutofill"
+    #if LOCUS_WALLET
     static let walletHandlerName = "locusWalletProvider"
+    #endif
 
     /// Main frame only: refs are minted exclusively there — `callBridge`
     /// evaluates with `in: nil` (the main frame) and `walk()` stops at IFRAME
@@ -78,6 +80,7 @@ enum BrowserBridge {
         )
     }
 
+    #if LOCUS_WALLET
     static func walletProviderScript() -> WKUserScript {
         WKUserScript(
             source: LocusWalletProviderScript.evmBootstrap,
@@ -86,6 +89,7 @@ enum BrowserBridge {
         )
     }
 
+    #endif
     /// Message the model gets when it acts on an element the page has moved on
     /// from. Mirrored verbatim in the `browser_read_page` tool description, and
     /// asserted in both test suites, so the model's instructions and the

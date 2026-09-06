@@ -833,7 +833,7 @@ enum SessionQuickActionFiles {
         }
         let root = appConfigDirectory
             ?? fileManager.homeDirectoryForCurrentUser
-                .appending(path: ".config/Locus", directoryHint: .isDirectory)
+                .appending(path: ".config/\(AppEdition.current.displayName)", directoryHint: .isDirectory)
         let fallback = root.appending(path: "proxies.json")
         if fileManager.fileExists(atPath: fallback.path) {
             return ProxyResolution(url: fallback, created: false)
@@ -850,7 +850,7 @@ enum SessionQuickActionFiles {
     ) -> URL {
         let root = logsDirectory
             ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first!
-                .appending(path: "Logs/Locus", directoryHint: .isDirectory)
+                .appending(path: "Logs/\(AppEdition.current.displayName)", directoryHint: .isDirectory)
         let safeID = sessionID.isEmpty
             ? "current-session"
             : sessionID.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" }

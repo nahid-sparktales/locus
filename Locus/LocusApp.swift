@@ -69,7 +69,7 @@ struct LocusApp: App {
     @StateObject private var mainWindowPresenter = MainWindowPresenter()
 
     var body: some Scene {
-        Window("Locus", id: "main") {
+        Window(AppEdition.current.displayName, id: "main") {
             sceneContent
                 .appFeatureEnvironment(from: model)
                 .environmentObject(updates)
@@ -80,7 +80,7 @@ struct LocusApp: App {
                     lifecycle.connect(model: model)
                     updates.setRelaunchHandler(lifecycle)
                 }
-                #if LOCUS_DIRECT_DOWNLOAD
+                #if LOCUS_WALLET
                 .onOpenURL { url in
                     Task { _ = await model.walletGateway.beginWalletConnectPairing(deepLink: url) }
                 }
@@ -248,7 +248,7 @@ struct LocusApp: App {
         } label: {
             Image("MenuBarIcon")
                 .renderingMode(.template)
-                .accessibilityLabel("Locus")
+                .accessibilityLabel(AppEdition.current.displayName)
         }
         .menuBarExtraStyle(.menu)
     }
@@ -268,11 +268,13 @@ struct LocusApp: App {
             SettingsView(presentationContext: .sheet)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(LocusTheme.surfaceCanvas)
+        #if LOCUS_WALLET
         case "wallet":
             SettingsView(presentationContext: .sheet)
                 .onAppear { model.settingsPage = .wallet }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(LocusTheme.surfaceCanvas)
+        #endif
         case "browser":
             BrowserPanel(
                 browser: model.browser,
@@ -490,7 +492,7 @@ private struct LocusMenuBarView: View {
     let presenter: MainWindowPresenter
 
     var body: some View {
-        Button("Open Locus") { revealMainWindow() }
+        Button("Open \(AppEdition.current.displayName)") { revealMainWindow() }
             .keyboardShortcut("o")
         Button("Configure Agent…") {
             revealMainWindow()
@@ -1000,7 +1002,7 @@ struct RootView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Locus workspace")
+        .accessibilityLabel("\(AppEdition.current.displayName) workspace")
         .sheet(isPresented: $library.isPresented) {
             if model.isUITesting, locusEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
                 LibraryUITestFixtureView().appFeatureEnvironment(from: model)

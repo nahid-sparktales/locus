@@ -128,6 +128,62 @@ jobs:
             zsh -n "$release_script" || exit "$?"
           done
 
+  standard-native:
+    name: Wallet-free ${{ matrix.scheme }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: Locus
+            configuration: Release
+          - scheme: LocusMAS
+            configuration: ReleaseMAS
+    env:
+      LOCUS_BUNDLE_MODE: skip
+      # If a wallet signer dependency leaks into these targets, fail the build.
+      LOCUS_CARGO_BIN: /usr/bin/false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Generated project is current
+        run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
+      - name: Standard Locus unit tests
+        if: matrix.scheme == 'Locus'
+        run: >-
+          xcodebuild test
+          -project Locus.xcodeproj
+          -scheme Locus
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/locus-standard-tests"
+          -only-testing:LocusTests
+          CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+      - name: Build and inspect wallet-free release
+        env:
+          EDITION_SCHEME: ${{ matrix.scheme }}
+          EDITION_CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          xcodebuild build \
+            -project Locus.xcodeproj \
+            -scheme "$EDITION_SCHEME" \
+            -configuration "$EDITION_CONFIGURATION" \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/locus-standard-release" \
+            CODE_SIGNING_ALLOWED=NO
+          app="$RUNNER_TEMP/locus-standard-release/Build/Products/$EDITION_CONFIGURATION/Locus.app"
+          python3 Tools/AuditAppEdition.py "$app" --edition locus --allow-missing-runtime
+      - name: Retain standard unit-test evidence
+        if: always() && matrix.scheme == 'Locus'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-standard-macos15-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/locus-standard-tests/Logs/Test/*.xcresult/**
+          if-no-files-found: error
+          retention-days: 90
+
   swift:
     runs-on: macos-15
     steps:
@@ -152,18 +208,18 @@ jobs:
           -swift-version 5
           Locus/CompanionWireTypes.swift
           Locus/JSONValue.swift
-      - name: Swift unit tests
+      - name: LocusX wallet and shared unit tests
         env:
           LOCUS_BUNDLE_MODE: skip
         run: >-
           xcodebuild test
           -project Locus.xcodeproj
-          -scheme Locus
+          -scheme LocusX
           -configuration Debug
           -destination 'platform=macOS'
           -derivedDataPath "$RUNNER_TEMP/locus-debug-tests"
-          -only-testing:LocusTests
-          -skip-testing:LocusTests/WalletDecoderFuzzTests
+          -only-testing:LocusXTests
+          -skip-testing:LocusXTests/WalletDecoderFuzzTests
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
           LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
@@ -240,13 +296,13 @@ jobs:
             CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
             LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
             LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
-      - name: Direct and App Store release configurations compile
+      - name: LocusX and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip
         run: |
           xcodebuild build \
             -project Locus.xcodeproj \
-            -scheme Locus \
+            -scheme LocusX \
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/locus-release-direct" \
@@ -259,7 +315,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/locus-release-mas" \
             CODE_SIGNING_ALLOWED=NO
 
-          direct="$RUNNER_TEMP/locus-release-direct/Build/Products/Release/Locus.app"
+          direct="$RUNNER_TEMP/locus-release-direct/Build/Products/Release/LocusX.app"
           app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
           umask 077
           release_inspection_dir="$(mktemp -d "$RUNNER_TEMP/locus-release-inspection.XXXXXX")"
@@ -315,11 +371,11 @@ jobs:
           test ! -e "$app_store/Contents/Helpers/WalletRecovery.app"
           test -d "$direct/Contents/Frameworks/Sparkle.framework"
           test ! -e "$app_store/Contents/Frameworks/Sparkle.framework"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$direct/Contents/Info.plist")" = \
-            'https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml'
+          python3 Tools/AuditAppEdition.py "$direct" --edition locusx --allow-missing-runtime
+          python3 Tools/AuditAppEdition.py "$app_store" --edition locus --allow-missing-runtime
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             "$direct/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" = '2.9.6'
-          release_audit_output present 'Sparkle.framework' /usr/bin/otool -L "$direct/Contents/MacOS/Locus"
+          release_audit_output present 'Sparkle.framework' /usr/bin/otool -L "$direct/Contents/MacOS/LocusX"
           release_audit_output absent 'Sparkle.framework' /usr/bin/otool -L "$app_store/Contents/MacOS/Locus"
           release_audit_output absent '^  "SU[^" ]*"' /usr/bin/plutil -p "$app_store/Contents/Info.plist"
           test -z "$(find "$app_store/Contents" \
@@ -336,7 +392,7 @@ jobs:
             -destination 'generic/platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/locus-release-experimental" \
             CODE_SIGNING_ALLOWED=NO
-          experimental="$RUNNER_TEMP/locus-release-experimental/Build/Products/ReleaseExperimental/Locus Experimental.app"
+          experimental="$RUNNER_TEMP/locus-release-experimental/Build/Products/ReleaseExperimental/LocusX Experimental.app"
           app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
           Tools/AuditWalletBuildBoundary.sh "$experimental" "$app_store"
           for authority in "$experimental" \

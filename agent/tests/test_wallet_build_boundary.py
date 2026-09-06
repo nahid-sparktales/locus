@@ -132,10 +132,31 @@ def test_ci_inspection_invalid_pattern_fails_closed(tmp_path, expectation):
 
 def test_ci_release_boundary_has_no_early_exit_inspection_pipelines():
     source = (ROOT / ".github/workflows/ci.yml").read_text()
-    body = source.split("      - name: Direct and App Store release configurations compile\n", 1)[1].split(
+    body = source.split("      - name: LocusX and App Store release configurations compile\n", 1)[1].split(
         "\n  mobile:\n", 1
     )[0]
     assert "| grep -q" not in body
     assert "| grep -Eq" not in body
     assert body.count("release_audit_output absent ") == 3
     assert body.count("release_audit_output present ") == 1
+
+
+def test_ci_builds_standard_editions_without_wallet_toolchains_and_audits_artifacts():
+    source = (ROOT / ".github/workflows/ci.yml").read_text()
+    standard = source.split("\n  standard-native:\n", 1)[1].split("\n  swift:\n", 1)[0]
+    assert "scheme: Locus\n" in standard
+    assert "configuration: Release\n" in standard
+    assert "scheme: LocusMAS\n" in standard
+    assert "configuration: ReleaseMAS\n" in standard
+    assert "LOCUS_CARGO_BIN: /usr/bin/false" in standard
+    assert "setup-node" not in standard
+    assert "cargo install" not in standard
+    assert "-only-testing:LocusTests" in standard
+    assert 'Tools/AuditAppEdition.py "$app" --edition locus --allow-missing-runtime' in standard
+    wallet = source.split("\n  swift:\n", 1)[1].split("\n  mobile:\n", 1)[0]
+    assert "-scheme LocusX" in wallet
+    assert "-only-testing:LocusXTests" in wallet
+    assert 'Tools/AuditAppEdition.py "$direct" --edition locusx --allow-missing-runtime' in wallet
+    assert 'Tools/AuditWalletBuildBoundary.sh "$direct" "$app_store"' in wallet
+    for integration in ["RunWalletChainTests.sh", "RunWalletSolanaTests.sh", "RunWalletSuiTests.sh"]:
+        assert integration in wallet

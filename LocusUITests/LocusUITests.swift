@@ -3,6 +3,11 @@ import XCTest
 
 final class LocusUITests: XCTestCase {
     private var app: XCUIApplication!
+    #if LOCUS_WALLET
+    private let productName = "LocusX"
+    #else
+    private let productName = "Locus"
+    #endif
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -151,6 +156,7 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    #if LOCUS_WALLET
     /// Recovery is intentionally launched as an exact child executable rather
     /// than by XCTest. Resolve and validate that running child directly;
     /// bundle-identifier attachment is unreliable for nested helpers on macOS.
@@ -166,7 +172,7 @@ final class LocusUITests: XCTestCase {
                 !$0.isTerminated
                     && !excludedProcessIdentifiers.contains($0.processIdentifier)
                     && $0.bundleURL?.path.hasSuffix(
-                        "Locus.app/Contents/Helpers/WalletRecovery.app"
+                        "LocusX.app/Contents/Helpers/WalletRecovery.app"
                     ) == true
                     && $0.executableURL?.path.hasSuffix(
                         "WalletRecovery.app/Contents/MacOS/WalletRecovery"
@@ -212,6 +218,7 @@ final class LocusUITests: XCTestCase {
         )
     }
 
+    #endif
     /// SwiftUI alerts surface as sheets labeled "alert" on current macOS;
     /// their message text is exposed as a value, not a label.
     private func staticTextWithValue(containing fragment: String) -> XCUIElement {
@@ -617,6 +624,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement(anchor).waitForExistence(timeout: 10))
     }
 
+    #if LOCUS_WALLET
     private func relaunchWalletFixture(_ fixture: String, anchor: String) {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "wallet"
@@ -632,6 +640,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement(anchor).waitForExistence(timeout: 10))
     }
 
+    #endif
     private func assertCoreWorkspaceFitsInsideWindow(
         file: StaticString = #filePath,
         line: UInt = #line
@@ -1178,8 +1187,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
 
-    func testUpdatesSettingsShowAutomaticDirectDownloadControls() {
-        app.menuBars.menuBarItems["Locus"].firstMatch.click()
+    func testUpdatesSettingsShowManualLocalControls() {
+        app.menuBars.menuBarItems[productName].firstMatch.click()
         XCTAssertTrue(app.menuItems["Check for Updates…"].exists)
         app.typeKey(.escape, modifierFlags: [])
 
@@ -1193,9 +1202,10 @@ final class LocusUITests: XCTestCase {
         updatesPage.click()
 
         XCTAssertTrue(anyElement("settings.updateVersion").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("settings.automaticUpdateChecks").exists)
-        XCTAssertTrue(anyElement("settings.automaticUpdateDownloads").exists)
-        XCTAssertTrue(anyElement("settings.checkForUpdates").exists)
+        XCTAssertTrue(anyElement("settings.manualUpdates").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("settings.automaticUpdateChecks").exists)
+        XCTAssertFalse(anyElement("settings.automaticUpdateDownloads").exists)
+        XCTAssertFalse(anyElement("settings.checkForUpdates").exists)
         XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 
@@ -1238,6 +1248,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(workspace.exists)
     }
 
+    #if LOCUS_WALLET
     func testWalletHubDisabledFixture() {
         relaunchWalletFixture("disabled", anchor: "settings.wallet.enable-alpha")
         XCTAssertTrue(app.staticTexts[
@@ -1471,6 +1482,23 @@ final class LocusUITests: XCTestCase {
         ].exists)
     }
 
+    #else
+    func testStandardEditionHasNoWalletSettingsEvenWithLegacyActivationFlags() {
+        app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET"] = "1"
+        app.launchEnvironment["LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER"] = "1"
+        relaunchForAccessibilitySurface("settings", anchor: "settings.page.general")
+        XCTAssertFalse(anyElement("settings.page.wallets").exists)
+        XCTAssertFalse(anyElement("settings.page.wallet").exists)
+        let search = anyElement("settings.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("wallet")
+        XCTAssertTrue(app.staticTexts["No Settings Found"].waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("settings.search.result.settings.wallet.status").exists)
+        XCTAssertFalse(anyElement("settings.search.result.settings.wallet.connectors").exists)
+        XCTAssertFalse(app.staticTexts["Locus Vault"].exists)
+    }
+    #endif
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
         anyElement("workspace.modelPicker").click()
         app.buttons["Manage Agents & Teams…"].click()

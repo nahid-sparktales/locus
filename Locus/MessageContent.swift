@@ -448,7 +448,6 @@ struct StreamingPlainTextView: NSViewRepresentable {
         view.drawsBackground = false
         view.textContainerInset = .zero
         view.isHorizontallyResizable = false
-        view.isVerticallyResizable = true
         view.autoresizingMask = [.width]
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.heightTracksTextView = false
@@ -537,6 +536,9 @@ final class AppendOnlyTextView: LocusSelectionTextView {
         let stack = LocusSelectionTextView.makeTextKit1Stack()
         let view = AppendOnlyTextView(frame: .zero, textContainer: stack.container)
         view.adoptTextKit1(storage: stack.storage)
+        // Proposal measurement must not resize the view before SwiftUI places
+        // it, which would reset the text container to its previous frame width.
+        view.isVerticallyResizable = false
         return view
     }
 
@@ -566,11 +568,10 @@ final class AppendOnlyTextView: LocusSelectionTextView {
             isLiveResizing: isLiveResizing ?? liveResizeMeasurementActive
         )
         let key = MeasurementKey(revision: contentRevision, width: effectiveWidth)
+        // SwiftUI can revisit a previous proposal after measuring another
+        // width. Restore that proposal's line breaks before reusing its height.
+        setTextContainerWidthIfNeeded(effectiveWidth)
         if let cached = measurements.value(for: key) { return cached.height }
-        textContainer.containerSize = NSSize(
-            width: effectiveWidth,
-            height: .greatestFiniteMagnitude
-        )
         layoutManager.ensureLayout(for: textContainer)
         let height = max(ceil(layoutManager.usedRect(for: textContainer).height), 1)
         measurements.insert(NSSize(width: effectiveWidth, height: height), for: key)
@@ -596,6 +597,13 @@ final class AppendOnlyTextView: LocusSelectionTextView {
             lastIntrinsicWidth = effectiveWidth
             invalidateIntrinsicContentSize()
         }
+    }
+
+    private func setTextContainerWidthIfNeeded(_ width: CGFloat) {
+        guard let textContainer else { return }
+        let size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        guard textContainer.containerSize != size else { return }
+        textContainer.containerSize = size
     }
 }
 

@@ -103,7 +103,7 @@ final class WorkspaceAccess {
     private static func isAppOwnedWorkspace(_ path: String) -> Bool {
         guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return false }
         return ["Quickstart", "Workspace"].contains { folder in
-            let root = canonicalPath(support.appendingPathComponent("Locus/\(folder)").path)
+            let root = canonicalPath(AppEdition.current.supportDirectory(in: support).appendingPathComponent(folder).path)
             return path == root || path.hasPrefix(root + "/")
         }
     }
@@ -118,7 +118,7 @@ final class WorkspaceAccess {
             return nil
         }
         let url = support
-            .appending(path: "Locus", directoryHint: .isDirectory)
+            .appending(path: AppEdition.current.displayName, directoryHint: .isDirectory)
             .appending(path: "Workspace", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

@@ -27,6 +27,35 @@ private final class FakeUpdateDriver: AppUpdateDriving {
 
 @MainActor
 final class AppUpdateControllerTests: XCTestCase {
+    func testManualUpdatesIgnorePreviouslyEnabledUpdaterPreferences() {
+        let driver = FakeUpdateDriver()
+        let controller = AppUpdateController(
+            distribution: .directDownload, updateMode: .manual, driver: driver
+        )
+        XCTAssertFalse(controller.isAvailable)
+        XCTAssertFalse(controller.canCheckForUpdates)
+        XCTAssertFalse(controller.automaticallyChecksForUpdates)
+        XCTAssertFalse(controller.automaticallyDownloadsUpdates)
+        controller.checkForUpdates()
+        controller.setAutomaticallyChecksForUpdates(true)
+        controller.setAutomaticallyDownloadsUpdates(true)
+        driver.publishStateChange()
+        XCTAssertEqual(driver.checkCount, 0)
+        XCTAssertFalse(controller.canCheckForUpdates)
+        XCTAssertFalse(controller.automaticallyChecksForUpdates)
+        XCTAssertFalse(controller.automaticallyDownloadsUpdates)
+    }
+
+    func testUnconfiguredLocalBuildsDefaultToManualUpdates() {
+        for value in [nil, "", "unknown", "manual"] as [String?] {
+            XCTAssertEqual(AppUpdateController.UpdateMode.configured(bundleValue: value), .manual)
+        }
+        XCTAssertEqual(AppUpdateController.UpdateMode.configured(bundleValue: "automatic"), .automatic)
+        let controller = AppUpdateController(distribution: .directDownload, updateMode: .manual)
+        XCTAssertFalse(controller.isAvailable)
+        XCTAssertFalse(controller.canCheckForUpdates)
+    }
+
     func testAutomaticUpdaterStartsOnlyForNormalLaunches() {
         XCTAssertTrue(locusShouldStartAutomaticUpdater(environment: [:]))
         XCTAssertFalse(locusShouldStartAutomaticUpdater(environment: [
@@ -42,6 +71,7 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(
             startImmediately: false,
             distribution: .directDownload,
+            updateMode: .automatic,
             driver: driver
         )
 
@@ -64,6 +94,7 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(
             startImmediately: false,
             distribution: .directDownload,
+            updateMode: .automatic,
             driver: driver
         )
 
@@ -82,6 +113,7 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(
             startImmediately: false,
             distribution: .directDownload,
+            updateMode: .automatic,
             driver: driver
         )
 
@@ -121,6 +153,7 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(
             startImmediately: false,
             distribution: .directDownload,
+            updateMode: .automatic,
             driver: driver
         )
         let lifecycle = ApplicationLifecycleCoordinator()

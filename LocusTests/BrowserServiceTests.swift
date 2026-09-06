@@ -72,6 +72,7 @@ final class BrowserServiceTests: XCTestCase {
         )
     }
 
+    #if LOCUS_WALLET
     func testBrowserWalletIsNotInjectedWhileAccessIsOff() async throws {
         let gateway = WalletGateway(
             signer: UnavailableWalletSignerClient(),
@@ -225,6 +226,37 @@ final class BrowserServiceTests: XCTestCase {
         return try XCTUnwrap(result as? [String: Any])
     }
 
+    #else
+    func testStandardBrowserHasNoWalletProviderOrDiscovery() async throws {
+        let tab = service.tab(for: "session-standard-edition")
+        try await load("<title>Standard Locus</title>", into: tab)
+        let result = try await tab.webView.callAsyncJavaScript(
+            """
+            const announced = [];
+            addEventListener('eip6963:announceProvider', event => announced.push(event.detail));
+            dispatchEvent(new Event('eip6963:requestProvider'));
+            const registered = [];
+            dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
+              detail: { register(wallet) { registered.push(wallet); } },
+            }));
+            return {
+              provider: typeof globalThis.locusVault,
+              ethereum: typeof globalThis.ethereum,
+              bridge: typeof globalThis.webkit?.messageHandlers?.locusWalletProvider,
+              announced: announced.length,
+              registered: registered.length,
+            };
+            """,
+            arguments: [:], in: nil, contentWorld: .page
+        )
+        let discovery = try XCTUnwrap(result as? [String: Any])
+        XCTAssertEqual(discovery["provider"] as? String, "undefined")
+        XCTAssertEqual(discovery["ethereum"] as? String, "undefined")
+        XCTAssertEqual(discovery["bridge"] as? String, "undefined")
+        XCTAssertEqual(discovery["announced"] as? Int, 0)
+        XCTAssertEqual(discovery["registered"] as? Int, 0)
+    }
+    #endif
     func testUnchangedProfileIdentityKeepsTheSameStore() {
         let tab = service.tab(for: "session-store")
         let store = tab.webView.configuration.websiteDataStore
@@ -1253,7 +1285,7 @@ final class NotesStoreTests: XCTestCase {
         styled: NSAttributedString?
     ) throws {
         let directory = support
-            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
             .appendingPathComponent(NotesStore.directoryName(for: scope), isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if let plain {

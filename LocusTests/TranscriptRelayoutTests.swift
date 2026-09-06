@@ -91,6 +91,83 @@ final class TranscriptRelayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(restoredSuffix.maxY, wide.height)
     }
 
+    func testMeasuringANewWidthPreservesThePlacedMarkdownFrame() throws {
+        let view = makeTextView(text: Self.body, wraps: true)
+        let container = try XCTUnwrap(view.textContainer)
+        let layout = try XCTUnwrap(view.layoutManager)
+        let wide = view.measuredSize(for: 520, wraps: true)
+        view.setFrameSize(wide)
+        let placedFrame = view.frame
+
+        // AppKit previously resized the native view during this proposal,
+        // resetting the container to the placed width and invalidating layout.
+        // The resulting empty usedRect was then cached as a one-point height.
+        let narrow = view.measuredSize(for: 310, wraps: true)
+        let reference = makeTextView(text: Self.body, wraps: true)
+            .measuredSize(for: 310, wraps: true)
+        XCTAssertEqual(view.frame, placedFrame,
+            "Measuring a proposal must leave frame placement to SwiftUI")
+        XCTAssertEqual(narrow, reference)
+        XCTAssertGreaterThan(narrow.height, wide.height)
+        XCTAssertEqual(container.containerSize.width, 310)
+
+        // Once SwiftUI chooses the narrow proposal, the entire last paragraph
+        // must draw inside the resulting leaf rather than over the next row.
+        view.setFrameSize(narrow)
+        layout.ensureLayout(for: container)
+        let glyphs = layout.glyphRange(for: container)
+        let rendered = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        XCTAssertGreaterThan(rendered.height, 0)
+        XCTAssertEqual(layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil).length,
+            (Self.body as NSString).length)
+        XCTAssertLessThanOrEqual(rendered.maxY, view.bounds.height)
+    }
+
+    func testCachedStreamingProposalRestoresRenderedGlyphPositions() throws {
+        let suffix = "The streaming tail stays inside the measured row."
+        let text = String(repeating: "A streaming paragraph has several wrapped words. ", count: 30) + suffix
+        let view = AppendOnlyTextView.make()
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.heightTracksTextView = false
+        view.textContainer?.widthTracksTextView = true
+        view.isHorizontallyResizable = false
+        view.textStorage?.setAttributedString(MarkdownNativeText.plain(
+            text, font: .systemFont(ofSize: 13), color: .textColor, lineSpacing: 3
+        ))
+        view.contentDidChange()
+        let container = try XCTUnwrap(view.textContainer)
+        let layout = try XCTUnwrap(view.layoutManager)
+        let suffixRange = (text as NSString).range(of: suffix)
+
+        let wideHeight = view.measuredHeight(for: 520)
+        let wideGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let wideSuffix = layout.boundingRect(forGlyphRange: wideGlyphs, in: container)
+        view.setFrameSize(NSSize(width: 520, height: wideHeight))
+        let placedFrame = view.frame
+        let narrowHeight = view.measuredHeight(for: 310)
+        XCTAssertEqual(view.frame, placedFrame,
+            "Streaming measurement must not mutate the frame SwiftUI placed")
+        XCTAssertGreaterThan(narrowHeight, wideHeight)
+        XCTAssertEqual(container.containerSize.width, 310)
+
+        view.setFrameSize(NSSize(width: 310, height: narrowHeight))
+        layout.ensureLayout(for: container)
+        let narrowGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let narrowSuffix = layout.boundingRect(forGlyphRange: narrowGlyphs, in: container)
+        XCTAssertLessThanOrEqual(narrowSuffix.maxY, view.bounds.height,
+            "The selected narrow frame must contain the complete streaming tail")
+
+        XCTAssertEqual(view.measuredHeight(for: 520), wideHeight)
+        layout.ensureLayout(for: container)
+        let restoredGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let restoredSuffix = layout.boundingRect(forGlyphRange: restoredGlyphs, in: container)
+        XCTAssertEqual(restoredSuffix, wideSuffix,
+            "Reusing a height must also restore the glyph positions that fit inside it")
+        XCTAssertLessThanOrEqual(restoredSuffix.maxY, wideHeight,
+            "A cached streaming row must not draw its tail over the next row")
+    }
+
     func testLiveResizeUsesConservativeFourPointBucketsAndBoundedLRU() {
         let view = makeTextView(text: Self.longProse, wraps: true)
         view.setLiveResizeMeasurementActive(true)
@@ -781,7 +858,6 @@ final class TranscriptRelayoutTests: XCTestCase {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.heightTracksTextView = false
-        view.isVerticallyResizable = true
         XCTAssertTrue(view.configureWrapping(wraps))
         XCTAssertTrue(view.replaceAttributedTextIfNeeded(attributedText))
         return view

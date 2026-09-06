@@ -23,11 +23,22 @@ sparkle="${app}/Contents/Frameworks/Sparkle.framework"
 wallet_signer="${app}/Contents/XPCServices/WalletSigner.xpc"
 wallet_recovery="${app}/Contents/Helpers/WalletRecovery.app"
 wallet_recovery_signer="${wallet_recovery}/Contents/XPCServices/WalletSigner.xpc"
+edition="$(/usr/bin/plutil -extract LocusEdition raw -o - "${info_plist}" 2>/dev/null || true)"
+[[ "${edition}" == "locus" || "${edition}" == "locusx" ]] || {
+    echo "error: missing or invalid app edition" >&2; exit 1
+}
+# Local builds must never become an entry in the legacy public app feed.
+if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}" 2>/dev/null || true)" == "manual" \
+    && "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    echo "error: local editions require a separate release/feed setup before publication" >&2; exit 1
+fi
+python3 "${repo_root}/Tools/AuditAppEdition.py" "${app}" --edition "${edition}"
 
 # Wallet candidates can only originate from Xcode's Developer ID export flow.
 # Route before this legacy packager can mutate a plist or replace a signature.
 if [[ "${LOCUS_WALLET_RELEASE_CHANNEL:-disabled}" != "disabled" \
     || -n "${LOCUS_WALLET_EXPORT_PROVENANCE:-}" ]]; then
+    [[ "${edition}" == "locusx" ]] || { echo "error: wallet release requires LocusX" >&2; exit 1; }
     [[ -n "${LOCUS_WALLET_EXPORT_PROVENANCE:-}" ]] || {
         echo "error: canary/GA require Tools/ArchiveWalletRelease.sh and its export provenance receipt" >&2
         exit 1
@@ -186,6 +197,7 @@ if ! /usr/bin/plutil -insert LocusSourceRevision -string "${revision_label}" "${
 then
     /usr/bin/plutil -replace LocusSourceRevision -string "${revision_label}" "${info_plist}"
 fi
+if [[ "${edition}" == "locusx" ]]; then
 for signer_plist in \
     "${wallet_signer}/Contents/Info.plist" \
     "${wallet_recovery_signer}/Contents/Info.plist"
@@ -197,6 +209,7 @@ do
             "${signer_plist}"
     fi
 done
+fi
 /bin/mkdir -p "${resources}"
 {
     echo "source_revision=${revision_label}"
@@ -232,6 +245,7 @@ if [[ -d "${sparkle}" ]]; then
             --sign "${identity}" "${nested}"
     done
 fi
+if [[ "${edition}" == "locusx" ]]; then
 [[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
     echo "error: direct-download release is missing WalletSigner.xpc" >&2
     exit 1
@@ -282,6 +296,7 @@ fi
 /usr/bin/codesign --force --timestamp --options runtime \
     --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
     --sign "${identity}" "${wallet_signer}"
+fi
 document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
 [[ -x "${document_helper}" ]] || {
     echo "error: release is missing the local document extractor" >&2
@@ -313,12 +328,17 @@ signed_tree_sha="$(/usr/bin/shasum -a 256 \
     "${simulator_provenance}"
 /usr/bin/sed -i '' "s/^tree_binary_sha256=.*/tree_binary_sha256=${signed_tree_sha}/" \
     "${simulator_provenance}"
+if [[ "${edition}" == "locusx" ]]; then
 python3 "${repo_root}/Tools/WalletSignerSBOM.py" \
     "${repo_root}/WalletSignerCore" "${resources}/WalletSignerSBOM.cdx.json"
 python3 "${repo_root}/Tools/WalletConnectionsSBOM.py" \
     "${repo_root}/Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" \
     "${repo_root}/project.yml" "${resources}/WalletConnectionsSBOM.cdx.json"
-/usr/bin/codesign --force --timestamp --options runtime --sign "${identity}" "${app}"
+fi
+host_entitlements="${repo_root}/Config/LocusDirect.entitlements"
+[[ "${edition}" != "locusx" ]] || host_entitlements="${repo_root}/Config/LocusX.entitlements"
+/usr/bin/codesign --force --timestamp --options runtime \
+    --entitlements "${host_entitlements}" --sign "${identity}" "${app}"
 "${repo_root}/Tools/AuditDistribution.sh" "${app}"
 /usr/bin/codesign --verify --deep --strict "${app}"
 echo "Seal valid after signing."

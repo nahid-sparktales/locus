@@ -5,7 +5,8 @@ options:
     macOS: "14.0"
   createIntermediateGroups: true
 configs:
-  # Two release shapes, because the two channels want opposite things.
+  # Distribution is independent of edition: Locus is wallet-free; LocusX owns
+  # the optional wallet. Both direct editions keep desktop capabilities.
   # Release is the direct download: Developer ID signed, notarized, and NOT
   # sandboxed — a container buys nothing outside the App Store and only
   # constrains which workspaces the agent can reach. ReleaseMAS is the App
@@ -87,18 +88,39 @@ targetTemplates:
       - path: Locus
         excludes:
           - Resources
+          - "Wallet*.swift"
   LocusSharedPackages:
     dependencies:
       - package: SwiftTerm
       - package: SwiftMarkdown
         product: Markdown
   LocusDirectSwiftSources:
+    dependencies:
+      - package: Sparkle
+  LocusWalletSwiftSources:
     sources:
+      - path: Locus/WalletConnectionProtocol.swift
+      - path: Locus/WalletConnectionsClient.swift
+      - path: Locus/WalletDappRequestRouter.swift
+      - path: Locus/WalletDappTransactionDecoder.swift
+      - path: Locus/WalletGateway.swift
+      - path: Locus/WalletNetworkModels.swift
+      - path: Locus/WalletProviderCoordinator.swift
+      - path: Locus/WalletPublicStore.swift
+      - path: Locus/WalletRPCClient.swift
+      - path: Locus/WalletRecoveryXPCClient.swift
+      - path: Locus/WalletSettingsView.swift
+      - path: Locus/WalletSignerProtocol.swift
+      - path: Locus/WalletSignerXPCClient.swift
+      - path: Locus/WalletSolanaRPCClient.swift
+      - path: Locus/WalletStructuredAuthorization.swift
+      - path: Locus/WalletSuiGraphQLClient.swift
+      - path: Locus/WalletUniswapQuoteProvider.swift
+      - path: Locus/WalletVaultKeychain.swift
       - path: WalletConnectionsRuntime
         excludes:
           - Resources
     dependencies:
-      - package: Sparkle
       - package: ReownSwift
         product: WalletConnect
   LocusApplication:
@@ -134,6 +156,9 @@ targetTemplates:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus
         PRODUCT_NAME: Locus
+        PRODUCT_MODULE_NAME: Locus
+        LOCUS_EDITION: locus
+        LOCUS_UPDATE_MODE: manual
         COMBINE_HIDPI_IMAGES: YES
         # Public identifier for the Locus GitHub App device flow. Both app
         # targets inherit it, so local and distribution builds can connect to
@@ -152,6 +177,7 @@ targets:
       - path: Locus/WalletSignerProtocol.swift
     settings:
       base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.WalletRecovery
         PRODUCT_NAME: WalletRecovery
         GENERATE_INFOPLIST_FILE: NO
@@ -215,6 +241,7 @@ targets:
           "$cargo_bin" build --release --locked --target aarch64-apple-darwin
     settings:
       base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.WalletSigner
         PRODUCT_NAME: WalletSigner
         GENERATE_INFOPLIST_FILE: NO
@@ -249,7 +276,7 @@ targets:
           ENABLE_HARDENED_RUNTIME: YES
         ReleaseExperimental:
           INFOPLIST_FILE: Config/WalletSignerExperimental-Info.plist
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_EXPERIMENTAL_MAINNET"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET LOCUS_EXPERIMENTAL_MAINNET"
           CODE_SIGN_STYLE: Automatic
           CODE_SIGN_IDENTITY: "Apple Development"
           ENABLE_APP_SANDBOX: YES
@@ -259,6 +286,27 @@ targets:
       - LocusSwiftSources
       - LocusSharedPackages
       - LocusDirectSwiftSources
+      - LocusApplication
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Locus/Info.plist
+        LOCUS_DIRECT_ENTITLEMENTS: Config/LocusDirect.entitlements
+        CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+    scheme:
+      testTargets:
+        - LocusTests
+        - LocusUITests
+  LocusX:
+    templates:
+      - LocusSwiftSources
+      - LocusSharedPackages
+      - LocusDirectSwiftSources
+      - LocusWalletSwiftSources
       - LocusApplication
     sources:
       - path: WalletConnectionsRuntime/Resources
@@ -270,10 +318,15 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Locus/Info.plist
-        LOCUS_DIRECT_ENTITLEMENTS: Config/LocusDirect.entitlements
+        INFOPLIST_FILE: Config/LocusX-Info.plist
+        PRODUCT_NAME: LocusX
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locusx
+        LOCUS_EDITION: locusx
+        LOCUS_GOOGLE_OAUTH_CLIENT_ID: ""
+        LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID: ""
+        LOCUS_DIRECT_ENTITLEMENTS: Config/LocusX.entitlements
         CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
         LOCUS_REOWN_PROJECT_ID: ""
         LOCUS_WALLETCONNECT_REDIRECT_URL: ""
         LOCUS_PHANTOM_APP_ID: ""
@@ -294,12 +347,14 @@ targets:
         LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL: ""
         LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL: ""
       configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
         ReleaseExperimental:
-          PRODUCT_NAME: Locus Experimental
+          PRODUCT_NAME: LocusX Experimental
           PRODUCT_MODULE_NAME: Locus
-          EXECUTABLE_NAME: Locus
+          EXECUTABLE_NAME: LocusX
           INFOPLIST_FILE: Config/LocusExperimental-Info.plist
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_EXPERIMENTAL_MAINNET"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET LOCUS_EXPERIMENTAL_MAINNET"
           LOCUS_WALLET_RELEASE_ACTIVATION_URL: ""
     dependencies:
       - target: WalletRecoveryApplication
@@ -314,8 +369,8 @@ targets:
         codeSign: true
     scheme:
       testTargets:
-        - LocusTests
-        - LocusUITests
+        - LocusXTests
+        - LocusXUITests
   LocusMAS:
     templates:
       - LocusSwiftSources
@@ -326,6 +381,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Config/LocusMAS-Info.plist
         PRODUCT_MODULE_NAME: Locus
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
       configs:
         ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
@@ -337,6 +393,7 @@ targets:
       - LocusSwiftSources
       - LocusSharedPackages
       - LocusDirectSwiftSources
+      - LocusWalletSwiftSources
     sources:
       - path: WalletFuzzHost
     settings:
@@ -353,13 +410,14 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_DEBUG_DYLIB: NO
         SKIP_INSTALL: YES
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET_FUZZ_HOST"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET LOCUS_WALLET_FUZZ_HOST"
   LocusTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: LocusTests
-      - path: WalletFuzzHost/WalletFuzzDecoderFixtures.swift
+        excludes:
+          - "Wallet*.swift"
       - path: ProtocolFixtures/companion-v1.json
         buildPhase: resources
     dependencies:
@@ -369,17 +427,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+  LocusXTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: LocusTests
+      - path: WalletFuzzHost/WalletFuzzDecoderFixtures.swift
+      - path: ProtocolFixtures/companion-v1.json
+        buildPhase: resources
+    dependencies:
+      - target: LocusX
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locusx.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
   LocusWalletChainTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: LocusWalletChainTests
     dependencies:
-      - target: Locus
+      - target: LocusX
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.wallet-chain-tests
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
         OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
   LocusUITests:
@@ -394,6 +468,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.ui-tests
         TEST_TARGET_NAME: Locus
         GENERATE_INFOPLIST_FILE: YES
+  LocusXUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: LocusUITests
+    dependencies:
+      - target: LocusX
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locusx.ui-tests
+        TEST_TARGET_NAME: LocusX
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
   LocusMASUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -410,7 +497,7 @@ schemes:
   LocusExperimental:
     build:
       targets:
-        Locus: all
+        LocusX: all
     run:
       config: ReleaseExperimental
     archive:
@@ -424,7 +511,7 @@ schemes:
   WalletChainIntegration:
     build:
       targets:
-        Locus: all
+        LocusX: all
         LocusWalletChainTests: [test]
     test:
       config: Debug

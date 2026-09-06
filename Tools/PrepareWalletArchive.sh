@@ -2,7 +2,8 @@
 # Runs in the build phase before Xcode seals the archive. Never run on an export.
 set -euo pipefail
 [[ "${LOCUS_WALLET_ARCHIVE:-0}" == "1" ]] || exit 0
-[[ "${TARGET_NAME:-}" == "Locus" && "${CONFIGURATION:-}" == "Release" \
+[[ "${TARGET_NAME:-}" == "LocusX" && "${LOCUS_EDITION:-}" == "locusx" \
+    && "${CONFIGURATION:-}" == "Release" \
     && "${ACTION:-}" == "install" ]] || {
     echo "error: wallet archive preparation requires the Direct Release archive action" >&2
     exit 1

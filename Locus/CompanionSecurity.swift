@@ -143,8 +143,8 @@ struct CompanionTLSMaterial {
 }
 
 enum CompanionIdentityStore {
-    private static let keyTag = Data("io.sparktales.locus.companion.identity".utf8)
-    private static let certificateLabel = "Locus Companion TLS"
+    private static let keyTag = Data(AppEdition.current.keychainService("companion.identity").utf8)
+    private static let certificateLabel = AppEdition.current.companionCertificateLabel
 
     static func loadOrCreate() throws -> CompanionTLSMaterial {
         if let certificate = loadCertificate(), let identity = identity(for: certificate) {

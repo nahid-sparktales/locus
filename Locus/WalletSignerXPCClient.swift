@@ -16,7 +16,7 @@ final class WalletXPCReplyGate: @unchecked Sendable {
 @MainActor
 enum WalletSignerClientFactory {
     static func make() -> WalletSignerClient {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         let client = XPCWalletSignerClient()
         return client.isAvailable ? client : UnavailableWalletSignerClient()
         #else
@@ -25,7 +25,7 @@ enum WalletSignerClientFactory {
     }
 }
 
-#if LOCUS_DIRECT_DOWNLOAD
+#if LOCUS_WALLET
 private struct WalletSuiClientIntent {
     let packet: WalletSuiPreparationPacket
     let unsigned: WalletSuiUnsignedIntent

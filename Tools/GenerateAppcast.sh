@@ -92,6 +92,10 @@ info="${app}/Contents/Info.plist"
     echo "error: update archive does not contain Locus.app" >&2
     exit 1
 }
+[[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info}" 2>/dev/null || true)" != "manual" ]] || {
+    echo "error: local editions cannot be published through the legacy appcast" >&2
+    exit 1
+}
 /usr/bin/codesign --verify --deep --strict "${app}" || {
     echo "error: archived app has an invalid code-signature seal" >&2
     exit 1

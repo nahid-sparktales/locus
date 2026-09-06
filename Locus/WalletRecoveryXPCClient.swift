@@ -137,7 +137,7 @@ final class UnavailableWalletRecoveryViewClient: WalletRecoveryViewClient {
 @MainActor
 enum WalletRecoveryViewClientFactory {
     static func make() -> WalletRecoveryViewClient {
-        #if LOCUS_DIRECT_DOWNLOAD
+        #if LOCUS_WALLET
         let client = ProcessWalletRecoveryViewClient()
         return client.isAvailable ? client : UnavailableWalletRecoveryViewClient()
         #else
@@ -146,7 +146,7 @@ enum WalletRecoveryViewClientFactory {
     }
 }
 
-#if LOCUS_DIRECT_DOWNLOAD
+#if LOCUS_WALLET
 @MainActor
 final class ProcessWalletRecoveryViewClient: WalletRecoveryViewClient {
     let isAvailable: Bool

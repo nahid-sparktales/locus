@@ -123,7 +123,6 @@ BROWSER_TOOL_BUDGET_MS = {"browser_navigate": 120_000}
 #: delivered right at the cutoff is still collected rather than dropped.
 BROWSER_TIMEOUT_SLACK_SECONDS = 8
 NOTES_BUDGET_MS = 15_000
-WALLET_BUDGET_MS = 60_000
 
 #: Tools whose result is page-derived and must be framed before the model reads
 #: it. Locus has no shared helper for this — MCP resources carry their own
@@ -2152,27 +2151,6 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         raw = msg.get("result")
         result = raw if isinstance(raw, dict) else {"error": "invalid Notes result"}
         svc.answer_notes(request_id, result)
-    elif mtype == "set_wallet_control":
-        if svc.busy:
-            _command_error(svc, "set_wallet_control", "Wait for the active turn to finish.")
-            return
-        capability = msg.get("capability")
-        enabled = core.tool_registry.configure_wallet_capability(capability)
-        core.wallet_executor = svc.execute_wallet if enabled else None
-        svc.queue_event({
-            "type": "wallet_control_status",
-            "enabled": enabled,
-            "protocol_version": 1,
-            "session_id": (
-                core.tool_registry.wallet_capability.get("session_id")
-                if core.tool_registry.wallet_capability else None
-            ),
-        })
-    elif mtype == "wallet_action_result":
-        request_id = str(msg.get("request_id") or "")
-        raw = msg.get("result")
-        result = raw if isinstance(raw, dict) else {"error": "invalid wallet result"}
-        svc.answer_wallet(request_id, result)
     elif mtype == "set_connector_control":
         if svc.busy:
             _command_error(svc, "set_connector_control", "Wait for the active turn to finish.")
@@ -2209,7 +2187,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_all_simulator_actions()
         svc.cancel_all_browser_actions()
         svc.cancel_all_notes_actions()
-        svc.cancel_all_wallet_actions()
+        svc.core.tool_registry.product_features.cancel_pending()
         svc.cancel_all_connector_actions()
         svc.cancel_dispatch_decisions()
         svc.cancel_all_mcp_inputs()
@@ -2283,6 +2261,8 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "ping":
         svc.queue_event({"type": "pong"})
+    elif core.tool_registry.product_features.handle_message(msg):
+        return
     else:
         _command_error(svc, str(mtype or "unknown"), f"unknown message type: {mtype}")
 

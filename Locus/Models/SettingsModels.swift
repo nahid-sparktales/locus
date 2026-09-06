@@ -309,6 +309,7 @@ struct AppSettings: Codable, Hashable {
     /// The browser is on by default and, unlike computer control, works in the
     /// sandboxed App Store build too — a web view needs no special access.
     var browserEnabled = true
+    #if LOCUS_WALLET
     /// Public Sepolia RPC used only by the native wallet broker. It is never
     /// included in model context or sent to the Python agent.
     var walletSepoliaRPCURL = "https://ethereum-sepolia-rpc.publicnode.com"
@@ -321,6 +322,7 @@ struct AppSettings: Codable, Hashable {
     /// This marker lets an existing install adopt that choice exactly once;
     /// afterward the persisted switches are authoritative.
     var walletFeatureAccessMigrated = false
+    #endif
     /// Raw string, like the tab: an unknown preset from a future version must
     /// not fail the whole settings decode.
     var browserViewportRaw = BrowserViewport.desktop.rawValue
@@ -474,11 +476,8 @@ struct AppSettings: Codable, Hashable {
         return min(max(value, 0), 1)
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
+    #if LOCUS_WALLET
     static let walletAlphaSupportedByCurrentBuild = true
-    #else
-    static let walletAlphaSupportedByCurrentBuild = false
-    #endif
 
     static func effectiveWalletFeatureAccess(
         walletEnabled: Bool,
@@ -503,6 +502,8 @@ struct AppSettings: Codable, Hashable {
         walletFeatureAccessMigrated = true
         return true
     }
+
+    #endif
 
     var resolvedInspectorTab: InspectorTab {
         let tab = InspectorTab(rawValue: inspectorLastTab) ?? .plan
@@ -555,9 +556,11 @@ struct AppSettings: Codable, Hashable {
         voiceCloudSpeechModel = draft.voiceCloudSpeechModel
         voiceCloudVoiceIdentifier = draft.voiceCloudVoiceIdentifier
         browserEnabled = draft.browserEnabled
+        #if LOCUS_WALLET
         walletSepoliaRPCURL = draft.walletSepoliaRPCURL
         walletAlphaEnabled = draft.walletAlphaEnabled
         walletBrowserProviderEnabled = draft.walletBrowserProviderEnabled
+        #endif
         previewURL = draft.previewURL
         browserViewportRaw = draft.browserViewportRaw
         browserPersistProfile = draft.browserPersistProfile
@@ -888,6 +891,7 @@ struct AppSettings: Codable, Hashable {
         ) ?? defaults.simulatorControlEnabled
         browserEnabled = try container.decodeIfPresent(Bool.self, forKey: .browserEnabled)
             ?? defaults.browserEnabled
+        #if LOCUS_WALLET
         walletSepoliaRPCURL = try container.decodeIfPresent(
             String.self, forKey: .walletSepoliaRPCURL
         ) ?? defaults.walletSepoliaRPCURL
@@ -900,6 +904,7 @@ struct AppSettings: Codable, Hashable {
         walletFeatureAccessMigrated = try container.decodeIfPresent(
             Bool.self, forKey: .walletFeatureAccessMigrated
         ) ?? defaults.walletFeatureAccessMigrated
+        #endif
         browserViewportRaw = try container.decodeIfPresent(String.self, forKey: .browserViewportRaw)
             ?? defaults.browserViewportRaw
         browserPersistProfile = try container.decodeIfPresent(

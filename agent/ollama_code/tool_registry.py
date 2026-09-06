@@ -8,6 +8,7 @@ import re
 import shlex
 from typing import Any
 
+from . import product_build
 from .capabilities import enabled as capability_enabled
 from .extensions import ExtensionError, ExtensionManager
 from .solo_swarm import DELEGATE_READ_ONLY_SCHEMA
@@ -706,97 +707,6 @@ _NOTES_TOOL_NAMES = {
 }
 
 
-WALLET_TOOL_SCHEMAS = [
-    _schema(
-        "wallet_list_accounts",
-        "List public Locus Vault accounts and chains. Never returns keys or recovery material.",
-        {},
-        [],
-    ),
-    _schema(
-        "wallet_get_balance",
-        "Read balances for one public Locus Vault account.",
-        {"account_id": {"type": "string"}, "network_id": {"type": "string"}},
-        ["account_id", "network_id"],
-    ),
-    _schema(
-        "wallet_get_activity",
-        "Read recent on-chain activity for one public Locus Vault account.",
-        {"account_id": {"type": "string"}, "network_id": {"type": "string"}, "limit": {"type": "integer"}},
-        ["account_id", "network_id"],
-    ),
-    _schema(
-        "wallet_prepare_transaction",
-        "Prepare one semantic transaction without exposing key material. Locus, not the caller, encodes and classifies the transaction.",
-        {
-            "network_id": {
-                "type": "string",
-                "enum": ["eip155:11155111"],
-                "description": "CAIP-2 network identifier. The experimental signer supports Sepolia only.",
-            },
-            "account_id": {"type": "string"},
-            "action": {
-                "type": "object",
-                "description": "A semantic action. Raw calldata and caller-supplied safety labels are not accepted.",
-                "properties": {
-                    "type": {"type": "string", "enum": ["native_transfer", "contract_call"]},
-                    "recipient": {"type": "string"},
-                    "amount_base_units": {"type": "string", "pattern": "^[0-9]+$"},
-                    "contract_id": {"type": "string"},
-                    "function": {"type": "string"},
-                    "arguments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string"},
-                                "value": {},
-                            },
-                            "required": ["type", "value"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "value_base_units": {"type": "string", "pattern": "^[0-9]+$"},
-                },
-                "required": ["type"],
-                "additionalProperties": False,
-            },
-            "maximum_fee_base_units": {
-                "type": "string",
-                "pattern": "^[0-9]+$",
-                "description": "Unsigned fee ceiling in the network's smallest unit.",
-            },
-        },
-        ["network_id", "account_id", "action", "maximum_fee_base_units"],
-    ),
-    _schema(
-        "wallet_simulate_transaction",
-        "Re-simulate one prepared transaction and report decoded asset and fee changes.",
-        {"intent_id": {"type": "string"}},
-        ["intent_id"],
-    ),
-    _schema(
-        "wallet_execute_transaction",
-        "Execute exactly one prepared digest after native policy, expiry, nonce, and simulation checks. No permission mode can bypass the wallet policy.",
-        {"intent_id": {"type": "string"}},
-        ["intent_id"],
-    ),
-    _schema(
-        "wallet_lock",
-        "Lock the Locus Vault immediately and clear all session transaction policies.",
-        {},
-        [],
-    ),
-]
-
-_READ_ONLY_WALLET_TOOLS = {
-    "wallet_list_accounts", "wallet_get_balance", "wallet_get_activity",
-}
-_WALLET_TOOL_NAMES = {
-    schema["function"]["name"] for schema in WALLET_TOOL_SCHEMAS
-}
-
-
 CONNECTOR_TOOL_SCHEMAS = [
     _schema(
         "gmail_fetch_thread",
@@ -945,10 +855,7 @@ class ToolRegistry:
         #: Public connector ids and kinds only. Credentials remain exclusively
         #: in the native app's Keychain-backed connector owner.
         self.connector_connections: dict[str, str] = {}
-        #: The native app sends a versioned, session-bound capability. A bool
-        #: is not enough here: stale backends must not retain operations after
-        #: a signer lock or replacement session.
-        self.wallet_capability: dict[str, Any] | None = None
+        self.product_features = product_build.create_features(self)
         self.refresh()
 
     def refresh(self) -> None:
@@ -1178,7 +1085,7 @@ class ToolRegistry:
             if self._user_allows(schema["function"]["name"])
         )
         schemas.extend(
-            schema for schema in self.wallet_schemas()
+            schema for schema in self.product_features.schemas()
             if self._user_allows(schema["function"]["name"])
         )
         schemas.extend(
@@ -1327,64 +1234,6 @@ class ToolRegistry:
             return False
         if self._agent_access_ceiling == "read_only":
             return name in _READ_ONLY_NOTES_TOOLS
-        return True
-
-    def wallet_schemas(self) -> list[dict[str, Any]]:
-        if not self.wallet_enabled:
-            return []
-        return [
-            schema for schema in WALLET_TOOL_SCHEMAS
-            if self.wallet_tool_allowed(schema["function"]["name"])
-        ]
-
-    def wallet_tool_allowed(self, name: str) -> bool:
-        if not self.wallet_enabled or name not in _WALLET_TOOL_NAMES:
-            return False
-        allowed = set(self.wallet_capability.get("allowed_operations") or [])
-        if name not in allowed:
-            return False
-        if self._agent_access_ceiling == "read_only":
-            return name in _READ_ONLY_WALLET_TOOLS
-        return True
-
-    @property
-    def wallet_enabled(self) -> bool:
-        capability = self.wallet_capability
-        return bool(
-            capability
-            and capability.get("protocol_version") == 1
-            and capability.get("signer_state") == "unlocked"
-            and str(capability.get("session_id") or "").strip()
-        )
-
-    def configure_wallet_capability(self, value: Any) -> bool:
-        """Validate and install the native signer's least-authority surface."""
-        if not isinstance(value, dict):
-            self.wallet_capability = None
-            return False
-        operations = value.get("allowed_operations")
-        chains = value.get("supported_chains")
-        valid = (
-            value.get("protocol_version") == 1
-            and value.get("signer_state") == "unlocked"
-            and bool(str(value.get("session_id") or "").strip())
-            and isinstance(operations, list)
-            and bool(operations)
-            and set(operations) <= _WALLET_TOOL_NAMES
-            and isinstance(chains, list)
-            and bool(chains)
-            and all(isinstance(chain, str) and ":" in chain for chain in chains)
-        )
-        if not valid:
-            self.wallet_capability = None
-            return False
-        self.wallet_capability = {
-            "protocol_version": 1,
-            "signer_state": "unlocked",
-            "session_id": str(value["session_id"]),
-            "supported_chains": list(dict.fromkeys(chains)),
-            "allowed_operations": list(dict.fromkeys(operations)),
-        }
         return True
 
     def connector_schemas(self) -> list[dict[str, Any]]:
@@ -1654,7 +1503,7 @@ class ToolRegistry:
             return True
         if self.notes_enabled and name in _READ_ONLY_NOTES_TOOLS:
             return True
-        if self.wallet_enabled and name in _READ_ONLY_WALLET_TOOLS:
+        if self.product_features.is_safe(name):
             return True
         if name in _READ_ONLY_CONNECTOR_TOOLS and name in _CONNECTOR_TOOL_NAMES:
             return any(
@@ -1782,14 +1631,8 @@ class ToolRegistry:
                 "origin": "notes",
                 "annotations": {"readOnlyHint": name in _READ_ONLY_NOTES_TOOLS},
             }
-        if self.wallet_enabled and name in _WALLET_TOOL_NAMES:
-            return {
-                "origin": "wallet",
-                "annotations": {
-                    "readOnlyHint": name in _READ_ONLY_WALLET_TOOLS,
-                    "destructiveHint": name == "wallet_execute_transaction",
-                },
-            }
+        if info := self.product_features.tool_info(name):
+            return info
         if name in _CONNECTOR_TOOL_NAMES and self.connector_connections:
             return {
                 "origin": "connector",
@@ -1823,7 +1666,6 @@ class ToolRegistry:
         base_schemas.extend(self.simulator_schemas())
         base_schemas.extend(self.browser_schemas())
         base_schemas.extend(self.notes_schemas())
-        base_schemas.extend(self.wallet_schemas())
         base_schemas.extend(self.connector_schemas())
         for schema in base_schemas:
             fn = schema["function"]
@@ -1840,7 +1682,6 @@ class ToolRegistry:
                     else "simulator" if schema in SIMULATOR_TOOL_SCHEMAS
                     else "browser" if schema in BROWSER_TOOL_SCHEMAS
                     else "notes" if schema in NOTES_TOOL_SCHEMAS
-                    else "wallet" if schema in WALLET_TOOL_SCHEMAS
                     else "connector" if fn["name"] in _CONNECTOR_TOOL_NAMES
                     else "extension"
                 ),
@@ -1852,10 +1693,10 @@ class ToolRegistry:
                     or fn["name"] in _READ_ONLY_SIMULATOR_TOOLS
                     or fn["name"] in _READ_ONLY_BROWSER_TOOLS
                     or fn["name"] in _READ_ONLY_NOTES_TOOLS
-                    or fn["name"] in _READ_ONLY_WALLET_TOOLS
                     or fn["name"] in _READ_ONLY_CONNECTOR_TOOLS
                 },
             })
+        out.extend(self.product_features.metadata())
         for name, tool in sorted(self._mcp_by_qualified.items()):
             out.append({
                 "name": name,

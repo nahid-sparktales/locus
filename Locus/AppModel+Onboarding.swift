@@ -54,7 +54,7 @@ extension AppModel {
     func chooseOnboardingSample() {
         do {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Locus/Quickstart", isDirectory: true)
+                .appendingPathComponent("\(AppEdition.current.displayName)/Quickstart", isDirectory: true)
             let root = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try OnboardingSamples.create(at: root, startingPoint: onboarding.progress.startingPoint)
             guard workspaceAccess.rememberAndActivate(root) else {

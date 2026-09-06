@@ -22,8 +22,49 @@ python3 -m venv .venv
 
 This is only for working on the agent or using the REPL — the Locus app
 bundles its own copy of the service with a self-contained Python, so app
-users install nothing. The app's *fallback backend folder* setting expects
-exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
+users install nothing. Standard Locus's *fallback backend folder* setting
+expects exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
+LocusX requires its bundled, edition-specific runtime; it reports a rebuild
+error if that runtime is missing instead of launching the standard source tree.
+
+## Locus and LocusX builds
+
+The source checkout and CLI default to **Locus without a wallet**. The app build
+uses `Tools/StageBackendEdition.py` to stage a fixed product factory and identity:
+
+- **Locus:** no wallet module, wallet tool schemas, or wallet control handlers
+  in the packaged runtime. Wallet control messages receive the ordinary unknown
+  command response, and guessed wallet tool names cannot execute.
+- **LocusX:** the staged package includes the private `_locusx` implementation.
+  Tools remain unavailable until the native signer provides a valid capability;
+  the original policy checks, read-only limits, and request/result protocol apply.
+
+The private product adapter is a build boundary, not an installable plugin.
+Environment variables, settings, and native messages cannot change the product
+factory. `LOCUS_EDITION`, when supplied by the app, is informational. MCP OAuth
+callbacks and outbound product identification also come from the fixed build.
+
+For backend-only LocusX development, stage a disposable copy from the repository
+root and use a separate profile:
+
+```bash
+staged="$(mktemp -d "${TMPDIR:-/tmp}/locusx-backend.XXXXXX")"
+python3 Tools/StageBackendEdition.py \
+  --source agent/ollama_code \
+  --destination "$staged/ollama_code" \
+  --edition locusx
+OLLAMA_CODE_HOME="$staged/profile/Agent" \
+LOCUS_CODEX_HOME="$staged/profile/Codex" \
+PYTHONPATH="$staged" \
+  agent/.venv/bin/python -m ollama_code.server --cwd "$staged" --port 8792
+```
+
+The regular Locus app preserves `~/.ollama-code` and its existing
+`~/Library/Application Support/Locus/Codex` home. LocusX uses independent `Agent`
+and `Codex` directories under `~/Library/Application Support/LocusX`. This
+separates chats, settings, encrypted memories, extensions, and ChatGPT accounts.
+App Store Locus retains its existing container-based home. Workspace files such
+as `.locus/launch.json` remain shared workspace conventions.
 
 ## Use it from the terminal
 
@@ -271,7 +312,7 @@ an audit hook that fails the suite if anything writes to the real
 `~/.ollama-code`. `tests/live/` holds manual real-model smoke tests, not
 collected by pytest; each starts its own server on its own port.
 
-458 collected tests cover the tools (including atomic `multi_edit` and the binary-file
+The tests cover the tools (including atomic `multi_edit` and the binary-file
 guard), permission modes and the deny list, streaming and `<think>` filtering,
 session metadata and trash recovery, the context window (that the number sent as
 `num_ctx` is the same one compaction budgets against, that a window a hosted
@@ -289,3 +330,10 @@ storage, evaluations, telemetry, local knowledge, modern MCP behavior, and a
 deterministic fake App Server for managed authentication, model/usage lookup,
 dynamic tool correlation, permission denial, streaming, interruption, restart,
 thread resume, and reasoning-summary mapping.
+
+`test_product_backend.py` stages both real package variants and verifies their
+native protocol surfaces, immutable product selection, OAuth callback isolation,
+and separate storage. It also starts both staged servers simultaneously on
+different loopback ports, checks token isolation, saves and reads chats/settings/
+encrypted memories through HTTP, and verifies wallet activation over live
+WebSockets succeeds only for LocusX. These checks need no model or signer.

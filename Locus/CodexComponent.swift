@@ -41,7 +41,7 @@ enum CodexComponent {
         FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
-            .appending(path: "Locus/Components/\(componentID)", directoryHint: .isDirectory)
+            .appending(path: "\(AppEdition.current.displayName)/Components/\(componentID)", directoryHint: .isDirectory)
     }
 
     /// Stable path the backend is pointed at, whether or not anything is

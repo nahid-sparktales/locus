@@ -3,6 +3,127 @@ import XCTest
 
 @MainActor
 final class WalletConnectorDriverTests: XCTestCase {
+    func testDefaultDriversStayDormantUntilStatusAndDoNotReconnectAfterSuspension() async throws {
+        let id = UUID().uuidString
+        let account = externalAccount(id: "metamask-1")
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            restoreSessions: [session(id: id, connector: .metamask, account: account)]
+        )
+        var factoryCount = 0
+        let client = DirectWalletConnectionsClient(driverFactory: {
+            factoryCount += 1
+            return [driver]
+        })
+
+        XCTAssertEqual(factoryCount, 0)
+        try await client.suspendAll()
+        try await client.suspendAll()
+        do {
+            _ = try await client.cancelPairing(requestID: id)
+            XCTFail("Dormant clients have no pairing to cancel")
+        } catch let error as WalletConnectorRuntimeError {
+            XCTAssertEqual(error, .sessionNotFound)
+        }
+        do {
+            _ = try await client.disconnect(connectionID: id)
+            XCTFail("Dormant clients have no connection to disconnect")
+        } catch let error as WalletConnectorRuntimeError {
+            XCTAssertEqual(error, .sessionNotFound)
+        }
+        XCTAssertEqual(factoryCount, 0)
+        XCTAssertEqual(driver.suspendCount, 0)
+        XCTAssertEqual(driver.restoreCount, 0)
+
+        let restored = try await client.status()
+        XCTAssertEqual(factoryCount, 1)
+        XCTAssertEqual(driver.restoreCount, 1)
+        XCTAssertEqual(restored.accounts, [account])
+
+        try await client.suspendAll()
+        let suspended = try await client.status()
+        XCTAssertEqual(suspended.connections.first?.state, .reconnecting)
+        XCTAssertEqual(factoryCount, 1)
+        XCTAssertEqual(driver.restoreCount, 1, "Reading status must not reconnect suspended sessions")
+        XCTAssertEqual(driver.suspendCount, 1)
+    }
+
+    func testLazyPairingPreservesHandlersInstalledBeforeInitialization() async throws {
+        let id = UUID().uuidString
+        let account = locusAccount()
+        let driver = FixtureWalletConnectorDriver(
+            connector: .walletConnect,
+            connectSession: session(id: id, connector: .walletConnect, account: account),
+            proposal: proposal(id: id)
+        )
+        var factoryCount = 0
+        let client = DirectWalletConnectionsClient(driverFactory: {
+            factoryCount += 1
+            return [driver]
+        })
+        var reviewedIDs: [String] = []
+        client.proposalApprovalHandler = { review in
+            reviewedIDs.append(review.requestID)
+            return true
+        }
+        let request = WalletConnectorDappRequest(
+            requestID: UUID().uuidString, connectionID: id, peerID: "fixture-peer",
+            peerOrigin: "https://app.example", peerName: "Fixture dapp",
+            networkID: WalletGateway.sepoliaNetworkID, accountID: account.id,
+            method: .listAccounts, expiresAt: Date().addingTimeInterval(300),
+            payload: .listAccounts
+        )
+        let response = WalletConnectorDappResponse.accounts([
+            WalletConnectorDappAccount(address: account.address, publicKey: nil),
+        ])
+        client.dappRequestHandler = { received in
+            XCTAssertEqual(received, request)
+            return response
+        }
+        let published = expectation(description: "Lazy driver forwards session expiry")
+        var projection: WalletConnectionServiceStatus?
+        client.statusChangeHandler = { status in
+            projection = status
+            published.fulfill()
+        }
+        XCTAssertEqual(factoryCount, 0, "Installing callbacks must not start vendor SDKs")
+
+        let connected = try await client.beginPairing(walletConnectRequest(id: id, account: account))
+        XCTAssertEqual(connected.connections.first?.state, .connected)
+        XCTAssertEqual(factoryCount, 1)
+        XCTAssertEqual(driver.restoreCount, 1)
+        XCTAssertEqual(reviewedIDs, [id])
+        let handler = try XCTUnwrap(driver.dappRequestHandler)
+        let result = try await handler(request)
+        XCTAssertEqual(result, response)
+
+        client.dappRequestHandler = { _ in .accounts([]) }
+        let replacement = try XCTUnwrap(driver.dappRequestHandler)
+        let replacementResult = try await replacement(request)
+        XCTAssertEqual(replacementResult, .accounts([]))
+        client.dappRequestHandler = nil
+        XCTAssertNil(driver.dappRequestHandler)
+
+        driver.emit(.expired(connectionID: id))
+        await fulfillment(of: [published], timeout: 1)
+        XCTAssertEqual(projection?.connections.first?.state, .expired)
+        XCTAssertEqual(projection?.accounts, [])
+        _ = try await client.status()
+        XCTAssertEqual(factoryCount, 1)
+    }
+
+    func testInjectedDriversRemainImmediatelyAvailableWithoutCallingDefaultFactory() async throws {
+        let driver = FixtureWalletConnectorDriver(connector: .metamask)
+        let client = DirectWalletConnectionsClient(drivers: [driver], driverFactory: {
+            XCTFail("Explicit drivers must bypass the default factory")
+            return []
+        })
+        try await client.suspendAll()
+        XCTAssertEqual(driver.suspendCount, 1)
+        _ = try await client.status()
+        XCTAssertEqual(driver.restoreCount, 1)
+    }
+
     func testWalletConnectFixtureCoversApprovalAndRejection() async throws {
         let approvedID = UUID().uuidString
         let account = locusAccount()
@@ -554,6 +675,7 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
     private let proposal: WalletConnectionProposalReview?
 
     private(set) var approvalCount = 0
+    private(set) var restoreCount = 0
     private(set) var connectCount = 0
     private(set) var acceptedProposalCount = 0
     private(set) var disconnectedIDs: [String] = []
@@ -587,6 +709,7 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
     deinit { continuation.finish() }
 
     func restore() async throws -> [WalletConnectorSession] {
+        restoreCount += 1
         await restoreHandler?()
         if let restoreError { throw restoreError }
         return restoreSessions

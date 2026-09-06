@@ -259,6 +259,7 @@ extension AppModel {
         }
     }
 
+    #if LOCUS_WALLET
     /// Wallet requests never receive secret material. The native gateway
     /// returns only public account data, prepared-intent summaries, or a
     /// transaction result after the signer and session policy have approved it.
@@ -291,6 +292,7 @@ extension AppModel {
         }
     }
 
+    #endif
     func setComputerControlEnabled(_ enabled: Bool) {
         guard ComputerControlService.isAvailable else {
             settings.computerControlEnabled = false
@@ -436,6 +438,7 @@ extension AppModel {
         ])
     }
 
+    #if LOCUS_WALLET
     /// The backend only learns about wallet tools when an explicitly enabled,
     /// security-reviewed native signer is available. A release without that
     /// signer has no advertised wallet surface to guess or call.
@@ -446,6 +449,7 @@ extension AppModel {
         ])
     }
 
+    #endif
     @discardableResult
     func sendConnectorCapability(to transport: BackendService) -> Bool {
         transport.send([
@@ -496,6 +500,7 @@ extension AppModel {
         }
     }
 
+    #if LOCUS_WALLET
     func refreshWalletCapabilities() {
         sendWalletCapability(to: backend)
         for runtime in taskWorkers.values {
@@ -503,6 +508,7 @@ extension AppModel {
         }
     }
 
+    #endif
     /// Re-announce anything the agent refused while it was busy.
     func flushPendingBrowserCapability() {
         guard !pendingBrowserCapabilityTransports.isEmpty else { return }

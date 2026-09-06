@@ -1006,9 +1006,12 @@ extension AppModel {
     /// Security-sensitive services must be locked synchronously before either
     /// the updater or AppKit starts tearing down the rest of the process.
     func lockSensitiveServicesForShutdown() {
+        #if LOCUS_WALLET
         walletGateway.lock()
+        #endif
     }
 
+    #if LOCUS_WALLET
     func authorizeWalletSession() async {
         let authorized = await walletGateway.authorizeSession()
         refreshWalletCapabilities()
@@ -1019,4 +1022,5 @@ extension AppModel {
         walletGateway.lock()
         refreshWalletCapabilities()
     }
+    #endif
 }

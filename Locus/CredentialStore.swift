@@ -104,9 +104,7 @@ enum CredentialStore {
     }
 
     static var fileURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".locus", isDirectory: true)
-            .appendingPathComponent("auth.json")
+        AppEdition.current.credentialFile(in: URL(fileURLWithPath: NSHomeDirectory()))
     }
 
     /// The location to show the user. In the sandboxed App Store build
@@ -536,7 +534,7 @@ final class InMemoryMCPCredentialStore: MCPCredentialStoring {
 /// MCP OAuth and token material is app-owned Keychain data. A one-time lazy
 /// migration preserves credentials written by older Locus releases.
 enum MCPCredentialStore {
-    private static let service = "io.sparktales.locus.mcp"
+    private static let service = AppEdition.current.keychainService("mcp")
     static var displayName: String { "macOS Keychain" }
 
     static func get(serverID: String) -> [String: Any]? {
@@ -985,7 +983,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         let state = Self.randomURLSafeString(byteCount: 24)
         guard let expectedRedirect = URLComponents(string: context.redirectURI),
               let callbackScheme = expectedRedirect.scheme?.lowercased(),
-              callbackScheme == "locus",
+              callbackScheme == AppEdition.current.mcpCallbackScheme,
               var components = URLComponents(url: context.authorizationURL, resolvingAgainstBaseURL: false)
         else {
             completion(.failure(authError("The MCP OAuth redirect or authorization URL is invalid.")))
@@ -1068,7 +1066,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             throw authError("The MCP resource URL is invalid.")
         }
         let redirectURI = try validatedRedirectURI(
-            server.oauth?.redirectURI ?? "locus://mcp/oauth"
+            server.oauth?.redirectURI ?? AppEdition.current.mcpRedirectURI
         )
 
         if server.auth == "oauth", let oauth = server.oauth {
@@ -1436,17 +1434,9 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     }
 
     private func validatedRedirectURI(_ value: String) throws -> String {
-        guard let components = URLComponents(string: value),
-              components.scheme?.lowercased() == "locus",
-              components.host?.lowercased() == "mcp",
-              components.port == nil,
-              components.path == "/oauth",
-              components.user == nil,
-              components.password == nil,
-              components.query == nil,
-              components.fragment == nil
-        else { throw authError("The MCP OAuth redirect must be locus://mcp/oauth.") }
-        return "locus://mcp/oauth"
+        guard let redirect = AppEdition.current.canonicalMCPRedirectURI(value)
+        else { throw authError("The MCP OAuth redirect must be \(AppEdition.current.mcpRedirectURI).") }
+        return redirect
     }
 
     private func originString(for url: URL) -> String {

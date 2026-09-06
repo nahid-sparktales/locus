@@ -23,6 +23,7 @@ from urllib.parse import urlencode, urlparse
 import requests
 
 from .paths import APP_DIR
+from .product_build import PRODUCT_URL_SCHEME
 from .proxy import sanitized_child_environment
 
 MAX_PLUGIN_FILES = 5_000
@@ -346,7 +347,7 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "client_id": str(oauth_raw.get("client_id") or ""),
         "scopes": [str(value) for value in oauth_raw.get("scopes", [])]
         if isinstance(oauth_raw.get("scopes"), list) else [],
-        "redirect_uri": str(oauth_raw.get("redirect_uri") or "locus://mcp/oauth"),
+        "redirect_uri": str(oauth_raw.get("redirect_uri") or f"{PRODUCT_URL_SCHEME}://mcp/oauth"),
     }
     auth = str(raw.get("auth") or ("bearer" if raw.get("bearer_token_env_var") else "none")).lower()
     if auth not in {"none", "bearer", "headers", "oauth", "auto"}:
@@ -364,8 +365,10 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         if not oauth["client_id"]:
             raise ExtensionError("OAuth client_id is required")
         redirect = urlparse(oauth["redirect_uri"])
-        if redirect.scheme != "locus":
-            raise ExtensionError("OAuth redirect_uri must use the locus callback scheme")
+        if redirect.scheme != PRODUCT_URL_SCHEME:
+            raise ExtensionError(
+                f"OAuth redirect_uri must use the {PRODUCT_URL_SCHEME} callback scheme"
+            )
     try:
         startup_timeout = max(1, min(int(raw.get("startup_timeout_sec") or 10), 120))
         tool_timeout = max(1, min(int(raw.get("tool_timeout_sec") or 60), 600))

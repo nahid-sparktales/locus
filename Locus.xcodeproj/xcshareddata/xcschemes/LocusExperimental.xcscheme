@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
-               BuildableName = "Locus.app"
-               BlueprintName = "Locus"
+               BlueprintIdentifier = "A7FD138124077F7DDAC79D55"
+               BuildableName = "LocusX.app"
+               BlueprintName = "LocusX"
                ReferencedContainer = "container:Locus.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -32,9 +32,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
-            BuildableName = "Locus.app"
-            BlueprintName = "Locus"
+            BlueprintIdentifier = "A7FD138124077F7DDAC79D55"
+            BuildableName = "LocusX.app"
+            BlueprintName = "LocusX"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -55,9 +55,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
-            BuildableName = "Locus.app"
-            BlueprintName = "Locus"
+            BlueprintIdentifier = "A7FD138124077F7DDAC79D55"
+            BuildableName = "LocusX.app"
+            BlueprintName = "LocusX"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -74,9 +74,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4896638691C4AFF8C4B6701D"
-            BuildableName = "Locus.app"
-            BlueprintName = "Locus"
+            BlueprintIdentifier = "A7FD138124077F7DDAC79D55"
+            BuildableName = "LocusX.app"
+            BlueprintName = "LocusX"
             ReferencedContainer = "container:Locus.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

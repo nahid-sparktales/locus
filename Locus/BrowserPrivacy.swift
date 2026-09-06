@@ -259,7 +259,7 @@ struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
     /// Version 2 deliberately uses a new item. Version 1 required user presence,
     /// so querying it would revive the Touch ID / Mac-password prompt this
     /// provider exists to remove. The legacy item and file are left untouched.
-    static let service = "io.sparktales.locus.browser-autofill.v2"
+    static let service = AppEdition.current.keychainService("browser-autofill.v2")
     static let account = "vault-master-key-v2"
 
     /// Deliberately the file-based keychain, not the data protection keychain. The
@@ -355,7 +355,7 @@ final class BrowserAutofillVault: ObservableObject {
     static var defaultFileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("Locus/Browser/Autofill/vault-v2.bin")
+        return AppEdition.current.supportDirectory(in: base).appendingPathComponent("Browser/Autofill/vault-v2.bin")
     }
 
     var totalCount: Int { passwords.count + contacts.count + cards.count }
@@ -585,7 +585,7 @@ final class BrowserActivityStore: ObservableObject {
     static var defaultDatabaseURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("Locus/Browser/activity.sqlite3")
+        return AppEdition.current.supportDirectory(in: base).appendingPathComponent("Browser/activity.sqlite3")
     }
 
     func configure(profileID: String, persistent: Bool) {
@@ -891,7 +891,7 @@ final class BrowserPermissionStore: ObservableObject {
     private var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("Locus/Browser/Permissions/\(profileID).json")
+        return AppEdition.current.supportDirectory(in: base).appendingPathComponent("Browser/Permissions/\(profileID).json")
     }
 
     private func persist() {

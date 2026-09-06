@@ -143,7 +143,7 @@ final class NotebookModel: ObservableObject {
         for scope in NotesScope.allCases {
             let directoryName = NotesStore.directoryName(for: scope)
             let directory = applicationSupport
-                .appendingPathComponent("Locus", isDirectory: true)
+                .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
                 .appendingPathComponent(directoryName, isDirectory: true)
             let names = (try? FileManager.default
                 .contentsOfDirectory(atPath: directory.path)) ?? []

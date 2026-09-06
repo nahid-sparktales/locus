@@ -122,7 +122,7 @@ struct NotesNameRecord: Codable, Hashable {
 enum NotesNameIndex {
     static func fileURL(in applicationSupport: URL) -> URL {
         applicationSupport
-            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
             .appendingPathComponent("Notes Index.json")
     }
 
@@ -442,7 +442,7 @@ final class NotesStore: ObservableObject {
         self.origin = origin
         self.applicationSupport = applicationSupport
         let directory = applicationSupport
-            .appendingPathComponent("Locus", isDirectory: true)
+            .appendingPathComponent(AppEdition.current.displayName, isDirectory: true)
             .appendingPathComponent(documentID.directoryName, isDirectory: true)
         fileURL = directory.appendingPathComponent("\(documentID.digest).txt")
         styledFileURL = directory.appendingPathComponent("\(documentID.digest).styled")
