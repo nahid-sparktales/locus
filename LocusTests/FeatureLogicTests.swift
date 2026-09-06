@@ -127,6 +127,30 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(compact.midY, display.midY)
     }
 
+    func testCompactUIFixtureUsesWholeWindowSizeWithoutAContentHeightFloor() {
+        let frame = LocusWindowSizing.uiTestFrame(
+            in: NSRect(x: 0, y: 0, width: 1_600, height: 1_000),
+            environment: [
+                "LOCUS_UI_TESTING_WINDOW_WIDTH": "720",
+                "LOCUS_UI_TESTING_WINDOW_HEIGHT": "620",
+            ]
+        )
+        XCTAssertEqual(frame.size, NSSize(width: 720, height: 620))
+        let fixtureMinimum = LocusWindowSizing.minimumContentSize(isUITesting: true)
+        XCTAssertEqual(fixtureMinimum, NSSize(width: 680, height: 0))
+        // Native chrome differs between supported macOS releases. None of
+        // these insets may turn the requested whole-frame height into a
+        // minimum content height and enlarge the acceptance window.
+        for titlebarHeight: CGFloat in [28, 32, 40] {
+            XCTAssertLessThanOrEqual(fixtureMinimum.height, frame.height - titlebarHeight)
+        }
+        XCTAssertEqual(
+            LocusWindowSizing.minimumContentSize(isUITesting: false),
+            NSSize(width: 720, height: 620),
+            "UI fixtures must not change normal user window minimums."
+        )
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)
@@ -1576,6 +1600,22 @@ final class FeatureLogicTests: XCTestCase {
             AgentInstructionsStarter.boundaries.appending(to: ""),
             AgentInstructionsStarter.boundaries.document
         )
+    }
+
+    func testInspectorResizeStartsFromRenderedWidthAndDoesNotCompoundTranslation() {
+        var drag = InspectorResizeDrag()
+        // The saved expanded-chat preference is 420, but only 396 fits beside
+        // the inspector in a 720-point window. The first point must move it.
+        XCTAssertEqual(drag.width(renderedWidth: 396, translation: -1, zoomed: true), 395)
+        XCTAssertEqual(drag.width(renderedWidth: 395, translation: -20, zoomed: true), 376)
+        XCTAssertEqual(drag.width(renderedWidth: 376, translation: -10, zoomed: true), 386)
+        drag.end()
+        XCTAssertEqual(drag.width(renderedWidth: 386, translation: 1, zoomed: true), 387)
+        drag.end()
+        // The normal inspector contracts on a rightward drag; its saved width
+        // can also exceed the available space and must not create a dead zone.
+        XCTAssertEqual(drag.width(renderedWidth: 316, translation: 1, zoomed: false), 315)
+        XCTAssertEqual(drag.width(renderedWidth: 315, translation: -10, zoomed: false), 326)
     }
 
     func testInspectorWidthIsClampedToTheUsableRange() {
@@ -3184,32 +3224,58 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(ModelProvider.remote.detail.contains("GPU"))
     }
 
-    func testCredentialStoreRoundTripsAndClearsTheAPIKey() {
+    private func isolatedCredentialStore() throws -> FileCredentialStore {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocusCredentialTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        addTeardownBlock { try FileManager.default.removeItem(at: directory) }
+        return FileCredentialStore(fileURL: directory.appendingPathComponent("auth.json"))
+    }
+
+    func testCredentialStoreRoundTripsAndClearsTheAPIKey() throws {
+        let store = try isolatedCredentialStore()
         let account = "unit-test-\(UUID().uuidString)"
-        defer { CredentialStore.remove(account: account) }
 
-        XCTAssertNil(CredentialStore.get(account: account))
-        XCTAssertTrue(CredentialStore.set("hf_secret_value", account: account))
-        XCTAssertEqual(CredentialStore.get(account: account), "hf_secret_value")
-        XCTAssertTrue(CredentialStore.has(account: account))
+        XCTAssertNil(store.get(account: account))
+        XCTAssertTrue(store.set("hf_secret_value", account: account))
+        XCTAssertEqual(store.get(account: account), "hf_secret_value")
+        XCTAssertTrue(store.has(account: account))
 
-        XCTAssertTrue(CredentialStore.set("replacement", account: account))
-        XCTAssertEqual(CredentialStore.get(account: account), "replacement")
+        XCTAssertTrue(store.set("replacement", account: account))
+        XCTAssertEqual(store.get(account: account), "replacement")
 
         // Saving an empty value removes the item rather than storing a blank.
-        XCTAssertTrue(CredentialStore.set("   ", account: account))
-        XCTAssertNil(CredentialStore.get(account: account))
-        XCTAssertFalse(CredentialStore.has(account: account))
+        XCTAssertTrue(store.set("   ", account: account))
+        XCTAssertNil(store.get(account: account))
+        XCTAssertFalse(store.has(account: account))
+    }
+
+    func testCredentialFileInstancesDoNotShareCachesOrSalvageFiles() throws {
+        let first = try isolatedCredentialStore()
+        let second = try isolatedCredentialStore()
+        XCTAssertTrue(first.set("first-value", account: "fixture"))
+        XCTAssertTrue(second.set("second-value", account: "fixture"))
+        XCTAssertEqual(first.get(account: "fixture"), "first-value")
+        XCTAssertEqual(second.get(account: "fixture"), "second-value")
+        try Data("{ malformed fixture".utf8).write(to: first.fileURL)
+        first.resetCacheForTesting()
+        XCTAssertTrue(first.isDegraded)
+        XCTAssertFalse(second.isDegraded)
+        XCTAssertTrue(first.set("recovered", account: "fixture"))
+        let salvage = first.fileURL.deletingLastPathComponent().appendingPathComponent("auth.json.corrupt")
+        XCTAssertEqual(try Data(contentsOf: salvage), Data("{ malformed fixture".utf8))
+        XCTAssertEqual(second.get(account: "fixture"), "second-value")
+        XCTAssertEqual(FileCredentialStore(fileURL: second.fileURL).get(account: "fixture"), "second-value")
     }
 
     /// File permissions are the protection for locally stored secrets, so the
     /// app must create and maintain restrictive modes itself.
     func testCredentialFileIsNotReadableByOtherUsers() throws {
+        let store = try isolatedCredentialStore()
         let account = "unit-test-\(UUID().uuidString)"
-        defer { CredentialStore.remove(account: account) }
-        XCTAssertTrue(CredentialStore.set("sk-permission-check", account: account))
+        XCTAssertTrue(store.set("sk-permission-check", account: account))
 
-        let file = CredentialStore.fileURL
+        let file = store.fileURL
         let directory = file.deletingLastPathComponent()
         let fileMode = try FileManager.default
             .attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
@@ -3223,58 +3289,48 @@ final class FeatureLogicTests: XCTestCase {
     /// The secret is the point: it must never be legible in the surrounding
     /// structure, and a second account must not disturb the first.
     func testCredentialsPersistIndependentlyAcrossAReload() throws {
+        let store = try isolatedCredentialStore()
         let first = "unit-test-\(UUID().uuidString)"
         let second = "unit-test-\(UUID().uuidString)"
-        defer {
-            CredentialStore.remove(account: first)
-            CredentialStore.remove(account: second)
-        }
-        XCTAssertTrue(CredentialStore.set("sk-first", account: first))
-        XCTAssertTrue(CredentialStore.set("sk-second", account: second))
+        XCTAssertTrue(store.set("sk-first", account: first))
+        XCTAssertTrue(store.set("sk-second", account: second))
 
         // Drop the in-memory copy so this reads what actually reached disk.
-        CredentialStore.resetCacheForTesting()
-        XCTAssertEqual(CredentialStore.get(account: first), "sk-first")
-        XCTAssertEqual(CredentialStore.get(account: second), "sk-second")
+        store.resetCacheForTesting()
+        XCTAssertEqual(store.get(account: first), "sk-first")
+        XCTAssertEqual(store.get(account: second), "sk-second")
 
-        XCTAssertTrue(CredentialStore.remove(account: first))
-        CredentialStore.resetCacheForTesting()
-        XCTAssertNil(CredentialStore.get(account: first))
-        XCTAssertEqual(CredentialStore.get(account: second), "sk-second", "removal is surgical")
+        XCTAssertTrue(store.remove(account: first))
+        store.resetCacheForTesting()
+        XCTAssertNil(store.get(account: first))
+        XCTAssertEqual(store.get(account: second), "sk-second", "removal is surgical")
     }
 
     /// A truncated or hand-edited file must not read as "every account was
     /// deleted" — that is exactly the state in which a sweep would destroy
     /// live credentials.
     func testUnreadableCredentialFileSuppressesOrphanSweeps() throws {
+        let store = try isolatedCredentialStore()
         let survivor = "\(CredentialStore.mcpCredentialPrefix)unit-test-\(UUID().uuidString)"
-        let file = CredentialStore.fileURL
-        let backup = file.appendingPathExtension("testbackup")
-        let hadFile = FileManager.default.fileExists(atPath: file.path)
-        if hadFile { try? FileManager.default.moveItem(at: file, to: backup) }
-        defer {
-            try? FileManager.default.removeItem(at: file)
-            if hadFile { try? FileManager.default.moveItem(at: backup, to: file) }
-            CredentialStore.resetCacheForTesting()
-        }
+        let file = store.fileURL
 
         try "{ not json".write(to: file, atomically: true, encoding: .utf8)
-        CredentialStore.resetCacheForTesting()
-        XCTAssertTrue(CredentialStore.isDegraded, "an unparseable file must report itself")
+        store.resetCacheForTesting()
+        XCTAssertTrue(store.isDegraded, "an unparseable file must report itself")
 
         // Sweeping against a list we could not read would delete live tokens.
-        CredentialStore.removeOrphanedMCPCredentials(keeping: [])
-        CredentialStore.removeOrphanedProviderKeys(keeping: [])
+        store.removeOrphanedMCPCredentials(keeping: [])
+        store.removeOrphanedProviderKeys(keeping: [])
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "{ not json")
 
         // The unreadable file is preserved rather than overwritten in place.
-        XCTAssertTrue(CredentialStore.set("sk-after-corruption", account: survivor))
+        XCTAssertTrue(store.set("sk-after-corruption", account: survivor))
         let salvage = file.deletingLastPathComponent().appendingPathComponent("auth.json.corrupt")
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: salvage.path),
             "the file we could not parse must be kept, not silently destroyed"
         )
-        try? FileManager.default.removeItem(at: salvage)
-        CredentialStore.remove(account: survivor)
+        XCTAssertEqual(try String(contentsOf: salvage, encoding: .utf8), "{ not json")
     }
 
     /// A file that parses as JSON but holds one unreadable value is the more
@@ -3282,15 +3338,8 @@ final class FeatureLogicTests: XCTestCase {
     /// as a whole made a single bad value drop every sibling key silently, and
     /// the next write then overwrote them for good.
     func testOneBadValueDoesNotDiscardTheRestOfTheFile() throws {
-        let file = CredentialStore.fileURL
-        let backup = file.appendingPathExtension("testbackup")
-        let hadFile = FileManager.default.fileExists(atPath: file.path)
-        if hadFile { try? FileManager.default.moveItem(at: file, to: backup) }
-        defer {
-            try? FileManager.default.removeItem(at: file)
-            if hadFile { try? FileManager.default.moveItem(at: backup, to: file) }
-            CredentialStore.resetCacheForTesting()
-        }
+        let store = try isolatedCredentialStore()
+        let file = store.fileURL
 
         // Valid JSON; one value is null rather than a string.
         try """
@@ -3303,14 +3352,14 @@ final class FeatureLogicTests: XCTestCase {
           "mcp_servers": {}
         }
         """.write(to: file, atomically: true, encoding: .utf8)
-        CredentialStore.resetCacheForTesting()
+        store.resetCacheForTesting()
 
         XCTAssertTrue(
-            CredentialStore.isDegraded,
+            store.isDegraded,
             "a value we cannot read must degrade the whole file, not vanish quietly"
         )
         // And because it degraded, the sweeps must not run against it.
-        CredentialStore.removeOrphanedProviderKeys(keeping: [])
+        store.removeOrphanedProviderKeys(keeping: [])
         let onDisk = try String(contentsOf: file, encoding: .utf8)
         XCTAssertTrue(
             onDisk.contains("sk-must-not-vanish"),
@@ -3318,12 +3367,10 @@ final class FeatureLogicTests: XCTestCase {
         )
 
         // The first write salvages the original rather than overwriting it.
-        XCTAssertTrue(CredentialStore.set("sk-new", account: "provider-account-NEW"))
+        XCTAssertTrue(store.set("sk-new", account: "provider-account-NEW"))
         let salvage = file.deletingLastPathComponent().appendingPathComponent("auth.json.corrupt")
         let salvaged = try String(contentsOf: salvage, encoding: .utf8)
         XCTAssertTrue(salvaged.contains("sk-must-not-vanish"), "the original must be recoverable")
-        try? FileManager.default.removeItem(at: salvage)
-        CredentialStore.remove(account: "provider-account-NEW")
     }
 
     // MARK: - Provider accounts
@@ -3408,17 +3455,18 @@ final class FeatureLogicTests: XCTestCase {
     }
 
     func testCustomEndpointsWorkWithoutAStoredKey() {
+        let store = InMemoryCredentialStore()
         // A local llama.cpp / LM Studio server usually has no auth at all, so
         // the custom kind must be usable with no stored credential — while
         // hosted providers keep demanding theirs.
         let custom = ProviderAccount(kind: .custom, name: "Llama box")
         XCTAssertTrue(custom.kind.allowsEmptyAPIKey)
-        XCTAssertTrue(custom.isCredentialReady)
+        XCTAssertTrue(custom.isCredentialReady(in: store))
         XCTAssertEqual(custom.kind.keyPlaceholder, "API key (optional)")
 
         let hosted = ProviderAccount(kind: .codex, name: "Work")
         XCTAssertFalse(hosted.kind.allowsEmptyAPIKey)
-        XCTAssertFalse(hosted.isCredentialReady)
+        XCTAssertFalse(hosted.isCredentialReady(in: store))
     }
 
     func testAccountStoredBeforeCodexNativeParityDecodesWithTheDefaults() throws {
@@ -3510,7 +3558,8 @@ final class FeatureLogicTests: XCTestCase {
 
         let migrated = ProviderAccountStore.migrateLegacyEndpoint(
             settings: settings,
-            existing: []
+            existing: [],
+            credentialStore: InMemoryCredentialStore()
         )
 
         let account = try? XCTUnwrap(migrated)
@@ -3525,7 +3574,9 @@ final class FeatureLogicTests: XCTestCase {
     func testMigrationSkipsWhenThereIsNothingToMoveOrAccountsExist() {
         // Nothing configured.
         XCTAssertNil(
-            ProviderAccountStore.migrateLegacyEndpoint(settings: AppSettings(), existing: [])
+            ProviderAccountStore.migrateLegacyEndpoint(
+                settings: AppSettings(), existing: [], credentialStore: InMemoryCredentialStore()
+            )
         )
         // Already migrated once: it must not run again and duplicate.
         var settings = AppSettings()
@@ -3533,7 +3584,8 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNil(
             ProviderAccountStore.migrateLegacyEndpoint(
                 settings: settings,
-                existing: [ProviderAccount(kind: .custom)]
+                existing: [ProviderAccount(kind: .custom)],
+                credentialStore: InMemoryCredentialStore()
             )
         )
     }
@@ -5081,7 +5133,7 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testMCPAutomaticOAuthDiscoversChallengeAndRegistersIssuerBoundClient() async throws {
         let serverID = "oauth-test-\(UUID().uuidString)"
-        defer { MCPCredentialStore.remove(serverID: serverID) }
+        let credentialStore = InMemoryMCPCredentialStore()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MCPURLProtocol.self]
         MCPURLProtocol.handler = { request in
@@ -5134,14 +5186,16 @@ final class FeatureLogicTests: XCTestCase {
              "url":"https://mcp.test/mcp","auth":"auto"}
             """#.utf8)
         )
-        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+        let coordinator = MCPAuthCoordinator(
+            configurationForTesting: configuration, credentialStore: credentialStore
+        )
         let resolved = try await coordinator.resolvedConfigurationForTesting(server: server)
 
         XCTAssertEqual(resolved["issuer"] as? String, "https://auth.test")
         XCTAssertEqual(resolved["client_id"] as? String, "registered-client")
         XCTAssertEqual(resolved["resource"] as? String, "https://mcp.test/mcp")
         XCTAssertEqual(resolved["scopes"] as? [String], ["read"])
-        let registration = try XCTUnwrap(MCPCredentialStore.get(serverID: serverID))
+        let registration = try XCTUnwrap(credentialStore.get(serverID: serverID))
         XCTAssertEqual(registration["issuer"] as? String, "https://auth.test")
         XCTAssertEqual(registration["client_secret"] as? String, "native-only-secret")
     }
@@ -5200,7 +5254,9 @@ final class FeatureLogicTests: XCTestCase {
         var prompt: MCPDeviceAuthorizationPrompt?
         var credentials: [String: Any]?
         var completionError: Error?
-        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+        let coordinator = MCPAuthCoordinator(
+            configurationForTesting: configuration, credentialStore: InMemoryMCPCredentialStore()
+        )
 
         coordinator.authorize(
             server: server,
@@ -5231,7 +5287,6 @@ final class FeatureLogicTests: XCTestCase {
     @MainActor
     func testMCPAutomaticOAuthFallsBackToOIDCPathInsertion() async throws {
         let serverID = "oauth-oidc-test-\(UUID().uuidString)"
-        defer { MCPCredentialStore.remove(serverID: serverID) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MCPURLProtocol.self]
         MCPURLProtocol.handler = { request in
@@ -5282,7 +5337,7 @@ final class FeatureLogicTests: XCTestCase {
         )
 
         let resolved = try await MCPAuthCoordinator(
-            configurationForTesting: configuration
+            configurationForTesting: configuration, credentialStore: InMemoryMCPCredentialStore()
         ).resolvedConfigurationForTesting(server: server)
 
         XCTAssertEqual(resolved["issuer"] as? String, "https://auth.test/tenant")
@@ -5344,7 +5399,7 @@ final class FeatureLogicTests: XCTestCase {
         )
 
         let resolved = try await MCPAuthCoordinator(
-            configurationForTesting: configuration
+            configurationForTesting: configuration, credentialStore: InMemoryMCPCredentialStore()
         ).resolvedConfigurationForTesting(server: server)
 
         XCTAssertEqual(resolved["client_id"] as? String, "https://client.test/locus.json")
@@ -5378,7 +5433,9 @@ final class FeatureLogicTests: XCTestCase {
             ])
             return (200, ["Content-Type": "application/json"], data)
         }
-        let coordinator = MCPAuthCoordinator(configurationForTesting: configuration)
+        let coordinator = MCPAuthCoordinator(
+            configurationForTesting: configuration, credentialStore: InMemoryMCPCredentialStore()
+        )
         let refreshed = try await coordinator.refreshedCredentialsIfNeeded([
             "access_token": "old-access",
             "refresh_token": "old-refresh",
@@ -5431,7 +5488,7 @@ final class FeatureLogicTests: XCTestCase {
         }
 
         let refreshed = try await MCPAuthCoordinator(
-            configurationForTesting: configuration
+            configurationForTesting: configuration, credentialStore: InMemoryMCPCredentialStore()
         ).refreshedCredentialsIfNeeded([
             "access_token": "expired-github-access",
             "refresh_token": "github-refresh",

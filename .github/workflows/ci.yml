@@ -14,6 +14,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Only superseded PR revisions cancel one another. Protected branch/tag and
+# manually dispatched checks retain distinct run IDs and are never preempted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   wallet-signer:
     runs-on: macos-15
@@ -24,6 +30,46 @@ jobs:
           # current-tree scan and never sees a secret committed and removed
           # within a PR's commit series — which still lands in public history.
           fetch-depth: 0
+      - name: Install reviewed wallet JavaScript toolchain
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.20.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install reviewed wallet npm resolver
+        run: |
+          npm install --prefix "$RUNNER_TEMP/locus-wallet-npm" --no-save --package-lock=false --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org npm@11.8.0
+          echo "$RUNNER_TEMP/locus-wallet-npm/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify exact wallet JavaScript toolchain
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v24.20.0"
+          test "$(npm --version)" = "11.8.0"
+      - name: Locked dependency, license, and SBOM gate
+        run: python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/WalletSignerSBOM.cdx.json"
+      - name: Wallet connection SDK provenance and activation gate
+        run: >-
+          python3 Tools/WalletConnectionsSBOM.py
+          Locus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          project.yml
+          "$RUNNER_TEMP/WalletConnectionsSBOM.cdx.json"
+      - name: Wallet review manifest signing boundary
+        run: Tools/TestWalletReviewManifestTool.sh
+      - name: Wallet capability evidence and signing boundary
+        run: Tools/TestWalletCapabilityManifestTool.sh
+      - name: Deterministic wallet connector bundle and advisory gate
+        working-directory: WalletConnectionsWeb
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --audit-level=high
+          npm --ignore-scripts run build
+          git diff --exit-code -- ../WalletConnectionsRuntime/Resources/WalletConnections.bundle.js
+      - name: Rust advisory audit
+        working-directory: WalletSignerCore
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit
       - name: Rust formatting, lint, and tests
         working-directory: WalletSignerCore
         run: |
@@ -31,13 +77,9 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-      - name: Locked dependency, license, and SBOM gate
-        run: python3 Tools/WalletSignerSBOM.py WalletSignerCore "$RUNNER_TEMP/WalletSignerSBOM.cdx.json"
-      - name: Rust advisory audit
+      - name: Deterministic Rust wallet fuzz-smoke
         working-directory: WalletSignerCore
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        run: cargo test --locked fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
       - name: Repository secret scan
         env:
           GITLEAKS_VERSION: 8.30.1
@@ -84,7 +126,10 @@ jobs:
       - run: python -m pytest -q
       - run: python -m pip_audit -r agent/requirements-runtime.lock --disable-pip --no-deps
       - name: Release script syntax
-        run: zsh -n Tools/*.sh agent/run.sh
+        run: |
+          for release_script in Tools/*.sh agent/run.sh; do
+            zsh -n "$release_script" || exit "$?"
+          done
 
   swift:
     runs-on: macos-15
@@ -119,10 +164,23 @@ jobs:
           -scheme Locus
           -configuration Debug
           -destination 'platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/locus-debug-tests"
           -only-testing:LocusTests
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
           LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+      - name: Deterministic Swift wallet fuzz-smoke
+        env:
+          LOCUS_BUNDLE_MODE: skip
+        run: >-
+          xcodebuild test-without-building
+          -project Locus.xcodeproj
+          -scheme Locus
+          -configuration Debug
+          -destination 'platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/locus-debug-tests"
+          -only-testing:LocusTests/WalletDecoderFuzzTests
       - name: Pinned Anvil wallet-chain integration
         env:
           FOUNDRY_VERSION: v1.7.1
@@ -150,31 +208,105 @@ jobs:
           test "$actual" = "$expected"
           tar -xzf "$foundry_dir/$asset" -C "$foundry_dir"
           LOCUS_ANVIL_BIN="$foundry_dir/anvil" Tools/RunWalletChainTests.sh \
+            -derivedDataPath "$RUNNER_TEMP/locus-debug-anvil" \
             CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+      - name: Pinned Solana local-validator integration
+        env:
+          AGAVE_VERSION: v4.1.2
+        run: |
+          case "$(uname -m)" in
+            arm64)
+              asset="solana-release-aarch64-apple-darwin.tar.bz2"
+              expected="51a44318e6fb8be0cfa69cdfdb3252f4c76a5eb2866740694e91de3d2fc5a75b"
+              ;;
+            x86_64)
+              asset="solana-release-x86_64-apple-darwin.tar.bz2"
+              expected="eb678fe505ca470d4b474a0a92a1d6dd6c00c95df47ee4d8ca0712fe7a97efa1"
+              ;;
+            *)
+              echo "Unsupported CI architecture" >&2
+              exit 1
+              ;;
+          esac
+          agave_dir="$RUNNER_TEMP/agave-${AGAVE_VERSION}"
+          mkdir -p "$agave_dir"
+          curl -fL \
+            "https://github.com/anza-xyz/agave/releases/download/${AGAVE_VERSION}/${asset}" \
+            -o "$agave_dir/$asset"
+          actual="$(shasum -a 256 "$agave_dir/$asset" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          tar -xjf "$agave_dir/$asset" -C "$agave_dir"
+          LOCUS_SOLANA_TEST_VALIDATOR_BIN="$agave_dir/solana-release/bin/solana-test-validator" \
+            Tools/RunWalletSolanaTests.sh \
+            -derivedDataPath "$RUNNER_TEMP/locus-debug-solana" \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+      - name: Pinned Sui GraphQL localnet integration
+        run: |
+          brew install postgresql@17
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          Tools/RunWalletSuiTests.sh \
+            -derivedDataPath "$RUNNER_TEMP/locus-debug-sui" \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+            LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements \
+            LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
       - name: Direct and App Store release configurations compile
         env:
           LOCUS_BUNDLE_MODE: skip
         run: |
-          build_root="$RUNNER_TEMP/locus-release-builds"
           xcodebuild build \
             -project Locus.xcodeproj \
             -scheme Locus \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$build_root" \
+            -derivedDataPath "$RUNNER_TEMP/locus-release-direct" \
             CODE_SIGNING_ALLOWED=NO
           xcodebuild build \
             -project Locus.xcodeproj \
             -scheme LocusMAS \
             -configuration ReleaseMAS \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$build_root" \
+            -derivedDataPath "$RUNNER_TEMP/locus-release-mas" \
             CODE_SIGNING_ALLOWED=NO
 
-          direct="$build_root/Build/Products/Release/Locus.app"
-          app_store="$build_root/Build/Products/ReleaseMAS/Locus.app"
+          direct="$RUNNER_TEMP/locus-release-direct/Build/Products/Release/Locus.app"
+          app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
+          umask 077
+          release_inspection_dir="$(mktemp -d "$RUNNER_TEMP/locus-release-inspection.XXXXXX")"
+          trap 'find "$release_inspection_dir" -depth -delete' EXIT
+          # BEGIN release_audit_output
+          release_audit_output() {
+            local expectation="$1" pattern="$2"
+            shift 2
+            local inspection="$release_inspection_dir/inspection.stdout"
+            if ! "$@" > "$inspection" 2>/dev/null; then
+              echo 'error: release inspection producer failed' >&2
+              return 1
+            fi
+            local match_status=0
+            grep -E -- "$pattern" "$inspection" >/dev/null || match_status=$?
+            if [[ "$expectation" == present && "$match_status" == 0 ]] ||
+               [[ "$expectation" == absent && "$match_status" == 1 ]]; then
+              return 0
+            fi
+            echo 'error: release inspection did not satisfy the required boundary' >&2
+            return 1
+          }
+          # END release_audit_output
+          Tools/AuditWalletBuildBoundary.sh "$direct" "$app_store"
           test -x "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          test ! -e "$direct/Contents/XPCServices/WalletConnections.xpc"
+          test -f "$direct/Contents/Resources/WalletConnections.bundle.js"
+          test "$(shasum -a 256 "$direct/Contents/Resources/WalletConnections.bundle.js" | awk '{print $1}')" = \
+            '09aa8643956ae5e17ab004ccd85b62811a36f7f4e44535d2659ef43e512323bf'
+          test -f "$direct/Contents/Resources/WalletConnectionsNotices.md"
+          grep -Fq 'Portions © 2025 Reown, Inc. All Rights Reserved' \
+            "$direct/Contents/Resources/WalletConnectionsNotices.md"
+          test "$(shasum -a 256 "$direct/Contents/Resources/LICENSE" | awk '{print $1}')" = \
+            'e30bbba6782f025ba0b6ced7d36840ac8587073d8df06a21be369a5cfcfc5830'
           test -x "$direct/Contents/Helpers/WalletRecovery.app/Contents/MacOS/WalletRecovery"
           test -x "$direct/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
           cmp "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner" \
@@ -186,6 +318,13 @@ jobs:
           Tools/AuditWalletSignerBinary.sh \
             "$direct/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
           test ! -e "$app_store/Contents/XPCServices/WalletSigner.xpc"
+          test ! -e "$app_store/Contents/XPCServices/WalletConnections.xpc"
+          test ! -e "$app_store/Contents/Resources/WalletConnections.bundle.js"
+          test ! -e "$app_store/Contents/Resources/WalletConnectionsNotices.md"
+          test ! -e "$app_store/Contents/Resources/LICENSE"
+          test -z "$(find "$app_store/Contents/Resources" -name 'LocusReownSwift_*' -print -quit)"
+          release_audit_output absent 'LocusWalletConnectPrivateBindingsV1' \
+            /usr/bin/strings "$app_store/Contents/MacOS/Locus"
           test ! -e "$app_store/Contents/Helpers/WalletRecovery.app"
           test -d "$direct/Contents/Frameworks/Sparkle.framework"
           test ! -e "$app_store/Contents/Frameworks/Sparkle.framework"
@@ -193,12 +332,54 @@ jobs:
             'https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             "$direct/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" = '2.9.6'
-          /usr/bin/otool -L "$direct/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
-          ! /usr/bin/otool -L "$app_store/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
-          ! /usr/bin/plutil -p "$app_store/Contents/Info.plist" | grep -Eq '^  "SU[^" ]*"'
+          release_audit_output present 'Sparkle.framework' /usr/bin/otool -L "$direct/Contents/MacOS/Locus"
+          release_audit_output absent 'Sparkle.framework' /usr/bin/otool -L "$app_store/Contents/MacOS/Locus"
+          release_audit_output absent '^  "SU[^" ]*"' /usr/bin/plutil -p "$app_store/Contents/Info.plist"
           test -z "$(find "$app_store/Contents" \
             \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
             -print -quit)"
+      - name: Experimental wallet release configuration compiles without activation
+        env:
+          LOCUS_BUNDLE_MODE: skip
+        run: |
+          xcodebuild build \
+            -project Locus.xcodeproj \
+            -scheme LocusExperimental \
+            -configuration ReleaseExperimental \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/locus-release-experimental" \
+            CODE_SIGNING_ALLOWED=NO
+          experimental="$RUNNER_TEMP/locus-release-experimental/Build/Products/ReleaseExperimental/Locus Experimental.app"
+          app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
+          Tools/AuditWalletBuildBoundary.sh "$experimental" "$app_store"
+          for authority in "$experimental" \
+            "$experimental/Contents/XPCServices/WalletSigner.xpc" \
+            "$experimental/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc"; do
+            test "$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletExperimentalMainnetEnabled' \
+              "$authority/Contents/Info.plist")" = true
+          done
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableAutomaticChecks' \
+            "$experimental/Contents/Info.plist")" = false
+          test -z "$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReleaseActivationURL' \
+            "$experimental/Contents/Info.plist")"
+          Tools/AuditWalletSignerBinary.sh \
+            "$experimental/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          # Compile/boundary evidence only: no signing, provisioning, activation,
+          # provider credentials, or real mainnet execution is claimed here.
+      - name: Retain native and local-chain result bundles on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-native-chain-macos15-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # xcodebuild's generated test bundles, including failure geometry and
+          # attachments. Never upload whole DerivedData or bundled runtimes.
+          path: |
+            ${{ runner.temp }}/locus-debug-tests/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-anvil/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-solana/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-sui/Logs/Test/*.xcresult/**
+          if-no-files-found: error
+          retention-days: 90
 
   mobile:
     runs-on: macos-15
@@ -236,16 +417,20 @@ jobs:
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
-      - name: Accessibility and keyboard UI tests
+      - name: Serialized full UI suite with exact native profile accounting
         env:
           LOCUS_BUNDLE_MODE: skip
         run: >-
-          xcodebuild test
-          -project Locus.xcodeproj
-          -scheme Locus
-          -configuration Debug
-          -destination 'platform=macOS'
-          -only-testing:LocusUITests
-          CODE_SIGN_IDENTITY=-
-          DEVELOPMENT_TEAM=
-          LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
+          python3 Tools/RunLocusUIMatrix.py
+          --os-major 15
+          --native-profile compact-light
+          --derived-data "$RUNNER_TEMP/locus-ui-derived"
+          --output "$RUNNER_TEMP/locus-ui-evidence"
+      - name: Retain requested IDs, exact counts, screenshots, and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-ui-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/locus-ui-evidence
+          if-no-files-found: error
+          retention-days: 90

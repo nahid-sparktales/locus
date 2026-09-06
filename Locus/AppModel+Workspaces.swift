@@ -94,7 +94,7 @@ extension AppModel {
         initialWorkspacePath = path
         expandedWorkspaceIDs.insert(path)
         persistExpandedWorkspaces()
-        if backendProcess.isRunning, WorkspaceAccess.isSandboxed {
+        if persistenceEnabled, backendProcess.isRunning, WorkspaceAccess.isSandboxed {
             workspaceToOpenAfterReconnect = path
             backend.disconnect()
             sessionInfo = nil

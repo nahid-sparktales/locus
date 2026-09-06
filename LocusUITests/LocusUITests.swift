@@ -8,6 +8,18 @@ final class LocusUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["LOCUS_UI_TESTING"] = "1"
+        let sidebarHitTestMethods = [
+            "testAgentDestinationKeepsNewChatAndShowsTheAgentOverview",
+            "testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet",
+            "testSessionOrganizerMenus",
+            "testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet",
+            "testSidebarSearchIsRevealedFromTheWorkspacesHeader",
+            "testSidebarScrollViewportOwnsItsVisibleSearchControl",
+        ]
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1",
+           sidebarHitTestMethods.contains(where: { name.hasSuffix(" \($0)]") }) {
+            app.launchEnvironment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] = "1"
+        }
         // The window is clamped to the screen, so a CI runner's display can
         // leave far less of a panel visible than a developer's. Forwarding an
         // explicit size makes that geometry reproducible locally with
@@ -20,8 +32,35 @@ final class LocusUITests: XCTestCase {
         // Stale window-restoration state can suppress the main window at
         // launch; tests must not depend on the machine's saved state.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        if let appearance = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_APPEARANCE"] {
+            XCTAssertTrue(["Light", "Dark"].contains(appearance))
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
+            app.launchArguments += ["-AppleInterfaceStyle", appearance]
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_MATRIX_PROFILE"] != nil {
+            // These must be real native settings, not synthetic app overrides.
+            let environment = ProcessInfo.processInfo.environment
+            XCTAssertEqual(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+                environment["LOCUS_UI_TESTING_EXPECT_CONTRAST"] == "1")
+            XCTAssertEqual(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                environment["LOCUS_UI_TESTING_EXPECT_MOTION"] == "1")
+        }
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_MATRIX_PROFILE"] != nil {
+            let environment = ProcessInfo.processInfo.environment
+            XCTAssertEqual(app.windows.firstMatch.frame.width,
+                CGFloat(try XCTUnwrap(Double(environment["LOCUS_UI_TESTING_WINDOW_WIDTH"] ?? ""))), accuracy: 2)
+            XCTAssertEqual(app.windows.firstMatch.frame.height,
+                CGFloat(try XCTUnwrap(Double(environment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] ?? ""))), accuracy: 2)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        // Never leave this test's launched fixture app registered as a live
+        // same-bundle-ID target for the next serialized test session.
+        app?.terminate()
+        app = nil
     }
 
     /// How long the first screen a launch fixture renders is given to appear.
@@ -38,6 +77,41 @@ final class LocusUITests: XCTestCase {
     /// first result, because interactions on an ambiguous query fail outright.
     private func anyElement(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier].firstMatch
+    }
+
+    /// Compact windows intentionally present the sidebar on demand. Navigate
+    /// through the visible workspace control instead of assuming it is docked;
+    /// keep this local to tests that actually use the sidebar.
+    private func revealSidebarForNavigation(file: StaticString = #filePath, line: UInt = #line) {
+        let sidebar = anyElement("sidebar.newSession")
+        let restore = anyElement("workspace.showSidebar")
+        XCTAssertTrue(waitUntil { sidebar.exists || restore.exists }, file: file, line: line)
+        if !sidebar.exists {
+            XCTAssertTrue(waitUntilHittable(restore), file: file, line: line)
+            restore.click()
+        }
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 3), file: file, line: line)
+    }
+
+    /// Scrollable forms expose only visible rows on some macOS releases. Stop
+    /// at the requested control, not at a fixed scroll offset tied to one
+    /// window height, and retain an exact visible/hittable requirement.
+    private func revealSettingsControl(
+        _ target: XCUIElement,
+        in scroll: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(scroll.waitForExistence(timeout: 3), file: file, line: line)
+        for _ in 0..<16 {
+            let viewport = scroll.frame
+            if target.exists, viewport.contains(target.frame), target.isHittable { return }
+            let scrollUp = target.exists && target.frame.minY < viewport.minY
+            scroll.scroll(byDeltaX: 0, deltaY: scrollUp ? 100 : -100)
+        }
+        XCTAssertTrue(waitUntilHittable(target), file: file, line: line)
+        XCTAssertTrue(scroll.frame.contains(target.frame),
+            "The requested settings control must be fully inside its viewport", file: file, line: line)
     }
 
     /// SwiftUI menu commands arrive as menu items on macOS 26 but can retain
@@ -488,20 +562,9 @@ final class LocusUITests: XCTestCase {
                issue.element?.identifier == "settings.localContextDescription" {
                 return true
             }
-            // Xcode 16 audits native SwiftUI Form labels before AppKit has
-            // composited their dynamic semantic colors. It consequently
-            // reports a different system-owned label on every run even when
-            // it uses near-black ink. Keep every other accessibility audit on
-            // these surfaces; semantic text contrast is enforced for all
-            // light/dark Form backgrounds by the palette unit suite, and raw
-            // colors are rejected by the design-system source audit.
-            if issue.auditType == .contrast,
-               let surface = self.app.launchEnvironment[
-                   "LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"
-               ],
-               surface == "settings" || surface == "agent-editor" || surface == "wallet" {
-                return true
-            }
+            // Whole surfaces must not bypass contrast checks. Native drawing
+            // false positives continue through the rendered-pixel measurement
+            // below; named platform exceptions above remain individually scoped.
             // These compact combined elements include tested semantic text
             // plus small status/decorative content that XCTest samples as one
             // foreground. The palette suite verifies each actual text role.
@@ -579,6 +642,7 @@ final class LocusUITests: XCTestCase {
             anyElement("workspace.sessionTitle"),
             anyElement("composer.input"),
             anyElement("composer.mode.plan"),
+            anyElement("composer.send"),
             anyElement("inspector.tabBar"),
             anyElement("sidebar.agentStatus"),
             anyElement("sidebar.more"),
@@ -588,6 +652,7 @@ final class LocusUITests: XCTestCase {
         }
         for element in [
             anyElement("composer.mode.plan"),
+            anyElement("composer.send"),
             anyElement("sidebar.agentStatus"),
             anyElement("sidebar.more"),
         ] {
@@ -600,9 +665,9 @@ final class LocusUITests: XCTestCase {
             )
         }
         XCTAssertGreaterThanOrEqual(
-            anyElement("composer.mode.plan").frame.maxY,
+            anyElement("composer.send").frame.maxY,
             window.frame.maxY - 28,
-            "The composer should stay close to the bottom edge",
+            "The primary composer action should stay close to the bottom edge, including when controls wrap",
             file: file,
             line: line
         )
@@ -688,6 +753,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testClearSessionsPreservesTheActiveJob() {
+        revealSidebarForNavigation()
         anyElement("sidebar.more").click()
         let clearSessions = menuItem(
             "sidebar.clearSessions",
@@ -954,13 +1020,17 @@ final class LocusUITests: XCTestCase {
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
         let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101")
         let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
-        let composer = app.textViews["composer.input"]
+        let readingColumn = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Conversation transcript")
+        ).firstMatch
 
         XCTAssertTrue(userBubble.waitForExistence(timeout: 3))
         XCTAssertTrue(assistant.exists)
+        XCTAssertTrue(readingColumn.exists)
+        XCTAssertGreaterThan(readingColumn.frame.width, 0)
         XCTAssertLessThanOrEqual(
             userBubble.frame.width,
-            composer.frame.width * 0.84,
+            readingColumn.frame.width * 0.84,
             "user prompts should stay capped near 82 percent of the reading column"
         )
         XCTAssertGreaterThan(userBubble.frame.minX, assistant.frame.minX)
@@ -974,6 +1044,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSessionOrganizerMenus() {
+        revealSidebarForNavigation()
         let workspace = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@",
             "workspace.group.",
@@ -1011,11 +1082,13 @@ final class LocusUITests: XCTestCase {
     }
 
     func testArchivedSessionsFilter() {
+        revealSidebarForNavigation()
         app.typeKey("a", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.buttons["session.seed-archived"].waitForExistence(timeout: 3))
     }
 
     func testSidebarCollapsesAndRestoresFromWorkspaceHeader() {
+        revealSidebarForNavigation()
         let collapse = anyElement("sidebar.collapse")
         XCTAssertTrue(collapse.waitForExistence(timeout: 3))
         collapse.click()
@@ -1029,6 +1102,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarDragAndDoubleClickResetItsWidth() {
+        revealSidebarForNavigation()
         let handle = anyElement("sidebar.resize")
         XCTAssertTrue(handle.waitForExistence(timeout: 3))
         let initialEdge = handle.frame.midX
@@ -1058,6 +1132,7 @@ final class LocusUITests: XCTestCase {
             "the workspace header should stay inside the compact unified title-bar band"
         )
 
+        revealSidebarForNavigation()
         let workspaceMenu = anyElement("sidebar.workspaceMenu")
         XCTAssertTrue(workspaceMenu.waitForExistence(timeout: 3))
         workspaceMenu.click()
@@ -1065,6 +1140,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["tmp"].exists)
         app.typeKey(.escape, modifierFlags: [])
 
+        if anyElement("workspace.showSidebar").exists {
+            // Put away the compact overlay before interacting with the chat
+            // underneath it; a docked sidebar remains untouched.
+            anyElement("sidebar.collapse").click()
+        }
         let composer = app.textViews["composer.input"]
         XCTAssertTrue(composer.exists)
         composer.click()
@@ -1234,7 +1314,23 @@ final class LocusUITests: XCTestCase {
         relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
         let agentRules = app.buttons["wallet.hub.agent-rules"]
         XCTAssertTrue(agentRules.waitForExistence(timeout: 2))
+        let navigation = anyElement("wallet.hub.navigation")
+        XCTAssertTrue(navigation.waitForExistence(timeout: 2))
+        // Separate revealing the tab from activating it. An implicit scroll
+        // during click can otherwise hit the newly displayed scrollbar.
+        for _ in 0..<12 {
+            if navigation.frame.contains(agentRules.frame), agentRules.isHittable { break }
+            let scrollRight = agentRules.frame.maxX > navigation.frame.maxX
+            navigation.scroll(byDeltaX: scrollRight ? -100 : 100, deltaY: 0)
+        }
+        XCTAssertTrue(navigation.frame.contains(agentRules.frame))
+        XCTAssertTrue(waitUntilHittable(agentRules))
+        for scroller in navigation.scrollBars.allElementsBoundByIndex {
+            XCTAssertFalse(scroller.frame.intersects(agentRules.frame),
+                "The horizontal scrollbar must not cover the section button")
+        }
         agentRules.click()
+        XCTAssertTrue(waitUntil { agentRules.isSelected }, "Agent Rules must become the selected section")
         XCTAssertTrue(app.staticTexts["Agent Spending Rules"].waitForExistence(timeout: 2))
         XCTAssertTrue(anyElement("settings.wallet.rule.usage").exists)
     }
@@ -1258,7 +1354,58 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
         relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        let window = app.windows.firstMatch.frame
+        let search = anyElement("settings.search").frame
+        let close = anyElement("settings.close").frame
+        let footer = anyElement("settings.cancel").frame
+        XCTAssertGreaterThanOrEqual(search.minX, window.minX)
+        XCTAssertLessThanOrEqual(close.maxX, window.maxX)
+        XCTAssertLessThanOrEqual(footer.maxY, window.maxY)
         try auditCurrentSurface()
+    }
+
+    func testWalletSendValidatesRecipientAndKeepsReviewDisabled() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        app.buttons["wallet.hub.send"].click()
+        let send = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "wallet.send.open.wallet-fixture-sui:"
+        )).firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        send.click()
+        let recipient = app.textFields["Recipient address"]
+        XCTAssertTrue(recipient.waitForExistence(timeout: 3))
+        recipient.click()
+        recipient.typeText("not-a-wallet-address")
+        XCTAssertTrue(anyElement("wallet.send.recipient-error").waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["wallet.send.review"].isEnabled)
+        XCTAssertEqual(recipient.value as? String, "not-a-wallet-address")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+    }
+
+    func testWalletReceiveConfirmsCopyAndExplainsNetwork() {
+        relaunchWalletFixture("locked", anchor: "settings.wallet.unlock")
+        app.buttons["Receive"].firstMatch.click()
+        let copy = app.buttons["wallet.receive.copy-address"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts[
+            "Use only Ethereum Sepolia when sending to this address."
+        ].exists)
+        copy.click()
+        XCTAssertTrue(waitUntil { copy.label == "Address Copied" })
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(anyElement("settings.wallet.unlock").waitForExistence(timeout: 3))
+    }
+
+    func testWalletConnectionsExplainUnavailableNetworks() {
+        relaunchWalletFixture("ready", anchor: "settings.wallet.lock")
+        app.buttons["wallet.hub.connections"].click()
+        let reason = anyElement("wallet.connection.unavailable.metamask")
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["wallet.connection.connect.metamask"].isEnabled)
+        XCTAssertTrue(app.staticTexts[
+            "Managed by Phantom · approve each action in Locus"
+        ].exists)
     }
 
     func testWalletHubActivityFixture() {
@@ -1287,6 +1434,41 @@ final class LocusUITests: XCTestCase {
         let confirm = app.buttons["Confirm and Send 0.01 ETH"]
         XCTAssertTrue(confirm.exists)
         XCTAssertTrue(confirm.isEnabled)
+    }
+
+    func testWalletExternalConfirmationExplainsWalletApprovalAndCancels() {
+        relaunchWalletFixture("transaction-external", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertEqual(confirm.label, "Continue to Wallet Approval")
+        let approval = anyElement("wallet.transaction.approval-model")
+        XCTAssertTrue((approval.label + " " + String(describing: approval.value))
+            .contains("Wallet approval comes next"))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !confirm.exists })
+    }
+
+    func testWalletPhantomConfirmationExplainsLocusApprovalAndCancels() {
+        relaunchWalletFixture("transaction-managed", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertEqual(confirm.label, "Approve and Send")
+        let approval = anyElement("wallet.transaction.approval-model")
+        XCTAssertTrue((approval.label + " " + String(describing: approval.value))
+            .contains("Approve in Locus"))
+        XCTAssertTrue(app.staticTexts["Solana Devnet"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !confirm.exists })
+    }
+
+    func testWalletConfirmationExpiresWhileReviewIsOpen() {
+        relaunchWalletFixture("transaction-expiring", anchor: "settings.wallet.lock")
+        let confirm = app.buttons["wallet.transaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 8) { !confirm.isEnabled })
+        XCTAssertTrue(app.staticTexts[
+            "This prepared transaction has expired. Cancel and prepare a new review."
+        ].exists)
     }
 
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
@@ -1466,12 +1648,13 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(developerPage.waitForExistence(timeout: 3))
         let browserPage = anyElement("settings.page.browser")
         browserPage.click()
-        anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -620)
+        let browserForm = anyElement("settings.browser.root")
         let browserControls = anyElement("settings.browser.advanced")
+        revealSettingsControl(browserControls, in: browserForm)
         XCTAssertTrue(browserControls.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntilHittable(browserControls))
         browserControls.click()
-        anyElement("settings.browser.root").scroll(byDeltaX: 0, deltaY: -420)
+        revealSettingsControl(anyElement("settings.browser.webInspector"), in: browserForm)
         XCTAssertTrue(anyElement("settings.browser.webInspector").waitForExistence(timeout: 3))
         anyElement("settings.navigation").scroll(byDeltaX: 0, deltaY: -900)
         XCTAssertTrue(waitUntilHittable(developerPage))
@@ -1520,6 +1703,7 @@ final class LocusUITests: XCTestCase {
         for (index, manager) in managers.enumerated() {
             if index > 0 { openBrowserSettings() }
             let link = anyElement("settings.browser.manager.\(manager.route)")
+            revealSettingsControl(link, in: anyElement("settings.browser.root"))
             XCTAssertTrue(link.waitForExistence(timeout: 3))
             XCTAssertTrue(waitUntilHittable(link))
             link.click()
@@ -1620,6 +1804,7 @@ final class LocusUITests: XCTestCase {
             anyElement("workspace.workStatus").exists,
             "idle operational status should stay out of the transcript"
         )
+        revealSidebarForNavigation()
         XCTAssertTrue(anyElement("sidebar.agentStatus").exists)
         XCTAssertFalse(anyElement("workspace.agentStatus").exists)
         XCTAssertFalse(anyElement("workspace.modelStatus").exists)
@@ -1670,7 +1855,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(pinkAccent.value as? String, "Selected")
         XCTAssertEqual(blueAccent.value as? String, "Not selected")
         XCTAssertEqual(logoPreview.label, "Current Locus logo, Pink")
+        let appearanceForm = anyElement("settings.content.appearance")
+        revealSettingsControl(teamProgress, in: appearanceForm)
         teamProgress.click()
+        revealSettingsControl(contextUsage, in: appearanceForm)
         contextUsage.click()
 
         XCTAssertFalse(app.buttons["settings.save"].exists)
@@ -1921,6 +2109,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarPlacesAgentWorkAndCreationControlsBelowTheBrand() {
+        revealSidebarForNavigation()
         let brand = anyElement("sidebar.brand")
         let destination = anyElement("sidebar.destination")
         let ask = app.buttons["sidebar.mode.ask"]
@@ -1974,6 +2163,7 @@ final class LocusUITests: XCTestCase {
 
     func testAgentDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         let identity = anyElement("agentOverview.identity")
         XCTAssertTrue(identity.waitForExistence(timeout: Self.launchContentTimeout))
@@ -2077,6 +2267,7 @@ final class LocusUITests: XCTestCase {
 
     func testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet() {
         relaunchWithAgentFixture("fleet")
+        revealSidebarForNavigation()
 
         // The schedule's dedicated chat groups under the schedule like any agent.
         let group = anyElement("agent.seed-schedule")
@@ -2134,6 +2325,7 @@ final class LocusUITests: XCTestCase {
 
     func testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet() {
         relaunchWithAgentFixture("fleet")
+        revealSidebarForNavigation()
 
         // The fixture's third agent was switched off by Locus after a failure.
         let stopped = anyElement("agent.seed-stopped-agent")
@@ -2165,6 +2357,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testAgentAndWorkDestinationsKeepConversationWorkControlsAvailable() {
+        revealSidebarForNavigation()
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
         XCTAssertTrue(ask.waitForExistence(timeout: 3))
@@ -2242,6 +2435,7 @@ final class LocusUITests: XCTestCase {
         app.menuItems["inspector.rail.menu.agents"].click()
         XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
 
+        revealSidebarForNavigation()
         let settingsMenu = anyElement("sidebar.more")
         XCTAssertTrue(settingsMenu.waitForExistence(timeout: 3))
         settingsMenu.click()
@@ -2399,32 +2593,36 @@ final class LocusUITests: XCTestCase {
 
         let originalDividerX = handle.frame.midX
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // Compact layouts begin at the maximum available chat width. First
+        // move inward, then reverse within that space; do not demand travel
+        // beyond the inspector's minimum width.
         start.press(
             forDuration: 0.1,
-            thenDragTo: start.withOffset(CGVector(dx: 60, dy: 0))
-        )
-        let dividerMovedRight = NSPredicate { candidate, _ in
-            guard let element = candidate as? XCUIElement else { return false }
-            return element.frame.midX > originalDividerX + 20
-        }
-        expectation(for: dividerMovedRight, evaluatedWith: handle)
-        waitForExpectations(timeout: 3)
-
-        let rightwardDividerX = handle.frame.midX
-        let secondStart = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        secondStart.press(
-            forDuration: 0.1,
-            thenDragTo: secondStart.withOffset(CGVector(dx: -30, dy: 0))
+            thenDragTo: start.withOffset(CGVector(dx: -30, dy: 0))
         )
         let dividerMovedLeft = NSPredicate { candidate, _ in
             guard let element = candidate as? XCUIElement else { return false }
-            return element.frame.midX < rightwardDividerX - 10
+            return element.frame.midX < originalDividerX - 20
         }
         expectation(for: dividerMovedLeft, evaluatedWith: handle)
+        waitForExpectations(timeout: 3)
+
+        let leftwardDividerX = handle.frame.midX
+        let secondStart = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        secondStart.press(
+            forDuration: 0.1,
+            thenDragTo: secondStart.withOffset(CGVector(dx: 20, dy: 0))
+        )
+        let dividerMovedRight = NSPredicate { candidate, _ in
+            guard let element = candidate as? XCUIElement else { return false }
+            return element.frame.midX > leftwardDividerX + 10
+        }
+        expectation(for: dividerMovedRight, evaluatedWith: handle)
         waitForExpectations(timeout: 3)
         let persistedDividerX = handle.frame.midX
 
         zoom.click()
+        revealSidebarForNavigation()
         XCTAssertTrue(anyElement("sidebar.brand").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("browser.url").exists)
         XCTAssertEqual(handle.label, "Inspector width")
@@ -2538,6 +2736,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testSidebarSearchIsRevealedFromTheWorkspacesHeader() {
+        revealSidebarForNavigation()
         let toggle = anyElement("sidebar.search.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 3))
         // The field is put away until asked for; the sidebar no longer spends
@@ -2553,6 +2752,33 @@ final class LocusUITests: XCTestCase {
         // Search All Conversations (⇧⌘F) reveals and focuses it from anywhere.
         app.typeKey("f", modifierFlags: [.command, .shift])
         XCTAssertTrue(anyElement("sidebar.search").waitForExistence(timeout: 3))
+    }
+
+    func testSidebarScrollViewportOwnsItsVisibleSearchControl() {
+        revealSidebarForNavigation()
+        let scroll = app.scrollViews["sidebar.scroll"]
+        let toggle = scroll.buttons["sidebar.search.toggle"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 3))
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        XCTAssertTrue(scroll.frame.contains(toggle.frame), "The target must already be inside its own viewport")
+        XCTAssertTrue(waitUntilHittable(toggle), "The sidebar must expose the button, not only its scroll container")
+        toggle.click()
+        let field = scroll.textFields["sidebar.search"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(field))
+        field.click()
+        field.typeText("Workspace")
+        XCTAssertEqual(field.value as? String, "Workspace")
+        // An active query deliberately keeps search open. Exercise its own
+        // visible Clear control before asking the header to put the field away.
+        let clear = scroll.buttons["sidebar.search.clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(clear))
+        clear.click()
+        XCTAssertTrue(waitUntil { (field.value as? String) == "" })
+        XCTAssertTrue(waitUntilHittable(toggle))
+        toggle.click()
+        XCTAssertTrue(waitForDisappearance(field))
     }
 
     func testNotesHeaderSwitchesScopeAndKeepsToolbarActions() {
@@ -2696,6 +2922,7 @@ final class LocusUITests: XCTestCase {
             app.terminate()
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = height
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
             app.launchArguments = [
                 "-ApplePersistenceIgnoreState", "YES",
                 "-AppleInterfaceStyle", appearance,
@@ -2777,6 +3004,7 @@ final class LocusUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
+        app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = "dark"
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "-AppleInterfaceStyle", "Dark",
@@ -2799,8 +3027,14 @@ final class LocusUITests: XCTestCase {
         let planMode = anyElement("composer.mode.plan")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(planMode.frame.maxY, window.frame.maxY - 8)
+        // Mode controls can wrap above Voice/Send; measure the final action
+        // row instead of requiring the upper row to touch the window bottom.
+        let send = anyElement("composer.send")
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        XCTAssertTrue(window.frame.contains(send.frame))
+        XCTAssertLessThanOrEqual(send.frame.maxY, window.frame.maxY - 8)
         XCTAssertGreaterThanOrEqual(
-            planMode.frame.maxY,
+            send.frame.maxY,
             window.frame.maxY - 28,
             "The composer should stay close to the bottom edge"
         )
@@ -2892,6 +3126,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testNotebookOpensFromTheSidebarMenuAndListsStoredNotes() throws {
+        revealSidebarForNavigation()
         anyElement("sidebar.more").click()
         let item = menuItem("sidebar.notebook", title: "Notebook")
         XCTAssertTrue(item.waitForExistence(timeout: 3))
@@ -3515,6 +3750,10 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_RUN_FIXTURE"] = fixture
         app.launchEnvironment["LOCUS_UI_TESTING_UNCLEAN_RECOVERY"] = uncleanRecovery ? "1" : nil
         app.launchEnvironment["LOCUS_UI_TESTING_STALE_QUIT_STATE"] = staleQuitState ? "1" : nil
+        let geometryDiagnosticFixture = ["dispatcher-repair", "dispatch-plan"].contains(fixture)
+        app.launchEnvironment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] = geometryDiagnosticFixture
+            && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
+            ? "1" : nil
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
     }
@@ -3570,6 +3809,7 @@ final class LocusUITests: XCTestCase {
 
     func testActivityDestinationShowsBackgroundRunAndReturnsToChat() {
         relaunchWithRunFixture("activity")
+        revealSidebarForNavigation()
 
         let destination = anyElement("sidebar.activity")
         let newChat = anyElement("sidebar.newSession")
@@ -3623,6 +3863,7 @@ final class LocusUITests: XCTestCase {
 
     func testOrphanedRecoveryOffersIndividualAndBulkClear() {
         relaunchWithRunFixture("orphaned-activity")
+        revealSidebarForNavigation()
 
         let destination = anyElement("sidebar.activity")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
@@ -3640,6 +3881,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
+        revealSidebarForNavigation()
         let configureAgent = anyElement("sidebar.configureAgent")
         XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))
         configureAgent.click()
@@ -3682,6 +3924,7 @@ final class LocusUITests: XCTestCase {
 
     func testSavedConfigurationsLiveOnTheAgentsTab() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
@@ -3697,6 +3940,7 @@ final class LocusUITests: XCTestCase {
 
     func testAgentEventQueueFanOutAndSharedLimitAreVisible() {
         relaunchWithAgentFixture()
+        revealSidebarForNavigation()
 
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
@@ -3719,6 +3963,7 @@ final class LocusUITests: XCTestCase {
         composer.click()
         composer.typeText("When bitcoin hits 100k run the safety plan")
 
+        revealSidebarForNavigation()
         anyElement("sidebar.configureAgent").click()
 
         XCTAssertTrue(anyElement("configureAgent.draftSuggestion").waitForExistence(timeout: 3))
@@ -3739,6 +3984,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testConfigureAgentCreationCardsOpenChildSheetsAndReturnToHub() {
+        revealSidebarForNavigation()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
 
@@ -4110,6 +4356,7 @@ final class LocusUITests: XCTestCase {
             app.launchEnvironment["LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"] = "collapsed"
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = height
+            app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance.lowercased()
             app.launchArguments = [
                 "-ApplePersistenceIgnoreState", "YES",
                 "-AppleInterfaceStyle", appearance,
@@ -4150,15 +4397,16 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("landing.runChecks").exists)
         XCTAssertTrue(anyElement("landing.destination").exists)
 
-        let destinationControl = anyElement("landing.destination")
+        let form = app.scrollViews.containing(.any, identifier: "landing.destination").firstMatch
         let branchDestination = app.buttons["Branch, Commit & PR"].firstMatch
         XCTAssertTrue(branchDestination.exists)
+        revealSettingsControl(branchDestination, in: form)
         branchDestination.click()
-        // AppKit only publishes descendants of a SwiftUI ScrollView once they
-        // enter its viewport. Scroll the selected destination's form into the
-        // accessibility hierarchy before querying its fields.
-        destinationControl.scroll(byDeltaX: 0, deltaY: -400)
+        // Navigate the actual form viewport, not an offscreen selector whose
+        // synthetic wheel event can land on unrelated content behind the sheet.
+        revealSettingsControl(anyElement("landing.branch"), in: form)
         XCTAssertTrue(anyElement("landing.branch").waitForExistence(timeout: 3))
+        revealSettingsControl(anyElement("landing.commitMessage"), in: form)
         XCTAssertTrue(anyElement("landing.commitMessage").exists)
         XCTAssertTrue(anyElement("landing.confirm").exists)
     }

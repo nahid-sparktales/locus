@@ -15,13 +15,20 @@ final class ExtensionsModel: ObservableObject {
     @Published var mcpInputRequest: MCPInputRequest?
     @Published var mcpDeviceAuthorization: MCPDeviceAuthorizationPrompt?
 
-    private let mcpAuthCoordinator = MCPAuthCoordinator()
+    private let mcpAuthCoordinator: MCPAuthCoordinator
+    private let credentialStore: any MCPCredentialStoring
     private var extensionRefreshTask: Task<Void, Never>?
 
     private var backend: BackendService?
     private var isUITesting = false
     private var workspacePathProvider: () -> String = { "" }
     private var toastHandler: (String) -> Void = { _ in }
+
+    init(credentialStore: (any MCPCredentialStoring)? = nil) {
+        let credentialStore = credentialStore ?? KeychainMCPCredentialStore()
+        self.credentialStore = credentialStore
+        mcpAuthCoordinator = MCPAuthCoordinator(credentialStore: credentialStore)
+    }
 
     func configure(
         backend: BackendService,
@@ -79,7 +86,7 @@ final class ExtensionsModel: ObservableObject {
             // unreadable state file would present as "no servers" and this
             // would delete live third-party refresh tokens rather than orphans.
             if response.errors.isEmpty {
-                MCPCredentialStore.removeOrphaned(
+                credentialStore.removeOrphaned(
                     keeping: Set(response.mcpServers.map(\.id))
                 )
             }
@@ -260,7 +267,7 @@ final class ExtensionsModel: ObservableObject {
                 as: ExtensionOperationResponse.self
             )
             for serverID in credentialServerIDs {
-                MCPCredentialStore.remove(serverID: serverID)
+                credentialStore.remove(serverID: serverID)
             }
             await refreshExtensions()
             await refreshExtensionCatalog()
@@ -438,7 +445,7 @@ final class ExtensionsModel: ObservableObject {
                 "/api/extensions/mcp/\(id)",
                 as: ExtensionOperationResponse.self
             )
-            MCPCredentialStore.remove(serverID: id)
+            credentialStore.remove(serverID: id)
             await refreshExtensions()
         } catch {
             extensionErrorMessage = error.localizedDescription
@@ -452,8 +459,8 @@ final class ExtensionsModel: ObservableObject {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return false
         }
-        let previous = MCPCredentialStore.get(serverID: serverID)
-        guard MCPCredentialStore.set(values, serverID: serverID) else {
+        let previous = credentialStore.get(serverID: serverID)
+        guard credentialStore.set(values, serverID: serverID) else {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return false
         }
@@ -467,9 +474,9 @@ final class ExtensionsModel: ObservableObject {
             return true
         } catch {
             if let previous {
-                MCPCredentialStore.set(previous, serverID: serverID)
+                credentialStore.set(previous, serverID: serverID)
             } else {
-                MCPCredentialStore.remove(serverID: serverID)
+                credentialStore.remove(serverID: serverID)
             }
             extensionErrorMessage = error.localizedDescription
             return false
@@ -484,7 +491,7 @@ final class ExtensionsModel: ObservableObject {
                 body: ["id": serverID, "credentials": [String: Any]()],
                 as: MCPStatusCredentialResponse.self
             )
-            MCPCredentialStore.remove(serverID: serverID)
+            credentialStore.remove(serverID: serverID)
             await refreshExtensions()
             toastHandler("MCP credentials removed")
         } catch {
@@ -550,7 +557,7 @@ final class ExtensionsModel: ObservableObject {
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
         guard let backend else { return }
         for server in servers {
-            guard let storedValues = MCPCredentialStore.get(serverID: server.id) else { continue }
+            guard let storedValues = credentialStore.get(serverID: server.id) else { continue }
             guard Self.mcpCredentials(storedValues, areBoundTo: server) else {
                 extensionErrorMessage = "Saved OAuth credentials no longer match \(server.name). Reconnect it before enabling the server."
                 continue
@@ -560,7 +567,7 @@ final class ExtensionsModel: ObservableObject {
             let oldData = try? JSONSerialization.data(withJSONObject: storedValues, options: [.sortedKeys])
             let refreshedData = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
             let refreshedToken = oldData != refreshedData
-            if refreshedToken { MCPCredentialStore.set(values, serverID: server.id) }
+            if refreshedToken { credentialStore.set(values, serverID: server.id) }
             guard server.hasCredentials != true || refreshedToken else { continue }
             _ = try? await backend.post(
                 "/api/extensions/mcp/credentials",

@@ -45,7 +45,7 @@ final class AppModel: ObservableObject {
     }
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
-    let providerAccountsModel = ProviderAccountsModel()
+    let providerAccountsModel: ProviderAccountsModel
     private var providerAccountsCapabilityObservation: AnyCancellable?
     let voiceControl = VoiceControlModel()
 
@@ -82,7 +82,7 @@ final class AppModel: ObservableObject {
         CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
         #endif
     }
-    let agentTeamsModel = AgentTeamsModel()
+    let agentTeamsModel: AgentTeamsModel
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
     @Published var activeWorkerID: String?  // internal(for: AppModel extension files)
@@ -102,9 +102,29 @@ final class AppModel: ObservableObject {
     @Published var companionPairingPayload: CompanionPairingPayload?  // internal(for: AppModel+MobileCompanion)
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
     let backgroundServicesModel = BackgroundServicesModel()
-    let extensionsModel = ExtensionsModel()
+    let extensionsModel: ExtensionsModel
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
+    /// Compatibility notification for an AppModel-owned identity transition,
+    /// after the transcript's identity and rows have committed together. This
+    /// is not a subscription to child publications: content and streaming
+    /// changes remain isolated in TranscriptPresentationModel.
+    @Published private var transcriptSessionTransitionRevision: UInt64 = 0
+    enum TranscriptInputState: Equatable {
+        case ready
+        case loading
+        case unavailable
+
+        var explanation: String? {
+            switch self {
+            case .ready: nil
+            case .loading: "Loading this conversation. Your draft is kept."
+            case .unavailable: "Reopen this conversation before sending. Your draft is kept."
+            }
+        }
+    }
+    @Published private(set) var transcriptInputState = TranscriptInputState.ready
+    var canAcceptTranscriptInput: Bool { transcriptInputState == .ready }
     var sessions: [SessionSummary] {
         get { sessionCatalog.snapshot.sessions }
         set { sessionCatalog.replaceSessions(newValue) }
@@ -113,7 +133,17 @@ final class AppModel: ObservableObject {
         get { sessionCatalog.snapshot.chatFolders }
         set { sessionCatalog.replaceChatFolders(newValue) }
     }
-    @Published var currentSessionID = ""
+    var currentSessionID: String {
+        get { transcriptPresentation.snapshot.sessionID }
+        set {
+            guard currentSessionID != newValue else { return }
+            invalidatePendingTranscriptTransition()
+            if transcriptInputState == .loading { transcriptInputState = .unavailable }
+            commitTranscriptIdentityTransition {
+                transcriptPresentation.beginSession(newValue)
+            }
+        }
+    }
     @Published var chatSplitRestoration = ChatSplitRestoration.empty  // internal(for: AppModel extension files)
     let primaryChatPaneState = ChatPaneState(id: .primary)
     let secondaryChatPaneState = ChatPaneState(id: .secondary)
@@ -155,6 +185,71 @@ final class AppModel: ObservableObject {
 
     func updateTranscriptBlocks(_ update: (inout [ChatBlock]) -> Void) {
         transcriptPresentation.updateBlocks(update)
+    }
+
+    func installTranscriptSession(
+        _ sessionID: String, blocks: [ChatBlock], forceNewGeneration: Bool = false
+    ) {
+        commitTranscriptIdentityTransition {
+            transcriptPresentation.installSession(
+                sessionID, blocks: blocks, forceNewGeneration: forceNewGeneration
+            )
+        }
+    }
+
+    func rekeyTranscriptSession(to sessionID: String) {
+        guard currentSessionID != sessionID else { return }
+        commitTranscriptIdentityTransition {
+            transcriptPresentation.rekeySession(from: currentSessionID, to: sessionID)
+        }
+    }
+
+    func beginTranscriptSessionLoad(_ sessionID: String) -> TranscriptSessionLoadToken {
+        invalidatePendingTranscriptTransition()
+        transcriptInputState = .loading
+        return commitTranscriptIdentityTransition {
+            transcriptPresentation.beginSessionLoad(sessionID)
+        }
+    }
+
+    @discardableResult
+    func completeTranscriptSessionLoad(
+        _ token: TranscriptSessionLoadToken, sessionID: String, blocks: [ChatBlock]
+    ) -> Bool {
+        guard transcriptPresentation.ownsSessionLoad(token),
+              transcriptPresentation.loadingSessionID != nil else { return false }
+        return commitTranscriptIdentityTransition {
+            transcriptPresentation.completeSessionLoad(token, sessionID: sessionID, blocks: blocks)
+        }
+    }
+
+    /// Notify compatibility consumers only for an identity change that this
+    /// synchronous orchestration operation actually committed. Observers read
+    /// the already-coherent child snapshot; no identity or row copy is stored
+    /// here, and rejected/no-op/content-only mutations publish nothing.
+    private func commitTranscriptIdentityTransition<Result>(_ mutation: () -> Result) -> Result {
+        let previousID = currentSessionID
+        let result = mutation()
+        if currentSessionID != previousID { transcriptSessionTransitionRevision &+= 1 }
+        return result
+    }
+
+    /// Loading the rows alone is insufficient: the send path also snapshots
+    /// the selected session's workspace and task. Publish readiness only once
+    /// that same owned operation has finished applying its metadata.
+    func finishTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
+        guard transcriptPresentation.ownsSessionLoad(token) else { return }
+        transcriptInputState = sessionInfo?.sessionID == currentSessionID ? .ready : .unavailable
+    }
+
+    func failTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
+        guard transcriptPresentation.ownsSessionLoad(token) else { return }
+        transcriptInputState = .unavailable
+        transcriptPresentation.cancelSessionLoad(token)
+    }
+
+    func transcriptSessionMetadataDidBecomeReady() {
+        transcriptInputState = .ready
     }
 
     @Published var todos: [TodoItem] = []
@@ -424,17 +519,18 @@ final class AppModel: ObservableObject {
     let computerControl = ComputerControlService()
     let applicationContext = ApplicationContextService()
     let simulatorControl = SimulatorControlService()
-    let eventAutomations = EventAutomationModel()
+    let eventAutomations: EventAutomationModel
     private var applicationContextCapabilityObservation: AnyCancellable?
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
-    let browser = BrowserService()
+    let browser: BrowserService
     lazy var walletGateway = WalletGateway()
     let streamingReply = StreamingReplyState()
     /// Provider-neutral, event-sourced state consumed by the Overview inspector.
     let sessionOverview = SessionStateEmitter()
 
     let backend: BackendService  // internal(for: AppModel extension files)
+    let credentialStore: any CredentialStoring
     let providerCredentialWriter: (String, String) -> Bool  // internal(for: AppModel extension files)
     let backendProcess = BackendProcess()  // internal(for: AppModel extension files)
     var taskWorkers: [String: ChatWorkerRuntime] = [:]  // internal(for: AppModel extension files)
@@ -604,6 +700,17 @@ final class AppModel: ObservableObject {
     var workspaceToOpenAfterReconnect: String?  // internal(for: AppModel extension files)
     var appliedWorkspacePath: String?  // internal(for: AppModel extension files)
     var sessionResetWatchdog: Task<Void, Never>?  // internal(for: AppModel extension files)
+    /// Retains only the currently requested transcript load. Completion clears
+    /// its own handle without clearing a newer request; callers may await a
+    /// captured handle without changing response ordering or cancellation.
+    var activeTranscriptLoad: (token: TranscriptSessionLoadToken, task: Task<Void, Never>)?
+    struct PendingTranscriptTransition {
+        let ownership: TranscriptSessionLoadToken
+        let source: ObjectIdentifier
+        let reasons: Set<String>
+        var acceptsSocketAcknowledgement: Bool
+    }
+    var pendingTranscriptTransition: PendingTranscriptTransition?
     var terminalRefreshRunIDs: Set<String> = []  // internal(for: AppModel extension files)
     var restoredQueuedRunIDs: Set<String> = []  // internal(for: AppModel extension files)
     let lifecycleJournal: AppLifecycleJournal?  // internal(for: AppModel extension files)
@@ -627,14 +734,30 @@ final class AppModel: ObservableObject {
         startImmediately: Bool = true,
         backendOverride: BackendService? = nil,
         lifecycleJournal: AppLifecycleJournal? = nil,
-        providerCredentialWriter: ((String, String) -> Bool)? = nil
+        providerCredentialWriter: ((String, String) -> Bool)? = nil,
+        credentialStore: (any CredentialStoring)? = nil,
+        mcpCredentialStore: (any MCPCredentialStoring)? = nil,
+        browserAutofillVault: BrowserAutofillVault? = nil,
+        connectorCredentialStore: (any ConnectorCredentialStoring)? = nil
     ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
+        let persistenceEnabled = startImmediately && !isUITesting
+        self.persistenceEnabled = persistenceEnabled
+        let credentials: any CredentialStoring = credentialStore ?? (persistenceEnabled
+            ? CredentialStore.shared : InMemoryCredentialStore())
+        self.credentialStore = credentials
+        providerAccountsModel = ProviderAccountsModel(credentialStore: credentials)
+        agentTeamsModel = AgentTeamsModel(credentialStore: credentials)
         self.providerCredentialWriter = providerCredentialWriter ?? { value, account in
-            CredentialStore.set(value, account: account)
+            credentials.set(value, account: account)
         }
-        persistenceEnabled = startImmediately && !isUITesting
+        extensionsModel = ExtensionsModel(credentialStore: mcpCredentialStore ?? (persistenceEnabled
+            ? KeychainMCPCredentialStore() : InMemoryMCPCredentialStore()))
+        browser = BrowserService(autofillVault: browserAutofillVault ?? (persistenceEnabled
+            ? BrowserAutofillVault() : BrowserAutofillVault(inMemory: ())))
+        eventAutomations = EventAutomationModel(credentials: connectorCredentialStore ?? (persistenceEnabled
+            ? ConnectorCredentialStore.shared : InMemoryConnectorCredentialStore()))
         let launchJournal = lifecycleJournal ?? AppLifecycleJournal()
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
@@ -891,7 +1014,9 @@ final class AppModel: ObservableObject {
                 } else if self.agentRuntimePhase.isOnline, !self.isShuttingDown {
                     self.agentRuntimePhase = .recovering("Reconnecting to the local agent…")
                     self.recoverFromLostConnection()
-                    self.scheduleRuntimeRecovery(reason: "The local agent connection was lost.")
+                    if self.persistenceEnabled {
+                        self.scheduleRuntimeRecovery(reason: "The local agent connection was lost.")
+                    }
                 }
             }
         }
@@ -1171,7 +1296,9 @@ final class AppModel: ObservableObject {
                     ? "The local agent exited with status \(code)."
                     : String(detail.suffix(1_000))
                 self.agentRuntimePhase = .recovering("Restarting the local agent…")
-                self.scheduleRuntimeRecovery(reason: "The local agent stopped unexpectedly.")
+                if self.persistenceEnabled {
+                    self.scheduleRuntimeRecovery(reason: "The local agent stopped unexpectedly.")
+                }
             }
         }
 

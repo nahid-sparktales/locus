@@ -1,0 +1,57 @@
+[package]
+name = "locus-wallet-signer-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+locus-wallet-signer-core = { path = ".." }
+serde_json = "=1.0.145"
+
+[workspace]
+members = ["."]
+
+# Test-only engine patch. Production signer dependency resolution is unchanged.
+# The exact archive, license and patched-tree identities are verified before use.
+[patch.crates-io]
+libfuzzer-sys = { path = "vendor/libfuzzer-sys-0.4.13" }
+
+[[bin]]
+name = "evm_ffi"
+path = "fuzz_targets/evm_ffi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "solana_ffi"
+path = "fuzz_targets/solana_ffi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sui_ffi"
+path = "fuzz_targets/sui_ffi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authorization_ffi"
+path = "fuzz_targets/authorization_ffi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "calldata_ffi"
+path = "fuzz_targets/calldata_ffi.rs"
+test = false
+doc = false
+bench = false

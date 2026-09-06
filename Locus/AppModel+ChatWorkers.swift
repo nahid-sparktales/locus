@@ -237,7 +237,7 @@ extension AppModel {
             taskWorkers.removeValue(forKey: requestedSessionID)
             taskWorkers[runtime.sessionID] = runtime
             if currentSessionID == requestedSessionID {
-                currentSessionID = runtime.sessionID
+                rekeyTranscriptSession(to: runtime.sessionID)
             }
         }
         if currentSessionID == runtime.sessionID, let info = runtime.sessionInfo {
@@ -358,7 +358,7 @@ extension AppModel {
             "account_id": account.id.uuidString,
             "base_url": account.resolvedBaseURL,
             "model": model,
-            "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
+            "api_key": credentialStore.get(account: account.credentialAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
             "lists_models": account.kind.listsModels,
@@ -449,7 +449,7 @@ extension AppModel {
             recordBackgroundWorkerEvent(event, runtime: runtime)
             return
         }
-        handle(event)
+        handle(event, source: runtime.service)
     }
 
     private func recordBackgroundWorkerEvent(

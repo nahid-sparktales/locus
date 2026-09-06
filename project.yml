@@ -12,6 +12,9 @@ configs:
   # Store build, sandboxed and entitled.
   Debug: debug
   Release: release
+  # Explicit personal mainnet channel. It retains release compilation and XPC
+  # authentication; it is not a Debug, canary, or App Store configuration.
+  ReleaseExperimental: release
   ReleaseMAS: release
 settings:
   base:
@@ -20,6 +23,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CURRENT_PROJECT_VERSION: 24
     MARKETING_VERSION: 2.4.0
+    LOCUS_SOURCE_REVISION: ""
   configs:
     # A stable signing identity rather than ad-hoc. Keychain items are guarded by
     # an ACL bound to the code signature, and an ad-hoc signature changes on every
@@ -45,6 +49,14 @@ settings:
       # Required for notarization, and safe here: every Mach-O in the bundled
       # runtime is signed with this same team, so library validation passes.
       ENABLE_HARDENED_RUNTIME: YES
+    ReleaseExperimental:
+      ARCHS: arm64
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "Apple Development"
+      DEVELOPMENT_TEAM: 4X4RJA7GMD
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+      ENABLE_APP_SANDBOX: NO
+      ENABLE_HARDENED_RUNTIME: YES
     ReleaseMAS:
       ARCHS: arm64
       CODE_SIGN_STYLE: Automatic
@@ -65,6 +77,8 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     exactVersion: 1.18.0
+  ReownSwift:
+    path: Vendor/ReownSwift
 targetTemplates:
   LocusApplication:
     type: application
@@ -141,6 +155,11 @@ targets:
           DEVELOPMENT_TEAM: 4X4RJA7GMD
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
+        ReleaseExperimental:
+          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_IDENTITY: "Apple Development"
+          ENABLE_APP_SANDBOX: YES
+          ENABLE_HARDENED_RUNTIME: YES
     dependencies:
       - target: WalletSignerService
         embed: true
@@ -151,8 +170,14 @@ targets:
     sources:
       - path: WalletSignerService
       - path: Locus/WalletSignerProtocol.swift
+      - path: Locus/WalletConnectionProtocol.swift
+      - path: Locus/WalletDappRequestRouter.swift
       - path: Locus/WalletNetworkModels.swift
+      - path: Locus/WalletStructuredAuthorization.swift
       - path: Locus/WalletVaultKeychain.swift
+      - path: WalletConnectionsRuntime/WalletReleaseActivation.swift
+      - path: WalletConnectionsRuntime/WalletReleaseAuthority.swift
+      - path: WalletConnectionsRuntime/WalletReleaseAuthorityStore.swift
     preBuildScripts:
       - name: Build pinned Rust signer core
         basedOnDependencyAnalysis: false
@@ -189,6 +214,8 @@ targets:
         LOCUS_WALLET_CAPABILITY_PUBLIC_KEY: ""
         LOCUS_WALLET_CAPABILITY_MANIFEST_BASE64: ""
         LOCUS_WALLET_REVIEW_MANIFEST_BASE64: ""
+        LOCUS_WALLET_REVIEW_CEILING_BASE64: ""
+        LOCUS_SOURCE_REVISION: "$(LOCUS_SOURCE_REVISION)"
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
@@ -202,15 +229,40 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: "$(LOCUS_WALLET_SIGNER_PROVISIONING_PROFILE_SPECIFIER)"
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           ENABLE_HARDENED_RUNTIME: YES
+        ReleaseExperimental:
+          INFOPLIST_FILE: Config/WalletSignerExperimental-Info.plist
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_EXPERIMENTAL_MAINNET"
+          CODE_SIGN_STYLE: Automatic
+          CODE_SIGN_IDENTITY: "Apple Development"
+          ENABLE_APP_SANDBOX: YES
+          ENABLE_HARDENED_RUNTIME: YES
   Locus:
     templates:
       - LocusApplication
+    sources:
+      - path: WalletConnectionsRuntime
+        excludes:
+          - Resources
+      - path: WalletConnectionsRuntime/Resources
+        buildPhase: resources
+      - path: WalletConnectionsWeb/licenses
+        buildPhase: resources
+      - path: Vendor/ReownSwift/LICENSE
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Locus/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Config/LocusDirect.entitlements
+        LOCUS_DIRECT_ENTITLEMENTS: Config/LocusDirect.entitlements
+        CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
+        LOCUS_REOWN_PROJECT_ID: ""
+        LOCUS_WALLETCONNECT_REDIRECT_URL: ""
+        LOCUS_PHANTOM_APP_ID: ""
+        LOCUS_PHANTOM_REDIRECT_URL: ""
+        LOCUS_WALLET_RELEASE_ACTIVATION_URL: "https://github.com/nahid-sparktales/locus/releases/latest/download/wallet-activation.json"
+        LOCUS_CANARY_UPDATE_FEED_URL: ""
+        LOCUS_WALLET_CANDIDATE_ARCHIVE_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_QUICKNODE_ETHEREUM_MAINNET_RPC_URL: ""
         LOCUS_WALLET_ALCHEMY_ETHEREUM_SEPOLIA_RPC_URL: ""
@@ -223,6 +275,14 @@ targets:
         LOCUS_WALLET_QUICKNODE_SUI_MAINNET_GRAPHQL_URL: ""
         LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL: ""
         LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL: ""
+      configs:
+        ReleaseExperimental:
+          PRODUCT_NAME: Locus Experimental
+          PRODUCT_MODULE_NAME: Locus
+          EXECUTABLE_NAME: Locus
+          INFOPLIST_FILE: Config/LocusExperimental-Info.plist
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_EXPERIMENTAL_MAINNET"
+          LOCUS_WALLET_RELEASE_ACTIVATION_URL: ""
     dependencies:
       - target: WalletRecoveryApplication
         embed: true
@@ -238,6 +298,8 @@ targets:
       - package: SwiftTerm
       - package: SwiftMarkdown
         product: Markdown
+      - package: ReownSwift
+        product: WalletConnect
     scheme:
       testTargets:
         - LocusTests
@@ -310,6 +372,14 @@ targets:
         TEST_TARGET_NAME: LocusMAS
         GENERATE_INFOPLIST_FILE: YES
 schemes:
+  LocusExperimental:
+    build:
+      targets:
+        Locus: all
+    run:
+      config: ReleaseExperimental
+    archive:
+      config: ReleaseExperimental
   WalletChainIntegration:
     build:
       targets:
@@ -320,6 +390,14 @@ schemes:
       environmentVariables:
         LOCUS_ANVIL_RPC_URL: "$(LOCUS_ANVIL_RPC_URL)"
         LOCUS_ANVIL_VERSION: "$(LOCUS_ANVIL_VERSION)"
+        LOCUS_SUI_LOCALNET_GRAPHQL_URL: "$(LOCUS_SUI_LOCALNET_GRAPHQL_URL)"
+        LOCUS_SUI_LOCALNET_FAUCET_URL: "$(LOCUS_SUI_LOCALNET_FAUCET_URL)"
+        LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER: "$(LOCUS_SUI_LOCALNET_CHAIN_IDENTIFIER)"
+        LOCUS_SUI_LOCALNET_VERSION: "$(LOCUS_SUI_LOCALNET_VERSION)"
+        LOCUS_SUI_FIXTURE_SIGNER_BIN: "$(LOCUS_SUI_FIXTURE_SIGNER_BIN)"
+        LOCUS_SOLANA_VALIDATOR_RPC_URL: "$(LOCUS_SOLANA_VALIDATOR_RPC_URL)"
+        LOCUS_SOLANA_VALIDATOR_GENESIS_HASH: "$(LOCUS_SOLANA_VALIDATOR_GENESIS_HASH)"
+        LOCUS_SOLANA_VALIDATOR_VERSION: "$(LOCUS_SOLANA_VALIDATOR_VERSION)"
       targets:
         - LocusWalletChainTests
   LocusMAS:

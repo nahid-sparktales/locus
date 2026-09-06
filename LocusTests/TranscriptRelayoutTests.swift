@@ -67,6 +67,30 @@ final class TranscriptRelayoutTests: XCTestCase {
         )
     }
 
+    func testCachedWrappedProposalRestoresNativeLineLayout() throws {
+        let suffix = "The final line must use the restored wide layout."
+        let text = String(repeating: "A wrapped transcript paragraph has several words. ", count: 100) + suffix
+        let view = makeTextView(text: text, wraps: true)
+        let container = try XCTUnwrap(view.textContainer)
+        let layout = try XCTUnwrap(view.layoutManager)
+        let suffixRange = (text as NSString).range(of: suffix)
+
+        let wide = view.measuredSize(for: 520, wraps: true)
+        let wideGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let wideSuffix = layout.boundingRect(forGlyphRange: wideGlyphs, in: container)
+        let narrow = view.measuredSize(for: 310, wraps: true)
+        XCTAssertGreaterThan(narrow.height, wide.height)
+
+        XCTAssertEqual(view.measuredSize(for: 520, wraps: true), wide)
+        XCTAssertEqual(view.textLayoutMeasurementCount, 2, "Reuse the cached size without measuring again")
+        XCTAssertEqual(container.containerSize.width, 520, "The cached size must describe the active native layout")
+        layout.ensureLayout(for: container)
+        let restoredGlyphs = layout.glyphRange(forCharacterRange: suffixRange, actualCharacterRange: nil)
+        let restoredSuffix = layout.boundingRect(forGlyphRange: restoredGlyphs, in: container)
+        XCTAssertEqual(restoredSuffix, wideSuffix, "Drawing, selection and accessibility must use the restored line breaks")
+        XCTAssertLessThanOrEqual(restoredSuffix.maxY, wide.height)
+    }
+
     func testLiveResizeUsesConservativeFourPointBucketsAndBoundedLRU() {
         let view = makeTextView(text: Self.longProse, wraps: true)
         view.setLiveResizeMeasurementActive(true)
@@ -158,6 +182,121 @@ final class TranscriptRelayoutTests: XCTestCase {
         XCTAssertEqual(summary.finalWidth, 1_184)
     }
 
+    func testResizeSamplerCapturesReadyInputWithoutASleepWakeCycle() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.entry, at: 10)
+        sampler.observe(.beforeSources, at: 10.002)
+        sampler.observe(.exit, at: 10.006)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 6, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerExcludesSleepAndDoesNotRestartAnOpenInterval() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.observe(.beforeTimers, at: 10)
+        sampler.observe(.beforeSources, at: 10.001)
+        sampler.observe(.entry, at: 10.002) // Nested entry must not erase prior work.
+        sampler.observe(.beforeWaiting, at: 10.003)
+        sampler.observe(.afterWaiting, at: 20)
+        sampler.observe(.beforeSources, at: 20.001)
+        sampler.observe(.exit, at: 20.004)
+        sampler.observe(.exit, at: 20.005)
+        sampler.finish(at: 21)
+        XCTAssertEqual(sampler.samples.count, 2)
+        XCTAssertEqual(sampler.samples[0], 3, accuracy: 0.0001)
+        XCTAssertEqual(sampler.samples[1], 4, accuracy: 0.0001)
+    }
+
+    func testResizeSamplerCannotManufactureWorkFromAnEmptySession() {
+        var sampler = LiveResizeWorkSampler()
+        sampler.finish(at: 10)
+        sampler.observe(.exit, at: 11)
+        XCTAssertTrue(sampler.samples.isEmpty)
+        sampler.observe(.beforeSources, at: 12)
+        sampler.finish(at: 12.002)
+        XCTAssertEqual(sampler.samples.count, 1)
+        XCTAssertEqual(sampler.samples[0], 2, accuracy: 0.0001)
+    }
+
+    func testCompactComposerWrapsEveryControlInsideItsActualWorkspaceWidth() {
+        let controls: [CGSize] = [
+            CGSize(width: 72, height: 30), // Context.
+            CGSize(width: 30, height: 30), // Attachment.
+            CGSize(width: 68, height: 30), // Permission, never hidden.
+            CGSize(width: 38, height: 24), // Plan.
+            CGSize(width: 38, height: 24), // Grill.
+            CGSize(width: 108, height: 24), // Selected team.
+            CGSize(width: 142, height: 32), // Voice and primary action.
+        ]
+        let available = CGFloat(360 - 48 - 20) // Workspace, card and toolbar padding.
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: available)
+        XCTAssertEqual(result.size.width, available)
+        XCTAssertEqual(result.size.height, 68)
+        XCTAssertEqual(result.frames.count, controls.count)
+        for (index, frame) in result.frames.enumerated() {
+            XCTAssertEqual(frame.size, controls[index], "No control may be shrunk or dropped to fit")
+            XCTAssertGreaterThanOrEqual(frame.minX, 0)
+            XCTAssertLessThanOrEqual(frame.maxX, available)
+            XCTAssertGreaterThanOrEqual(frame.minY, 0)
+            XCTAssertLessThanOrEqual(frame.maxY, result.size.height)
+            for other in result.frames.dropFirst(index + 1) {
+                XCTAssertFalse(frame.intersects(other), "Wrapping controls must never overlap")
+            }
+        }
+        XCTAssertEqual(result.frames.last?.maxX, available, "Send/Stop stays at the trailing edge")
+    }
+
+    func testWideComposerKeepsOneRowAndTrailingActionWithoutReordering() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let result = ComposerActionMetrics.arrange(sizes: controls, width: 672)
+        XCTAssertEqual(result.size, CGSize(width: 672, height: 32))
+        XCTAssertEqual(result.frames.map(\.midY), [16, 16, 16])
+        XCTAssertEqual(result.frames.map(\.minX), [0, 78, 530])
+    }
+
+    func testComposerReproposesLongTeamNamesAndHandlesUnboundedMeasurementProbes() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 2_000, height: 24),
+                        CGSize(width: 142, height: 32)]
+        for proposal: CGFloat? in [292, 0, nil, .infinity, -.infinity, .nan] {
+            var remeasuredIndices: [Int] = []
+            let result = ComposerActionMetrics.measure(
+                idealSizes: controls, minimumWidth: 142, proposedWidth: proposal
+            ) { index, width in
+                remeasuredIndices.append(index)
+                XCTAssertEqual(index, 1, "Only the long team label needs a narrower proposal")
+                return CGSize(width: width, height: controls[index].height)
+            }
+            XCTAssertEqual(remeasuredIndices, [1])
+            XCTAssertTrue(result.size.width.isFinite)
+            XCTAssertTrue(result.size.height.isFinite)
+            XCTAssertGreaterThanOrEqual(result.size.width, 142)
+            XCTAssertEqual(result.frames.first?.minX, 0)
+            XCTAssertEqual(result.frames.last?.maxX, result.size.width)
+            XCTAssertEqual(result.frames.last?.size, controls.last, "Voice and Send/Stop remain a group")
+            XCTAssertEqual(result.frames.count, controls.count)
+            for frame in result.frames {
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertLessThanOrEqual(frame.maxX, result.size.width)
+            }
+        }
+    }
+
+    func testComposerWrappingMirrorsGeometryButKeepsControlIdentityOrder() {
+        let controls = [CGSize(width: 72, height: 30), CGSize(width: 108, height: 24),
+                        CGSize(width: 142, height: 32)]
+        let leftToRight = ComposerActionMetrics.arrange(sizes: controls, width: 292)
+        let rightToLeft = ComposerActionMetrics.arrange(sizes: controls, width: 292, rightToLeft: true)
+        XCTAssertEqual(leftToRight.size, rightToLeft.size)
+        for index in controls.indices {
+            XCTAssertEqual(rightToLeft.frames[index].size, leftToRight.frames[index].size)
+            XCTAssertEqual(rightToLeft.frames[index].minX, 292 - leftToRight.frames[index].maxX)
+            XCTAssertEqual(rightToLeft.frames[index].minY, leftToRight.frames[index].minY)
+        }
+        XCTAssertEqual(rightToLeft.frames.last?.minX, 0)
+        XCTAssertEqual(ComposerActionMetrics.arrange(sizes: [], width: 292).size.height, 0)
+    }
+
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
         let initial = MarkdownNativeText.plain(
             Self.longProse,
@@ -205,24 +344,382 @@ final class TranscriptRelayoutTests: XCTestCase {
         pump()
         parkTranscriptAtTop(in: live)
         let dragged = try XCTUnwrap(snapshot(live))
+        let draggedGeometry = snapshotGeometry(in: live, image: dragged)
 
         // The same model state, laid out from scratch, is the answer the
         // dragged transcript has to agree with.
         let rebuilt = mount(makeModel(inspectorWidth: endWidth), size: size)
         parkTranscriptAtTop(in: rebuilt)
         let reference = try XCTUnwrap(snapshot(rebuilt))
+        let referenceGeometry = snapshotGeometry(in: rebuilt, image: reference)
+        let difference = differingFraction(dragged, reference)
+        let sameDimensions = dragged.pixelsWide == reference.pixelsWide
+            && dragged.pixelsHigh == reference.pixelsHigh
+        if !sameDimensions || difference >= 0.01 {
+            attachSnapshot(dragged, name: "Dragged transcript")
+            attachSnapshot(reference, name: "Rebuilt transcript")
+            let geometry = XCTAttachment(string: """
+                differingFraction=\(difference)
+                Dragged snapshot:\n\(draggedGeometry)
+                Rebuilt snapshot:\n\(referenceGeometry)
+                """)
+            geometry.name = "Transcript relayout geometry"
+            geometry.lifetime = .keepAlways
+            add(geometry)
+        }
+        XCTAssertEqual(dragged.pixelsWide, reference.pixelsWide, "Snapshot widths must match exactly")
+        XCTAssertEqual(dragged.pixelsHigh, reference.pixelsHigh, "Snapshot heights must match exactly")
 
         // A few tenths of a percent of drift is the scroll anchor settling in
         // a different place between the two mounts. The defect this guards
         // against moves ~4.5% of the window, so the bar sits well between the
         // two rather than at either edge.
         XCTAssertLessThan(
-            differingFraction(dragged, reference), 0.01,
+            difference, 0.01,
             "The transcript kept row heights from the previous column width"
         )
     }
 
+    func testLargeHistoryKeepsActualTailVisibleWithoutRealizingEveryTextView() throws {
+        let model = makeGrowthModel()
+        let count = 600
+        model.blocks = (0..<count).map { index in
+            ChatBlock(
+                kind: index.isMultiple(of: 2) ? .user : .assistant,
+                text: index == count - 1 ? "Large history visible tail" : "History fixture row \(index)"
+            )
+        }
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Large history visible tail", in: scroll))
+        var pending = [try XCTUnwrap(scroll.documentView)]
+        var visited = 0
+        var realizedTextViews = 0
+        while let view = pending.popLast(), visited < 8_192 {
+            visited += 1
+            if view is ResponseSelectableTextView { realizedTextViews += 1 }
+            pending.append(contentsOf: view.subviews)
+        }
+        XCTAssertTrue(pending.isEmpty, "The bounded native traversal must account for the mounted tree")
+        XCTAssertGreaterThan(realizedTextViews, 0)
+        XCTAssertLessThan(realizedTextViews, count / 4,
+            "Following the tail must retain lazy history rather than mount the whole transcript")
+    }
+
+    func testEqualCountNewRowIDsRevealTheReplacementSuffix() throws {
+        let model = makeGrowthModel()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Baseline visible tail", in: scroll))
+        let previous = model.transcriptPresentation.snapshot
+
+        model.blocks = [
+            ChatBlock(kind: .user, text: previous.blocks[0].text),
+            ChatBlock(kind: .assistant, text: Self.body + "\n\nChanged identity tail"),
+        ]
+
+        XCTAssertEqual(model.blocks.count, previous.blocks.count)
+        XCTAssertNotEqual(model.transcriptPresentation.snapshot.renderToken.tailID, previous.renderToken.tailID)
+        XCTAssertEqual(model.transcriptPresentation.snapshot.renderToken.sessionGeneration, previous.renderToken.sessionGeneration)
+        XCTAssertNotNil(waitForRenderedSuffix("Changed identity tail", in: scroll))
+    }
+
+    func testEqualCountSameRowIDsRevealTheChangedContentSuffix() throws {
+        let model = makeGrowthModel()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Baseline visible tail", in: scroll))
+        let previous = model.transcriptPresentation.snapshot
+
+        model.updateTranscriptBlocks { $0[$0.count - 1].text = Self.body + "\n\nSame identity tail" }
+
+        XCTAssertEqual(model.blocks.count, previous.blocks.count)
+        XCTAssertEqual(model.transcriptPresentation.snapshot.renderToken.tailID, previous.renderToken.tailID)
+        XCTAssertGreaterThan(model.transcriptPresentation.snapshot.renderToken.contentRevision, previous.renderToken.contentRevision)
+        XCTAssertNotNil(waitForRenderedSuffix("Same identity tail", in: scroll))
+    }
+
+    func testRenderedStreamingGrowthDoesNotRebuildCommittedSnapshot() throws {
+        let model = makeGrowthModel()
+        model.handleEventForTesting(["type": "message_start"])
+        model.handleEventForTesting(["type": "token", "text": "Streaming initial tail"])
+        model.flushPendingTokens()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Streaming initial tail", in: scroll))
+        let snapshot = model.transcriptPresentation.snapshot
+        let builds = model.transcriptPresentation.snapshotBuildCountForTesting
+
+        for index in 1...3 {
+            let suffix = "Streaming growth tail \(index)"
+            model.handleEventForTesting([
+                "type": "token", "text": "\n\n" + Self.body + "\n\n" + suffix,
+            ])
+            model.flushPendingTokens()
+            XCTAssertNotNil(waitForRenderedSuffix(suffix, in: scroll))
+            XCTAssertEqual(model.transcriptPresentation.snapshot, snapshot)
+            XCTAssertEqual(model.transcriptPresentation.snapshotBuildCountForTesting, builds)
+        }
+    }
+
+    func testLiveDispatcherCardGrowthMovesTheRenderedTailWithoutSnapshotRebuild() throws {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = true
+        model.currentSessionID = "live-card-growth"
+        model.orchestrationRunID = "live-card-run"
+        model.turnDispatchedTeamRunID = "live-card-run"
+        model.orchestrationState = .dispatching
+        model.isBusy = true
+        model.teamRunLive.apply("dispatcher_started", [
+            "run_id": "live-card-run", "agent_name": "Dispatcher", "provider": "Fixture",
+            "model": "Fixture", "goal": "Prepare the reviewed plan",
+        ])
+        model.blocks = [
+            ChatBlock(kind: .user, text: "Prepare this small fixture plan", runID: "live-card-run"),
+            ChatBlock(kind: .assistant, text: "Live card visible tail"),
+        ]
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        let before = try XCTUnwrap(waitForRenderedSuffix("Live card visible tail", in: scroll))
+        let snapshot = model.transcriptPresentation.snapshot
+        let builds = model.transcriptPresentation.snapshotBuildCountForTesting
+
+        model.teamRunLive.apply("dispatcher_plan_rejected", [
+            "run_id": "live-card-run",
+            "reason": "The proposed team plan needs explicit dependencies and complete review criteria before approval.",
+            "message": "Correcting the incomplete plan and verifying every dependency before presenting it for review.",
+        ])
+
+        // Only the live card changed. Compare the actual suffix glyph's
+        // document position, not the lazy document's estimated total height.
+        let after = try XCTUnwrap(waitForRenderedSuffix(
+            "Live card visible tail", in: scroll, below: before.rect.maxY + 20
+        ))
+        XCTAssertGreaterThan(after.rect.maxY, before.rect.maxY + 20)
+        XCTAssertEqual(model.transcriptPresentation.snapshot, snapshot)
+        XCTAssertEqual(model.transcriptPresentation.snapshotBuildCountForTesting, builds)
+    }
+
+    func testRapidConversationReplacementRealizesOnlyTheLatestSuffix() throws {
+        let model = makeGrowthModel()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Baseline visible tail", in: scroll))
+        scrollUpForGrowthTest(scroll)
+        for index in 1...3 {
+            model.installTranscriptSession("replacement-\(index)", blocks: [
+                ChatBlock(kind: .user, text: String(repeating: Self.body + "\n\n", count: 5 + index)),
+                ChatBlock(kind: .assistant, text: "Latest replacement tail \(index)"),
+            ])
+        }
+        XCTAssertEqual(model.currentSessionID, "replacement-3")
+        XCTAssertNotNil(waitForRenderedSuffix("Latest replacement tail 3", in: scroll))
+        XCTAssertNil(renderedSuffix("Latest replacement tail 1", in: scroll))
+        XCTAssertNil(renderedSuffix("Latest replacement tail 2", in: scroll))
+    }
+
+    func testDetachedReaderKeepsViewportWhileExistingTailGrows() throws {
+        let model = makeGrowthModel()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Baseline visible tail", in: scroll))
+        scrollUpForGrowthTest(scroll)
+        let parked = scroll.contentView.bounds.origin.y
+        model.updateTranscriptBlocks {
+            $0[$0.count - 1].text += "\n\n" + Self.body + "\n\nDetached growth tail"
+        }
+        assertViewportRemains(parked, in: scroll)
+    }
+
+    func testActiveTextSelectionKeepsViewportWhileNewOutputArrives() throws {
+        let model = makeGrowthModel()
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        let suffix = try XCTUnwrap(waitForRenderedSuffix("Baseline visible tail", in: scroll))
+        let leaf = try XCTUnwrap(suffix.leaf as? ResponseSelectableTextView)
+        let store = try XCTUnwrap(leaf.selectionStore)
+        let window = try XCTUnwrap(leaf.window)
+        let start = leaf.convert(NSPoint(x: 8, y: leaf.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType, x: CGFloat) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: start.x + x, y: start.y),
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1,
+                clickCount: 1, pressure: 1
+            ))
+        }
+        let down = try event(.leftMouseDown, x: 0)
+        let drag = try event(.leftMouseDragged, x: 40)
+        let up = try event(.leftMouseUp, x: 40)
+        store.mouseDown(in: leaf, event: down)
+        store.mouseDragged(event: drag)
+        defer { store.mouseUp(in: leaf, event: up); store.clearSelection() }
+        XCTAssertFalse(store.activeRowIDs.isEmpty, "The regression must hold a real active text-selection drag")
+        func attachSelectionGeometry(_ phase: String) {
+            let clip = scroll.contentView
+            let document = scroll.documentView
+            let pointer = clip.convert(drag.locationInWindow, from: nil)
+            var glyphRect: NSRect = .zero
+            if let layout = leaf.layoutManager, let container = leaf.textContainer {
+                let glyphs = layout.glyphRange(forCharacterRange: leaf.selectedRange(), actualCharacterRange: nil)
+                glyphRect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                    .offsetBy(dx: leaf.textContainerOrigin.x, dy: leaf.textContainerOrigin.y)
+            }
+            // Two bounded samples of geometry only. In particular this does
+            // not read accessibility trees, force a root layout, or log text.
+            let attachment = XCTAttachment(string: """
+            phase=\(phase)
+            viewport=\(NSStringFromRect(clip.bounds))
+            document=\(NSStringFromRect(document?.bounds ?? .zero))
+            leafBounds=\(NSStringFromRect(leaf.bounds))
+            leafInDocument=\(NSStringFromRect(leaf.convert(leaf.bounds, to: document)))
+            selectedGlyphInDocument=\(NSStringFromRect(leaf.convert(glyphRect, to: document)))
+            selectedGlyphInClip=\(NSStringFromRect(leaf.convert(glyphRect, to: clip)))
+            pointerInClip=\(NSStringFromPoint(pointer))
+            pointerInsideViewport=\(clip.visibleRect.contains(pointer))
+            selectedGlyphHasArea=\(!glyphRect.isEmpty)
+            leafStillOwned=\(leaf.window === window && leaf.enclosingScrollView === scroll)
+            """)
+            attachment.name = "Selection reader geometry — \(phase)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        attachSelectionGeometry("before append")
+        let parked = scroll.contentView.bounds.origin.y
+        model.blocks.append(ChatBlock(kind: .assistant, text: Self.body + "\n\nSelection growth tail"))
+        assertViewportRemains(parked, in: scroll)
+        attachSelectionGeometry("after append observation")
+    }
+
+    func testRenderedSuffixProbeMeasuresStreamingGlyphsAndRejectsClippingOrTransparency() throws {
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
+        let document = NSView(frame: scroll.bounds)
+        scroll.documentView = document
+        let leaf = AppendOnlyTextView.make()
+        leaf.textContainerInset = NSSize(width: 7, height: 5)
+        leaf.textContainer?.lineFragmentPadding = 0
+        leaf.textContainer?.heightTracksTextView = false
+        leaf.isVerticallyResizable = true
+        leaf.textStorage?.setAttributedString(NSAttributedString(
+            string: "Synthetic streaming prefix\nExact streaming suffix",
+            attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        ))
+        leaf.contentDidChange()
+        leaf.frame = NSRect(x: 0, y: 0, width: 304, height: leaf.measuredHeight(for: 290) + 10)
+        let clip = NSClipView(frame: NSRect(x: 20, y: 20, width: 304, height: leaf.frame.height))
+        clip.documentView = leaf
+        document.addSubview(clip)
+        let window = NSWindow(contentRect: scroll.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = scroll
+        window.orderFront(nil)
+        windows.append(window)
+        pump()
+
+        XCTAssertTrue(try XCTUnwrap(renderedSuffix("Exact streaming suffix", in: scroll)).leaf === leaf)
+        XCTAssertNil(renderedSuffix("Absent streaming suffix", in: scroll))
+        leaf.isHidden = true
+        XCTAssertNil(renderedSuffix("Exact streaming suffix", in: scroll))
+        leaf.isHidden = false
+        leaf.alphaValue = 0
+        XCTAssertNil(renderedSuffix("Exact streaming suffix", in: scroll))
+        leaf.alphaValue = 1
+        clip.alphaValue = 0
+        XCTAssertNil(renderedSuffix("Exact streaming suffix", in: scroll))
+        clip.alphaValue = 1
+        clip.setFrameSize(NSSize(width: 80, height: leaf.frame.height))
+        XCTAssertNil(renderedSuffix("Exact streaming suffix", in: scroll),
+            "Partly visible streaming glyphs must not satisfy the full-suffix requirement")
+        clip.setFrameSize(NSSize(width: 304, height: leaf.frame.height))
+        XCTAssertNotNil(renderedSuffix("Exact streaming suffix", in: scroll))
+    }
+
     // MARK: - Harness
+
+    private struct RenderedSuffix {
+        let leaf: NSTextView
+        let rect: NSRect
+    }
+
+    private func makeGrowthModel() -> AppModel {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = true
+        model.blocks = [
+            ChatBlock(kind: .user, text: String(repeating: Self.body + "\n\n", count: 8)),
+            ChatBlock(kind: .assistant, text: "Baseline visible tail"),
+        ]
+        return model
+    }
+
+    private func renderedSuffix(_ suffix: String, in scroll: NSScrollView) -> RenderedSuffix? {
+        guard scroll.window?.isVisible == true, let document = scroll.documentView else { return nil }
+        var pending = [document]
+        var visited = 0
+        while let view = pending.popLast() {
+            visited += 1
+            guard visited <= 8_192 else { return nil }
+            pending.append(contentsOf: view.subviews)
+            guard view is ResponseSelectableTextView || view is AppendOnlyTextView,
+                  let leaf = view as? NSTextView,
+                  !leaf.isHiddenOrHasHiddenAncestor, leaf.enclosingScrollView === scroll,
+                  let layout = leaf.layoutManager, let container = leaf.textContainer else { continue }
+            var ancestor: NSView? = leaf
+            var transparent = false
+            while let current = ancestor {
+                if current.alphaValue <= 0 { transparent = true; break }
+                ancestor = current.superview
+            }
+            guard !transparent else { continue }
+            let characters = (leaf.string as NSString).range(of: suffix)
+            guard characters.location != NSNotFound else { continue }
+            let glyphs = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
+            let bounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                .offsetBy(dx: leaf.textContainerOrigin.x, dy: leaf.textContainerOrigin.y)
+            let visibleBounds = bounds.intersection(leaf.visibleRect)
+            guard !bounds.isEmpty, !visibleBounds.isEmpty else { continue }
+            let inDocument = leaf.convert(bounds, to: document)
+            let clipped = leaf.convert(visibleBounds, to: document)
+                .intersection(scroll.documentVisibleRect)
+            guard !bounds.isEmpty, !clipped.isEmpty, clipped.contains(inDocument) else { continue }
+            return RenderedSuffix(leaf: leaf, rect: inDocument)
+        }
+        return nil
+    }
+
+    private func waitForRenderedSuffix(
+        _ suffix: String, in scroll: NSScrollView, below minimumY: CGFloat? = nil
+    ) -> RenderedSuffix? {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        repeat {
+            if let result = renderedSuffix(suffix, in: scroll),
+               minimumY.map({ result.rect.maxY > $0 }) ?? true { return result }
+            pump(2)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return nil
+    }
+
+    private func scrollUpForGrowthTest(_ scroll: NSScrollView) {
+        let original = scroll.contentView.bounds.origin.y
+        simulateUserScroll(scroll, pump: pump) { origin, document in
+            NSPoint(x: origin.x, y: max(document?.bounds.minY ?? 0, origin.y - 250))
+        }
+        XCTAssertLessThan(scroll.contentView.bounds.origin.y, original - 100,
+            "The fixture must actually leave the followed bottom before testing reader ownership")
+    }
+
+    private func assertViewportRemains(
+        _ parked: CGFloat, in scroll: NSScrollView, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        var maximumMovement: CGFloat = 0
+        repeat {
+            pump(2)
+            maximumMovement = max(maximumMovement, abs(scroll.contentView.bounds.origin.y - parked))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        XCTAssertLessThanOrEqual(maximumMovement, 1,
+            "Rendered growth must not move a reader-owned viewport", file: file, line: line)
+    }
 
     private func makeModel(inspectorWidth: CGFloat) -> AppModel {
         let model = AppModel(startImmediately: false)
@@ -345,6 +842,60 @@ final class TranscriptRelayoutTests: XCTestCase {
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep
+    }
+
+    /// Read immediately after each image, without forcing another layout or
+    /// reading text, accessibility values, or responder descriptions. Bound
+    /// traversal and row output so failures retain useful, finite diagnostics.
+    private func snapshotGeometry(in root: NSView, image: NSBitmapImageRep) -> String {
+        var lines = [
+            "uptime=\(ProcessInfo.processInfo.systemUptime)",
+            "imagePixels=\(image.pixelsWide)x\(image.pixelsHigh) rootBounds=\(NSStringFromRect(root.bounds))",
+            "appActive=\(NSApp.isActive) appearance=\(root.effectiveAppearance.name.rawValue)"
+        ]
+        if let window = root.window {
+            let responderType = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+            lines.append("windowFrame=\(NSStringFromRect(window.frame)) contentLayout=\(NSStringFromRect(window.contentLayoutRect)) scale=\(window.backingScaleFactor)")
+            lines.append("windowKey=\(window.isKeyWindow) main=\(window.isMainWindow) visible=\(window.isVisible) responderType=\(responderType.prefix(128)) mouse=\(NSStringFromPoint(window.mouseLocationOutsideOfEventStream))")
+        } else {
+            lines.append("window=nil")
+        }
+        guard let scroll = transcriptScrollView(in: root) else {
+            return (lines + ["transcriptScrollView=nil"]).joined(separator: "\n")
+        }
+        let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: root)
+        lines.append("scrollFrame=\(NSStringFromRect(scroll.convert(scroll.bounds, to: root))) clipBounds=\(NSStringFromRect(scroll.contentView.bounds)) viewport=\(NSStringFromRect(viewport))")
+        if let document = scroll.documentView {
+            lines.append("documentFrame=\(NSStringFromRect(document.frame)) documentBounds=\(NSStringFromRect(document.bounds)) flipped=\(document.isFlipped)")
+        }
+        var pending: [NSView] = [scroll]
+        var visited = 0
+        var rowCount = 0
+        while visited < 512, rowCount < 24, let view = pending.popLast() {
+            visited += 1
+            if let text = view as? ResponseSelectableTextView {
+                let frame = text.convert(text.bounds, to: root)
+                if !text.isHiddenOrHasHiddenAncestor, frame.intersects(viewport) {
+                    lines.append("visibleText[\(rowCount)] frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(text.bounds)) container=\(NSStringFromSize(text.textContainer?.containerSize ?? .zero)) measurements=\(text.textLayoutMeasurementCount) cacheEntries=\(text.measurementCacheEntryCount)")
+                    rowCount += 1
+                }
+            }
+            pending.append(contentsOf: view.subviews.reversed())
+        }
+        lines.append("visitedViews=\(visited) visibleTextRows=\(rowCount) traversalTruncated=\(!pending.isEmpty)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func attachSnapshot(_ image: NSBitmapImageRep, name: String) {
+        let attachment: XCTAttachment
+        if let png = image.representation(using: .png, properties: [:]) {
+            attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        } else {
+            attachment = XCTAttachment(string: "Snapshot PNG encoding failed")
+        }
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func differingFraction(_ lhs: NSBitmapImageRep, _ rhs: NSBitmapImageRep) -> Double {

@@ -1,0 +1,11 @@
+{
+  "name": "reown-swift",
+  "version": "2.3.2",
+  "revision": "0b1337bdff0d6925eaa0467b83e2cc664275a8ee",
+  "archiveURL": "https://github.com/reown-com/reown-swift/archive/refs/tags/2.3.2.tar.gz",
+  "archiveSHA256": "c5de42f4a78a3b33aa58a593d81d9ba7295e69bdc00d25ffce20afb6932ee3a8",
+  "patches": ["Tools/Patches/reown-swift-2.3.2-foundation.patch", "Tools/ReownSwift.Package.swift"],
+  "patchedTreeSHA256": "2eac4caec48ca638bab63d61cadc22c8b8cb86df454040560cf28e1d7cbfb838",
+  "enabledProduct": "WalletConnect",
+  "excludedProducts": ["ReownWalletKit", "WalletConnectPay", "YttriumWrapper", "YttriumUtilsWrapper"]
+}

@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 extension AppModel {
-    func seedUITestState() {
+    func seedUITestState(runFixture: String? = nil) {
         // A fixed path so UI tests see a deterministic workspace name ("tmp")
         // regardless of the runner's TMPDIR.
         let workspace = "/tmp"
@@ -526,7 +526,9 @@ extension AppModel {
            !variant.isEmpty {
             seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
             // "schedule" lands on the scheduled agent's chat so its panel shows.
-            if variant == "schedule" { currentSessionID = "seed-schedule-chat" }
+            if variant == "schedule" {
+                installTranscriptSession("seed-schedule-chat", blocks: blocks)
+            }
         }
         seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
@@ -642,7 +644,7 @@ extension AppModel {
                 ]
             )
         }
-        seedUITestRunFixtureIfNeeded()
+        seedUITestRunFixtureIfNeeded(runFixture: runFixture)
 
         if let simulatorFixture = ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_SIMULATOR"
@@ -706,7 +708,7 @@ extension AppModel {
         )
         sessions.append(contentsOf: [newestChat, olderChat])
         if selectsAgentChat {
-            currentSessionID = newestChat.id
+            installTranscriptSession(newestChat.id, blocks: blocks)
         }
         if selectsAgentChat { sessionInfo = SessionInfo(
             model: "qwen3:8b",
@@ -1181,8 +1183,8 @@ extension AppModel {
         ]
     }
 
-    private func seedUITestRunFixtureIfNeeded() {
-        guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
+    private func seedUITestRunFixtureIfNeeded(runFixture: String? = nil) {
+        guard let fixture = runFixture ?? ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
               [
                 "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
                 "activity", "orphaned-activity", "swarm-live", "swarm-recoverable",

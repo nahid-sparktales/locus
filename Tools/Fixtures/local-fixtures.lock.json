@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "productionAuthority": false,
+  "sourceSHA256": {
+    "EVM/StatefulAssets.sol": "c2c437e70fd9c723d7d37a00acdd6ab5f86e1b2002d17f376bb78efb1f1780fd",
+    "Sui/Move.toml": "dc8d3de0fa5d4c9109fc767ee9a8d7227dc49ce43af14da28b487acb6b6810b1",
+    "Sui/sources/assets.move": "381c4414a1474caa86148f533ad2148f542437b5da0ae1e8bdd58e6395e34791",
+    "SuiLocalSigner/Cargo.toml": "d49594b10c9ac5607e8fae774f35bfeaefbc17ae777aee9d045e52915d570d6b",
+    "SuiLocalSigner/Cargo.lock": "737d94e4a3c153d3435359d75a4a429db226338ccebc753f81ba3dde1e8bad77",
+    "SuiLocalSigner/src/main.rs": "462f07d8a3a07116c9d3c124ecd2dacb9bb14a35713bb6a8462cfde1977a9c72",
+    "scenarios.json": "0949b1a129559cfeae874d00984c25257255a9f4cd7ececf65a7966d0b68fbc7"
+  },
+  "tools": {
+    "anvil": {"version":"1.7.1", "archiveSHA256":{"darwin_arm64":"eacdc67718fac857cad9e19c7f6729dd80de731d09df81856391d093cfcab547", "darwin_x86_64":"c7fd1f5c9bf718d30b5cb6fc94eac605039de2aa50afc4c545a4dddc1e411acb"}},
+    "agave": {"version":"4.1.2", "archiveSHA256":{"darwin_arm64":"51a44318e6fb8be0cfa69cdfdb3252f4c76a5eb2866740694e91de3d2fc5a75b", "darwin_x86_64":"eb678fe505ca470d4b474a0a92a1d6dd6c00c95df47ee4d8ca0712fe7a97efa1"}},
+    "sui": {"version":"testnet-v1.79.0", "commit":"46f18562f1f5af2438d35828e8b62d5e0b972db7", "archiveSHA256":{"darwin_arm64":"79900034cb533832a3bf9f10d783c309bfa8259697d6417e6dccdb0758f0f613", "darwin_x86_64":"de1cef624dd7344102094a46d68008de4f5256fc6aeb5c25f3a87dc21df333e1"}},
+    "solc": {"version":"0.8.26", "archiveSHA256":{}, "reviewStatus":"pending"},
+    "postgresql": {"version":"17", "archiveSHA256":{}, "reviewStatus":"pending-patch-and-build-identity"}
+  },
+  "compiledFixtureArtifacts": [],
+  "requiredMissingInputs": [
+    "reviewed-solc-executable-and-compiled-assets",
+    "pinned-real-v2-v3-universal-router-permit2-source-builds",
+    "pinned-spl-token2022-ata-core-programs-and-account-fixtures",
+    "compiled-sui-move-package-and-published-local-identities",
+    "process-crash-and-transport-fault-injection-harness"
+  ]
+}

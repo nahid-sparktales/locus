@@ -30,6 +30,8 @@ struct WalletSuiIndexedActivity: Equatable, Sendable {
     let objectHasPublicTransfer: Bool?
     let amountBaseUnits: String?
     let isInbound: Bool?
+    var counterpartyAddress: String? = nil
+    var counterpartyAmountBaseUnits: String? = nil
 }
 
 struct WalletSuiGasCoin: Equatable, Sendable {
@@ -153,33 +155,48 @@ struct WalletSuiProviderConfiguration: Sendable {
 
     static func bundled(
         network: WalletNetworkDescriptor,
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        reviewRegistry: WalletReviewRegistry? = nil
     ) -> WalletSuiProviderConfiguration? {
         guard network.chain == .sui else { return nil }
         let suffix = network.environment == .mainnet ? "Mainnet" : "Testnet"
-        let alchemy = endpoint(
+        let reviewRegistry = reviewRegistry ?? WalletReviewRegistry.loadBundled(from: bundle)
+        let alchemy = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletAlchemySui\(suffix)GraphQLURL")
                 as? String,
             provider: .alchemy, network: network, priority: 0
-        )
-        let quickNode = endpoint(
+        ), network: network, reviewRegistry: reviewRegistry)
+        let quickNode = reviewed(endpoint(
             bundle.object(forInfoDictionaryKey: "LocusWalletQuickNodeSui\(suffix)GraphQLURL")
                 as? String,
             provider: .quickNode, network: network, priority: 1
-        )
+        ), network: network, reviewRegistry: reviewRegistry)
         if let alchemy {
             return WalletSuiProviderConfiguration(primary: alchemy, fallback: quickNode)
+        }
+        if let quickNode {
+            return WalletSuiProviderConfiguration(primary: quickNode, fallback: nil)
         }
 
         // Development builds retain the Foundation endpoint. Release
         // verification separately requires restricted vendor endpoints.
-        let foundation = network.environment == .mainnet
-            ? WalletSuiGraphQLClient.mainnetDefaultEndpoint
-            : WalletSuiGraphQLClient.testnetDefaultEndpoint
+        guard network.environment != .mainnet else { return nil }
+        let foundation = WalletSuiGraphQLClient.testnetDefaultEndpoint
         guard let primary = endpoint(
             foundation, provider: .userDefined, network: network, priority: 0
         ) else { return nil }
         return WalletSuiProviderConfiguration(primary: primary, fallback: nil)
+    }
+
+    private static func reviewed(
+        _ endpoint: WalletProviderEndpoint?,
+        network: WalletNetworkDescriptor,
+        reviewRegistry: WalletReviewRegistry?
+    ) -> WalletProviderEndpoint? {
+        guard let endpoint else { return nil }
+        guard network.environment != .mainnet
+                || reviewRegistry?.containsProvider(endpoint) == true else { return nil }
+        return endpoint
     }
 
     private static func endpoint(
@@ -206,20 +223,25 @@ actor WalletSuiGraphQLClient {
     private static let maximumResponseBytes = 1_048_576
     private static let maximumCheckpointAge: TimeInterval = 15 * 60
     private static let maximumFutureDrift: TimeInterval = 2 * 60
-    private static let balancePageSize = 100
-    private static let maximumBalancePages = 100
-    private static let maximumBalances = balancePageSize * maximumBalancePages
-    private static let objectPageSize = 100
-    private static let maximumObjectPages = 50
-    private static let maximumObjects = objectPageSize * maximumObjectPages
-    private static let gasCoinPageSize = 100
-    private static let maximumGasCoinPages = 50
-    private static let maximumGasCoins = gasCoinPageSize * maximumGasCoinPages
+    // Sui testnet-v1.79.0 (46f18562f1f5af2438d35828e8b62d5e0b972db7),
+    // crates/sui-indexer-alt-graphql/src/config.rs: Limits::default uses 50.
+    // Smaller pages retain the existing total discovery ceilings; they never
+    // relax checkpoint, cursor, identity, or full-effects reconciliation.
+    private static let connectionPageSize = 50
+    private static let balancePageSize = connectionPageSize
+    private static let maximumBalances = 10_000
+    private static let maximumBalancePages = maximumBalances / balancePageSize
+    private static let objectPageSize = connectionPageSize
+    private static let maximumObjects = 5_000
+    private static let maximumObjectPages = maximumObjects / objectPageSize
+    private static let gasCoinPageSize = connectionPageSize
+    private static let maximumGasCoins = 5_000
+    private static let maximumGasCoinPages = maximumGasCoins / gasCoinPageSize
     private static let nativeCoinObjectType = "0x2::coin::Coin<0x2::sui::SUI>"
-    private static let activityPageSize = 50
+    private static let activityPageSize = connectionPageSize
     private static let maximumActivityPages = 10
-    private static let balanceChangesPerTransaction = 100
-    private static let objectChangesPerTransaction = 100
+    private static let balanceChangesPerTransaction = connectionPageSize
+    private static let objectChangesPerTransaction = connectionPageSize
 
     private static let nativeTransferSimulationQuery = """
     query LocusSuiSimulateNativeTransfer($transaction: JSON!) {
@@ -371,6 +393,7 @@ actor WalletSuiGraphQLClient {
           pageInfo { hasNextPage endCursor }
         }
       }
+    }
     """
 
     private static let ownedObjectsQuery = """
@@ -470,7 +493,7 @@ actor WalletSuiGraphQLClient {
               status
               timestamp
               checkpoint { sequenceNumber }
-              balanceChanges(first: 100) {
+              balanceChanges(first: \(balanceChangesPerTransaction)) {
                 nodes {
                   owner { address }
                   coinType { repr }
@@ -478,7 +501,7 @@ actor WalletSuiGraphQLClient {
                 }
                 pageInfo { hasNextPage }
               }
-              objectChanges(first: 100) {
+              objectChanges(first: \(objectChangesPerTransaction)) {
                 nodes {
                   address
                   idCreated
@@ -542,6 +565,36 @@ actor WalletSuiGraphQLClient {
         self.session = session
         self.now = now
     }
+
+    #if DEBUG
+    /// Local GraphQL integration only. Release has no HTTP initializer.
+    init(
+        testLoopbackEndpoint value: String,
+        expectedChainIdentifier: String,
+        session: URLSession = .shared,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) throws {
+        guard let url = URL(string: value), url.scheme == "http",
+              ["127.0.0.1", "localhost", "::1", "[::1]"].contains(url.host ?? ""),
+              url.user == nil, url.password == nil, url.fragment == nil,
+              WalletSuiChainIdentity.shortHex(expectedChainIdentifier) != nil else {
+            throw WalletRPCError.invalidEndpoint
+        }
+        let testnet = WalletNetworkCatalog.suiTestnet
+        network = WalletNetworkDescriptor(
+            canonicalID: testnet.id, chain: .sui, environment: .local,
+            displayName: "Sui localnet",
+            identity: .init(kind: .suiChainIdentifier, value: expectedChainIdentifier),
+            nativeAssetID: testnet.nativeAssetID, nativeSymbol: testnet.nativeSymbol,
+            nativeDecimals: testnet.nativeDecimals,
+            explorerTransactionURLTemplate: testnet.explorerTransactionURLTemplate,
+            staticallyReviewedCapabilities: testnet.staticallyReviewedCapabilities
+        )
+        endpoint = url
+        self.session = session
+        self.now = now
+    }
+    #endif
 
     static func validatedEndpoint(_ value: String) -> URL? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1099,7 +1152,7 @@ actor WalletSuiGraphQLClient {
                   let address = owner["address"] as? String,
                   address == sender || address == recipient,
                   let coinType = node["coinType"] as? [String: Any],
-                  coinType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+                  Self.normalizedWireCoinType(coinType["repr"]) == WalletSuiAssetIdentity.nativeCoinType,
                   let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui simulation returned an unexpected balance change"
@@ -1212,7 +1265,7 @@ actor WalletSuiGraphQLClient {
             guard let owner = node["owner"] as? [String: Any],
                   let address = owner["address"] as? String,
                   let coinType = node["coinType"] as? [String: Any],
-                  let representation = coinType["repr"] as? String,
+                  let representation = Self.normalizedWireCoinType(coinType["repr"]),
                   let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui simulation returned an undecodable Coin balance change"
@@ -1330,7 +1383,7 @@ actor WalletSuiGraphQLClient {
               let balanceOwner = balanceNodes[0]["owner"] as? [String: Any],
               balanceOwner["address"] as? String == sender,
               let balanceType = balanceNodes[0]["coinType"] as? [String: Any],
-              balanceType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+              Self.normalizedWireCoinType(balanceType["repr"]) == WalletSuiAssetIdentity.nativeCoinType,
               let signedGas = Self.canonicalSignedBaseUnits(balanceNodes[0]["amount"]),
               signedGas == "-\(actualFee)",
               let changes = effects["objectChanges"] as? [String: Any],
@@ -1639,13 +1692,102 @@ actor WalletSuiGraphQLClient {
         return value
     }
 
+    // GraphQL MoveType.repr uses fully padded package addresses (Sui 1.79.0,
+    // 46f18562f1f5af2438d35828e8b62d5e0b972db7, TypeInput::to_canonical_string).
+    // This is a wire representation conversion, never a public manifest parser
+    // or authority grant. Only package address padding changes; identifiers,
+    // generic structure, case, and numeric address identity remain exact.
+    static func normalizedWireMoveType(_ value: Any?) -> String? {
+        guard let value = value as? String, !value.isEmpty,
+              value.utf8.count <= 512,
+              value.utf8.allSatisfy({ (0x21...0x7e).contains($0) }) else { return nil }
+        var parser = WireMoveTypeParser(bytes: Array(value.utf8))
+        guard let result = parser.parseType(depth: 0, requiresStruct: true),
+              parser.offset == parser.bytes.count else { return nil }
+        return result
+    }
+
+    private static func normalizedWireCoinType(_ value: Any?) -> String? {
+        guard let result = normalizedWireMoveType(value),
+              WalletSuiAssetIdentity.isCanonicalCoinType(result) else { return nil }
+        return result
+    }
+
+    private struct WireMoveTypeParser {
+        let bytes: [UInt8]
+        var offset = 0
+        var nodes = 0
+
+        mutating func parseType(depth: Int, requiresStruct: Bool = false) -> String? {
+            guard depth < 16, nodes < 64 else { return nil }
+            nodes += 1
+            if take("0x") {
+                let start = offset
+                while offset < bytes.count, Self.isHex(bytes[offset]) { offset += 1 }
+                let hex = bytes[start..<offset]
+                // Accept the stable upstream 32-byte spelling or the existing
+                // canonical short spelling, never arbitrary partial padding.
+                guard !hex.isEmpty, hex.count <= 64,
+                      hex.count == 64 || hex.first != 48 || hex.count == 1,
+                      take("::"), let module = identifier(), take("::"),
+                      let name = identifier() else { return nil }
+                let significant = hex.drop(while: { $0 == 48 })
+                let address = significant.isEmpty ? "0" : String(decoding: significant, as: UTF8.self)
+                var result = "0x\(address)::\(module)::\(name)"
+                if take("<") {
+                    var arguments: [String] = []
+                    repeat {
+                        guard arguments.count < 16,
+                              let argument = parseType(depth: depth + 1) else { return nil }
+                        arguments.append(argument)
+                    } while take(",")
+                    guard take(">") else { return nil }
+                    result += "<\(arguments.joined(separator: ","))>"
+                }
+                return result
+            }
+            guard !requiresStruct, let name = identifier() else { return nil }
+            if name == "vector" {
+                guard take("<"), let element = parseType(depth: depth + 1), take(">") else { return nil }
+                return "vector<\(element)>"
+            }
+            return ["bool", "u8", "u16", "u32", "u64", "u128", "u256", "address", "signer"]
+                .contains(name) ? name : nil
+        }
+
+        mutating func identifier() -> String? {
+            guard offset < bytes.count, Self.isIdentifierStart(bytes[offset]) else { return nil }
+            let start = offset
+            offset += 1
+            while offset < bytes.count,
+                  Self.isIdentifierStart(bytes[offset]) || (48...57).contains(bytes[offset]) {
+                offset += 1
+            }
+            return String(decoding: bytes[start..<offset], as: UTF8.self)
+        }
+
+        mutating func take(_ token: String) -> Bool {
+            let tokenBytes = Array(token.utf8)
+            guard bytes[offset...].starts(with: tokenBytes) else { return false }
+            offset += tokenBytes.count
+            return true
+        }
+
+        static func isHex(_ byte: UInt8) -> Bool {
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
+
+        static func isIdentifierStart(_ byte: UInt8) -> Bool {
+            byte == 95 || (65...90).contains(byte) || (97...122).contains(byte)
+        }
+    }
+
     private static func parseBalance(
         _ value: [String: Any],
         networkID: String
     ) -> WalletSuiBalance? {
         guard let coinType = value["coinType"] as? [String: Any],
-              let representation = coinType["repr"] as? String,
-              WalletSuiAssetIdentity.isCanonicalCoinType(representation),
+              let representation = normalizedWireCoinType(coinType["repr"]),
               let total = canonicalBaseUnits(value["totalBalance"]),
               let coins = canonicalBaseUnits(value["coinBalance"]),
               let accumulator = canonicalBaseUnits(value["addressBalance"]),
@@ -1672,7 +1814,7 @@ actor WalletSuiGraphQLClient {
               let hasPublicTransfer = value["hasPublicTransfer"] as? Bool,
               let contents = value["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              let moveType = type["repr"] as? String,
+              let moveType = normalizedWireMoveType(type["repr"]),
               isSafeMoveTypeLabel(moveType),
               let ownerValue = value["owner"] as? [String: Any],
               ownerValue["__typename"] as? String == "AddressOwner",
@@ -1704,7 +1846,7 @@ actor WalletSuiGraphQLClient {
               let hasPublicTransfer = moveObject["hasPublicTransfer"] as? Bool,
               let contents = moveObject["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              let moveType = type["repr"] as? String,
+              let moveType = normalizedWireMoveType(type["repr"]),
               isSafeMoveTypeLabel(moveType) else { return nil }
         return WalletSuiSimulatedObjectState(
             reference: WalletSuiObjectReference(
@@ -1746,7 +1888,7 @@ actor WalletSuiGraphQLClient {
               WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
               let contents = value["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              type["repr"] as? String == objectType,
+              normalizedWireMoveType(type["repr"]) == objectType,
               let encodedBCS = contents["bcs"] as? String,
               let bcs = Data(base64Encoded: encodedBCS), bcs.count == 40,
               bcs.base64EncodedString() == encodedBCS,
@@ -1894,21 +2036,27 @@ actor WalletSuiGraphQLClient {
                 amountBaseUnits: nil, isInbound: nil
             )]
         }
-        var seenTypes: Set<String> = []
-        var records: [WalletSuiIndexedActivity] = []
-        for node in nodes {
+        let balanceChanges = try nodes.map { node -> (
+            owner: String, representation: String, signed: String
+        ) in
             guard let changeOwner = node["owner"] as? [String: Any],
                   let ownerAddress = changeOwner["address"] as? String,
                   WalletSuiAddress.isCanonical(ownerAddress),
                   let coinType = node["coinType"] as? [String: Any],
-                  let representation = coinType["repr"] as? String,
-                  WalletSuiAssetIdentity.isCanonicalCoinType(representation),
+                  let representation = normalizedWireCoinType(coinType["repr"]),
                   let signed = canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui returned a malformed activity balance change"
                 )
             }
-            guard ownerAddress == owner, signed != "0" else { continue }
+            return (ownerAddress, representation, signed)
+        }
+        var seenTypes: Set<String> = []
+        var records: [WalletSuiIndexedActivity] = []
+        for change in balanceChanges {
+            guard change.owner == owner, change.signed != "0" else { continue }
+            let representation = change.representation
+            let signed = change.signed
             guard seenTypes.insert(representation).inserted else {
                 throw WalletRPCError.invalidResponse(
                     "Sui repeated one Coin type in transaction balance changes"
@@ -1919,13 +2067,23 @@ actor WalletSuiGraphQLClient {
             let identity = WalletSuiAssetIdentity(
                 networkID: networkID, coinType: representation
             )
+            let counterparties = balanceChanges.filter {
+                $0.owner != owner && $0.representation == representation
+                    && $0.signed != "0" && $0.signed.hasPrefix("-") != signed.hasPrefix("-")
+            }
+            let counterparty = counterparties.count == 1 ? counterparties[0] : nil
+            let counterpartyAmount = counterparty.map {
+                $0.signed.hasPrefix("-") ? String($0.signed.dropFirst()) : $0.signed
+            }
             records.append(WalletSuiIndexedActivity(
                 id: "\(digest):\(identity.canonicalID)",
                 transactionDigest: digest, checkpointSequence: sequence,
                 occurredAt: timestamp, sender: sender, successful: true,
                 identity: identity, objectIdentity: nil, objectType: nil,
                 objectHasPublicTransfer: nil, amountBaseUnits: amount,
-                isInbound: inbound
+                isInbound: inbound,
+                counterpartyAddress: counterparty?.owner,
+                counterpartyAmountBaseUnits: counterpartyAmount
             ))
         }
         var seenObjectIDs: Set<String> = []
@@ -2059,7 +2217,8 @@ actor WalletSuiGraphQLClient {
                 identity: nil, objectIdentity: identity,
                 objectType: input.reference.type,
                 objectHasPublicTransfer: input.hasPublicTransfer,
-                amountBaseUnits: "1", isInbound: inbound
+                amountBaseUnits: "1", isInbound: inbound,
+                counterpartyAddress: inbound ? input.owner : output.owner
             ))
         }
         if records.isEmpty {

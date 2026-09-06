@@ -192,11 +192,11 @@ final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
 }
 
 actor EventConnectorClient {
-    private let credentials: ConnectorCredentialStore
+    private let credentials: any ConnectorCredentialStoring
     private let session: URLSession
 
     init(
-        credentials: ConnectorCredentialStore = .shared,
+        credentials: any ConnectorCredentialStoring = ConnectorCredentialStore.shared,
         session: URLSession? = nil
     ) {
         self.credentials = credentials

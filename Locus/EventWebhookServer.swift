@@ -9,13 +9,13 @@ final class EventWebhookServer {
 
     typealias Ingest = (String, InboundEvent) async throws -> Void
 
-    private let credentials: ConnectorCredentialStore
+    private let credentials: any ConnectorCredentialStoring
     private var listeners: [String: NWListener] = [:]
     private var connections: [String: ConnectorConnection] = [:]
     private var replayIDs: [String: [String]] = [:]
     private var ingest: Ingest?
 
-    init(credentials: ConnectorCredentialStore = .shared) {
+    init(credentials: any ConnectorCredentialStoring = ConnectorCredentialStore.shared) {
         self.credentials = credentials
     }
 

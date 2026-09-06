@@ -48,6 +48,36 @@ private func walletRPCRequestBody(_ request: URLRequest) throws -> Data {
 
 @MainActor
 private final class FakeWalletSigner: WalletSignerClient {
+    #if LOCUS_DIRECT_DOWNLOAD
+    var currentReleaseStatus = WalletReleaseAuthorityStatus(
+        installationID: String(repeating: "f", count: 64), checkpoint: nil)
+    private(set) var releaseHistoryApplyCount = 0
+    private(set) var releaseHistoryStateChangeCount = 0
+    var hasOperationalReleaseAuthority = false
+    #if DEBUG
+    var experimentalTestConfiguration: WalletExperimentalActivationTestConfiguration?
+    #endif
+    var releaseHistoryApplyHandler: ((WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus)?
+
+    func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus { currentReleaseStatus }
+
+    func applyReleaseHistory(_ history: WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus {
+        releaseHistoryApplyCount += 1
+        guard let releaseHistoryApplyHandler else { throw WalletReleaseActivationError.stateUnavailable }
+        let accepted = try await releaseHistoryApplyHandler(history)
+        if accepted.checkpoint != currentReleaseStatus.checkpoint { releaseHistoryStateChangeCount += 1 }
+        currentReleaseStatus = accepted
+        hasOperationalReleaseAuthority = true
+        return accepted
+    }
+    #endif
+
+    func applyReleaseActivation(
+        _ envelope: WalletSignedReleaseActivationEnvelope
+    ) async throws -> WalletReleaseActivationStatus {
+        throw WalletGateway.Error.signerUnavailable
+    }
+
     let isAvailable = true
     private(set) var sessionID: String?
     private(set) var authorizationCount = 0
@@ -55,6 +85,8 @@ private final class FakeWalletSigner: WalletSignerClient {
     private(set) var preparedContracts: [WalletContractRegistryEntry?] = []
     private(set) var executedIntentIDs: [String] = []
     private(set) var confirmedIntentIDs: [String] = []
+    private(set) var canceledIntentIDs: [String] = []
+    var confirmationHandler: ((String) async -> Void)?
     private(set) var activePolicyStatuses: [WalletActivePolicyStatus] = []
     var invalidationHandler: (() -> Void)?
     var riskFlags: [WalletRiskFlag] = []
@@ -63,6 +95,7 @@ private final class FakeWalletSigner: WalletSignerClient {
     var policyID: String?
     var executionError: WalletGateway.Error?
     var browserRPCResponse: Any = "0x1"
+    var browserRPCResponses: [Any] = []
     var balanceBaseUnits = "1234500000000000000"
     var discoveredAssetRows: [[String: Any]] = []
     var indexedActivityRows: [[String: Any]] = []
@@ -73,7 +106,7 @@ private final class FakeWalletSigner: WalletSignerClient {
     var reportedVaultState: WalletVaultState?
 
     func signerStatus() async throws -> WalletSignerStatus {
-        WalletSignerStatus(protocolVersion: 2,
+        WalletSignerStatus(protocolVersion: WalletGateway.protocolVersion,
                            vaultState: reportedVaultState ?? (sessionID == nil ? .locked : .unlocked),
                            sessionID: sessionID, accounts: try await listAccounts())
     }
@@ -94,6 +127,23 @@ private final class FakeWalletSigner: WalletSignerClient {
         )]
     }
 
+    func signStructuredAuthorization(
+        _ request: WalletStructuredAuthorizationRequest,
+        source: WalletRequestSource
+    ) async throws -> WalletStructuredAuthorizationResult {
+        let account = try await listAccounts()[0]
+        return WalletStructuredAuthorizationResult(
+            request: request,
+            canonicalMessage: try WalletStructuredAuthorization.canonicalMessage(
+                request, account: account
+            ),
+            messageDigest: "0xdigest",
+            signature: "0xsignature",
+            signatureEncoding: .eip191Hex,
+            signedAt: Date()
+        )
+    }
+
     func prepare(
         _ request: WalletPrepareRequest,
         contract: WalletContractRegistryEntry?
@@ -107,7 +157,12 @@ private final class FakeWalletSigner: WalletSignerClient {
         fixture(request: preparedRequests.last!, riskFlags: riskFlags, adapterID: adapterID)
     }
 
-    func confirmExecution(intentID: String) async throws { confirmedIntentIDs.append(intentID) }
+    func confirmExecution(intentID: String) async throws {
+        confirmedIntentIDs.append(intentID)
+        await confirmationHandler?(intentID)
+    }
+
+    func cancelPreparation(intentID: String) { canceledIntentIDs.append(intentID) }
 
     func execute(intentID: String) async throws -> [String: Any] {
         executedIntentIDs.append(intentID)
@@ -132,7 +187,10 @@ private final class FakeWalletSigner: WalletSignerClient {
         )
     }
     func browserRPC(networkID: String, method: String, params: [Any]) async throws -> Any {
-        browserRPCResponse
+        if !browserRPCResponses.isEmpty {
+            return browserRPCResponses.removeFirst()
+        }
+        return browserRPCResponse
     }
 
     func performRead(tool: String, arguments: [String: Any]) async throws -> [String: Any] {
@@ -198,7 +256,8 @@ private final class FakeWalletRecoveryView: WalletRecoveryViewClient {
         presentationState = .presented
         presentationStateHandler?(.presented)
         let status = outcome == .completed ? WalletSignerStatus(
-            protocolVersion: 2, vaultState: .locked, sessionID: nil,
+            protocolVersion: WalletGateway.protocolVersion,
+            vaultState: .locked, sessionID: nil,
             accounts: [WalletAccount(
                 id: "account-1", chain: .evm, address: "0xabc", label: "EVM",
                 networkIDs: [WalletGateway.sepoliaNetworkID]
@@ -216,6 +275,448 @@ private final class FakeWalletRecoveryView: WalletRecoveryViewClient {
 
 @MainActor
 final class WalletGatewayTests: XCTestCase {
+    func testPolicyAccountSelectionRequiresExactVaultOwnershipChainAndNetwork() {
+        let mainnet = WalletNetworkCatalog.ethereumMainnet.id
+        let accounts: [WalletAccount] = [
+            .init(id: "vault-mainnet", chain: .evm, address: "0x1", label: "Vault",
+                networkIDs: [mainnet]),
+            .init(id: "vault-testnet", chain: .evm, address: "0x2", label: "Testnet",
+                networkIDs: [WalletNetworkCatalog.ethereumSepolia.id]),
+            .init(id: "metamask", chain: .evm, address: "0x3", label: "MetaMask",
+                networkIDs: [mainnet], ownership: .external(connectorID: .metamask)),
+            .init(id: "wrong-chain", chain: .solana, address: "not-used", label: "Wrong chain",
+                networkIDs: [mainnet]),
+        ]
+        XCTAssertEqual(WalletPolicyAccountEligibility.accounts(accounts, networkID: mainnet).map(\.id),
+            ["vault-mainnet"])
+    }
+
+    func testSolanaPolicySelectionNeverIncludesManagedOrExternalAccounts() {
+        let networkID = WalletNetworkCatalog.solanaMainnet.id
+        let accounts: [WalletAccount] = [
+            .init(id: "vault", chain: .solana, address: "public", label: "Vault", networkIDs: [networkID]),
+            .init(id: "managed", chain: .solana, address: "public", label: "Phantom", networkIDs: [networkID],
+                ownership: .connectorManaged(connectorID: .phantom)),
+            .init(id: "legacy", chain: .solana, address: "public", label: "Legacy", networkIDs: [networkID],
+                ownership: .external(connectorID: .phantom)),
+        ]
+        XCTAssertEqual(WalletPolicyAccountEligibility.accounts(accounts, networkID: networkID).map(\.id), ["vault"])
+    }
+
+    func testPolicySelectionDoesNotExpandToSuiOrUnknownNetworks() {
+        let account = WalletAccount(id: "sui", chain: .sui, address: "0x1", label: "Sui",
+            networkIDs: [WalletNetworkCatalog.suiMainnet.id, "unknown"])
+        XCTAssertTrue(WalletPolicyAccountEligibility.accounts([account], networkID: WalletNetworkCatalog.suiMainnet.id).isEmpty)
+        XCTAssertTrue(WalletPolicyAccountEligibility.accounts([account], networkID: "unknown").isEmpty)
+    }
+
+    func testContractPolicyAssetUsesRegistryNetworkRatherThanSepolia() {
+        let address = "0xAa11111111111111111111111111111111111111"
+        let entry = WalletContractRegistryEntry(id: "mainnet.token", networkID: "eip155:1",
+            checksumAddress: address, label: "Token", normalizedABI: "[]", abiDigest: "digest",
+            runtimeCodeHash: "hash", permittedFunctions: ["transfer(address,uint256)"],
+            permittedSelectors: ["0xa9059cbb"], reviewedAdapterID: WalletReviewedAdapters.erc20,
+            verifiedAt: Date())
+        XCTAssertEqual(WalletPolicyAccountEligibility.contractAssetID(entry: entry, address: address),
+            "eip155:1/erc20:0xaa11111111111111111111111111111111111111")
+        XCTAssertNil(WalletPolicyAccountEligibility.contractAssetID(entry: entry, address: "not-an-address"))
+        XCTAssertEqual(WalletPolicyAccountEligibility.contractCapability(entry), .fungibleTokenTransfer)
+    }
+
+    func testRuleReadinessCannotEnablePolicyOnDormantNetwork() async {
+        let signer = FakeWalletSigner()
+        signer.accountNetworkIDs = [WalletNetworkCatalog.ethereumMainnet.id]
+        let gateway = WalletGateway(signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            launchGate: try! WalletLaunchGate())
+        _ = await gateway.authorizeSession()
+        XCTAssertTrue(gateway.policyAccounts(networkID: WalletNetworkCatalog.ethereumMainnet.id,
+            capability: .nativeTransfer).isEmpty)
+        XCTAssertFalse(gateway.canAuthorizeNativePolicy)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
+
+    func testRuleReadinessPreservesSupportedTestnetWithoutMainnetActivation() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            launchGate: try! WalletLaunchGate())
+        _ = await gateway.authorizeSession()
+        XCTAssertEqual(gateway.policyAccounts(networkID: WalletGateway.sepoliaNetworkID,
+            capability: .nativeTransfer).map(\.id), ["account-1"])
+        XCTAssertTrue(gateway.canAuthorizeNativePolicy)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        gateway.applyFeatureAccess(walletEnabled: false, browserEnabled: false)
+        XCTAssertFalse(gateway.canAuthorizeNativePolicy)
+    }
+
+    private func contractRuleEntry(adapter: String) -> WalletContractRegistryEntry {
+        .init(id: "mainnet.contract", networkID: "eip155:1",
+            checksumAddress: "0x1111111111111111111111111111111111111111", label: "Contract",
+            normalizedABI: "[]", abiDigest: "digest", runtimeCodeHash: "hash",
+            permittedFunctions: [], permittedSelectors: [], reviewedAdapterID: adapter, verifiedAt: Date())
+    }
+
+    private func contractRuleDraft(
+        adapter: String = WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+        ownership: WalletAccountOwnership = .locusVault,
+        networkIDs: [String] = ["eip155:1"], slippage: String = "50", floor: String = "975",
+        perTransaction: String = "1000", sessionCap: String = "2000"
+    ) -> WalletSessionPolicy? {
+        let account = WalletAccount(id: "selected-vault", chain: .evm,
+            address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", label: "Vault", networkIDs: networkIDs,
+            ownership: ownership)
+        return WalletPolicyAccountEligibility.contractPolicy(entry: contractRuleEntry(adapter: adapter),
+            account: account, inputToken: "0x2222222222222222222222222222222222222222",
+            recipient: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", perTransaction: perTransaction,
+            sessionCap: sessionCap, feeCap: "20", durationMinutes: "30",
+            maximumSlippageBPS: slippage, minimumOutput: floor,
+            now: Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    func testSwapRuleDraftBindsSemanticActionSelectedVaultNetworkRecipientAndFiniteLimits() throws {
+        let policy = try XCTUnwrap(contractRuleDraft())
+        XCTAssertEqual(policy.accountID, "selected-vault")
+        XCTAssertEqual(policy.networkID, "eip155:1")
+        XCTAssertEqual(policy.allowedAssetIDs, ["eip155:1/erc20:0x2222222222222222222222222222222222222222"])
+        XCTAssertEqual(policy.allowedRecipients, ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+        XCTAssertEqual(policy.allowedContractIDs, ["mainnet.contract"])
+        XCTAssertEqual(policy.allowedActionKinds, [.exactInputSwap])
+        XCTAssertEqual(policy.maximumSlippageBPS, 50)
+        XCTAssertEqual(policy.minimumOutputBaseUnits, "975")
+        XCTAssertEqual(policy.maximumTransactionBaseUnits, "1000")
+        XCTAssertEqual(policy.maximumSessionBaseUnits, "2000")
+        XCTAssertEqual(policy.maximumFeeBaseUnits, "20")
+        XCTAssertEqual(policy.expiresAt, Date(timeIntervalSince1970: 1_800_001_800))
+    }
+
+    func testSwapRuleDraftRejectsMissingOutOfRangeAndMalformedLimits() {
+        for slippage in ["", "-1", "501", "not-a-number"] { XCTAssertNil(contractRuleDraft(slippage: slippage)) }
+        for floor in ["", "0", "01", "1.5", "-1"] { XCTAssertNil(contractRuleDraft(floor: floor)) }
+        XCTAssertNil(contractRuleDraft(perTransaction: "0"))
+        XCTAssertNil(contractRuleDraft(perTransaction: "2001"))
+        XCTAssertNotNil(contractRuleDraft(slippage: "0"))
+        XCTAssertNotNil(contractRuleDraft(slippage: "500"))
+    }
+
+    func testContractRuleDraftRejectsWrongNetworkExternalManagedAndAllowanceAdapters() {
+        XCTAssertNil(contractRuleDraft(networkIDs: [WalletNetworkCatalog.ethereumSepolia.id]))
+        XCTAssertNil(contractRuleDraft(ownership: .external(connectorID: .metamask)))
+        XCTAssertNil(contractRuleDraft(ownership: .connectorManaged(connectorID: .phantom)))
+        XCTAssertNil(contractRuleDraft(adapter: WalletReviewedAdapters.uniswapPermit2AllowanceSetup))
+        XCTAssertNil(contractRuleDraft(adapter: WalletReviewedAdapters.erc721SafeTransfer))
+    }
+
+    func testTokenRuleDraftUsesFungibleTransferNotApprovalOrLegacyContractAction() throws {
+        let policy = try XCTUnwrap(contractRuleDraft(adapter: WalletReviewedAdapters.erc20, slippage: "", floor: ""))
+        XCTAssertEqual(policy.allowedActionKinds, [.fungibleTokenTransfer])
+        XCTAssertEqual(policy.allowedAssetIDs, ["eip155:1/erc20:0x1111111111111111111111111111111111111111"])
+        XCTAssertEqual(policy.allowedRecipients, ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"])
+        XCTAssertNil(policy.maximumSlippageBPS)
+        XCTAssertNil(policy.minimumOutputBaseUnits)
+    }
+
+    #if LOCUS_DIRECT_DOWNLOAD
+    #if DEBUG
+    private func experimentalGatewayFixture() throws
+        -> (gateway: WalletGateway, signer: FakeWalletSigner, data: Data) {
+        let key = Curve25519.Signing.PrivateKey()
+        let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let issued = now.addingTimeInterval(-30)
+        let expiry = now.addingTimeInterval(600)
+        let network = WalletNetworkCatalog.ethereumMainnet
+        let providers = [WalletProviderKind.alchemy, .quickNode].map { provider in
+            WalletReviewedProviderIdentity(networkID: network.id, provider: provider,
+                configurationID: "\(provider.rawValue):\(network.id)",
+                endpointSHA256: String(repeating: "2", count: 64), expectedIdentity: network.identity)
+        }
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1, issuedAt: issued,
+            expiresAt: expiry, assets: [], evmContracts: [], explorerTemplates: [:], adapterIDs: [],
+            providerIdentities: providers)
+        let ceilingValue = WalletReviewCeiling(schemaVersion: 1, domain: WalletReviewCeiling.domain,
+            reviewRevision: 1, reviewedAt: issued.addingTimeInterval(-60), scope: WalletReviewScope(review))
+        func signature<T: Encodable>(_ value: T) throws -> String {
+            try key.signature(for: WalletAuthorityEncoding.encode(value)).base64EncodedString()
+        }
+        let ceiling = WalletSignedReviewCeiling(ceiling: ceilingValue, signatureBase64: try signature(ceilingValue))
+        let identity = WalletInstalledReleaseIdentity(sourceRevision: String(repeating: "a", count: 40),
+            bundleVersion: "fixture", outerAppCodeDirectoryHash: String(repeating: "b", count: 40),
+            signerCodeDirectoryHash: String(repeating: "c", count: 40))
+        let cap = WalletCapabilityManifest(schemaVersion: 3, revision: 1, releaseStage: .experimentalMainnet,
+            evidenceIndexSHA256: "", issuedAt: issued, expiresAt: expiry,
+            networkGrants: [.init(networkID: network.id, capabilities: [.nativeTransfer], connectors: [])],
+            approvedRegions: [], completedApprovals: [])
+        let envelope = WalletReleaseTransitionEnvelope(schemaVersion: 2,
+            sourceRevision: identity.sourceRevision, bundleVersion: identity.bundleVersion,
+            outerAppCodeDirectoryHash: identity.outerAppCodeDirectoryHash,
+            signerCodeDirectoryHash: identity.signerCodeDirectoryHash,
+            archiveSHA256: String(repeating: "d", count: 64), releaseStage: .experimentalMainnet,
+            issuedAt: issued, expiresAt: expiry, revision: 1,
+            capabilityManifest: .init(manifest: cap, signatureBase64: try signature(cap)),
+            reviewRestriction: .init(manifest: review, signatureBase64: try signature(review)),
+            transition: .initial, purpose: .experimentalMainnet, candidateID: "",
+            reviewCeilingSHA256: try WalletAuthorityEncoding.digest(ceilingValue),
+            previousEnvelopeSHA256: nil, authoritySHA256: "", cohortID: nil,
+            admissionGeneration: 0, revokedAdmissionSerials: [], permanentLimits: [])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: WalletAuthorityEncoding.encode(envelope)) as? [String: Any])
+        object["candidateID"] = try envelope.computedCandidateID()
+        object["authoritySHA256"] = try envelope.computedAuthoritySHA256()
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let completed = try decoder.decode(WalletReleaseTransitionEnvelope.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        let history = WalletReleaseHistoryRequest(schemaVersion: 1,
+            transitions: [.init(envelope: completed, signatureBase64: try signature(completed))], admission: nil)
+        let signer = FakeWalletSigner()
+        signer.releaseHistoryApplyHandler = { [weak signer] request in
+            guard let signer else { throw WalletReleaseActivationError.stateUnavailable }
+            let current = signer.currentReleaseStatus
+            let verified = try WalletReleaseHistoryVerifier.verify(request, ceiling: ceiling, key: key.publicKey,
+                identity: identity, previous: current.checkpoint, installationID: current.installationID,
+                allowExperimentalMainnet: true)
+            return .init(installationID: current.installationID, checkpoint: verified.checkpoint)
+        }
+        let gateway = WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            recoveryView: FakeWalletRecoveryView(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1", "XCTestConfigurationFilePath": "fixture"],
+            launchGate: try WalletLaunchGate())
+        let configuration = WalletExperimentalActivationTestConfiguration(key: key.publicKey, ceiling: ceiling, identity: identity)
+        signer.experimentalTestConfiguration = configuration
+        gateway.configureExperimentalActivationForTesting(configuration)
+        return (gateway, signer, try WalletAuthorityEncoding.encode(history))
+    }
+
+    func testExperimentalGatewayPreviewGrantsNothingUntilOneExplicitEnable() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let preview = try XCTUnwrap(gateway.experimentalMainnetActivationPreview)
+        XCTAssertEqual(preview.networkGrants.map(\.networkID), ["eip155:1"])
+        XCTAssertEqual(preview.networkGrants.first?.capabilities, [.nativeTransfer])
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        try await gateway.enableExperimentalMainnetActivation(previewID: preview.id)
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2, "Explicit import, followed by idempotent signer hydration on refresh")
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertTrue(signer.hasOperationalReleaseAuthority)
+        XCTAssertTrue(gateway.experimentalMainnetActive)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+        XCTAssertEqual(signer.authorizationCount, 0)
+    }
+
+    func testExperimentalGatewayReplacementAndDuplicatePreviewsCannotApply() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let oldID = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let currentID = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        XCTAssertNotEqual(oldID, currentID)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: oldID); XCTFail("Stale review accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        try await gateway.enableExperimentalMainnetActivation(previewID: currentID)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: currentID); XCTFail("Review replay accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+    }
+
+    func testExperimentalGatewayLockCancelsUnconsumedReview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        gateway.lock()
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Canceled review accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayRestartRehydratesColdSignerFromPersistedCheckpoint() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        try await gateway.enableExperimentalMainnetActivation(
+            previewID: XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id))
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        let checkpoint = try XCTUnwrap(signer.currentReleaseStatus.checkpoint)
+        signer.hasOperationalReleaseAuthority = false
+        let restarted = WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            recoveryView: FakeWalletRecoveryView(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1", "XCTestConfigurationFilePath": "fixture"],
+            launchGate: try WalletLaunchGate())
+        restarted.configureExperimentalActivationForTesting(try XCTUnwrap(signer.experimentalTestConfiguration))
+        XCTAssertFalse(restarted.experimentalMainnetActive)
+        await restarted.refreshStatus()
+        XCTAssertTrue(signer.hasOperationalReleaseAuthority)
+        XCTAssertTrue(restarted.experimentalMainnetActive)
+        XCTAssertEqual(signer.currentReleaseStatus.checkpoint, checkpoint)
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 3)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertTrue(restarted.activePolicies.isEmpty)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+    }
+
+    func testExperimentalGatewayChangedInstallationInvalidatesPreview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        signer.currentReleaseStatus = .init(installationID: String(repeating: "e", count: 64), checkpoint: nil)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Replaced installation accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayDisableDuringSignerCallbackDoesNotPublishActivation() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway] request in
+            let committed = try await verify(request)
+            gateway?.applyFeatureAccess(walletEnabled: false, browserEnabled: false)
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Canceled callback published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint, "Do not erase an already committed signer checkpoint")
+        XCTAssertFalse(gateway.walletEnabled)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+    }
+
+    func testExperimentalGatewayRejectsForgedSignatureBeforeCreatingPreview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        let original = try WalletExperimentalActivationImport.decode(data)
+        let forged = WalletReleaseHistoryRequest(schemaVersion: 1, transitions: [
+            .init(envelope: original.transitions[0].envelope, signatureBase64: Data(repeating: 0, count: 64).base64EncodedString())
+        ], admission: nil)
+        do { try await gateway.previewExperimentalMainnetActivation(WalletAuthorityEncoding.encode(forged)); XCTFail("Forged signature accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayLockDuringSignerCallbackDoesNotPublishActivation() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway] request in
+            let committed = try await verify(request)
+            gateway?.lock()
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Lock callback published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertTrue(gateway.walletEnabled)
+        XCTAssertEqual(gateway.status, .locked)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
+
+    func testExperimentalGatewayLockDuringRefreshDoesNotPublishSuccess() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway, weak signer] request in
+            let committed = try await verify(request)
+            if signer?.releaseHistoryApplyCount == 2 { gateway?.lock() }
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Lock during refresh published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertEqual(gateway.status, .locked)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
+    #endif
+
+    /// Intake fixtures deliberately contain invalid signatures. Intake may
+    /// decode them; the separate history verifier must still authenticate them.
+    private func experimentalIntakeHistory(
+        stage: WalletReleaseStage = .experimentalMainnet,
+        purpose: WalletReleasePurpose = .experimentalMainnet
+    ) -> WalletReleaseHistoryRequest {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let capability = WalletCapabilityManifest(schemaVersion: 3, revision: 1,
+            releaseStage: stage, evidenceIndexSHA256: "", issuedAt: now,
+            expiresAt: now.addingTimeInterval(600), networkGrants: [],
+            approvedRegions: [], completedApprovals: [])
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1,
+            issuedAt: now, expiresAt: now.addingTimeInterval(600), assets: [],
+            evmContracts: [], explorerTemplates: [:], adapterIDs: [])
+        let envelope = WalletReleaseTransitionEnvelope(schemaVersion: 2,
+            sourceRevision: String(repeating: "a", count: 40), bundleVersion: "1",
+            outerAppCodeDirectoryHash: String(repeating: "b", count: 40),
+            signerCodeDirectoryHash: String(repeating: "c", count: 40),
+            archiveSHA256: String(repeating: "d", count: 64), releaseStage: stage,
+            issuedAt: now, expiresAt: now.addingTimeInterval(600), revision: 1,
+            capabilityManifest: .init(manifest: capability, signatureBase64: "invalid"),
+            reviewRestriction: .init(manifest: review, signatureBase64: "invalid"),
+            transition: .initial, purpose: purpose, candidateID: String(repeating: "e", count: 64),
+            reviewCeilingSHA256: String(repeating: "f", count: 64), previousEnvelopeSHA256: nil,
+            authoritySHA256: String(repeating: "a", count: 64), cohortID: nil,
+            admissionGeneration: 0, revokedAdmissionSerials: [], permanentLimits: [])
+        return .init(schemaVersion: 1, transitions: [.init(envelope: envelope, signatureBase64: "invalid")], admission: nil)
+    }
+
+    func testExperimentalImportIntakeRejectsEmptyOversizedAndMalformedFiles() {
+        for data in [Data(), Data(repeating: 0x20, count: WalletExperimentalActivationImport.maximumBytes + 1),
+                     Data("{}".utf8)] {
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(data))
+        }
+    }
+
+    func testExperimentalImportIntakeRequiresBothExperimentalStageAndPurpose() throws {
+        for pair: (WalletReleaseStage, WalletReleasePurpose) in [
+            (.invitedCanary, .production), (.generalAvailability, .production),
+            (.experimentalMainnet, .production), (.invitedCanary, .experimentalMainnet),
+            (.experimentalMainnet, .testnetRehearsal),
+        ] {
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(
+                WalletAuthorityEncoding.encode(experimentalIntakeHistory(stage: pair.0, purpose: pair.1))))
+        }
+        let request = experimentalIntakeHistory()
+        XCTAssertEqual(try WalletExperimentalActivationImport.decode(WalletAuthorityEncoding.encode(request)), request)
+    }
+
+    func testExperimentalImportIntakeRejectsMixedAndEmptyHistories() throws {
+        let experimental = experimentalIntakeHistory().transitions
+        let production = experimentalIntakeHistory(stage: .generalAvailability, purpose: .production).transitions
+        for transitions in [[], experimental + production,
+            Array(repeating: experimental[0], count: WalletReleaseHistoryVerifier.maximumTransitions + 1)] {
+            let request = WalletReleaseHistoryRequest(schemaVersion: 1, transitions: transitions, admission: nil)
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(WalletAuthorityEncoding.encode(request)))
+        }
+    }
+
+    func testRemoteHistoryCannotIntroduceExperimentalAuthority() {
+        XCTAssertTrue(WalletExperimentalActivationImport.containsExperimentalAuthority(experimentalIntakeHistory()))
+        XCTAssertTrue(WalletExperimentalActivationImport.containsExperimentalAuthority(
+            experimentalIntakeHistory(stage: .invitedCanary, purpose: .experimentalMainnet)))
+        XCTAssertFalse(WalletExperimentalActivationImport.containsExperimentalAuthority(
+            experimentalIntakeHistory(stage: .invitedCanary, purpose: .production)))
+    }
+
+    func testExperimentalEnableWithoutAnExplicitPreviewGrantsNothing() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer, environment: [:], launchGate: try! WalletLaunchGate())
+        do {
+            try await gateway.enableExperimentalMainnetActivation(previewID: UUID())
+            XCTFail("A missing review must never authorize mainnet")
+        } catch { }
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertEqual(signer.authorizationCount, 0)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+    }
+    #endif
+
     private func prepared(
         riskFlags: [WalletRiskFlag] = [],
         adapterID: String? = "native-eth-transfer-v1",
@@ -376,12 +877,15 @@ final class WalletGatewayTests: XCTestCase {
             staticallyReviewedCapabilities: [.nativeTransfer]
         )
         let manifest = WalletCapabilityManifest(
-            schemaVersion: 2, revision: 1, releaseStage: .generalAvailability,
+            schemaVersion: 3, revision: 1, releaseStage: .generalAvailability,
             evidenceIndexSHA256: String(repeating: "b", count: 64),
             issuedAt: Date(timeIntervalSince1970: 1_700_000_000),
             expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
-            enabledNetworkIDs: [limited.id],
-            enabledCapabilities: [.nativeTransfer, .exactInputSwap],
+            networkGrants: [.init(
+                networkID: limited.id,
+                capabilities: [.nativeTransfer],
+                connectors: []
+            )],
             approvedRegions: ["CA"],
             completedApprovals: WalletLaunchGate.requiredGAApprovals
         )
@@ -408,12 +912,16 @@ final class WalletGatewayTests: XCTestCase {
     func testInvitedCanaryCannotClaimGeneralAvailability() throws {
         let privateKey = Curve25519.Signing.PrivateKey()
         let manifest = WalletCapabilityManifest(
-            schemaVersion: 2, revision: 7, releaseStage: .invitedCanary,
+            schemaVersion: 3, revision: 7, releaseStage: .invitedCanary,
             evidenceIndexSHA256: String(repeating: "a", count: 64),
             issuedAt: Date(timeIntervalSince1970: 1_700_000_000),
             expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
-            enabledNetworkIDs: [WalletNetworkCatalog.ethereumMainnet.id],
-            enabledCapabilities: [.nativeTransfer], approvedRegions: ["CA"],
+            networkGrants: [.init(
+                networkID: WalletNetworkCatalog.ethereumMainnet.id,
+                capabilities: [.nativeTransfer],
+                connectors: []
+            )],
+            approvedRegions: ["CA"],
             completedApprovals: WalletLaunchGate.requiredCanaryApprovals
         )
         let encoder = JSONEncoder()
@@ -462,7 +970,7 @@ final class WalletGatewayTests: XCTestCase {
             verifiedAt: issuedAt.addingTimeInterval(-60)
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 4, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(20 * 24 * 60 * 60),
             assets: [asset], evmContracts: [entry],
             explorerTemplates: [
@@ -493,14 +1001,27 @@ final class WalletGatewayTests: XCTestCase {
             trust: asset.trust, manifestRevision: 5
         )
         let restriction = WalletReviewManifest(
-            schemaVersion: 1, revision: 5,
+            schemaVersion: 2, revision: 5,
             issuedAt: issuedAt.addingTimeInterval(120),
             expiresAt: issuedAt.addingTimeInterval(10 * 24 * 60 * 60),
             assets: [retained, extra], evmContracts: [],
             explorerTemplates: [:], adapterIDs: []
         )
-        let narrowed = try registry.restricted(
+        XCTAssertThrowsError(try registry.restricted(
             by: signedReview(restriction, key: privateKey),
+            publicKey: privateKey.publicKey,
+            now: issuedAt.addingTimeInterval(180)
+        )) { error in
+            XCTAssertEqual(error as? WalletReviewManifestError, .broaderThanBundledReview)
+        }
+        let exactRestriction = WalletReviewManifest(
+            schemaVersion: 2, revision: 5,
+            issuedAt: issuedAt.addingTimeInterval(120),
+            expiresAt: issuedAt.addingTimeInterval(10 * 24 * 60 * 60),
+            assets: [retained], evmContracts: [], explorerTemplates: [:], adapterIDs: []
+        )
+        let narrowed = try registry.restricted(
+            by: signedReview(exactRestriction, key: privateKey),
             publicKey: privateKey.publicKey,
             now: issuedAt.addingTimeInterval(180)
         )
@@ -659,7 +1180,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 1
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 1, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 1, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -679,7 +1200,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: asset.trust, manifestRevision: asset.manifestRevision
         )
         let invalid = WalletReviewManifest(
-            schemaVersion: 1, revision: 1, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 1, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [mismatched], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -703,7 +1224,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 2
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 2, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 2, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -723,7 +1244,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: asset.trust, manifestRevision: asset.manifestRevision
         )
         let invalid = WalletReviewManifest(
-            schemaVersion: 1, revision: 2, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 2, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [wrongReference], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -747,7 +1268,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 3
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 3, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 3, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -771,7 +1292,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: asset.trust, manifestRevision: asset.manifestRevision
         )
         let invalid = WalletReviewManifest(
-            schemaVersion: 1, revision: 3, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 3, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [malformed], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -795,7 +1316,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 4
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 4, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -820,7 +1341,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: asset.trust, manifestRevision: asset.manifestRevision
         )
         let invalid = WalletReviewManifest(
-            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 4, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [malformed], evmContracts: [], explorerTemplates: [:],
             adapterIDs: []
@@ -1254,7 +1775,9 @@ final class WalletGatewayTests: XCTestCase {
             accountAddress: account, networkID: "eip155:1", now: now
         ))
         XCTAssertNil(WalletUniversalRouterV2V3Adapter.contractAction(
-            for: action(protocolVersion: .v2, slippageBPS: 500),
+            // At 500 bps, floor(10 * 0.95) is still 9. Zero slippage
+            // requires all 10 units and must reject this supplied minimum.
+            for: action(protocolVersion: .v2, slippageBPS: 0),
             accountAddress: account, networkID: "eip155:1", now: now
         ))
 
@@ -1305,6 +1828,45 @@ final class WalletGatewayTests: XCTestCase {
             XCTFail("A response with both result and error must fail closed.")
         } catch WalletRPCError.invalidResponse(let message) {
             XCTAssertTrue(message.contains("exactly one"))
+        }
+    }
+
+    func testRPCProviderResponseMutationCorpusIsBoundedAndFailsClosed() async throws {
+        let seed = try walletFuzzCorpus("providers/json-rpc-response.json")
+        func bindingResponseID(
+            _ response: Data,
+            to request: URLRequest
+        ) throws -> Data {
+            guard var responseObject = try? JSONSerialization.jsonObject(
+                with: response
+            ) as? [String: Any],
+            let requestObject = try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)
+            ) as? [String: Any],
+            let requestID = requestObject["id"] else {
+                return response
+            }
+            responseObject["id"] = requestID
+            return try JSONSerialization.data(withJSONObject: responseObject)
+        }
+        let baseline = makeRPCClient {
+            try bindingResponseID(seed, to: $0)
+        }
+        let baselineValue = try await baseline.publicRead(
+            method: "eth_blockNumber", params: []
+        )
+        XCTAssertEqual(baselineValue as? String, "0xaa36a7")
+
+        var generator = WalletFuzzGenerator()
+        for iteration in 0..<128 {
+            let response = generator.mutate(seed, iteration: iteration)
+            XCTAssertLessThanOrEqual(response.count, 2_048)
+            let client = makeRPCClient {
+                try bindingResponseID(response, to: $0)
+            }
+            _ = try? await client.publicRead(
+                method: "eth_blockNumber", params: []
+            )
         }
     }
 
@@ -1950,6 +2512,95 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(refreshedBalance, "1007")
     }
 
+    func testSuiGraphQLNormalizesPinnedOfficialMoveTypeRepresentationsOnlyAtWireBoundary() {
+        // Exact repr examples from Sui 1.79.0 commit 46f18562f1f5af2438d35828e8b62d5e0b972db7:
+        // crates/sui-indexer-alt-e2e-tests/tests/graphql/addressable/coins.snap.
+        let native = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+        let coin = "0x0000000000000000000000000000000000000000000000000000000000000002::coin::Coin<0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI>"
+        let empty = "0x0000000000000000000000000000000000000000000000000000000000000042::empty::COIN"
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(native), "0x2::sui::SUI")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(coin), "0x2::coin::Coin<0x2::sui::SUI>")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(empty), "0x42::empty::COIN")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType("0x2::sui::SUI"), "0x2::sui::SUI")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType("0x0::example::Object"), "0x0::example::Object")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(
+            "0x2::example::Object<vector<\(empty)>,u64>"
+        ), "0x2::example::Object<vector<0x42::empty::COIN>,u64>")
+        XCTAssertFalse(WalletSuiAssetIdentity.isCanonicalCoinType(native))
+        XCTAssertNil(WalletSuiAssetIdentity.parse("sui:testnet/coin:\(native)"))
+        XCTAssertNil(WalletSuiAssetIdentity.parse("sui:testnet/coin:0x2::coin::Coin<0x2::sui::SUI>"))
+    }
+
+    func testSuiGraphQLWireTypeNormalizerRejectsMalformedAndExcessiveGrammar() {
+        let invalid = [
+            "", "u64", "vector<u8>", "0x02::sui::SUI", "0X2::sui::SUI", "0xA::sui::SUI",
+            "0x::sui::SUI", "0x2::sui", "0x2::::SUI", "0x2::2sui::SUI", "0x2::sui::SUI::Extra",
+            "0x2::sui::SUI ", "0x2::sui::SUI\n", "0x2::sui::SUİ", "0x2::sui::SUI/extra",
+            "0x2::coin::Coin<>", "0x2::coin::Coin<u64,>", "0x2::coin::Coin<,u64>",
+            "0x2::coin::Coin<u64", "0x2::coin::Coin<u64>>", "0x2::coin::Coin<unknown>",
+            "0x2::coin::Coin<vector<u8,u64>>", "0x2::coin::Coin<0x02::sui::SUI>",
+            "0x" + String(repeating: "1", count: 65) + "::sui::SUI",
+            "0x2::example::Object<" + String(repeating: "vector<", count: 16) + "u8" + String(repeating: ">", count: 17),
+            "0x2::example::Object<" + Array(repeating: "u8", count: 17).joined(separator: ",") + ">",
+            "0x2::example::" + String(repeating: "A", count: 512),
+        ]
+        for value in invalid {
+            XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(value), "Malformed type must not normalize")
+        }
+        XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(NSNull()))
+        XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(2))
+    }
+
+    func testSuiGraphQLWireNormalizationPreservesNumericAddressModuleAndTypeIdentity() {
+        let address = "0x" + String(repeating: "0", count: 63) + "2"
+        for (wire, expected) in [
+            ("0x" + String(repeating: "0", count: 63) + "3::sui::SUI", "0x3::sui::SUI"),
+            ("\(address)::Sui::SUI", "0x2::Sui::SUI"),
+            ("\(address)::sui::Sui", "0x2::sui::Sui"),
+            ("\(address)::coin::Coin<0x3::sui::SUI>", "0x2::coin::Coin<0x3::sui::SUI>"),
+        ] {
+            XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(wire), expected)
+            XCTAssertNotEqual(WalletSuiGraphQLClient.normalizedWireMoveType(wire), "0x2::sui::SUI")
+        }
+    }
+
+    func testSuiGraphQLRejectsShortAndPaddedDuplicateBalanceIdentities() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let padded = "0x" + String(repeating: "0", count: 63) + "2::sui::SUI"
+        let client = makeSuiGraphQLClient(now: now, paddedWireTypes: false) { _ in
+            try self.suiBalancesResponse(address: owner, balances: [
+                ("0x2::sui::SUI", "1", "1", "0"), (padded, "2", "2", "0"),
+            ], hasNextPage: false, endCursor: nil)
+        }
+        do {
+            _ = try await client.balances(owner: owner)
+            XCTFail("Wire aliases must remain one identity and duplicate evidence must fail")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicate"))
+        }
+    }
+
+    func testSuiGraphQLPaddedGasEvidenceRejectsPackageModuleAndTypeSubstitution() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let objectID = "0x" + String(repeating: "2", count: 64)
+        for wrongType in ["0x3::sui::SUI", "0x2::Sui::SUI", "0x2::sui::Sui"] {
+            let client = makeSuiGraphQLClient(now: now) { _ in
+                try self.suiGasCoinsResponse(owner: owner, total: "100", coinsBalance: "100", accumulator: "0",
+                    coins: [self.suiGasCoinJSON(objectID: objectID, owner: owner, version: 1,
+                                               digestByte: 13, balance: 100, coinType: wrongType)],
+                    hasNextPage: false, endCursor: nil)
+            }
+            do {
+                _ = try await client.selectNativeGasCoin(owner: owner, requiredBalanceBaseUnits: "1")
+                XCTFail("Padded package/module/type substitution must fail exact gas-coin identity")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("malformed"))
+            }
+        }
+    }
+
     func testSuiGraphQLRejectsWrongChainAndInconsistentBalance() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -2036,7 +2687,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let variables = try XCTUnwrap(object["variables"] as? [String: Any])
             XCTAssertEqual(variables["address"] as? String, address)
-            XCTAssertEqual(variables["first"] as? Int, 100)
+            XCTAssertEqual(variables["first"] as? Int, 50)
             if requests == 1 {
                 XCTAssertTrue(variables["after"] is NSNull)
                 XCTAssertTrue(variables["checkpoint"] is NSNull)
@@ -2065,6 +2716,144 @@ final class WalletGatewayTests: XCTestCase {
             balances.first(where: { $0.identity.coinType == coinType })?.totalBalance,
             "1007"
         )
+    }
+
+    func testSuiGraphQLBalanceQueryClosesItsOperationSelection() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "5", count: 64)
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let query = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(query.contains("query LocusSuiBalances("))
+            // This literal contains no string values or brace-bearing argument
+            // objects: its final brace must close the operation, not the address.
+            var depth = 0
+            var operationClosures = 0
+            for character in query {
+                if character == "{" { depth += 1 }
+                if character == "}" {
+                    depth -= 1
+                    XCTAssertGreaterThanOrEqual(depth, 0)
+                    if depth == 0 { operationClosures += 1 }
+                }
+            }
+            XCTAssertEqual(depth, 0)
+            XCTAssertEqual(operationClosures, 1)
+            return try self.suiBalancesResponse(address: owner, balances: [],
+                hasNextPage: false, endCursor: nil)
+        }
+        let balances = try await client.balances(owner: owner)
+        XCTAssertTrue(balances.isEmpty)
+    }
+
+    func testSuiGraphQLDiscoveryPreservesTotalBoundsAndCheckpointAcrossSmallerPages() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "5", count: 64)
+        let marker = "0x1234::example::COIN"
+        // Existing total capacities: 10,000 balances and 5,000 objects/coins.
+        // An endless, otherwise-valid cursor stream must fail at the exact cap.
+        for (kind, totalLimit) in [(0, 10_000), (1, 5_000), (2, 5_000), (3, 5_000)] {
+            var requests = 0
+            let client = makeSuiGraphQLClient(now: now) { request in
+                requests += 1
+                let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)) as? [String: Any])
+                let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+                XCTAssertEqual(variables["first"] as? Int, 50)
+                XCTAssertEqual(variables["address"] as? String, owner)
+                if requests == 1 {
+                    XCTAssertTrue(variables["checkpoint"] is NSNull)
+                    XCTAssertTrue(variables["after"] is NSNull)
+                } else {
+                    XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+                    XCTAssertEqual(variables["after"] as? String, "page-\(requests - 1)")
+                }
+                switch kind {
+                case 0:
+                    return try self.suiBalancesResponse(address: owner, balances: [],
+                        hasNextPage: true, endCursor: "page-\(requests)")
+                case 1:
+                    return try self.suiOwnedObjectsResponse(owner: owner, objects: [],
+                        hasNextPage: true, endCursor: "page-\(requests)")
+                default:
+                    return try self.suiGasCoinsResponse(owner: owner, total: "0",
+                        coinsBalance: "0", accumulator: "0", coins: [],
+                        hasNextPage: true, endCursor: "page-\(requests)",
+                        coinType: kind == 2 ? WalletSuiAssetIdentity.nativeCoinType : marker)
+                }
+            }
+            do {
+                switch kind {
+                case 0: _ = try await client.balances(owner: owner)
+                case 1: _ = try await client.ownedObjects(owner: owner)
+                case 2: _ = try await client.nativeGasCoins(owner: owner)
+                default: _ = try await client.coinObjects(owner: owner, coinType: marker)
+                }
+                XCTFail("Unresolved discovery pagination must fail at its existing total bound.")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("pagination was truncated"))
+            }
+            XCTAssertEqual(requests * 50, totalLimit)
+        }
+    }
+
+    func testSuiGasCoinDiscoveryReconcilesAcrossAFullPinnedPageBoundary() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "6", count: 64)
+        let coins = (1...51).map { index in
+            self.suiGasCoinJSON(objectID: "0x" + String(format: "%064x", index),
+                owner: owner, version: 1, digestByte: UInt8(index), balance: 1)
+        }
+        var requests = 0
+        let client = makeSuiGraphQLClient(now: now) { request in
+            requests += 1
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
+            if requests == 1 {
+                XCTAssertTrue(variables["checkpoint"] is NSNull)
+                return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                    coinsBalance: "51", accumulator: "0", coins: Array(coins.prefix(50)),
+                    hasNextPage: true, endCursor: "coin-51")
+            }
+            XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+            XCTAssertEqual(variables["after"] as? String, "coin-51")
+            return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                coinsBalance: "51", accumulator: "0", coins: [coins[50]],
+                hasNextPage: false, endCursor: nil)
+        }
+        let snapshot = try await client.nativeGasCoins(owner: owner)
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(snapshot.coins.count, 51)
+        XCTAssertEqual(Set(snapshot.coins.map(\.reference.objectID)).count, 51)
+        XCTAssertEqual(snapshot.coinBalance, "51")
+        XCTAssertEqual(snapshot.network.checkpointSequence, 123_456)
+    }
+
+    func testSuiGasCoinDiscoveryRejectsMoreThanTheRequestedPageSize() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "7", count: 64)
+        let coins = (1...51).map { index in
+            self.suiGasCoinJSON(objectID: "0x" + String(format: "%064x", index),
+                owner: owner, version: 1, digestByte: UInt8(index), balance: 1)
+        }
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
+            return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                coinsBalance: "51", accumulator: "0", coins: coins,
+                hasNextPage: false, endCursor: nil)
+        }
+        do {
+            _ = try await client.nativeGasCoins(owner: owner)
+            XCTFail("A response cannot exceed the exact requested connection bound.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertEqual(message, "Sui returned malformed gas-coin evidence")
+        }
     }
 
     func testSuiGraphQLRejectsDuplicateAndNoncanonicalCoinTypes() async throws {
@@ -2122,6 +2911,8 @@ final class WalletGatewayTests: XCTestCase {
             XCTAssertTrue(query.contains("hasPublicTransfer"))
             XCTAssertFalse(query.contains("objectBcs"))
             XCTAssertFalse(query.contains("display"))
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
             return try self.suiOwnedObjectsResponse(
                 owner: owner,
                 objects: [
@@ -2216,6 +3007,7 @@ final class WalletGatewayTests: XCTestCase {
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
             XCTAssertEqual(variables["address"] as? String, owner)
             XCTAssertEqual(variables["coinType"] as? String, "0x2::sui::SUI")
+            XCTAssertEqual(variables["first"] as? Int, 50)
             XCTAssertEqual(
                 variables["objectType"] as? String,
                 "0x2::coin::Coin<0x2::sui::SUI>"
@@ -2353,6 +3145,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
             XCTAssertEqual(variables["coinType"] as? String, coinType)
+            XCTAssertEqual(variables["first"] as? Int, 50)
             XCTAssertEqual(
                 variables["objectType"] as? String,
                 "0x2::coin::Coin<\(coinType)>"
@@ -2466,7 +3259,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 4
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 4, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 4, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: [WalletReviewedAdapters.suiCoinTransfer]
@@ -2549,14 +3342,97 @@ final class WalletGatewayTests: XCTestCase {
                 trust: .curated, manifestRevision: 7
             ),
         ]
+        let codeHash: (Character) -> String = {
+            "0x" + String(repeating: String($0), count: 64)
+        }
+        let permit2ABI = #"[{"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"name":"token","type":"address"},{"name":"spender","type":"address"},{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"}],"outputs":[]}]"#
+        let permit2Entry = WalletContractRegistryEntry(
+            id: "uniswap.permit2", networkID: WalletGateway.sepoliaNetworkID,
+            checksumAddress: "0x9999999999999999999999999999999999999999",
+            label: "Reviewed Permit2", normalizedABI: permit2ABI,
+            abiDigest: "sha256:" + SHA256.hash(data: Data(permit2ABI.utf8))
+                .map { String(format: "%02x", $0) }.joined(),
+            runtimeCodeHash: codeHash("f"),
+            permittedFunctions: ["approve(address,address,uint160,uint48)"],
+            permittedSelectors: ["0x87517c45"],
+            reviewedAdapterID: WalletReviewedAdapters.uniswapPermit2AllowanceSetup,
+            verifiedAt: issuedAt.addingTimeInterval(-60)
+        )
+        let erc20ABI = #"[{"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"name":"","type":"bool"}]}]"#
+        func tokenEntry(id: String, address: String, hash: Character)
+            -> WalletContractRegistryEntry {
+            WalletContractRegistryEntry(
+                id: id, networkID: WalletGateway.sepoliaNetworkID,
+                checksumAddress: address, label: id,
+                normalizedABI: erc20ABI,
+                abiDigest: "sha256:" + SHA256.hash(data: Data(erc20ABI.utf8))
+                    .map { String(format: "%02x", $0) }.joined(),
+                runtimeCodeHash: codeHash(hash),
+                permittedFunctions: ["approve(address,uint256)"],
+                permittedSelectors: ["0x095ea7b3"],
+                reviewedAdapterID: WalletReviewedAdapters.erc20,
+                verifiedAt: issuedAt.addingTimeInterval(-60)
+            )
+        }
+        let inputEntry = tokenEntry(
+            id: "token.input",
+            address: "0x1111111111111111111111111111111111111111",
+            hash: "7"
+        )
+        let outputEntry = tokenEntry(
+            id: "token.output",
+            address: "0x2222222222222222222222222222222222222222",
+            hash: "8"
+        )
+        let uniswap = WalletReviewedUniswapConfiguration(
+            networkID: WalletGateway.sepoliaNetworkID,
+            universalRouterContractID: entry.id,
+            permit2ContractID: permit2Entry.id,
+            contracts: [
+                .init(role: .v2Router, address: "0x5555555555555555555555555555555555555555", runtimeCodeHash: codeHash("b")),
+                .init(role: .v2Factory, address: "0x6666666666666666666666666666666666666666", runtimeCodeHash: codeHash("c")),
+                .init(role: .v3Factory, address: "0x7777777777777777777777777777777777777777", runtimeCodeHash: codeHash("d")),
+                .init(role: .v3QuoterV2, address: "0x8888888888888888888888888888888888888888", runtimeCodeHash: codeHash("e")),
+                .init(role: .universalRouter, address: entry.checksumAddress, runtimeCodeHash: entry.runtimeCodeHash),
+                .init(role: .permit2, address: "0x9999999999999999999999999999999999999999", runtimeCodeHash: codeHash("f")),
+            ],
+            pools: [.init(
+                protocolVersion: .v3,
+                address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                runtimeCodeHash: codeHash("1"),
+                token0AssetID: input, token1AssetID: output, feeTier: 3_000
+            )],
+            allowedIntermediaryAssetIDs: [], allowedFeeTiers: [3_000],
+            maximumHops: 3, zeroFirstApprovalAssetIDs: []
+        )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 7, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 7, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
-            assets: assets, evmContracts: [entry], explorerTemplates: [:],
+            assets: assets,
+            evmContracts: [entry, permit2Entry, inputEntry, outputEntry],
+            explorerTemplates: [:],
             adapterIDs: [
                 WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
-            ]
+                WalletReviewedAdapters.uniswapPermit2AllowanceSetup,
+                WalletReviewedAdapters.erc20,
+            ],
+            uniswapConfigurations: [uniswap]
         )
+        let missingTokenReview = WalletReviewManifest(
+            schemaVersion: manifest.schemaVersion, revision: manifest.revision,
+            issuedAt: manifest.issuedAt, expiresAt: manifest.expiresAt,
+            assets: manifest.assets,
+            evmContracts: [entry, permit2Entry, inputEntry],
+            explorerTemplates: manifest.explorerTemplates,
+            adapterIDs: manifest.adapterIDs,
+            uniswapConfigurations: manifest.uniswapConfigurations
+        )
+        XCTAssertThrowsError(try WalletReviewRegistry(
+            signedManifest: signedReview(missingTokenReview, key: key),
+            publicKey: key.publicKey
+        )) { error in
+            XCTAssertEqual(error as? WalletReviewManifestError, .malformed)
+        }
         let registry = try WalletReviewRegistry(
             signedManifest: signedReview(manifest, key: key),
             publicKey: key.publicKey
@@ -2565,12 +3441,18 @@ final class WalletGatewayTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(
-            try JSONEncoder().encode([entry]),
+            try JSONEncoder().encode([entry, permit2Entry, inputEntry, outputEntry]),
             forKey: "LocusWalletContractRegistryV1"
         )
         let signer = FakeWalletSigner()
         let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         signer.accountAddress = account
+        signer.browserRPCResponses = [
+            "0x" + String(repeating: "0", count: 61) + "3e8",
+            "0x" + String(repeating: "0", count: 61) + "3e8"
+                + String(format: "%064x", UInt64(Date().timeIntervalSince1970) + 1_200)
+                + String(repeating: "0", count: 64),
+        ]
         let gateway = WalletGateway(
             signer: signer,
             environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
@@ -2580,33 +3462,52 @@ final class WalletGatewayTests: XCTestCase {
         )
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
+        let quoteTime = Date()
+        func swapAction(expiresAt: Date) -> [String: Any] {
+            [
+                "type": WalletActionKind.exactInputSwap.rawValue,
+                "contract_id": entry.id,
+                "adapter_id": WalletReviewedAdapters
+                    .uniswapUniversalRouterV2V3ExactIn,
+                "input_asset_id": input, "output_asset_id": output,
+                "amount_base_units": "1000",
+                "minimum_output_base_units": "975",
+                "recipient": account,
+                "route": [
+                    "protocol_version": "v3",
+                    "path_asset_ids": [input, output],
+                    "fee_tiers": ["3000"],
+                    "minimum_hop_price_x36": [
+                        "975000000000000000000000000000000000",
+                    ],
+                    "quoted_output_base_units": "1000",
+                    "slippage_bps": "250",
+                    "deadline_unix_seconds": String(
+                        UInt64(quoteTime.timeIntervalSince1970) + 600
+                    ),
+                    "quote_evidence": [
+                        "block_number": "100",
+                        "block_hash": "0x" + String(repeating: "2", count: 64),
+                        "quote_contract_address": "0x8888888888888888888888888888888888888888",
+                        "quote_contract_runtime_code_hash": codeHash("e"),
+                        "per_hop_output_base_units": ["1000"],
+                        "gas_estimate": "100000",
+                        "quoted_at": quoteTime,
+                        "expires_at": expiresAt,
+                        "agreeing_provider_count": "1",
+                    ],
+                ],
+            ]
+        }
         let response = await gateway.perform(
             tool: "wallet_prepare_transaction",
             arguments: [
                 "network_id": WalletGateway.sepoliaNetworkID,
                 "account_id": "account-1",
                 "maximum_fee_base_units": "50000",
-                "action": [
-                    "type": WalletActionKind.exactInputSwap.rawValue,
-                    "contract_id": entry.id,
-                    "adapter_id": WalletReviewedAdapters
-                        .uniswapUniversalRouterV2V3ExactIn,
-                    "input_asset_id": input, "output_asset_id": output,
-                    "amount_base_units": "1000",
-                    "minimum_output_base_units": "975",
-                    "recipient": account,
-                    "route": [
-                        "protocol_version": "v3",
-                        "path_asset_ids": [input, output],
-                        "fee_tiers": ["3000"],
-                        "minimum_hop_price_x36": ["1"],
-                        "quoted_output_base_units": "1000",
-                        "slippage_bps": "250",
-                        "deadline_unix_seconds": String(
-                            UInt64(Date().timeIntervalSince1970) + 600
-                        ),
-                    ],
-                ],
+                "action": swapAction(
+                    expiresAt: quoteTime.addingTimeInterval(60)
+                ),
             ],
             source: .human
         )
@@ -2632,6 +3533,19 @@ final class WalletGatewayTests: XCTestCase {
         )
         XCTAssertNotNil(rejected["error"])
         XCTAssertEqual(signer.preparedRequests.count, 1)
+
+        let staleQuote = await gateway.perform(
+            tool: "wallet_prepare_transaction",
+            arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID,
+                "account_id": "account-1", "maximum_fee_base_units": "50000",
+                "action": swapAction(
+                    expiresAt: quoteTime.addingTimeInterval(-1)
+                ),
+            ], source: .human
+        )
+        XCTAssertNotNil(staleQuote["error"])
+        XCTAssertEqual(signer.preparedRequests.count, 1)
     }
 
     @MainActor
@@ -2650,7 +3564,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 5
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 5, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 5, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: [WalletReviewedAdapters.suiObjectTransfer]
@@ -2716,7 +3630,7 @@ final class WalletGatewayTests: XCTestCase {
             trust: .curated, manifestRevision: 6
         )
         let manifest = WalletReviewManifest(
-            schemaVersion: 1, revision: 6, issuedAt: issuedAt,
+            schemaVersion: 2, revision: 6, issuedAt: issuedAt,
             expiresAt: issuedAt.addingTimeInterval(24 * 60 * 60),
             assets: [asset], evmContracts: [], explorerTemplates: [:],
             adapterIDs: [WalletReviewedAdapters.solanaCoreTransfer]
@@ -3187,7 +4101,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let query = try XCTUnwrap(body["query"] as? String)
             XCTAssertTrue(query.contains("relation: AFFECTED"))
-            XCTAssertTrue(query.contains("balanceChanges(first: 100)"))
+            XCTAssertTrue(query.contains("balanceChanges(first: 50)"))
             XCTAssertFalse(query.lowercased().contains("bcs"))
             XCTAssertFalse(query.contains("display"))
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
@@ -3263,7 +4177,7 @@ final class WalletGatewayTests: XCTestCase {
                 ) as? [String: Any]
             )
             let query = try XCTUnwrap(body["query"] as? String)
-            XCTAssertTrue(query.contains("objectChanges(first: 100)"))
+            XCTAssertTrue(query.contains("objectChanges(first: 50)"))
             XCTAssertTrue(query.contains("hasPublicTransfer"))
             XCTAssertFalse(query.lowercased().contains("bcs"))
             XCTAssertFalse(query.contains("display"))
@@ -3938,10 +4852,14 @@ final class WalletGatewayTests: XCTestCase {
     }
 
     func testSolanaCanonicalCoreMessageMatchesIndependentSignerShape() throws {
-        XCTAssertFalse(
+        XCTAssertTrue(
             WalletNetworkCatalog.solanaMainnet.staticallyReviewedCapabilities
                 .contains(.nftTransfer)
         )
+        XCTAssertThrowsError(try WalletLaunchGate().authorize(
+            networkID: WalletNetworkCatalog.solanaMainnet.id,
+            capability: .nftTransfer, regionCode: "CA"
+        ))
         XCTAssertTrue(
             WalletNetworkCatalog.solanaDevnet.staticallyReviewedCapabilities
                 .contains(.nftTransfer)
@@ -5851,9 +6769,15 @@ final class WalletGatewayTests: XCTestCase {
     private func makeSuiGraphQLClient(
         network: WalletNetworkDescriptor = WalletNetworkCatalog.suiTestnet,
         now: Date,
+        paddedWireTypes: Bool = true,
         response: @escaping (URLRequest) throws -> Data
     ) -> WalletSuiGraphQLClient {
-        WalletRPCURLProtocol.handler = { request in (200, try response(request)) }
+        WalletRPCURLProtocol.handler = { request in
+            let data = try response(request)
+            guard paddedWireTypes,
+                  let object = try? JSONSerialization.jsonObject(with: data) else { return (200, data) }
+            return (200, try JSONSerialization.data(withJSONObject: Self.suiOfficialWireRepresentations(object)))
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [WalletRPCURLProtocol.self]
         return try! WalletSuiGraphQLClient(
@@ -5862,6 +6786,31 @@ final class WalletGatewayTests: XCTestCase {
             session: URLSession(configuration: configuration),
             now: { now }
         )
+    }
+
+    // The real GraphQL server emits padded addresses in every MoveType.repr,
+    // including nested Coin<T>, simulation, and indexed activity. Keep outgoing
+    // requests and expected internal identities unchanged. Invalid fixture
+    // spellings (including partial leading-zero padding) are never repaired.
+    private static func suiOfficialWireRepresentations(_ value: Any) -> Any {
+        if let values = value as? [Any] { return values.map(suiOfficialWireRepresentations) }
+        guard let object = value as? [String: Any] else { return value }
+        var result: [String: Any] = [:]
+        for (key, field) in object {
+            guard key == "repr", let type = field as? String else {
+                result[key] = suiOfficialWireRepresentations(field)
+                continue
+            }
+            let expression = try! NSRegularExpression(pattern: "0x(?:0|[1-9a-f][0-9a-f]{0,63})(?=::)")
+            let padded = NSMutableString(string: type)
+            for match in expression.matches(in: type, range: NSRange(type.startIndex..., in: type)).reversed() {
+                let address = (type as NSString).substring(with: match.range)
+                let hex = String(address.dropFirst(2))
+                padded.replaceCharacters(in: match.range, with: "0x" + String(repeating: "0", count: 64 - hex.count) + hex)
+            }
+            result[key] = padded as String
+        }
+        return result
     }
 
     private func suiNetworkStatusResponse(
@@ -6662,6 +7611,180 @@ final class WalletGatewayTests: XCTestCase {
         ) else { return XCTFail("cumulative cap must be enforced") }
     }
 
+    func testUniswapRoutePlannerEnumeratesOnlyAcyclicReviewedSingleVersionPaths() {
+        let network = WalletGateway.sepoliaNetworkID
+        let input = "\(network)/erc20:0x1111111111111111111111111111111111111111"
+        let middle = "\(network)/erc20:0x2222222222222222222222222222222222222222"
+        let output = "\(network)/erc20:0x3333333333333333333333333333333333333333"
+        let forbidden = "\(network)/erc20:0x4444444444444444444444444444444444444444"
+        func pool(
+            _ version: WalletUniversalRouterSwapProtocol, _ marker: Character,
+            _ token0: String, _ token1: String, _ fee: UInt32? = nil
+        ) -> WalletReviewedUniswapPoolIdentity {
+            .init(
+                protocolVersion: version,
+                address: "0x" + String(repeating: String(marker), count: 40),
+                runtimeCodeHash: "0x" + String(repeating: String(marker), count: 64),
+                token0AssetID: token0, token1AssetID: token1, feeTier: fee
+            )
+        }
+        let configuration = WalletReviewedUniswapConfiguration(
+            networkID: network, universalRouterContractID: "router",
+            permit2ContractID: "permit2", contracts: [],
+            pools: [
+                pool(.v2, "a", input, output),
+                pool(.v2, "b", input, middle),
+                pool(.v2, "c", middle, output),
+                pool(.v3, "d", input, output, 500),
+                pool(.v3, "e", input, middle, 3_000),
+                pool(.v3, "f", middle, output, 3_000),
+                pool(.v3, "1", input, forbidden, 500),
+                pool(.v3, "2", forbidden, output, 500),
+            ],
+            allowedIntermediaryAssetIDs: [middle],
+            allowedFeeTiers: [500, 3_000], maximumHops: 2,
+            zeroFirstApprovalAssetIDs: []
+        )
+
+        let routes = WalletUniswapRoutePlanner.candidates(
+            configuration: configuration,
+            inputAssetID: input, outputAssetID: output
+        )
+        XCTAssertEqual(routes.count, 4)
+        XCTAssertEqual(Set(routes.map(\.protocolVersion)), [.v2, .v3])
+        XCTAssertTrue(routes.allSatisfy { Set($0.pathAssetIDs).count == $0.pathAssetIDs.count })
+        XCTAssertFalse(routes.contains { $0.pathAssetIDs.contains(forbidden) })
+        XCTAssertTrue(routes.filter { $0.protocolVersion == .v2 }.allSatisfy {
+            $0.feeTiers.isEmpty
+        })
+        XCTAssertEqual(
+            Set(routes.filter { $0.protocolVersion == .v3 }.map(\.feeTiers)),
+            Set([[500], [3_000, 3_000]])
+        )
+    }
+
+    func testCheckedQuoteMathUsesFloorAndRejectsZeroDivisor() {
+        XCTAssertEqual(
+            WalletBaseUnits.divide("100", by: "3")?.quotient, "33"
+        )
+        XCTAssertEqual(
+            WalletBaseUnits.divide("100", by: "3")?.remainder, "1"
+        )
+        XCTAssertEqual(
+            WalletBaseUnits.applyingBasisPointFloor("999", bpsToKeep: 9_950),
+            "994"
+        )
+        XCTAssertNil(WalletBaseUnits.divide("1", by: "0"))
+        XCTAssertNil(WalletBaseUnits.applyingBasisPointFloor(
+            "1", bpsToKeep: 10_001
+        ))
+    }
+
+    func testSwapAllowanceIsExactFiniteSwapBoundAndNeverAutonomous() throws {
+        let networkID = WalletGateway.sepoliaNetworkID
+        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let token = "0x1111111111111111111111111111111111111111"
+        let outputToken = "0x2222222222222222222222222222222222222222"
+        let router = "0x3333333333333333333333333333333333333333"
+        let permit2 = "0x4444444444444444444444444444444444444444"
+        let inputAsset = "\(networkID)/erc20:\(token)"
+        let outputAsset = "\(networkID)/erc20:\(outputToken)"
+        let now = Date()
+        let route = WalletExactInputSwapRoute(
+            protocolVersion: .v3,
+            pathAssetIDs: [inputAsset, outputAsset], feeTiers: [3_000],
+            minimumHopPriceX36: ["975" + String(repeating: "0", count: 33)],
+            quotedOutputBaseUnits: "1000", slippageBPS: 250,
+            deadlineUnixSeconds: String(UInt64(now.timeIntervalSince1970) + 600),
+            quoteEvidence: WalletUniswapQuoteEvidence(
+                blockNumber: "1", blockHash: "0x" + String(repeating: "1", count: 64),
+                quoteContractAddress: "0x5555555555555555555555555555555555555555",
+                quoteContractRuntimeCodeHash: "0x" + String(repeating: "5", count: 64),
+                perHopOutputBaseUnits: ["1000"], gasEstimate: "1",
+                quotedAt: now, expiresAt: now.addingTimeInterval(60),
+                agreeingProviderCount: 2
+            )
+        )
+        let binding = WalletSwapAllowanceBinding(
+            networkID: networkID, universalRouterContractID: "router",
+            universalRouterAddress: router, permit2Address: permit2,
+            inputAssetID: inputAsset, outputAssetID: outputAsset,
+            amountInBaseUnits: "1000", minimumOutputBaseUnits: "975",
+            recipient: account, route: route
+        )
+        let setup = WalletSwapAllowanceSetup(
+            stage: .erc20ToPermit2, binding: binding,
+            bindingDigest: try XCTUnwrap(binding.digest()),
+            approvalAmountBaseUnits: "1000", expirationUnixSeconds: nil
+        )
+        let action = WalletSemanticAction.swapAllowanceSetup(
+            contractID: "token", adapterID: WalletReviewedAdapters.erc20,
+            setup: setup
+        )
+        let erc20ABI = #"[{"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"type":"address"},{"type":"uint256"}],"outputs":[{"type":"bool"}]}]"#
+        let entry = WalletContractRegistryEntry(
+            id: "token", networkID: networkID, checksumAddress: token,
+            label: "Token", normalizedABI: erc20ABI,
+            abiDigest: "sha256:test",
+            runtimeCodeHash: "0x" + String(repeating: "a", count: 64),
+            permittedFunctions: ["approve(address,uint256)"],
+            permittedSelectors: ["0x095ea7b3"],
+            reviewedAdapterID: WalletReviewedAdapters.erc20,
+            verifiedAt: now
+        )
+        let configuration = WalletReviewedUniswapConfiguration(
+            networkID: networkID, universalRouterContractID: "router",
+            permit2ContractID: "permit2", contracts: [
+                WalletReviewedUniswapContractIdentity(
+                    role: .universalRouter, address: router,
+                    runtimeCodeHash: "0x" + String(repeating: "3", count: 64)
+                ),
+                WalletReviewedUniswapContractIdentity(
+                    role: .permit2, address: permit2,
+                    runtimeCodeHash: "0x" + String(repeating: "4", count: 64)
+                ),
+            ], pools: [], allowedIntermediaryAssetIDs: [],
+            allowedFeeTiers: [3_000], maximumHops: 3,
+            zeroFirstApprovalAssetIDs: []
+        )
+        let call = try XCTUnwrap(WalletSwapAllowanceAdapter.resolve(
+            action: action, registryEntry: entry,
+            configuration: configuration
+        ))
+        XCTAssertEqual(call.function, "approve(address,uint256)")
+        XCTAssertEqual(call.arguments.map(\.value), [permit2, "1000"])
+
+        let transaction = WalletPreparedTransaction(
+            id: "allowance", digest: "digest", networkID: networkID,
+            accountID: "account-1", source: .agent, action: action,
+            summary: "Allowance", effects: [], riskFlags: [], contract: nil,
+            adapterID: WalletReviewedAdapters.erc20,
+            budgetAssetID: inputAsset, spendBaseUnits: "1000",
+            maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "10",
+            simulation: "Success", simulationSucceeded: true, nonce: "1",
+            createdAt: now, expiresAt: now.addingTimeInterval(120),
+            policyDecision: "", policyID: nil
+        )
+        guard case .requiresApproval = WalletPolicyEngine.evaluate(
+            transaction: transaction, policy: policy(), spentThisSession: "0"
+        ) else {
+            return XCTFail("Allowance setup must never consume signer policy.")
+        }
+
+        let substituted = WalletSemanticAction.swapAllowanceSetup(
+            contractID: "token", adapterID: WalletReviewedAdapters.erc20,
+            setup: WalletSwapAllowanceSetup(
+                stage: .erc20ToPermit2, binding: binding,
+                bindingDigest: "sha256:" + String(repeating: "0", count: 64),
+                approvalAmountBaseUnits: "1000", expirationUnixSeconds: nil
+            )
+        )
+        XCTAssertNil(WalletSwapAllowanceAdapter.resolve(
+            action: substituted, registryEntry: entry,
+            configuration: configuration
+        ))
+    }
+
     func testReviewedContractPoliciesRequireExactContractAssetAndCounterparty() {
         let token = "0x1111111111111111111111111111111111111111"
         let recipient = "0x2222222222222222222222222222222222222222"
@@ -7097,12 +8220,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(recovery.presentedModes, [.create, .create])
     }
 
-    func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async {
+    func testDisablingAlphaLocksAndRevokesButRetainsReceiveSnapshot() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         await gateway.refreshAccountSnapshots()
@@ -7158,7 +8278,7 @@ final class WalletGatewayTests: XCTestCase {
                                     environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"])
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
-        XCTAssertEqual(gateway.capability?["protocol_version"] as? Int, 2)
+        XCTAssertEqual(gateway.capability?["protocol_version"] as? Int, 3)
         XCTAssertTrue(
             (gateway.capability?["supported_chains"] as? [String])?.contains(
                 WalletNetworkCatalog.solanaDevnet.id
@@ -7257,13 +8377,66 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(signer.preparedRequests.last?.action.arguments.count, 2)
     }
 
+    /// The browser never inherits testnet authority from its environment flag.
+    /// Positive fixtures carry explicitly signed testnet network/method grants.
+    private func browserFixtureGateway(
+        signer: WalletSignerClient,
+        networkID: String = WalletGateway.sepoliaNetworkID
+    ) throws -> WalletGateway {
+        let network = try XCTUnwrap(WalletNetworkCatalog.descriptor(id: networkID))
+        XCTAssertEqual(network.environment, .testnet, "Fixtures must not grant mainnet authority.")
+        let key = Curve25519.Signing.PrivateKey()
+        let now = Date()
+        var methods: Set<WalletConnectionMethod> = [.listAccounts, .sendTransaction]
+        let signInAdapters: [WalletReviewedSignInAdapter]
+        switch network.chain {
+        case .evm:
+            methods.formUnion([.switchNetwork, .signInWithEthereum])
+            signInAdapters = [.init(format: .siwe, version: "1.0.0",
+                implementationSHA256: String(repeating: "a", count: 64), networkIDs: [networkID])]
+        case .solana:
+            methods.insert(.signInWithSolana)
+            signInAdapters = [.init(format: .siws, version: "1.0.0",
+                implementationSHA256: String(repeating: "a", count: 64), networkIDs: [networkID])]
+        case .sui:
+            signInAdapters = []
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let capability = WalletCapabilityManifest(
+            schemaVersion: 3, revision: 1, releaseStage: .invitedCanary,
+            evidenceIndexSHA256: String(repeating: "f", count: 64),
+            issuedAt: now.addingTimeInterval(-60), expiresAt: now.addingTimeInterval(600),
+            networkGrants: [.init(networkID: networkID,
+                capabilities: [.embeddedBrowser, .nativeTransfer, .standardizedSignIn],
+                connectors: [.init(connector: .embeddedBrowser, ownership: .locusVault,
+                    directions: [.locusVaultToDapp], methods: methods)])],
+            approvedRegions: ["CA"], completedApprovals: WalletLaunchGate.requiredCanaryApprovals
+        )
+        let gate = try WalletLaunchGate(signedManifest: .init(manifest: capability,
+            signatureBase64: key.signature(for: encoder.encode(capability)).base64EncodedString()),
+            publicKey: key.publicKey, now: now)
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1,
+            issuedAt: now.addingTimeInterval(-60), expiresAt: now.addingTimeInterval(600),
+            assets: [], evmContracts: [], explorerTemplates: [:], adapterIDs: [],
+            connectors: [.init(connector: .embeddedBrowser, ownership: .locusVault,
+                version: "1.0.0", artifactSHA256: String(repeating: "b", count: 64),
+                directions: [.locusVaultToDapp], methods: methods,
+                configurationSHA256: WalletConnectorReleaseConfiguration.digest(
+                    for: .embeddedBrowser, values: [:]))], signInAdapters: signInAdapters)
+        let registry = try WalletReviewRegistry(signedManifest: signedReview(review, key: key),
+            publicKey: key.publicKey, now: now)
+        return WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                          "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1"],
+            launchGate: gate, reviewRegistry: registry, regionCode: "CA")
+    }
+
     @MainActor
-    func testBrowserAccountGrantIsOriginScopedAndRevoked() async {
+    func testBrowserAccountGrantIsOriginScopedAndRevoked() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let request = Task {
@@ -7291,14 +8464,27 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(accounts)
     }
 
-    func testGatewayRejectsSignerAutonomyForBrowserSource() async {
+    func testBrowserProviderEnvironmentFlagDoesNotGrantNetworkAuthority() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer,
+            connectionsClient: UnavailableWalletConnectionsClient(), environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
+            ])
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let accounts = await gateway.requestBrowserAccounts(origin: "https://dapp.test")
+        XCTAssertNil(accounts)
+        XCTAssertNil(gateway.pendingBrowserOriginGrant)
+        XCTAssertFalse(gateway.canUseBrowserNetwork(WalletGateway.sepoliaNetworkID))
+        XCTAssertFalse(gateway.canUseBrowserNetwork(WalletNetworkCatalog.ethereumMainnet.id))
+    }
+
+    func testGatewayRejectsSignerAutonomyForBrowserSource() async throws {
         let signer = FakeWalletSigner()
         signer.policyDecision = "allowed_by_session_policy"
         signer.policyID = "policy-1"
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7319,12 +8505,9 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
-    func testSignerInterruptionWithdrawsAgentCapabilityAndBrowserGrants() async {
+    func testSignerInterruptionWithdrawsAgentCapabilityAndBrowserGrants() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7342,12 +8525,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertTrue(gateway.browserAccounts(origin: "https://dapp.test").isEmpty)
     }
 
-    func testRevokingBrowserOriginCancelsPendingExactTransaction() async {
+    func testRevokingBrowserOriginCancelsPendingExactTransaction() async throws {
         let signer = FakeWalletSigner()
-        let gateway = WalletGateway(signer: signer, environment: [
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
-            "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
-        ])
+        let gateway = try browserFixtureGateway(signer: signer)
         let authorized = await gateway.authorizeSession()
         XCTAssertTrue(authorized)
         let accountRequest = Task {
@@ -7370,6 +8550,176 @@ final class WalletGatewayTests: XCTestCase {
             XCTFail("A revoked origin must not reach signer execution.")
         } catch {
             XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+        }
+    }
+
+    func testRevokingBrowserOriginDuringSignerPresencePreventsExecution() async throws {
+        let signer = FakeWalletSigner()
+        var approval: CheckedContinuation<Void, Never>?
+        signer.confirmationHandler = { _ in
+            await withCheckedContinuation { approval = $0 }
+        }
+        let gateway = try browserFixtureGateway(signer: signer)
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let connect = Task { await gateway.requestBrowserAccounts(origin: "https://dapp.test") }
+        for _ in 0..<100 where gateway.pendingBrowserOriginGrant == nil { await Task.yield() }
+        gateway.approveBrowserOrigin()
+        _ = await connect.value
+        let send = Task {
+            try await gateway.browserSendTransaction(origin: "https://dapp.test", transaction: [
+                "from": "0xabc", "to": "0x1111111111111111111111111111111111111111", "value": "0x1",
+            ])
+        }
+        for _ in 0..<100 where gateway.pendingConfirmation == nil { await Task.yield() }
+        XCTAssertNotNil(gateway.pendingConfirmation)
+        gateway.confirm(intentID: "intent-1")
+        for _ in 0..<100 where approval == nil { await Task.yield() }
+        XCTAssertNotNil(approval)
+        gateway.revokeBrowserOrigin("https://dapp.test", reason: .navigation)
+        XCTAssertNil(gateway.pendingConfirmation)
+        XCTAssertTrue(signer.canceledIntentIDs.contains("intent-1"))
+        approval?.resume()
+        do { _ = try await send.value; XCTFail("Navigation must cancel an approval already in progress.") }
+        catch { XCTAssertTrue(signer.executedIntentIDs.isEmpty) }
+    }
+
+    func testLockOrCancelDuringSignerPresencePreventsExecutionAndDuplicateReview() async {
+        for lock in [false, true] {
+            let signer = FakeWalletSigner()
+            var approval: CheckedContinuation<Void, Never>?
+            signer.confirmationHandler = { _ in
+                await withCheckedContinuation { approval = $0 }
+            }
+            let gateway = WalletGateway(signer: signer, environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            ])
+            let authorized = await gateway.authorizeSession()
+            XCTAssertTrue(authorized)
+            _ = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID, "account_id": "account-1",
+                "action": ["type": "native_transfer", "recipient": "0x1111111111111111111111111111111111111111", "amount_base_units": "1"],
+                "maximum_fee_base_units": "20",
+            ], source: .human)
+            let first = Task { await gateway.confirmAndExecuteHumanIntent(intentID: "intent-1") }
+            for _ in 0..<100 where approval == nil { await Task.yield() }
+            XCTAssertNotNil(approval)
+            let duplicate = await gateway.confirmAndExecuteHumanIntent(intentID: "intent-1")
+            XCTAssertFalse(duplicate)
+            XCTAssertEqual(signer.confirmedIntentIDs, ["intent-1"])
+            if lock { gateway.lock() } else { gateway.cancelConfirmation(intentID: "intent-1") }
+            approval?.resume()
+            let executed = await first.value
+            XCTAssertFalse(executed)
+            XCTAssertNil(gateway.pendingConfirmation)
+            XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+        }
+    }
+
+    func testConnectionLifecycleWithdrawsPreparedReviewAndSuspendedExecution() async {
+        for event in ["remove", "disconnect", "account", "network", "methods", "peer", "expiry", "reconnect"] {
+            let signer = FakeWalletSigner()
+            let client = UnavailableWalletConnectionsClient()
+            var approval: CheckedContinuation<Void, Never>?
+            signer.confirmationHandler = { _ in
+                await withCheckedContinuation { approval = $0 }
+            }
+            let gateway = WalletGateway(signer: signer, connectionsClient: client, environment: [
+                "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
+            ])
+            let authorized = await gateway.authorizeSession()
+            XCTAssertTrue(authorized)
+            let now = Date()
+            func connection(changed: Bool) -> WalletConnectionRecord {
+                WalletConnectionRecord(
+                    id: "connection-1", direction: .locusVaultToDapp, connector: .walletConnect,
+                    accountOwnership: .locusVault, peerName: "Fixture dapp", peerURL: "https://dapp.test",
+                    peerID: changed && event == "peer" ? "other-peer" : "peer-1",
+                    networkIDs: changed && event == "network" ? ["eip155:1"] : [WalletGateway.sepoliaNetworkID],
+                    approvedMethods: changed && event == "methods" ? [.listAccounts] : [.sendTransaction],
+                    accountIDs: changed && event == "account" ? ["other-account"] : ["account-1"],
+                    state: changed && event == "expiry" ? .expired
+                        : changed && event == "reconnect" ? .reconnecting : .connected,
+                    createdAt: now, updatedAt: now,
+                    expiresAt: now.addingTimeInterval(600)
+                )
+            }
+            client.statusChangeHandler?(.init(connections: [connection(changed: false)], accounts: []))
+            let source = WalletRequestSource.walletConnect(peerID: "peer-1", origin: "https://dapp.test", displayName: "Fixture dapp")
+            _ = await gateway.perform(tool: "wallet_prepare_transaction", arguments: [
+                "network_id": WalletGateway.sepoliaNetworkID, "account_id": "account-1",
+                "action": ["type": "native_transfer", "recipient": "0x1111111111111111111111111111111111111111", "amount_base_units": "1"],
+                "maximum_fee_base_units": "20",
+            ], source: source)
+            XCTAssertNotNil(gateway.pendingConfirmation, event)
+            gateway.confirm(intentID: "intent-1")
+            let execution = Task {
+                await gateway.perform(tool: "wallet_execute_transaction", arguments: ["intent_id": "intent-1"], source: source)
+            }
+            for _ in 0..<100 where approval == nil { await Task.yield() }
+            XCTAssertNotNil(approval, event)
+            if event == "disconnect" {
+                await gateway.disconnectWalletConnection(id: "connection-1")
+            } else {
+                client.statusChangeHandler?(.init(
+                    connections: event == "remove" ? [] : [connection(changed: true)], accounts: []
+                ))
+            }
+            XCTAssertNil(gateway.pendingConfirmation, event)
+            XCTAssertTrue(signer.canceledIntentIDs.contains("intent-1"), event)
+            approval?.resume()
+            let result = await execution.value
+            XCTAssertNotNil(result["error"], event)
+            XCTAssertTrue(signer.executedIntentIDs.isEmpty, event)
+            gateway.confirm(intentID: "intent-1")
+            let replay = await gateway.perform(tool: "wallet_execute_transaction", arguments: ["intent_id": "intent-1"], source: source)
+            XCTAssertNotNil(replay["error"], event)
+        }
+    }
+
+    func testBrowserPersonalSignAcceptsOnlyCanonicalReviewedSIWE() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountAddress = "0x1111111111111111111111111111111111111111"
+        let now = Date()
+        let gateway = try browserFixtureGateway(signer: signer)
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let accountRequest = Task {
+            await gateway.requestBrowserAccounts(origin: "https://dapp.test")
+        }
+        await Task.yield()
+        gateway.approveBrowserOrigin()
+        _ = await accountRequest.value
+        let signerAccounts = try await signer.listAccounts()
+        let account = try XCTUnwrap(signerAccounts.first)
+        let request = WalletStructuredAuthorizationRequest(
+            format: .siwe, domain: "dapp.test", origin: "https://dapp.test",
+            networkID: WalletGateway.sepoliaNetworkID,
+            accountID: account.id, address: account.address,
+            statement: "Sign in to the test dapp", uri: "https://dapp.test/session",
+            nonce: "Nonce123", issuedAt: now.addingTimeInterval(-5),
+            expirationTime: now.addingTimeInterval(300), notBefore: nil,
+            requestID: "browser-siwe", resources: []
+        )
+        let message = try WalletStructuredAuthorization.canonicalMessage(
+            request, account: account, now: now
+        )
+        let hexMessage = "0x" + Data(message.utf8).map {
+            String(format: "%02x", $0)
+        }.joined()
+
+        let signature = try await gateway.browserSignInWithEthereum(
+            origin: "https://dapp.test", params: [hexMessage, account.address]
+        )
+        XCTAssertEqual(signature, "0xsignature")
+        do {
+            _ = try await gateway.browserSignInWithEthereum(
+                origin: "https://dapp.test",
+                params: ["Please sign this arbitrary message", account.address]
+            )
+            XCTFail("Arbitrary personal_sign content must remain unavailable.")
+        } catch {
+            XCTAssertTrue(error is WalletStructuredAuthorizationError)
         }
     }
 
@@ -7421,6 +8771,15 @@ final class WalletGatewayTests: XCTestCase {
     func testProviderScriptAnnouncesLocusWithoutImpersonatingOtherWallets() {
         let script = LocusWalletProviderScript.evmBootstrap
         XCTAssertTrue(script.contains("eip6963:announceProvider"))
+        XCTAssertTrue(script.contains("wallet-standard:register-wallet"))
+        XCTAssertTrue(script.contains("solana:signAndSendTransaction"))
+        XCTAssertTrue(script.contains("solana:signIn"))
+        XCTAssertTrue(script.contains("sui:signAndExecuteTransaction"))
+        XCTAssertTrue(script.contains("supportedTransactionVersions"))
+        XCTAssertTrue(script.contains("input.transaction.serialize"))
+        XCTAssertFalse(script.contains("solana:signTransaction':"))
+        XCTAssertFalse(script.contains("solana:signAllTransactions':"))
+        XCTAssertFalse(script.contains("sui:signTransaction':"))
         XCTAssertTrue(script.contains("name: 'Locus Vault'"))
         XCTAssertTrue(script.contains("typeof globalThis.ethereum === 'undefined'"))
         XCTAssertTrue(script.contains("pending.size >= 32"))
@@ -7429,5 +8788,41 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertFalse(script.contains("535b3a6d-22e8-4f91-8a6f-bc9c6b2cafe1"))
         XCTAssertFalse(script.contains("isMetaMask"))
         XCTAssertFalse(script.contains("isPhantom"))
+    }
+
+    @MainActor
+    func testBrowserWalletStandardGrantIsChainBound() async throws {
+        let signer = FakeWalletSigner()
+        signer.accountChain = .solana
+        signer.accountAddress = "11111111111111111111111111111111"
+        signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
+        let gateway = try browserFixtureGateway(
+            signer: signer, networkID: WalletNetworkCatalog.solanaDevnet.id
+        )
+        let authorized = await gateway.authorizeSession()
+        XCTAssertTrue(authorized)
+        let request = Task {
+            await gateway.requestBrowserAccounts(
+                origin: "https://solana.example",
+                networkID: WalletNetworkCatalog.solanaDevnet.id
+            )
+        }
+        await Task.yield()
+        gateway.approveBrowserOrigin()
+        let addresses = await request.value
+        XCTAssertEqual(addresses, [signer.accountAddress])
+        XCTAssertTrue(gateway.browserAccounts(
+            origin: "https://solana.example",
+            networkID: WalletGateway.sepoliaNetworkID
+        ).isEmpty)
+        let records = gateway.browserWalletStandardAccounts(
+            origin: "https://solana.example",
+            networkID: WalletNetworkCatalog.solanaDevnet.id
+        )
+        XCTAssertEqual(records.first?["address"] as? String, signer.accountAddress)
+        XCTAssertEqual(
+            Data(base64Encoded: try XCTUnwrap(records.first?["publicKeyBase64"] as? String))?.count,
+            32
+        )
     }
 }

@@ -2,6 +2,10 @@
 set -euo pipefail
 
 repo_root="${0:A:h:h}"
+if [[ -z "${LOCUS_TEST_EXECUTION_LOCK_FD:-}" ]]; then
+  exec python3 "$repo_root/Tools/WalletTestExecution.py" --lock-timeout 600 -- "$0" "$@"
+fi
+python3 "$repo_root/Tools/WalletTestExecution.py" --assert-held
 pinned_version="1.7.1"
 anvil_bin="${LOCUS_ANVIL_BIN:-$(command -v anvil 2>/dev/null || true)}"
 
@@ -39,7 +43,7 @@ anvil_pid="$!"
 
 rpc_url="http://127.0.0.1:${port}"
 for _ in {1..100}; do
-  if curl -fsS \
+  if curl -fsS --connect-timeout 2 --max-time 3 \
     -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
     "$rpc_url" | grep -q '0xaa36a7'; then
@@ -53,7 +57,7 @@ for _ in {1..100}; do
   sleep 0.1
 done
 
-if ! curl -fsS \
+if ! curl -fsS --connect-timeout 2 --max-time 3 \
   -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
   "$rpc_url" | grep -q '0xaa36a7'; then
@@ -71,7 +75,7 @@ xcodebuild test \
   -scheme WalletChainIntegration \
   -configuration Debug \
   -destination 'platform=macOS' \
-  -only-testing:LocusWalletChainTests \
+  -only-testing:LocusWalletChainTests/WalletAnvilIntegrationTests \
   LOCUS_ANVIL_RPC_URL="$rpc_url" \
   LOCUS_ANVIL_VERSION="$pinned_version" \
   "$@"

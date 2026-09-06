@@ -45,10 +45,15 @@ private final class WalletSignerEndpointDelegate: NSObject, NSXPCListenerDelegat
 }
 
 private final class WalletSignerBootstrapService: NSObject, WalletSignerBootstrapXPCProtocol {
-    private let signer = WalletSignerService()
+    private let signer: WalletSignerService
     private let lock = NSLock()
     private var listeners: [NSXPCListener] = []
     private var delegates: [WalletSignerEndpointDelegate] = []
+
+    init(signer: WalletSignerService) {
+        self.signer = signer
+        super.init()
+    }
 
     func connectHost(reply: @escaping (NSXPCListenerEndpoint?) -> Void) {
         reply(makeEndpoint(access: .host))
@@ -84,6 +89,10 @@ private final class WalletSignerBootstrapService: NSObject, WalletSignerBootstra
 }
 
 private final class WalletSignerListenerDelegate: NSObject, NSXPCListenerDelegate {
+    // Every authenticated endpoint uses one authoritative state machine. A
+    // restriction cannot leave another bootstrap session on older grants.
+    private let signer = WalletSignerService()
+
     func listener(
         _ listener: NSXPCListener,
         shouldAcceptNewConnection connection: NSXPCConnection
@@ -91,7 +100,7 @@ private final class WalletSignerListenerDelegate: NSObject, NSXPCListenerDelegat
         connection.setCodeSigningRequirement(
             WalletXPCCodeSigningRequirement.signerBootstrapClient
         )
-        let service = WalletSignerBootstrapService()
+        let service = WalletSignerBootstrapService(signer: signer)
         connection.exportedInterface = NSXPCInterface(
             with: WalletSignerBootstrapXPCProtocol.self
         )

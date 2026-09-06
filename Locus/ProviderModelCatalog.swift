@@ -19,8 +19,11 @@ enum ProviderModelCatalog {
         delegate: { NoRedirectSessionDelegate() }
     )
 
-    static func fetch(for account: ProviderAccount) async -> Result {
-        let key = CredentialStore.get(account: account.credentialAccount) ?? ""
+    static func fetch(
+        for account: ProviderAccount,
+        credentialStore: any CredentialStoring = CredentialStore.shared
+    ) async -> Result {
+        let key = credentialStore.get(account: account.credentialAccount) ?? ""
         // A custom endpoint may genuinely have no key — a local llama.cpp or
         // LM Studio server, say — so probe it unauthenticated rather than
         // giving up before the request.

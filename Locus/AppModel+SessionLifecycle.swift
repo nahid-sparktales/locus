@@ -8,6 +8,48 @@ import UserNotifications
 /// Session lifecycle: clear-chat flows, new local and worktree sessions,
 /// resume with its transcript load, and foreground worker switching.
 extension AppModel {
+    /// Socket events have no operation ID on the existing backend wire. Bind
+    /// them to the requesting source and current selection lease; HTTP-backed
+    /// mutations wait for their exact response instead of racing that event.
+    func beginTranscriptTransition(
+        source: BackendService, reasons: Set<String>, acceptsSocketAcknowledgement: Bool
+    ) -> TranscriptSessionLoadToken {
+        let ownership = beginTranscriptSessionLoad(currentSessionID)
+        pendingTranscriptTransition = PendingTranscriptTransition(
+            ownership: ownership, source: ObjectIdentifier(source), reasons: reasons,
+            acceptsSocketAcknowledgement: acceptsSocketAcknowledgement
+        )
+        return ownership
+    }
+
+    func invalidatePendingTranscriptTransition() {
+        guard let pending = pendingTranscriptTransition else { return }
+        failTranscriptInputLoad(pending.ownership)
+        pendingTranscriptTransition = nil
+        sessionResetWatchdog?.cancel()
+        pendingSessionReset = false
+        pendingRetry = false
+        pendingCheckpointRestore = nil
+        pendingRewindDraft = nil
+    }
+
+    func acceptsTranscriptSessionStarted(
+        _ info: SessionInfo, reason: String?, source: BackendService
+    ) -> Bool {
+        if let pending = pendingTranscriptTransition {
+            return pending.acceptsSocketAcknowledgement
+                && pending.source == ObjectIdentifier(source)
+                && transcriptPresentation.ownsSessionLoad(pending.ownership)
+                && pending.reasons.contains(reason ?? "new_session")
+        }
+        // Only initial naming is unsolicited. A socket duplicate after an
+        // exact HTTP response must not regress its final metadata (a new
+        // worktree's early event can precede its completed task assignment).
+        return currentSessionID.isEmpty
+            && transcriptPresentation.sessionOwnershipToken.requestRevision == 0
+            && (reason == nil || reason == "new_session")
+    }
+
     func requestClearChat() {
         guard (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
             showToast("Finish or stop the active run before clearing")
@@ -33,6 +75,9 @@ extension AppModel {
         guard !isBusy || taskWorkers[currentSessionID] != nil, !pendingSessionReset else { return }
         voiceControl.exitVoiceMode()
         detachForegroundWorkerUIIfNeeded()
+        let loadToken = beginTranscriptTransition(
+            source: backend, reasons: ["clear_chat", "new_session"], acceptsSocketAcknowledgement: false
+        )
         pendingSessionReset = true
         armSessionResetWatchdog()
         showToast("Starting a fresh chat…")
@@ -43,17 +88,19 @@ extension AppModel {
                     body: ["reason": "clear_chat"],
                     as: NewSessionResponse.self
                 )
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
                 applySessionStarted(response.sessionInfo, reason: response.reason)
             } catch {
-                guard pendingSessionReset else { return }
-                if (error as NSError).code == 404,
-                   backend.send(["type": "new_session"])
-                {
-                    showToast("Starting a fresh chat…")
-                    return
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken),
+                      pendingSessionReset else { return }
+                if (error as NSError).code == 404 {
+                    pendingTranscriptTransition?.acceptsSocketAcknowledgement = true
+                    if backend.send(["type": "new_session"]) {
+                        showToast("Starting a fresh chat…")
+                        return
+                    }
                 }
-                pendingSessionReset = false
-                sessionResetWatchdog?.cancel()
+                invalidatePendingTranscriptTransition()
                 showToast("Could not clear the chat: \(error.localizedDescription)")
             }
         }
@@ -63,12 +110,12 @@ extension AppModel {
     /// arrives, release the latch so Clear Chat is not silently disabled.
     func armSessionResetWatchdog() {
         sessionResetWatchdog?.cancel()
+        let ownership = transcriptPresentation.sessionOwnershipToken
         sessionResetWatchdog = Task { [weak self] in
             try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled, let self, self.pendingSessionReset else { return }
-            self.pendingSessionReset = false
-            self.pendingCheckpointRestore = nil
-            self.pendingRewindDraft = nil
+            guard !Task.isCancelled, let self, self.pendingSessionReset,
+                  self.transcriptPresentation.ownsSessionLoad(ownership) else { return }
+            self.invalidatePendingTranscriptTransition()
             self.showToast("The agent did not confirm the new session — try again")
         }
     }
@@ -124,6 +171,9 @@ extension AppModel {
         initialWorkspacePath = path
         expandedWorkspaceIDs.insert(path)
         persistExpandedWorkspaces()
+        let loadToken = beginTranscriptTransition(
+            source: backend, reasons: ["workspace_chat"], acceptsSocketAcknowledgement: false
+        )
         pendingSessionReset = true
         armSessionResetWatchdog()
         showToast("Starting a new chat in \(URL(fileURLWithPath: path).lastPathComponent)…")
@@ -132,6 +182,7 @@ extension AppModel {
                 let isGit = (try? await GitClient(workspaceRoot: path).run(
                     ["rev-parse", "--show-toplevel"]
                 )) != nil
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
                 let environment = requestedEnvironment
                     ?? (settings.newGitChatsUseWorktree && isGit ? .worktree : .local)
                 let response = try await backend.post(
@@ -145,9 +196,11 @@ extension AppModel {
                     ],
                     as: NewSessionResponse.self
                 )
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
                 applySessionStarted(response.sessionInfo, reason: response.reason)
             } catch {
-                pendingSessionReset = false
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                invalidatePendingTranscriptTransition()
                 pendingWorkspacePath = nil
                 sessionResetWatchdog?.cancel()
                 showToast("Could not start the chat: \(error.localizedDescription)")
@@ -165,7 +218,9 @@ extension AppModel {
         clearSessionsConfirmationPresented = false
         guard !isClearingSessions else { return }
         isClearingSessions = true
+        let ownership = transcriptPresentation.sessionOwnershipToken
         Task {
+            defer { isClearingSessions = false }
             do {
                 let response = try await backend.delete(
                     "/api/sessions",
@@ -178,6 +233,7 @@ extension AppModel {
                     "/api/sessions\(suffix)",
                     as: SessionsResponse.self
                 )
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(ownership) else { return }
                 sessions = list.sessions
                 currentSessionID = list.current
                 reconcileChatSplitRestoration()
@@ -189,9 +245,9 @@ extension AppModel {
                     )
                 }
             } catch {
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(ownership) else { return }
                 showToast("Could not clear saved sessions: \(error.localizedDescription)")
             }
-            isClearingSessions = false
         }
     }
 
@@ -224,16 +280,34 @@ extension AppModel {
             return
         }
         if currentIsBackgroundCapable { detachForegroundWorkerUIIfNeeded() }
-        Task {
+        flushPendingTokens()
+        streamingAssistantID = nil
+        streamingReply.resetTurn()
+        let loadToken = beginTranscriptSessionLoad(session.id)
+        activeTranscriptLoad = (loadToken, Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if activeTranscriptLoad?.token == loadToken { activeTranscriptLoad = nil }
+                if transcriptPresentation.ownsSessionLoad(loadToken),
+                   transcriptInputState == .loading {
+                    failTranscriptInputLoad(loadToken)
+                }
+            }
             do {
                 let response = try await backend.post(
                     "/api/sessions/\(session.id)/resume",
                     body: [:],
                     as: ResumeResponse.self
                 )
-                flushPendingTokens()
-                streamingAssistantID = nil
-                streamingReply.resetTurn()
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                var loadedBlocks = ChatTranscriptBuilder.blocks(from: response.messages)
+                if let error = taskConversationStates[response.sessionInfo.sessionID]?
+                    .errorMessage?.nilIfEmpty, loadedBlocks.last?.text != error {
+                    loadedBlocks.append(ChatBlock(kind: .error, text: error))
+                }
+                guard completeTranscriptSessionLoad(
+                    loadToken, sessionID: response.sessionInfo.sessionID, blocks: loadedBlocks
+                ) else { return }
                 isBusy = false
                 todos = []
                 activePlan = nil
@@ -245,18 +319,12 @@ extension AppModel {
                 // session_info event doesn't wipe the freshly loaded transcript.
                 appliedWorkspacePath = response.sessionInfo.cwd
                 pendingWorkspacePath = nil
-                blocks = ChatTranscriptBuilder.blocks(from: response.messages)
                 splitPaneBlocks[response.sessionInfo.sessionID] = blocks
                 paneState(containing: response.sessionInfo.sessionID)?.blocks = blocks
-                if let error = taskConversationStates[response.sessionInfo.sessionID]?
-                    .errorMessage?.nilIfEmpty,
-                   blocks.last?.text != error {
-                    blocks.append(ChatBlock(kind: .error, text: error))
-                }
                 refreshAnchoredRunsIfNeeded()
                 applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
-                currentSessionID = response.sessionInfo.sessionID
+                activeTaskRecord = response.sessionInfo.task
                 sendComputerControlCapability()
                 sendSimulatorControlCapability()
                 dispatcherActivity = nil
@@ -287,11 +355,14 @@ extension AppModel {
                     }
                 }
                 touchWorkspaceProfile(response.sessionInfo.cwd)
+                finishTranscriptInputLoad(loadToken)
                 showToast("Session resumed")
             } catch {
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                failTranscriptInputLoad(loadToken)
                 blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
             }
-        }
+        })
     }
 
     private func detachForegroundWorkerUIIfNeeded() {
@@ -339,7 +410,7 @@ extension AppModel {
         // The previous session's question must not front this one; this
         // session's own parked question is restored below.
         clearPendingQuestion()
-        currentSessionID = runtime.sessionID
+        let loadToken = beginTranscriptSessionLoad(runtime.sessionID)
         sendComputerControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         queuedMessages = runtime.queuedMessages
@@ -347,25 +418,38 @@ extension AppModel {
         if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
         if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
         syncBrowserProfile()
-        Task {
+        activeTranscriptLoad = (loadToken, Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if activeTranscriptLoad?.token == loadToken { activeTranscriptLoad = nil }
+                if transcriptPresentation.ownsSessionLoad(loadToken),
+                   transcriptInputState == .loading {
+                    failTranscriptInputLoad(loadToken)
+                }
+            }
             do {
                 let detail = try await backend.get(
                     "/api/sessions/\(runtime.sessionID)",
                     as: SessionDetailResponse.self
                 )
-                blocks = ChatTranscriptBuilder.blocks(from: detail.messages)
-                splitPaneBlocks[runtime.sessionID] = blocks
-                paneState(containing: runtime.sessionID)?.blocks = blocks
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken),
+                      taskWorkers[runtime.sessionID] === runtime else { return }
+                var loadedBlocks = ChatTranscriptBuilder.blocks(from: detail.messages)
                 if let streamingID = runtime.streamingBlockID {
-                    blocks.append(ChatBlock(
+                    loadedBlocks.append(ChatBlock(
                         id: streamingID,
                         kind: .assistant,
                         text: runtime.streamingText,
                         reasoningText: runtime.streamingReasoning.nilIfEmpty,
                         isStreaming: true
                     ))
-                    streamingAssistantID = streamingID
                 }
+                guard completeTranscriptSessionLoad(
+                    loadToken, sessionID: runtime.sessionID, blocks: loadedBlocks
+                ) else { return }
+                streamingAssistantID = runtime.streamingBlockID
+                splitPaneBlocks[runtime.sessionID] = blocks
+                paneState(containing: runtime.sessionID)?.blocks = blocks
                 refreshAnchoredRunsIfNeeded()
                 teamRunLive.restoreActivities(detail.agentActivities ?? [])
                 orchestrationState = detail.orchestrationState
@@ -405,21 +489,28 @@ extension AppModel {
                    blocks.last?.text != error {
                     blocks.append(ChatBlock(kind: .error, text: error))
                 }
-                if let task = activeTaskRecord,
-                   let taskDetail = try? await backend.get(
+                if let task = activeTaskRecord {
+                    let taskDetail = try? await backend.get(
                        "/api/tasks/\(task.id)",
                        as: TaskDetailResponse.self
                    )
-                {
-                    landingFlow.taskHasChanges = taskDetail.patchBytes > 0
-                    landingFlow.taskPatchBytes = taskDetail.patchBytes
+                    guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken),
+                          taskWorkers[runtime.sessionID] === runtime else { return }
+                    if let taskDetail {
+                        landingFlow.taskHasChanges = taskDetail.patchBytes > 0
+                        landingFlow.taskPatchBytes = taskDetail.patchBytes
+                    }
                 }
                 touchWorkspaceProfile(session.workspacePath ?? workspacePath)
+                finishTranscriptInputLoad(loadToken)
                 showToast(isBusy ? "Running task opened" : "Task opened")
             } catch {
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken),
+                      taskWorkers[runtime.sessionID] === runtime else { return }
+                failTranscriptInputLoad(loadToken)
                 blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
                 isBusy = false
             }
-        }
+        })
     }
 }

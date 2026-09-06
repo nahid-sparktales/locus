@@ -9,7 +9,7 @@ import UserNotifications
 /// and the per-domain switch, plus session activation, streaming block
 /// management, lost-connection recovery, and the token flush pipeline.
 extension AppModel {
-    func handle(_ event: [String: Any]) {
+    func handle(_ event: [String: Any], source: BackendService? = nil) {
         guard let type = event["type"] as? String else { return }
         if type == "run_started" || type == "orchestration_started",
            let runID = event["run_id"] as? String,
@@ -43,12 +43,16 @@ extension AppModel {
 
         case "session_info":
             if let info = decode(SessionInfo.self, from: event) {
+                // Informational socket updates cannot select a different
+                // conversation over a newer user selection/load. Initial
+                // server naming is a rekey of the existing draft instead.
+                guard currentSessionID.isEmpty || currentSessionID == info.sessionID else { return }
+                if currentSessionID.isEmpty { rekeyTranscriptSession(to: info.sessionID) }
                 activeWorkerID = event["worker_id"] as? String ?? activeWorkerID
                 computerControl.beginSession(info.sessionID)
                 browser.beginSession(info.sessionID)
                 syncBrowserProfile()
                 sessionInfo = info
-                currentSessionID = info.sessionID
                 knowledge.watchWorkspaceKnowledge(info.workspaceRoot ?? info.cwd)
                 activeTaskRecord = info.task
                 // Only when a reply is not mid-flight. `approx_tokens` counts
@@ -69,7 +73,10 @@ extension AppModel {
 
         case "session_started":
             guard let raw = event["session_info"] as? [String: Any],
-                  let info = decode(SessionInfo.self, from: raw)
+                  let info = decode(SessionInfo.self, from: raw),
+                  acceptsTranscriptSessionStarted(
+                    info, reason: event["reason"] as? String, source: source ?? backend
+                  )
             else { return }
             applySessionStarted(info, reason: event["reason"] as? String)
 
@@ -779,6 +786,7 @@ extension AppModel {
             }
 
         case "error":
+            invalidatePendingTranscriptTransition()
             voiceControl.turnFailed()
             flushPendingTokens()
             finalizeStreamingBlocks()
@@ -875,24 +883,48 @@ extension AppModel {
     }
 
     func applySessionStarted(_ info: SessionInfo, reason: String?) {
+        defer { transcriptSessionMetadataDidBecomeReady() }
+        pendingTranscriptTransition = nil
         let previousSessionID = currentSessionID
         let isDuplicateAcknowledgement = currentSessionID == info.sessionID
             && !pendingSessionReset
             && !pendingRetry
             && pendingCheckpointRestore == nil
-        computerControl.beginSession(info.sessionID)
-        browser.beginSession(info.sessionID)
-        sessionInfo = info
-        syncBrowserProfile()
-        currentSessionID = info.sessionID
-        if previousSessionID != info.sessionID {
-            voiceControl.sessionDidChange()
-        }
-        activeTaskRecord = info.task
         let startsFreshOverview = pendingSessionReset
             || reason == "clear_chat"
             || reason == "workspace_chat"
             || reason == "deleted_active"
+        let isRetry = reason == "retry" || pendingRetry
+        if !isDuplicateAcknowledgement {
+            if let checkpoint = pendingCheckpointRestore {
+                var restored = checkpoint.blocks
+                if pendingRewindDraft == nil {
+                    restored.append(ChatBlock(
+                        kind: .note,
+                        text: "Restored “\(checkpoint.title)”. The next turn will receive this restored session context."
+                    ))
+                }
+                installTranscriptSession(info.sessionID, blocks: restored, forceNewGeneration: true)
+            } else if isRetry {
+                flushPendingTokens()
+                let retained = blocks.lastIndex(where: { $0.kind == .user })
+                    .map { Array(blocks.prefix(through: $0)) } ?? blocks
+                installTranscriptSession(info.sessionID, blocks: retained, forceNewGeneration: true)
+            } else if startsFreshOverview {
+                flushPendingTokens()
+                installTranscriptSession(info.sessionID, blocks: [], forceNewGeneration: true)
+            } else {
+                rekeyTranscriptSession(to: info.sessionID)
+            }
+        }
+        computerControl.beginSession(info.sessionID)
+        browser.beginSession(info.sessionID)
+        sessionInfo = info
+        syncBrowserProfile()
+        if previousSessionID != info.sessionID {
+            voiceControl.sessionDidChange()
+        }
+        activeTaskRecord = info.task
         if startsFreshOverview, !previousSessionID.isEmpty, previousSessionID != info.sessionID {
             liveApplicationTargets.removeValue(forKey: previousSessionID)
             simulatorControl.detach(sessionID: previousSessionID)
@@ -913,7 +945,6 @@ extension AppModel {
             // which would wipe the transcript we are about to restore.
             appliedWorkspacePath = checkpoint.workspacePath
             pendingWorkspacePath = nil
-            blocks = checkpoint.blocks
             todos = checkpoint.todos
             activePlan = checkpoint.activePlan
             planApprovalPending = false
@@ -927,21 +958,11 @@ extension AppModel {
                 draftText = rewindDraft
                 showToast("Rewound — edit the message and send again")
             } else {
-                blocks.append(
-                    ChatBlock(
-                        kind: .note,
-                        text: "Restored “\(checkpoint.title)”. The next turn will receive this restored session context."
-                    )
-                )
                 showToast("Checkpoint restored")
             }
             Task { await refreshContextFiles() }
             synchronizeSessionPlan(todos)
-        } else if reason == "retry" || pendingRetry {
-            flushPendingTokens()
-            if let userIndex = blocks.lastIndex(where: { $0.kind == .user }) {
-                blocks = Array(blocks.prefix(through: userIndex))
-            }
+        } else if isRetry {
             todos = []
             activePlan = nil
             planApprovalPending = false
@@ -959,8 +980,6 @@ extension AppModel {
                     || reason == "workspace_chat"
                     || reason == "deleted_active"
         {
-            flushPendingTokens()
-            blocks = []
             todos = []
             activePlan = nil
             planApprovalPending = false
@@ -1110,6 +1129,7 @@ extension AppModel {
     /// Called when the WebSocket drops mid-session: resolve every UI state
     /// that only a backend event could clear, so nothing stays stuck.
     func recoverFromLostConnection() {
+        invalidatePendingTranscriptTransition()
         cancelSimulatorActions()
         flushPendingTokens()
         finalizeStreamingBlocks()

@@ -330,8 +330,9 @@ final class BrowserAutofillVault: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var lastError: String?
 
-    private let fileURL: URL
+    private let fileURL: URL?
     private let keyProvider: any BrowserVaultKeyProviding
+    private var inMemoryData: Data?
     private var key: SymmetricKey?
     private var loadingTask: Task<Bool, Never>?
 
@@ -341,6 +342,14 @@ final class BrowserAutofillVault: ObservableObject {
     ) {
         self.fileURL = fileURL ?? Self.defaultFileURL
         self.keyProvider = keyProvider
+    }
+
+    /// A structurally separate, per-instance synthetic vault. No persistent
+    /// path is resolved, so a transient key can never open or replace a user's
+    /// encrypted vault.
+    init(inMemory: Void) {
+        fileURL = nil
+        keyProvider = InMemoryBrowserVaultKeyProvider()
     }
 
     static var defaultFileURL: URL {
@@ -457,11 +466,17 @@ final class BrowserAutofillVault: ObservableObject {
     }
 
     private func readPayload(using key: SymmetricKey) throws -> BrowserVaultPayload {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return BrowserVaultPayload()
-        }
         do {
-            let data = try Data(contentsOf: fileURL)
+            let data: Data
+            if let fileURL {
+                guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                    return BrowserVaultPayload()
+                }
+                data = try Data(contentsOf: fileURL)
+            } else {
+                guard let inMemoryData else { return BrowserVaultPayload() }
+                data = inMemoryData
+            }
             let box = try AES.GCM.SealedBox(combined: data)
             let clear = try AES.GCM.open(box, using: key)
             return try JSONDecoder.browser.decode(BrowserVaultPayload.self, from: clear)
@@ -476,6 +491,10 @@ final class BrowserAutofillVault: ObservableObject {
         let clear = try JSONEncoder.browser.encode(payload)
         let sealed = try AES.GCM.seal(clear, using: key)
         guard let combined = sealed.combined else { throw BrowserVaultError.corruptVault }
+        guard let fileURL else {
+            inMemoryData = combined
+            return
+        }
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

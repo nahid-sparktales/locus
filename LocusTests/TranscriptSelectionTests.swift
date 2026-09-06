@@ -1,10 +1,234 @@
 import AppKit
+import ApplicationServices
+import SwiftUI
 import XCTest
 @testable import Locus
 
 /// Coverage for the transcript-wide selection store and the geometry behind
 /// dragging through it.
 final class TranscriptSelectionTests: XCTestCase {
+    @MainActor
+    func testDecoratedLocusCardKeepsItsMeasuredButtonCenterAccessible() throws {
+        let identifier = "fixture.card.button"
+        let content = VStack(spacing: 0) {
+            Button {} label: {
+                HStack {
+                    Image(systemName: "chevron.right")
+                    Text("Expand tool")
+                    Spacer()
+                    Text("DONE")
+                }
+                .padding(.horizontal, 12)
+                .frame(width: 240, height: 39)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityIdentifier(identifier)
+        }
+        .locusCard(radius: 9)
+        .padding(20)
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(
+            contentRect: NSRect(x: 40, y: 50, width: 280, height: 79),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(window.isVisible)
+
+        // Activate SwiftUI's public accessibility tree without depending on
+        // another test class having queried it first. This reads only our own
+        // synthetic process and never requests permissions or changes settings.
+        let ready = expectation(description: "Card fixture accessibility client is ready")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(getpid())
+            let timeout = AXUIElementSetMessagingTimeout(application, 0.2)
+            XCTAssertEqual(timeout, .success)
+            if timeout == .success {
+                var windows: CFTypeRef?
+                XCTAssertEqual(AXUIElementCopyAttributeValue(
+                    application, kAXWindowsAttribute as CFString, &windows
+                ), .success)
+            }
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 1)
+        var traversalTruncated = false
+        func findButton() -> TranscriptAccessibilityNode? {
+            var queue: [(Any, Int)] = [(host, 0)]
+            var visited: Set<ObjectIdentifier> = []
+            var match: TranscriptAccessibilityNode?
+            while !queue.isEmpty {
+                let (value, depth) = queue.removeFirst()
+                guard let node = TranscriptAccessibilityNode(value),
+                      visited.insert(ObjectIdentifier(node.object)).inserted else { continue }
+                guard visited.count <= 256, depth <= 16 else {
+                    traversalTruncated = true
+                    return nil
+                }
+                if node.identifier == identifier, node.role == .button {
+                    XCTAssertNil(match, "The fixture must expose exactly one button identity")
+                    match = node
+                }
+                let children = node.children
+                guard children.count <= 256 else {
+                    traversalTruncated = true
+                    return nil
+                }
+                queue += children.map { ($0, depth + 1) }
+            }
+            return match
+        }
+        let deadline = Date().addingTimeInterval(3)
+        var button = findButton()
+        while button == nil, !traversalTruncated, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            host.layoutSubtreeIfNeeded()
+            button = findButton()
+        }
+        XCTAssertFalse(traversalTruncated)
+        let target = try XCTUnwrap(button)
+        XCTAssertEqual(target.role, .button)
+        let frame = target.frame
+        XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        let windowPoint = window.convertPoint(fromScreen: center)
+        XCTAssertTrue(host.bounds.contains(host.convert(windowPoint, from: nil)))
+        let rootPoint = host.superview?.convert(windowPoint, from: nil) ?? windowPoint
+        let nativeHit = try XCTUnwrap(host.hitTest(rootPoint))
+        let hit = try XCTUnwrap(nativeHit.accessibilityHitTest(center))
+        let accessibleHit = try XCTUnwrap(TranscriptAccessibilityNode(hit))
+        XCTAssertEqual(accessibleHit.role, .button)
+        XCTAssertEqual(accessibleHit.identifier, identifier,
+            "The visible button, not an outer decorative card shape, must own its measured center")
+    }
+
+    // MARK: - Noninteractive scope
+
+    @MainActor
+    func testTranscriptSelectionScopeNeverOwnsPointerOrAccessibilityHits() {
+        let scope = TranscriptSelectionScopeView(
+            frame: NSRect(x: 20, y: 30, width: 400, height: 200)
+        )
+        for point in [NSPoint(x: 30, y: 40), NSPoint(x: 200, y: 130), NSPoint(x: 410, y: 220)] {
+            XCTAssertNil(scope.hitTest(point))
+            XCTAssertNil(scope.accessibilityHitTest(point))
+        }
+        XCTAssertFalse(scope.isAccessibilityElement())
+        XCTAssertTrue(scope.isAccessibilityHidden())
+    }
+
+    @MainActor
+    func testOverlaidTranscriptScopePreservesButtonAndSelectedTextHitTargets() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 40, y: 50, width: 400, height: 200),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        let document = NSView(frame: scroll.bounds)
+        scroll.documentView = document
+        window.contentView = scroll
+
+        let button = NSButton(title: "Expand tool", target: nil, action: nil)
+        button.frame = NSRect(x: 20, y: 30, width: 180, height: 40)
+        document.addSubview(button)
+        let text = ResponseSelectableTextView.make()
+        text.frame = NSRect(x: 20, y: 110, width: 300, height: 40)
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = true
+        text.drawsBackground = false
+        text.textContainerInset = .zero
+        text.textContainer?.lineFragmentPadding = 0
+        text.textContainer?.heightTracksTextView = false
+        text.isVerticallyResizable = true
+        text.configureWrapping(true)
+        text.replaceAttributedTextIfNeeded(NSAttributedString(string: "selected text"))
+        document.addSubview(text)
+        let store = TranscriptSelectionStore()
+        defer { store.reset() }
+        store.syncRows(["scope-fixture"])
+        let selectedSpan = span(row: "scope-fixture", path: [0], text: "selected text")
+        store.register(selectedSpan, view: text)
+        store.selectForTesting(
+            from: .init(spanID: selectedSpan.id, utf16Offset: 0),
+            to: .init(spanID: selectedSpan.id, utf16Offset: 8)
+        )
+
+        window.makeKeyAndOrderFront(nil)
+        scroll.layoutSubtreeIfNeeded()
+        XCTAssertTrue(window.isVisible)
+
+        let buttonPoint = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        _ = text.measuredSize(for: text.bounds.width, wraps: true)
+        let layout = try XCTUnwrap(text.layoutManager)
+        let container = try XCTUnwrap(text.textContainer)
+        layout.ensureLayout(for: container)
+        let glyphs = layout.glyphRange(
+            forCharacterRange: NSRange(location: text.selectedRange().location, length: 1),
+            actualCharacterRange: nil
+        )
+        XCTAssertGreaterThan(glyphs.length, 0)
+        let glyphBounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        XCTAssertGreaterThan(glyphBounds.width, 0)
+        XCTAssertGreaterThan(glyphBounds.height, 0)
+        let pointInText = NSPoint(
+            x: glyphBounds.midX + text.textContainerOrigin.x,
+            y: glyphBounds.midY + text.textContainerOrigin.y
+        )
+        XCTAssertTrue(text.bounds.contains(pointInText))
+        let textPoint = document.convert(pointInText, from: text)
+        XCTAssertTrue(document.convert(scroll.contentView.bounds, from: scroll.contentView).contains(textPoint))
+        func accessibilityTarget(at point: NSPoint) -> NSObject? {
+            // A plain ignored document view's accessibilityHitTest resolves
+            // its unignored scroll ancestor, not the frontmost native child.
+            // AppKit first narrows the native hit, then lets that receiver
+            // resolve any finer accessibility target (for example, a cell).
+            guard let root = window.contentView else { return nil }
+            let windowPoint = document.convert(point, to: nil)
+            let rootPoint = root.superview?.convert(windowPoint, from: nil) ?? windowPoint
+            guard let hit = root.hitTest(rootPoint) else { return nil }
+            return hit.accessibilityHitTest(window.convertPoint(toScreen: windowPoint)) as? NSObject
+        }
+        let originalButtonTarget = try XCTUnwrap(accessibilityTarget(at: buttonPoint))
+        let originalTextTarget = try XCTUnwrap(accessibilityTarget(at: textPoint))
+        XCTAssertEqual(
+            (originalButtonTarget as? any NSAccessibilityProtocol)?.accessibilityRole(), .button
+        )
+        XCTAssertEqual(
+            (originalTextTarget as? any NSAccessibilityProtocol)?.accessibilityRole(), .textArea
+        )
+        XCTAssertTrue(document.hitTest(buttonPoint) === button)
+        XCTAssertTrue(document.hitTest(textPoint) === text)
+
+        // Deliberately put the registration-only view above real controls.
+        // Neither SwiftUI hosting order nor a future background refactor may
+        // turn this full-size invisible view into an input shield.
+        let scope = TranscriptSelectionScopeView(frame: document.bounds)
+        document.addSubview(scope, positioned: .above, relativeTo: nil)
+        scope.registerScope()
+        XCTAssertTrue(document.subviews.last === scope)
+        XCTAssertTrue(document.hitTest(buttonPoint) === button)
+        XCTAssertTrue(document.hitTest(textPoint) === text)
+        XCTAssertTrue(accessibilityTarget(at: buttonPoint) === originalButtonTarget)
+        XCTAssertTrue(accessibilityTarget(at: textPoint) === originalTextTarget)
+        XCTAssertTrue(
+            TranscriptSelectionMenu.shared.transcriptScrollView(containing: text) === scroll,
+            "Pass-through behavior must preserve the selection menu's scroll ownership"
+        )
+        XCTAssertEqual(store.selectedText, "selected")
+        XCTAssertEqual(text.selectedRange(), NSRange(location: 0, length: 8))
+    }
+
     // MARK: - Identity
 
     func testSpanIdentityIsScopedToItsRow() {

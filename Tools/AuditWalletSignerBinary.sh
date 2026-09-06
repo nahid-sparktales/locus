@@ -29,6 +29,7 @@ expected="$(/usr/bin/printf '%s\n' \
     locus_wallet_sign_solana_core_transfer_json \
     locus_wallet_sign_solana_native_transfer_json \
     locus_wallet_sign_solana_spl_transfer_json \
+    locus_wallet_sign_structured_authorization_json \
     locus_wallet_sign_sui_coin_transfer_json \
     locus_wallet_sign_sui_native_transfer_json \
     locus_wallet_sign_sui_object_transfer_json \

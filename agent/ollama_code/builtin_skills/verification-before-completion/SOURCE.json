@@ -5,5 +5,5 @@
   "upstream_path": "skills/verification-before-completion",
   "license": "MIT",
   "license_file": "LICENSE",
-  "activation": "automatic"
+  "activation": "explicit"
 }

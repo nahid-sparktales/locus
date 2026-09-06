@@ -40,6 +40,16 @@
 				<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.sparktales.locus.wallet-connections</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>locus-wallet</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -49,8 +59,18 @@
 	<string>public.app-category.developer-tools</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a WalletConnect QR code selected by you. Locus does not record camera images.</string>
 	<key>LocusComponentFeedURL</key>
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
+	<key>LocusSourceRevision</key>
+	<string>$(LOCUS_SOURCE_REVISION)</string>
+	<key>LocusWalletReleaseActivationURL</key>
+	<string>$(LOCUS_WALLET_RELEASE_ACTIVATION_URL)</string>
+	<key>LocusCanaryUpdateFeedURL</key>
+	<string>$(LOCUS_CANARY_UPDATE_FEED_URL)</string>
+	<key>LocusWalletCandidateArchiveURL</key>
+	<string>$(LOCUS_WALLET_CANDIDATE_ARCHIVE_URL)</string>
 	<key>LocusGitHubOAuthClientID</key>
 	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>LocusGoogleOAuthClientID</key>
@@ -81,6 +101,23 @@
 	<string>$(LOCUS_WALLET_ALCHEMY_SUI_TESTNET_GRAPHQL_URL)</string>
 	<key>LocusWalletQuickNodeSuiTestnetGraphQLURL</key>
 	<string>$(LOCUS_WALLET_QUICKNODE_SUI_TESTNET_GRAPHQL_URL)</string>
+	<key>LocusReownProjectID</key>
+	<string>$(LOCUS_REOWN_PROJECT_ID)</string>
+	<key>LocusWalletConnectRedirectURL</key>
+	<string>$(LOCUS_WALLETCONNECT_REDIRECT_URL)</string>
+	<key>LocusPhantomAppID</key>
+	<string>$(LOCUS_PHANTOM_APP_ID)</string>
+	<key>LocusPhantomRedirectURL</key>
+	<string>$(LOCUS_PHANTOM_REDIRECT_URL)</string>
+	<key>LocusWalletConnectorAllowedHosts</key>
+	<array>
+		<string>connect.metamask.io</string>
+		<string>metamask.app.link</string>
+		<string>connect.phantom.app</string>
+		<string>auth.phantom.app</string>
+		<string>wallet.slush.app</string>
+		<string>my.slush.app</string>
+	</array>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

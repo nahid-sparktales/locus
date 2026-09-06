@@ -324,6 +324,14 @@ struct TranscriptSelectionScope: NSViewRepresentable {
 }
 
 final class TranscriptSelectionScopeView: NSView {
+    // This view only discovers the owning scroll view. A representable can
+    // cover the entire transcript even when it draws nothing; it must never
+    // become the pointer or accessibility target instead of a visible control.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func isAccessibilityHidden() -> Bool { true }
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         registerScope()

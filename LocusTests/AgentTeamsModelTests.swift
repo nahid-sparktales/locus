@@ -24,7 +24,7 @@ final class AgentTeamsModelTests: XCTestCase {
     }
 
     private func makeModel(persistenceEnabled: Bool = true) -> AgentTeamsModel {
-        let model = AgentTeamsModel()
+        let model = AgentTeamsModel(credentialStore: InMemoryCredentialStore())
         model.restore(persistenceEnabled: persistenceEnabled, defaults: defaults)
         model.configure(
             isBusyProvider: { false },

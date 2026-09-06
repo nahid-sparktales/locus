@@ -26,7 +26,7 @@ final class EventAutomationModel: ObservableObject {
     @Published private(set) var hasLoaded = false
 
     private var backend: BackendService?
-    private let credentials: ConnectorCredentialStore
+    private let credentials: any ConnectorCredentialStoring
     private let client: EventConnectorClient
     private let webhookServer: EventWebhookServer
     private let gmailOAuth = GmailOAuthCoordinator()
@@ -49,7 +49,7 @@ final class EventAutomationModel: ObservableObject {
     private var onWarningResolved: ((String?) -> Void)?
     private var supportsWorkflows: () -> Bool = { false }
 
-    init(credentials: ConnectorCredentialStore = .shared) {
+    init(credentials: any ConnectorCredentialStoring = ConnectorCredentialStore.shared) {
         self.credentials = credentials
         client = EventConnectorClient(credentials: credentials)
         webhookServer = EventWebhookServer(credentials: credentials)

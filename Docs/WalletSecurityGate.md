@@ -1,7 +1,7 @@
 # Locus Vault security and launch gate
 
 Status: implementation branch; mainnet default denied
-Protocol: wallet signer v2
+Protocol: wallet signer v3 (structured canonical authorization; no generic signing)
 
 ## Authority boundary
 
@@ -25,7 +25,7 @@ protocol—never entropy, phrases, or signer endpoints. A ten-second visibility
 timeout and process/XPC invalidation paths cancel pending recovery and lock
 signing authority.
 
-The signer exports typed EVM, Solana, and Sui protocol-v2 operations. Arbitrary
+The signer exports typed EVM, Solana, and Sui protocol-v3 operations. Arbitrary
 digest signing, raw messages, opaque calldata, unresolved Solana instructions,
 and unknown Move calls are not exported authority. Implemented Solana builders
 accept only one canonical native transfer, one reviewed SPL/Token-2022
@@ -40,11 +40,14 @@ subsets described below.
 Mainnet authorization is the intersection of:
 
 1. a network and capability compiled into the app;
-2. a schema-v2 Ed25519-signed manifest valid for at most 31 days;
+2. a post-package Ed25519-signed activation for the exact installed app and signer;
 3. a release stage (`invited_canary` or `general_availability`);
 4. counsel-approved regions;
 5. stage-specific completed approvals; and
-6. an evidence-index SHA-256 bound into the manifest.
+6. an evidence-index SHA-256 bound into the schema-v3 capability manifest; and
+7. exact ownership/provider/configuration grants intersected with the bundled
+   signed schema-v2 review ceiling, signed finite canary limits, expiry, and
+   a signer-owned monotonic activation revision.
 
 The signing tool checks attributable evidence artifacts and their hashes. It
 requires zero unresolved critical/high audit findings. For GA it also enforces
@@ -52,9 +55,14 @@ at least 30 soak days, 25 external testers, 100 successful transactions per
 chain, and zero unauthorized-signing, secret-exposure, unrecoverable-vault,
 unresolved-broadcast, or loss-producing decoder events.
 
-An emergency manifest may only intersect with the bundled authority. It cannot
-silently enable a new network, capability, region, approval, release stage, or
-signing adapter.
+The candidate is dormant: it contains a verification key and signed review
+ceiling, but no activating capability manifest. The activation is signed only
+after Developer ID export, notarization, stapling, zip verification, and signed
+update-feed generation. Both app and authenticated signer verify its installed
+identity and accept a review restriction only when identical to or narrower
+than the bundled ceiling. Missing, mismatched, expired, invalid, and rolled-back
+activations remain disabled. A higher-revision restriction cancels affected
+authority and sessions. See [WalletReleasePackaging.md](WalletReleasePackaging.md).
 
 ## Implemented foundation
 
@@ -63,8 +71,10 @@ signing adapter.
 - Five-minute default idle lock, configurable to 30 minutes.
 - EVM chain identity checks, EIP-1559 construction, simulation/recheck, exact
   confirmation, signer-owned policies, and single-provider broadcast.
-- Alchemy primary, QuickNode fallback, optional user endpoint, provider identity
-  checks, and critical preparation-evidence comparison.
+- Alchemy primary, QuickNode fallback, provider identity checks, and critical
+  preparation-evidence comparison. Activated mainnet paths require exact
+  endpoint/configuration identities in the signed review ceiling; an optional
+  user endpoint is not an escape from those release restrictions.
 - Signed, short-lived review manifests for curated assets, exact EVM contract
   code/ABI metadata, explorers, and compiled adapters. Emergency updates use
   intersection-only semantics and cannot add signing authority.
@@ -141,9 +151,9 @@ signing adapter.
   sentinel shape with a `None` compression proof. The signer request rejects
   unknown fields, no autonomous NFT policy exists, and collection-backed,
   plugin-bearing, Token Metadata, programmable, and compressed collectible
-  transfers are not representable. The adapter is compiled for Solana devnet
-  only; mainnet static authority remains absent until deployed upgradeable-
-  program evidence is pinned and independently verified.
+  transfers are not representable. The reviewed subset is included in the
+  compiled Solana mainnet ceiling but remains unusable until exact asset,
+  adapter, deployed-program, review, and activation identities are granted.
 - Finalized Solana activity verifies genesis before bounded
   `getSignaturesForAddress` pagination and retrieves each signature with
   finalized `getTransaction` evidence. Signature order, slot, status, legacy/v0/
@@ -277,6 +287,9 @@ signing adapter.
   V3 fee bounds, and either zero hop floors or exactly one positive floor per
   hop. Exact-output, Permit2, wrapping, partial-fill cleanup, multiple commands,
   V4 nested actions, and sub-plans remain unrepresentable in this adapter.
+  Exact finite ERC-20/Permit2 setup is a separate internal semantic action
+  derived from a reviewed swap, requires its own exact review, and never
+  automates or exposes standalone dapp approval calldata.
 - Semantic Universal Router requests contain no commands or calldata. They bind
   a signed router plus a complete signed curated-token route, protocol version,
   fee tiers, quoted output, slippage, minimum output, per-hop floors, deadline,
@@ -288,6 +301,16 @@ signing adapter.
 - Versioned SQLite public store for activity, assets, contacts, and connections.
 - Network-scoped EIP-1193/EIP-6963 browser grants; opaque message and typed-data
   signing remain rejected.
+- Manifest-selected MetaMask Ethereum/Sepolia, Phantom-managed Solana
+  mainnet/devnet, and Slush Sui mainnet/testnet connections; the Direct runtime
+  requires exact connector, direction, method, ownership, and configuration
+  identity. MetaMask and Slush show wallet approval after Locus review.
+  Phantom uses exact Locus review only. External/managed accounts never use
+  signer policies. Embedded Wallet Standard and WalletConnect grants bind the
+  exact reviewed account/network/method set.
+- Native dual-provider Uniswap V2/V3 quote reproduction, quote expiry,
+  slippage/per-hop floors, Swap UI, finite allowance setup, typed
+  `needsAllowance` rejection, and semantic reconciliation are implemented.
 - Signed capability tooling and release packaging checks for recovery/signer
   entitlements, provider configuration, release stage, and evidence binding.
 
@@ -296,19 +319,15 @@ signing adapter.
 The code intentionally does not claim GA. These capabilities stay disabled
 until their implementation and evidence gates pass:
 
-- Solana transfer-altering Token-2022 extensions, Core collection/plugin
+- Deferred outside GA: Solana transfer-altering Token-2022 extensions, Core collection/plugin
   variants, Token Metadata/programmable and compressed-collectible transfer
   adapters, remote-media rendering,
-  versioned-message signing and local-validator coverage; all
-  Sui gRPC execution migration, multi-object
-  transfers, and localnet suites; native SUI, Coin, and object-transfer mainnet
-  activation remain gated;
-- Universal Router live quotes, human Swap UI, V4, and independent Anvil
-  execution coverage, plus Jupiter `/build` and pinned Cetus V3 swaps;
-- live MetaMask, Phantom, Slush, and Reown WalletKit sessions;
-- ERC-721/1155 metadata/media sandboxing and independent local-chain coverage
-  for Ethereum asset paths;
-- external audits, counsel approval, capacity testing, canary, soak, staffing,
+  Solana v1 signing, Sui gRPC migration and multi-object transfers, Uniswap V4,
+  Jupiter and Cetus swaps. These are not GA blockers and remain unavailable.
+- Evidence still required: full local-chain stateful settlement and failure
+  matrices, sanitizer-backed fuzz campaign duration, live MetaMask/Phantom/Slush
+  and WalletConnect interoperability, and every enabled mainnet identity.
+- Independent external audits, counsel approval, capacity testing, canary, soak, staffing,
   incident drill, notarization, and signed-update verification.
 
 No manifest should be signed merely to make an incomplete feature visible.

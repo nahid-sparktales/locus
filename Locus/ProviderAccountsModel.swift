@@ -49,6 +49,11 @@ final class ProviderAccountsModel: ObservableObject {
     private var activeAccountProvider: () -> ProviderAccount? = { nil }
     private var accountRoutingDeactivated: (UUID) async -> Void = { _ in }
     private var toastHandler: (String) -> Void = { _ in }
+    let credentialStore: any CredentialStoring
+
+    init(credentialStore: any CredentialStoring = CredentialStore.shared) {
+        self.credentialStore = credentialStore
+    }
 
     func configure(
         backend: BackendService,
@@ -130,7 +135,10 @@ final class ProviderAccountsModel: ObservableObject {
         let endpointAccounts = due.filter { $0.kind != .chatGPT }
         await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
             for account in endpointAccounts {
-                group.addTask { (account.id, await ProviderModelCatalog.fetch(for: account)) }
+                let credentialStore = credentialStore
+                group.addTask {
+                    (account.id, await ProviderModelCatalog.fetch(for: account, credentialStore: credentialStore))
+                }
             }
             for await (id, result) in group {
                 guard let account = providerAccounts.first(where: { $0.id == id }) else {

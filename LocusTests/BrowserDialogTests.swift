@@ -11,7 +11,7 @@ final class BrowserDialogTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        service = BrowserService()
+        service = BrowserService(autofillVault: BrowserAutofillVault(inMemory: ()))
     }
 
     override func tearDown() async throws {
@@ -135,17 +135,24 @@ final class BrowserProfileTests: XCTestCase {
         XCTAssertNotEqual(one, other)
     }
 
-    func testSwitchingProfilesClosesTabsOnce() {
-        let service = BrowserService()
+    func testSwitchingProfilesClosesTabsOnce() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocusBrowserProfileTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = BrowserService(
+            autofillVault: BrowserAutofillVault(inMemory: ()),
+            activityStore: BrowserActivityStore(databaseURL: directory.appendingPathComponent("activity.sqlite3"))
+        )
         _ = service.tab(for: "session-1")
         XCTAssertEqual(service.tabs.count, 1)
 
-        service.configureProfile(workspacePath: "/tmp/workspace-a", persistent: true)
+        service.configureProfile(workspacePath: directory.appendingPathComponent("workspace").path, persistent: true)
         XCTAssertTrue(service.tabs.isEmpty, "a cookie jar cannot be swapped under a live page")
 
         // Same profile again: no churn.
         _ = service.tab(for: "session-1")
-        service.configureProfile(workspacePath: "/tmp/workspace-a", persistent: true)
+        service.configureProfile(workspacePath: directory.appendingPathComponent("workspace").path, persistent: true)
         XCTAssertEqual(service.tabs.count, 1)
     }
 }

@@ -67,6 +67,124 @@ final class AppModelObservationBoundaryTests: XCTestCase {
         withExtendedLifetime((appSubscription, composerSubscription)) {}
     }
 
+    func testTranscriptChildPublicationsAndContentCommitsDoNotRepublishAppModel() {
+        let app = AppModel(startImmediately: false)
+        app.installTranscriptSession("selected", blocks: [ChatBlock(kind: .assistant, text: "Initial")])
+        var appPublications = 0
+        var transcriptPublications = 0
+        let appSubscription = app.objectWillChange.sink { appPublications += 1 }
+        let transcriptSubscription = app.transcriptPresentation.objectWillChange.sink {
+            transcriptPublications += 1
+        }
+
+        app.transcriptPresentation.objectWillChange.send()
+        app.blocks = [ChatBlock(kind: .assistant, text: "Replacement")]
+        app.updateTranscriptBlocks { $0[0].text += " with committed growth" }
+        app.installTranscriptSession("selected", blocks: [ChatBlock(kind: .assistant, text: "Same identity")])
+        app.transcriptPresentation.replaceBlocks([ChatBlock(kind: .assistant, text: "Direct child commit")])
+
+        XCTAssertEqual(appPublications, 0)
+        XCTAssertGreaterThanOrEqual(transcriptPublications, 5)
+        XCTAssertEqual(app.currentSessionID, "selected")
+        withExtendedLifetime((appSubscription, transcriptSubscription)) {}
+    }
+
+    func testExplicitTranscriptIdentityTransitionsPublishOnceAfterTheCoherentCommit() {
+        let app = AppModel(startImmediately: false)
+        app.installTranscriptSession("old", blocks: [ChatBlock(kind: .assistant, text: "Old rows")])
+        let next = ChatBlock(kind: .assistant, text: "New rows")
+        var snapshots: [TranscriptPresentationSnapshot] = []
+        let subscription = app.objectWillChange.sink {
+            let snapshot = app.transcriptPresentation.snapshot
+            XCTAssertEqual(app.currentSessionID, snapshot.sessionID)
+            XCTAssertEqual(app.blocks, snapshot.blocks)
+            snapshots.append(snapshot)
+        }
+
+        app.installTranscriptSession("new", blocks: [next])
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots.last?.sessionID, "new")
+        XCTAssertEqual(snapshots.last?.blocks, [next])
+
+        let renderToken = app.transcriptPresentation.snapshot.renderToken
+        let builds = app.transcriptPresentation.snapshotBuildCountForTesting
+        app.rekeyTranscriptSession(to: "server-assigned")
+        XCTAssertEqual(snapshots.count, 2)
+        XCTAssertEqual(snapshots.last?.sessionID, "server-assigned")
+        XCTAssertEqual(snapshots.last?.blocks, [next])
+        XCTAssertEqual(snapshots.last?.renderToken, renderToken)
+        XCTAssertEqual(app.transcriptPresentation.snapshotBuildCountForTesting, builds)
+
+        app.currentSessionID = "empty-selected"
+        XCTAssertEqual(snapshots.count, 3)
+        XCTAssertEqual(snapshots.last?.sessionID, "empty-selected")
+        XCTAssertEqual(snapshots.last?.blocks, [])
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testTranscriptIdentityNoOpsWrongSourceRekeyAndStaleCompletionDoNotPublish() {
+        let app = AppModel(startImmediately: false)
+        app.installTranscriptSession("selected", blocks: [ChatBlock(kind: .assistant, text: "Selected rows")])
+        let original = app.transcriptPresentation.snapshot
+        let stale = app.transcriptPresentation.beginSessionLoad("selected")
+        let current = app.transcriptPresentation.beginSessionLoad("selected")
+        var publications = 0
+        let subscription = app.objectWillChange.sink { publications += 1 }
+
+        app.currentSessionID = "selected"
+        app.rekeyTranscriptSession(to: "selected")
+        app.transcriptPresentation.rekeySession(from: "wrong-old-session", to: "unrelated")
+        XCTAssertFalse(app.completeTranscriptSessionLoad(
+            stale, sessionID: "late", blocks: [ChatBlock(kind: .assistant, text: "Rejected")]
+        ))
+        XCTAssertEqual(app.transcriptPresentation.snapshot, original)
+        XCTAssertEqual(publications, 0)
+        XCTAssertTrue(app.completeTranscriptSessionLoad(current, sessionID: "selected", blocks: original.blocks))
+        XCTAssertEqual(publications, 0, "An accepted same-identity response is not a session transition")
+        XCTAssertFalse(app.completeTranscriptSessionLoad(current, sessionID: "duplicate", blocks: []))
+        app.installTranscriptSession("selected", blocks: original.blocks)
+        XCTAssertEqual(publications, 0)
+        XCTAssertEqual(app.transcriptPresentation.snapshot, original)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testOwnedTranscriptCompletionWithAssignedIdentityPublishesItsInstalledRowsOnce() {
+        let app = AppModel(startImmediately: false)
+        let ownership = app.beginTranscriptSessionLoad("requested")
+        let loaded = ChatBlock(kind: .assistant, text: "Loaded for the assigned identity")
+        var snapshots: [TranscriptPresentationSnapshot] = []
+        let subscription = app.objectWillChange.sink { snapshots.append(app.transcriptPresentation.snapshot) }
+
+        XCTAssertTrue(app.completeTranscriptSessionLoad(ownership, sessionID: "assigned", blocks: [loaded]))
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots.first?.sessionID, "assigned")
+        XCTAssertEqual(snapshots.first?.blocks, [loaded])
+        XCTAssertEqual(app.currentSessionID, "assigned")
+        XCTAssertEqual(app.transcriptInputState, .loading,
+            "An identity notification does not bypass the separately owned metadata admission gate")
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testTranscriptLoadAdmissionAndIdentityPublishAtTheirSeparateOwnedBoundaries() {
+        let app = AppModel(startImmediately: false)
+        let old = ChatBlock(kind: .assistant, text: "Old rows")
+        app.installTranscriptSession("old", blocks: [old])
+        var snapshots: [TranscriptPresentationSnapshot] = []
+        let subscription = app.objectWillChange.sink { snapshots.append(app.transcriptPresentation.snapshot) }
+
+        let ownership = app.beginTranscriptSessionLoad("requested")
+
+        XCTAssertEqual(snapshots.count, 2,
+            "One loading-state publication and one successful identity transition have distinct owners")
+        XCTAssertEqual(snapshots.first?.sessionID, "old")
+        XCTAssertEqual(snapshots.first?.blocks, [old])
+        XCTAssertEqual(snapshots.last?.sessionID, "requested")
+        XCTAssertEqual(snapshots.last?.blocks, [])
+        XCTAssertEqual(app.transcriptInputState, .loading)
+        XCTAssertTrue(app.transcriptPresentation.ownsSessionLoad(ownership))
+        withExtendedLifetime(subscription) {}
+    }
+
     func testAdvisoryRepeatedFeaturePublicationFixture() {
         let app = AppModel(startImmediately: false)
         let catalogBuilds = app.sessionCatalog.snapshotBuildCountForTesting

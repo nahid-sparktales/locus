@@ -5,6 +5,7 @@ import SwiftUI
 /// run state, files, instructions, terminal and checkpoints, with a drag
 /// handle on its leading edge.
 struct InspectorView: View {
+    let resizeWidth: CGFloat
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     @EnvironmentObject private var workspaceFiles: WorkspaceFileModel
@@ -81,7 +82,7 @@ struct InspectorView: View {
             }
         }
         .overlay(alignment: .leading) {
-            InspectorResizeHandle()
+            InspectorResizeHandle(renderedWidth: resizeWidth)
                 .environmentObject(model)
         }
         .padding(model.inspectorZoomed ? 8 : 0)
@@ -928,7 +929,7 @@ struct InspectorProxiesTab: View {
         else { return }
         let typed = typedPasswords[profile.id] ?? ""
         let password = typed.isEmpty
-            ? CredentialStore.proxyPassword(profileID: profile.id) : typed
+            ? model.credentialStore.get(account: CredentialStore.proxyCredentialKey(profileID: profile.id)) : typed
         guard let resolved = ProxyConfigurator.resolved(
             settings: candidate,
             profile: profile,
@@ -1277,8 +1278,9 @@ struct InspectorTabBadge: View {
 
 /// Drag target on the inspector's leading divider.
 private struct InspectorResizeHandle: View {
+    let renderedWidth: CGFloat
     @EnvironmentObject private var model: AppModel
-    @State private var startWidth: CGFloat?
+    @State private var drag = InspectorResizeDrag()
     @State private var isHovering = false
 
     var body: some View {
@@ -1314,18 +1316,13 @@ private struct InspectorResizeHandle: View {
                                 // the panel fills the remainder, so the same
                                 // divider drags the chat column instead —
                                 // rightward widens chat in both readings.
-                                if model.inspectorZoomed {
-                                    let start = startWidth ?? model.zoomedChatWidth
-                                    if startWidth == nil { startWidth = start }
-                                    model.setZoomedChatWidth(start + value.translation.width)
-                                } else {
-                                    let start = startWidth ?? model.inspectorWidth
-                                    if startWidth == nil { startWidth = start }
-                                    model.setInspectorWidth(start - value.translation.width)
-                                }
+                                let width = drag.width(renderedWidth: renderedWidth,
+                                    translation: value.translation.width, zoomed: model.inspectorZoomed)
+                                if model.inspectorZoomed { model.setZoomedChatWidth(width) }
+                                else { model.setInspectorWidth(width) }
                             }
                             .onEnded { _ in
-                                startWidth = nil
+                                drag.end()
                                 if model.inspectorZoomed {
                                     model.commitZoomedChatWidth()
                                 } else {
@@ -1345,13 +1342,7 @@ private struct InspectorResizeHandle: View {
                     .accessibilityRepresentation {
                         Slider(
                             value: Binding(
-                                get: {
-                                    Double(
-                                        model.inspectorZoomed
-                                            ? model.zoomedChatWidth
-                                            : model.inspectorWidth
-                                    )
-                                },
+                                get: { Double(renderedWidth) },
                                 set: { value in
                                     if model.inspectorZoomed {
                                         model.setZoomedChatWidth(CGFloat(value))
@@ -1375,6 +1366,7 @@ private struct InspectorResizeHandle: View {
                         .accessibilityHint("Adjust the panel width. Double-click the divider to reset it.")
                         .accessibilityIdentifier("inspector.resizeHandle")
                     }
+                    .onDisappear { drag.end() }
             }
     }
 }

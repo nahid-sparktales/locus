@@ -4,7 +4,7 @@ extension AppModel {
     var eligibleVoiceAccounts: [ProviderAccount] {
         providerAccounts.filter { account in
             (account.kind == .codex || account.kind == .custom)
-                && account.isCredentialReady
+                && account.isCredentialReady(in: credentialStore)
                 && !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -27,7 +27,7 @@ extension AppModel {
         return VoiceCloudConfiguration(
             accountID: account.id.uuidString,
             baseURL: baseURL,
-            apiKey: CredentialStore.get(account: account.credentialAccount) ?? "",
+            apiKey: credentialStore.get(account: account.credentialAccount) ?? "",
             transcriptionModel: settings.voiceCloudTranscriptionModel
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             speechModel: settings.voiceCloudSpeechModel

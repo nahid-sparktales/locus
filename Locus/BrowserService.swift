@@ -222,7 +222,7 @@ final class BrowserService: NSObject, ObservableObject {
     @Published var autofillPrompt: BrowserAutofillPrompt?
     @Published var pendingPasswordSave: BrowserPasswordSavePrompt?
     let autofillVault: BrowserAutofillVault
-    let activityStore = BrowserActivityStore()
+    let activityStore: BrowserActivityStore
     let permissionStore = BrowserPermissionStore()
     /// More live web views than this and the oldest idle one is closed. Each
     /// carries a WebContent process; a long day of team runs must not
@@ -296,6 +296,7 @@ final class BrowserService: NSObject, ObservableObject {
     private var recentDownloadStarts: [String: [Date]] = [:]
 
     override init() {
+        activityStore = BrowserActivityStore()
         // The fixture key is a known constant, so this branch must not be
         // reachable in a signed Release or App Store build: anyone able to
         // influence the launch environment would otherwise get a vault sealed
@@ -324,8 +325,9 @@ final class BrowserService: NSObject, ObservableObject {
         super.init()
     }
 
-    init(autofillVault: BrowserAutofillVault) {
+    init(autofillVault: BrowserAutofillVault, activityStore: BrowserActivityStore? = nil) {
         self.autofillVault = autofillVault
+        self.activityStore = activityStore ?? BrowserActivityStore()
         super.init()
     }
 
@@ -2469,7 +2471,7 @@ extension BrowserService: WKNavigationDelegate {
             if let url = webView.url {
                 let nextOrigin = Self.walletOrigin(for: url)
                 if let previous = tab.walletOrigin, previous != nextOrigin {
-                    walletGateway?.revokeBrowserOrigin(previous)
+                    walletGateway?.revokeBrowserOrigin(previous, reason: .navigation)
                     tab.walletNetworkID = WalletGateway.sepoliaNetworkID
                 }
                 tab.walletOrigin = nextOrigin
@@ -3367,9 +3369,99 @@ extension BrowserService: WKScriptMessageHandler {
                 return ["result": try await gateway.browserSendTransaction(
                     origin: origin, networkID: tab.walletNetworkID, transaction: transaction
                 )]
-            case "personal_sign", "eth_sign", "eth_signTypedData", "eth_signTypedData_v3",
-                 "eth_signTypedData_v4", "wallet_addEthereumChain":
-                return walletError(4200, "Locus Vault does not support message signing or chain addition.")
+            case "personal_sign":
+                return ["result": try await gateway.browserSignInWithEthereum(
+                    origin: origin, networkID: tab.walletNetworkID, params: params
+                )]
+            case "locus_solana_connect":
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let networkID = input["networkID"] as? String,
+                      WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana else {
+                    return walletError(-32602, "An exact Solana network is required.")
+                }
+                guard await gateway.requestBrowserAccounts(
+                    origin: origin, networkID: networkID
+                ) != nil else {
+                    return walletError(4001, "The Solana Wallet Standard connection was rejected.")
+                }
+                return ["result": gateway.browserWalletStandardAccounts(
+                    origin: origin, networkID: networkID
+                )]
+            case "locus_solana_signAndSendTransaction":
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let transaction = input["transactionBase64"] as? String,
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
+                    return walletError(-32602, "A bounded Solana transaction and account are required.")
+                }
+                let minimumContextSlot: UInt64?
+                if let value = input["minimumContextSlot"] as? String {
+                    guard let normalized = WalletBaseUnits.normalize(value),
+                          normalized == value, let slot = UInt64(value) else {
+                        return walletError(-32602, "The Solana context slot is malformed.")
+                    }
+                    minimumContextSlot = slot
+                } else {
+                    minimumContextSlot = nil
+                }
+                return ["result": try await gateway.browserSendSolanaTransaction(
+                    origin: origin, networkID: networkID, transactionBase64: transaction,
+                    accountAddress: account, minimumContextSlot: minimumContextSlot
+                )]
+            case "locus_solana_signIn":
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let message = input["message"] as? String,
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
+                    return walletError(-32602, "A canonical SIWS message and account are required.")
+                }
+                let signed = try await gateway.browserSignInWithSolana(
+                    origin: origin, networkID: networkID,
+                    message: message, accountAddress: account
+                )
+                return ["result": [
+                    "accountAddress": signed.request.address,
+                    "canonicalMessage": signed.canonicalMessage,
+                    "signature": signed.signature,
+                    "signatureEncoding": signed.signatureEncoding.rawValue,
+                ]]
+            case "locus_sui_connect":
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let networkID = input["networkID"] as? String,
+                      WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui else {
+                    return walletError(-32602, "An exact Sui network is required.")
+                }
+                guard await gateway.requestBrowserAccounts(
+                    origin: origin, networkID: networkID
+                ) != nil else {
+                    return walletError(4001, "The Sui Wallet Standard connection was rejected.")
+                }
+                return ["result": gateway.browserWalletStandardAccounts(
+                    origin: origin, networkID: networkID
+                )]
+            case "locus_sui_signAndExecuteTransaction":
+                guard params.count == 1, let input = params[0] as? [String: Any],
+                      let transaction = input["transactionBase64"] as? String,
+                      let account = input["accountAddress"] as? String,
+                      let networkID = input["networkID"] as? String else {
+                    return walletError(-32602, "A bounded Sui transaction and account are required.")
+                }
+                return ["result": try await gateway.browserSendSuiTransaction(
+                    origin: origin, networkID: networkID, transactionBase64: transaction,
+                    accountAddress: account
+                )]
+            case "locus_wallet_standard_disconnect":
+                gateway.revokeBrowserOrigin(origin)
+                return ["result": NSNull()]
+            case "eth_sign", "eth_signTypedData", "eth_signTypedData_v3",
+                 "eth_signTypedData_v4", "wallet_addEthereumChain",
+                 "solana:signTransaction", "solana:signAllTransactions",
+                 "solana:signMessage", "sui:signTransaction",
+                 "sui:signPersonalMessage":
+                return walletError(
+                    4200,
+                    "Locus Vault supports canonical SIWE through personal_sign; arbitrary messages, typed data, and chain addition are unavailable."
+                )
             default:
                 return ["result": try await gateway.browserReadRPC(
                     origin: origin, networkID: tab.walletNetworkID,
@@ -3400,6 +3492,14 @@ extension BrowserService: WKScriptMessageHandler {
 
     private func emitWalletRevocation(origin: String?) {
         emitWalletEvent("accountsChanged", value: [String](), origin: origin)
+        for tab in openTabs where origin == nil || tab.walletOrigin == origin {
+            Task { @MainActor [weak webView = tab.webView] in
+                try? await webView?.callAsyncJavaScript(
+                    "globalThis.__locusWalletStandardDisconnect && globalThis.__locusWalletStandardDisconnect()",
+                    arguments: [:], in: nil, contentWorld: .page
+                )
+            }
+        }
     }
 
     private static func walletOrigin(for url: URL?) -> String? {

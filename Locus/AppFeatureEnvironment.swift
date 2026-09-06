@@ -93,10 +93,35 @@ final class LiveResizeCoordinator {
     }
 }
 
-/// Opt-in local acceptance instrumentation. A run-loop interval starts when
-/// AppKit wakes the main loop and ends immediately before it sleeps again,
-/// which captures the resize event, SwiftUI update, layout, and display work
-/// as one frame-work sample. Production launches pay no observer or storage
+/// Observed run-loop work intervals, not rendered frames or GPU timing. A
+/// ready input source can run and exit without ever sleeping: wake-only
+/// sampling would silently omit those tracking passes.
+struct LiveResizeWorkSampler {
+    private var start: TimeInterval?
+    private(set) var samples: [Double] = []
+
+    mutating func observe(_ activity: CFRunLoopActivity, at time: TimeInterval) {
+        switch activity {
+        case .entry, .beforeTimers, .beforeSources, .afterWaiting:
+            if start == nil { start = time }
+        case .beforeWaiting, .exit:
+            finish(at: time)
+        default:
+            break
+        }
+    }
+
+    mutating func finish(at time: TimeInterval) {
+        guard let start else { return }
+        let duration = (time - start) * 1_000
+        if duration.isFinite, duration >= 0 { samples.append(duration) }
+        self.start = nil
+    }
+}
+
+/// Opt-in local acceptance instrumentation. Each sample spans observed active
+/// main-loop work and closes before sleep, on loop exit, or at resize end.
+/// Production launches pay no observer or storage
 /// cost unless a report path is explicitly supplied.
 @MainActor
 final class LiveResizePerformanceMonitor {
@@ -109,8 +134,7 @@ final class LiveResizePerformanceMonitor {
 
     private let reportURL: URL?
     private var observer: CFRunLoopObserver?
-    private var frameStart: CFAbsoluteTime?
-    private var samples: [Double] = []
+    private var sampler = LiveResizeWorkSampler()
 
     init(reportPath: String?) {
         guard let reportPath, !reportPath.isEmpty else {
@@ -122,9 +146,11 @@ final class LiveResizePerformanceMonitor {
 
     func begin() {
         guard reportURL != nil, observer == nil else { return }
-        frameStart = nil
-        samples.removeAll(keepingCapacity: true)
-        let activities = CFRunLoopActivity.afterWaiting.rawValue
+        sampler = LiveResizeWorkSampler()
+        let activities = CFRunLoopActivity.entry.rawValue
+            | CFRunLoopActivity.beforeTimers.rawValue
+            | CFRunLoopActivity.beforeSources.rawValue
+            | CFRunLoopActivity.afterWaiting.rawValue
             | CFRunLoopActivity.beforeWaiting.rawValue
             | CFRunLoopActivity.exit.rawValue
         observer = CFRunLoopObserverCreateWithHandler(
@@ -144,12 +170,12 @@ final class LiveResizePerformanceMonitor {
 
     func end(finalWidth: CGFloat) {
         guard let reportURL else { return }
-        finishPendingFrame()
+        sampler.finish(at: ProcessInfo.processInfo.systemUptime)
         if let observer {
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
             self.observer = nil
         }
-        let summary = Self.summarize(samples: samples, finalWidth: finalWidth)
+        let summary = Self.summarize(samples: sampler.samples, finalWidth: finalWidth)
         guard let data = try? JSONEncoder().encode(summary) else { return }
         Task.detached(priority: .utility) {
             try? data.write(to: reportURL, options: .atomic)
@@ -168,20 +194,7 @@ final class LiveResizePerformanceMonitor {
     }
 
     private func observe(_ activity: CFRunLoopActivity) {
-        switch activity {
-        case .afterWaiting:
-            frameStart = CFAbsoluteTimeGetCurrent()
-        case .beforeWaiting, .exit:
-            finishPendingFrame()
-        default:
-            break
-        }
-    }
-
-    private func finishPendingFrame() {
-        guard let frameStart else { return }
-        samples.append((CFAbsoluteTimeGetCurrent() - frameStart) * 1_000)
-        self.frameStart = nil
+        sampler.observe(activity, at: ProcessInfo.processInfo.systemUptime)
     }
 }
 
