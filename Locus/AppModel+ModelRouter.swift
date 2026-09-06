@@ -173,7 +173,7 @@ extension AppModel {
             )
         }
         guard settings.automaticModelRoutingAllowHosted else { return routes }
-        for account in providerAccounts where account.isCredentialReady {
+        for account in providerAccounts where account.isCredentialReady(in: credentialStore) {
             guard accountStatus[account.id]?.isHealthy == true else { continue }
             let model = account.preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !model.isEmpty else { continue }

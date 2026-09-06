@@ -9,7 +9,7 @@ final class BrowserServiceTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        service = BrowserService()
+        service = BrowserService(autofillVault: BrowserAutofillVault(inMemory: ()))
     }
 
     override func tearDown() async throws {
@@ -1153,7 +1153,7 @@ final class BrowserActionRoutingTests: XCTestCase {
     /// and answering on `conversationBackend` would send the result to whichever
     /// session happens to be in front.
     func testBrowserActionsAnswerImmediatelyOnTheAskingTransport() async throws {
-        let model = AppModel()
+        let model = AppModel(startImmediately: false)
         model.selectInspectorTab(.files)
         var replies: [[String: Any]] = []
 
@@ -1194,7 +1194,7 @@ final class BrowserActionRoutingTests: XCTestCase {
     }
 
     func testMalformedRequestsAreIgnoredRatherThanCrashing() {
-        let model = AppModel()
+        let model = AppModel(startImmediately: false)
         var replies: [[String: Any]] = []
         let task = model.runBrowserAction(["tool": "browser_read_page"]) { payload in
             replies.append(payload)

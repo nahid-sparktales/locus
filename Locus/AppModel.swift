@@ -45,7 +45,7 @@ final class AppModel: ObservableObject {
     }
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
-    let providerAccountsModel = ProviderAccountsModel()
+    let providerAccountsModel: ProviderAccountsModel
     private var providerAccountsCapabilityObservation: AnyCancellable?
     let voiceControl = VoiceControlModel()
 
@@ -82,7 +82,7 @@ final class AppModel: ObservableObject {
         CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
         #endif
     }
-    let agentTeamsModel = AgentTeamsModel()
+    let agentTeamsModel: AgentTeamsModel
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
     @Published var activeWorkerID: String?  // internal(for: AppModel extension files)
@@ -102,7 +102,7 @@ final class AppModel: ObservableObject {
     @Published var companionPairingPayload: CompanionPairingPayload?  // internal(for: AppModel+MobileCompanion)
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
     let backgroundServicesModel = BackgroundServicesModel()
-    let extensionsModel = ExtensionsModel()
+    let extensionsModel: ExtensionsModel
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
     var sessions: [SessionSummary] {
@@ -424,13 +424,14 @@ final class AppModel: ObservableObject {
     private var applicationContextCapabilityObservation: AnyCancellable?
     /// The browser, for the same reason as the terminal: its tab list and load
     /// progress change far too often to republish AppModel over.
-    let browser = BrowserService()
+    let browser: BrowserService
     lazy var walletGateway = WalletGateway()
     let streamingReply = StreamingReplyState()
     /// Provider-neutral, event-sourced state consumed by the Overview inspector.
     let sessionOverview = SessionStateEmitter()
 
     let backend: BackendService  // internal(for: AppModel extension files)
+    let credentialStore: any CredentialStoring
     let providerCredentialWriter: (String, String) -> Bool  // internal(for: AppModel extension files)
     let backendProcess = BackendProcess()  // internal(for: AppModel extension files)
     var taskWorkers: [String: ChatWorkerRuntime] = [:]  // internal(for: AppModel extension files)
@@ -623,14 +624,27 @@ final class AppModel: ObservableObject {
         startImmediately: Bool = true,
         backendOverride: BackendService? = nil,
         lifecycleJournal: AppLifecycleJournal? = nil,
-        providerCredentialWriter: ((String, String) -> Bool)? = nil
+        providerCredentialWriter: ((String, String) -> Bool)? = nil,
+        credentialStore: (any CredentialStoring)? = nil,
+        mcpCredentialStore: (any MCPCredentialStoring)? = nil,
+        browserAutofillVault: BrowserAutofillVault? = nil
     ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
+        let persistenceEnabled = startImmediately && !isUITesting
+        self.persistenceEnabled = persistenceEnabled
+        let credentials: any CredentialStoring = credentialStore ?? (persistenceEnabled
+            ? CredentialStore.shared : InMemoryCredentialStore())
+        self.credentialStore = credentials
+        providerAccountsModel = ProviderAccountsModel(credentialStore: credentials)
+        agentTeamsModel = AgentTeamsModel(credentialStore: credentials)
         self.providerCredentialWriter = providerCredentialWriter ?? { value, account in
-            CredentialStore.set(value, account: account)
+            credentials.set(value, account: account)
         }
-        persistenceEnabled = startImmediately && !isUITesting
+        extensionsModel = ExtensionsModel(credentialStore: mcpCredentialStore ?? (persistenceEnabled
+            ? KeychainMCPCredentialStore() : InMemoryMCPCredentialStore()))
+        browser = BrowserService(autofillVault: browserAutofillVault ?? (persistenceEnabled
+            ? BrowserAutofillVault() : BrowserAutofillVault(inMemory: ())))
         let launchJournal = lifecycleJournal ?? AppLifecycleJournal()
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil

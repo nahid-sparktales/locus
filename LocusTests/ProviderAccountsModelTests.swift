@@ -16,7 +16,7 @@ final class ProviderAccountsModelTests: XCTestCase {
     }
 
     private func makeModel(persistenceEnabled: Bool = true) -> ProviderAccountsModel {
-        let model = ProviderAccountsModel()
+        let model = ProviderAccountsModel(credentialStore: InMemoryCredentialStore())
         model.configure(
             backend: stubbedBackendService(),
             persistenceEnabled: persistenceEnabled,

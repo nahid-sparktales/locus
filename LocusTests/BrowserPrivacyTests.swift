@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class BrowserPrivacyTests: XCTestCase {
+    func testMemoryVaultsKeepSyntheticRecordsInstanceLocal() async throws {
+        let first = BrowserAutofillVault(inMemory: ())
+        let second = BrowserAutofillVault(inMemory: ())
+        let firstLoaded = await first.load()
+        let secondLoaded = await second.load()
+        XCTAssertTrue(firstLoaded)
+        XCTAssertTrue(secondLoaded)
+        let record = BrowserPasswordRecord(
+            origin: "https://fixture.invalid", username: "synthetic", password: "fixture-only"
+        )
+        try first.save(record)
+        XCTAssertEqual(first.passwords.map(\.id), [record.id])
+        XCTAssertTrue(second.passwords.isEmpty)
+        let firstLoadedAgain = await first.load()
+        XCTAssertTrue(firstLoadedAgain)
+        XCTAssertEqual(first.passwords.first?.password, "fixture-only")
+        try first.removePassword(record.id)
+        XCTAssertTrue(first.passwords.isEmpty)
+        XCTAssertTrue(second.passwords.isEmpty)
+    }
+
     func testSettingsMigrationUsesPrivateSecureDefaults() throws {
         let settings = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
 

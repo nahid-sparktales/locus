@@ -38,7 +38,7 @@ extension AppModel {
             guard let account = providerAccounts.first(where: { $0.id == id }) else {
                 return "That provider account is unavailable."
             }
-            let result = await ProviderModelCatalog.fetch(for: account)
+            let result = await ProviderModelCatalog.fetch(for: account, credentialStore: credentialStore)
             accountModels[id] = result.models
             accountStatus[id] = result.status
             guard result.status.isHealthy else { return result.status.summary }
@@ -104,7 +104,7 @@ extension AppModel {
                 ]
             case .providerAccount(let accountID):
                 guard let account = providerAccounts.first(where: { $0.id == accountID }),
-                      account.isCredentialReady
+                      account.isCredentialReady(in: credentialStore)
                 else { return nil }
                 if account.kind == .chatGPT {
                     route = [
@@ -122,7 +122,7 @@ extension AppModel {
                     route = [
                         "provider": "remote",
                         "base_url": account.resolvedBaseURL,
-                        "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
+                        "api_key": credentialStore.get(account: account.credentialAccount) ?? "",
                         "auth_style": account.kind.authStyle,
                         "account_kind": account.kind.rawValue,
                         "lists_models": account.kind.listsModels,

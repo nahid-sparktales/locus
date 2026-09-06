@@ -1800,8 +1800,48 @@ final class AppModelTests: XCTestCase {
 
     // MARK: - Provider accounts
 
-    /// Adds an account through the real save path, with its key, and cleans up
-    /// the local credential-file entry afterwards.
+    @MainActor
+    func testNonpersistentModelsKeepProviderAndBrowserCredentialsInstanceLocal() async throws {
+        let first = AppModel(startImmediately: false)
+        let second = AppModel(startImmediately: false)
+        XCTAssertTrue(first.credentialStore is InMemoryCredentialStore)
+        XCTAssertTrue(second.credentialStore is InMemoryCredentialStore)
+        let account = ProviderAccount(kind: .claude, name: "Synthetic")
+        XCTAssertTrue(first.saveProviderAccount(account, apiKey: "fixture-only"))
+        XCTAssertEqual(first.credentialStore.get(account: account.credentialAccount), "fixture-only")
+        XCTAssertTrue(account.isCredentialReady(in: first.credentialStore))
+        XCTAssertFalse(account.isCredentialReady(in: second.credentialStore))
+        XCTAssertNil(second.credentialStore.get(account: account.credentialAccount))
+        first.settings.activeAccountID = account.id.uuidString
+        XCTAssertEqual(first.providerRequestBody()["api_key"] as? String, "fixture-only")
+        first.settings.activeAccountID = nil
+        first.removeProviderAccountKey(account)
+        XCTAssertNil(first.credentialStore.get(account: account.credentialAccount))
+
+        let firstLoaded = await first.browser.autofillVault.load()
+        let secondLoaded = await second.browser.autofillVault.load()
+        XCTAssertTrue(firstLoaded)
+        XCTAssertTrue(secondLoaded)
+        try first.browser.autofillVault.save(BrowserPasswordRecord(
+            origin: "https://fixture.invalid", username: "synthetic", password: "fixture-only"
+        ))
+        XCTAssertEqual(first.browser.autofillVault.passwords.count, 1)
+        XCTAssertTrue(second.browser.autofillVault.passwords.isEmpty)
+    }
+
+    @MainActor
+    func testInjectedProviderStoreIsSharedByAccountRoutingAndRemoval() {
+        let store = InMemoryCredentialStore()
+        let model = AppModel(startImmediately: false, credentialStore: store)
+        let account = ProviderAccount(kind: .codex, name: "Synthetic")
+        XCTAssertTrue(model.saveProviderAccount(account, apiKey: "fixture-only"))
+        XCTAssertTrue(account.hasKey(in: model.providerAccountsModel.credentialStore))
+        model.removeProviderAccount(account)
+        XCTAssertNil(store.get(account: account.credentialAccount))
+    }
+
+    /// Adds an account through the real save path, with its synthetic key in
+    /// the nonpersistent model's private in-memory credential store.
     @MainActor
     private func seedAccount(
         _ model: AppModel,
@@ -1812,7 +1852,6 @@ final class AppModelTests: XCTestCase {
     ) -> ProviderAccount {
         let account = ProviderAccount(kind: kind, name: name, preferredModel: preferredModel)
         model.saveProviderAccount(account, apiKey: key)
-        addTeardownBlock { CredentialStore.remove(account: account.credentialAccount) }
         return model.providerAccounts.first { $0.id == account.id } ?? account
     }
 
@@ -2060,7 +2099,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(body["api_key"])
         XCTAssertNil(body["base_url"])
         XCTAssertNil(body["context_window"])
-        XCTAssertFalse(CredentialStore.has(account: account.credentialAccount))
+        XCTAssertFalse(model.credentialStore.has(account: account.credentialAccount))
     }
 
     @MainActor
@@ -2363,7 +2402,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.providerAccounts.contains { $0.id == account.id })
         XCTAssertNil(model.settings.activeAccountID)
         XCTAssertEqual(model.settings.provider, .ollama)
-        XCTAssertNil(CredentialStore.get(account: account.credentialAccount), "the key goes with it")
+        XCTAssertNil(model.credentialStore.get(account: account.credentialAccount), "the key goes with it")
     }
 
     @MainActor

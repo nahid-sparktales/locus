@@ -116,27 +116,81 @@ enum CredentialStore {
         (fileURL.path as NSString).abbreviatingWithTildeInPath
     }
 
+    // The production facade retains its original location and behavior. Tests
+    // receive independent instances; they never redirect this shared store.
+    static let shared = FileCredentialStore(fileURL: fileURL)
+    static var isDegraded: Bool { shared.isDegraded }
+    @discardableResult static func set(_ value: String, account: String) -> Bool {
+        shared.set(value, account: account)
+    }
+    static func get(account: String) -> String? { shared.get(account: account) }
+    static func has(account: String) -> Bool { shared.has(account: account) }
+    @discardableResult static func remove(account: String) -> Bool { shared.remove(account: account) }
+    static func proxyPassword() -> String? { shared.proxyPassword() }
+    static func proxyPassword(profileID: UUID) -> String? { shared.proxyPassword(profileID: profileID) }
+    @discardableResult static func setProxyPassword(_ value: String) -> Bool {
+        shared.setProxyPassword(value)
+    }
+    @discardableResult static func setProxyPassword(_ value: String, profileID: UUID) -> Bool {
+        shared.setProxyPassword(value, profileID: profileID)
+    }
+    static func proxyPasswords(for profiles: [ProxyProfile]) -> [UUID: String] {
+        shared.proxyPasswords(for: profiles)
+    }
+    static func removeOrphanedProxyProfilePasswords(keeping ids: Set<UUID>) {
+        shared.removeOrphanedProxyProfilePasswords(keeping: ids)
+    }
+    static func allAccounts() -> [String] { shared.allAccounts() }
+    static func removeOrphanedProviderKeys(keeping accounts: Set<String>) {
+        shared.removeOrphanedProviderKeys(keeping: accounts)
+    }
+    static func removeOrphanedMCPCredentials(keeping ids: Set<String>) {
+        shared.removeOrphanedMCPCredentials(keeping: ids)
+    }
+    static func resetCacheForTesting() { shared.resetCacheForTesting() }
+}
+
+protocol CredentialStoring: Sendable {
+    var displayPath: String { get }
+    func get(account: String) -> String?
+    @discardableResult func set(_ value: String, account: String) -> Bool
+    @discardableResult func remove(account: String) -> Bool
+}
+
+extension CredentialStoring {
+    func has(account: String) -> Bool { get(account: account)?.isEmpty == false }
+}
+
+/// An explicitly located file store, with its own cache and lock. Synthetic
+/// file-format fixtures supply a fresh owned temporary directory, not a copy
+/// or backup of the production credential file.
+final class FileCredentialStore: CredentialStoring, @unchecked Sendable {
+    let fileURL: URL
+    var displayPath: String { (fileURL.path as NSString).abbreviatingWithTildeInPath }
+
+    init(fileURL: URL) { self.fileURL = fileURL }
+
     // MARK: - Cache
 
     /// `hasKey` is read during SwiftUI body evaluation — once per account per
     /// render — so every lookup must stay in memory. The file is read once and
     /// written through on change.
-    private static let lock = NSLock()
-    private static var cache: [String: String]?
+    private let lock = NSLock()
+    private var cache: [String: String]?
     /// Set when a file exists but could not be understood. Anything
     /// destructive must refuse to act on that, because the entries it could
     /// not read are exactly the ones that would look orphaned.
-    private static var readDegraded = false
+    private var readDegraded = false
 
     /// True when the stored file could not be parsed. Callers that delete must
     /// not act while this holds.
-    static var isDegraded: Bool {
+    var isDegraded: Bool {
         lock.lock(); defer { lock.unlock() }
         _ = loadLocked()
         return readDegraded
     }
 
-    private static func loadLocked() -> [String: String] {
+    private func loadLocked() -> [String: String] {
         if let cache { return cache }
         guard let data = try? Data(contentsOf: fileURL) else {
             // No file is a first run, not a degradation.
@@ -176,19 +230,19 @@ enum CredentialStore {
     /// Refuse to serve a partial view of a file we only half understood: the
     /// entries that failed to read are exactly the ones a sweep would treat as
     /// orphans, and the ones a write would drop.
-    private static func degradedLocked() -> [String: String] {
+    private func degradedLocked() -> [String: String] {
         readDegraded = true
         cache = [:]
         return [:]
     }
 
-    private static let providerSection = "provider_accounts"
-    private static let mcpSection = "mcp_servers"
-    private static let networkSection = "network"
+    private let providerSection = "provider_accounts"
+    private let mcpSection = "mcp_servers"
+    private let networkSection = "network"
 
     /// A name no earlier salvage already owns, so corrupting the file twice
     /// never destroys the first copy.
-    private static func uniqueSalvageURL(in directory: URL) -> URL {
+    private func uniqueSalvageURL(in directory: URL) -> URL {
         let base = directory.appendingPathComponent("auth.json.corrupt")
         guard FileManager.default.fileExists(atPath: base.path) else { return base }
         for suffix in 2...999 {
@@ -201,14 +255,14 @@ enum CredentialStore {
     // MARK: - Persistence
 
     @discardableResult
-    private static func writeLocked(_ entries: [String: String]) -> Bool {
+    private func writeLocked(_ entries: [String: String]) -> Bool {
         var provider: [String: String] = [:]
         var mcp: [String: String] = [:]
         var network: [String: String] = [:]
         for (key, value) in entries {
-            if key.hasPrefix(mcpCredentialPrefix) {
+            if key.hasPrefix(CredentialStore.mcpCredentialPrefix) {
                 mcp[key] = value
-            } else if key == proxyCredentialKey || key.hasPrefix(proxyProfileCredentialPrefix) {
+            } else if key == CredentialStore.proxyCredentialKey || key.hasPrefix(CredentialStore.proxyProfileCredentialPrefix) {
                 // Its own section, not the provider fallback: the orphan sweep
                 // walks provider keys, and a proxy password that landed there
                 // would be collected as an account nothing owns.
@@ -289,7 +343,7 @@ enum CredentialStore {
     // MARK: - API
 
     @discardableResult
-    static func set(_ value: String, account: String) -> Bool {
+    func set(_ value: String, account: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return remove(account: account) }
         lock.lock(); defer { lock.unlock() }
@@ -298,18 +352,18 @@ enum CredentialStore {
         return writeLocked(entries)
     }
 
-    static func get(account: String) -> String? {
+    func get(account: String) -> String? {
         lock.lock(); defer { lock.unlock() }
         let value = loadLocked()[account]
         return (value?.isEmpty ?? true) ? nil : value
     }
 
-    static func has(account: String) -> Bool {
+    func has(account: String) -> Bool {
         get(account: account)?.isEmpty == false
     }
 
     @discardableResult
-    static func remove(account: String) -> Bool {
+    func remove(account: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         var entries = loadLocked()
         guard entries.removeValue(forKey: account) != nil else { return true }
@@ -318,38 +372,38 @@ enum CredentialStore {
 
     /// The manual proxy's password, through the same entry API as every other
     /// secret so writes share the salvage and permission discipline.
-    static func proxyPassword() -> String? {
-        get(account: proxyCredentialKey)
+    func proxyPassword() -> String? {
+        get(account: CredentialStore.proxyCredentialKey)
     }
 
-    static func proxyPassword(profileID: UUID) -> String? {
-        get(account: proxyCredentialKey(profileID: profileID))
+    func proxyPassword(profileID: UUID) -> String? {
+        get(account: CredentialStore.proxyCredentialKey(profileID: profileID))
     }
 
     /// An empty value deletes the entry, so switching auth off leaves nothing.
     @discardableResult
-    static func setProxyPassword(_ value: String) -> Bool {
-        set(value, account: proxyCredentialKey)
+    func setProxyPassword(_ value: String) -> Bool {
+        set(value, account: CredentialStore.proxyCredentialKey)
     }
 
     @discardableResult
-    static func setProxyPassword(_ value: String, profileID: UUID) -> Bool {
-        set(value, account: proxyCredentialKey(profileID: profileID))
+    func setProxyPassword(_ value: String, profileID: UUID) -> Bool {
+        set(value, account: CredentialStore.proxyCredentialKey(profileID: profileID))
     }
 
-    static func proxyPasswords(for profiles: [ProxyProfile]) -> [UUID: String] {
+    func proxyPasswords(for profiles: [ProxyProfile]) -> [UUID: String] {
         Dictionary(uniqueKeysWithValues: profiles.compactMap { profile in
             proxyPassword(profileID: profile.id).map { (profile.id, $0) }
         })
     }
 
-    static func removeOrphanedProxyProfilePasswords(keeping profileIDs: Set<UUID>) {
+    func removeOrphanedProxyProfilePasswords(keeping profileIDs: Set<UUID>) {
         lock.lock(); defer { lock.unlock() }
         var entries = loadLocked()
         guard !readDegraded else { return }
-        let live = Set(profileIDs.map { proxyCredentialKey(profileID: $0) })
+        let live = Set(profileIDs.map { CredentialStore.proxyCredentialKey(profileID: $0) })
         let doomed = entries.keys.filter {
-            $0.hasPrefix(proxyProfileCredentialPrefix) && !live.contains($0)
+            $0.hasPrefix(CredentialStore.proxyProfileCredentialPrefix) && !live.contains($0)
         }
         guard !doomed.isEmpty else { return }
         doomed.forEach { entries.removeValue(forKey: $0) }
@@ -358,19 +412,19 @@ enum CredentialStore {
 
     /// Every account name Locus has stored. Used to sweep up keys whose
     /// account was deleted while the app was not running to see it.
-    static func allAccounts() -> [String] {
+    func allAccounts() -> [String] {
         lock.lock(); defer { lock.unlock() }
         return Array(loadLocked().keys)
     }
 
     /// Deletes provider-account keys with no matching account — the residue of
     /// a crash between writing the key and saving the account list.
-    static func removeOrphanedProviderKeys(keeping liveAccounts: Set<String>) {
+    func removeOrphanedProviderKeys(keeping liveAccounts: Set<String>) {
         lock.lock(); defer { lock.unlock() }
         var entries = loadLocked()
         guard !readDegraded else { return }
         let doomed = entries.keys.filter {
-            $0.hasPrefix(providerAccountPrefix) && !liveAccounts.contains($0)
+            $0.hasPrefix(CredentialStore.providerAccountPrefix) && !liveAccounts.contains($0)
         }
         guard !doomed.isEmpty else { return }
         doomed.forEach { entries.removeValue(forKey: $0) }
@@ -382,13 +436,13 @@ enum CredentialStore {
     /// server removed outside the app — a hand-edited or reset extensions
     /// state file, or a crash between the backend delete and the local delete —
     /// is a live third-party token nothing else would ever collect.
-    static func removeOrphanedMCPCredentials(keeping liveServerIDs: Set<String>) {
+    func removeOrphanedMCPCredentials(keeping liveServerIDs: Set<String>) {
         lock.lock(); defer { lock.unlock() }
         var entries = loadLocked()
         guard !readDegraded else { return }
-        let live = Set(liveServerIDs.map(mcpCredentialKey))
+        let live = Set(liveServerIDs.map(CredentialStore.mcpCredentialKey))
         let doomed = entries.keys.filter {
-            $0.hasPrefix(mcpCredentialPrefix) && !live.contains($0)
+            $0.hasPrefix(CredentialStore.mcpCredentialPrefix) && !live.contains($0)
         }
         guard !doomed.isEmpty else { return }
         doomed.forEach { entries.removeValue(forKey: $0) }
@@ -396,10 +450,86 @@ enum CredentialStore {
     }
 
     /// Drops the in-memory copy. Tests use this to observe a fresh read.
-    static func resetCacheForTesting() {
+    func resetCacheForTesting() {
         lock.lock(); defer { lock.unlock() }
         cache = nil
         readDegraded = false
+    }
+}
+
+/// Per-model synthetic credentials. No disk path, migration, or Keychain API
+/// is reachable from this implementation.
+final class InMemoryCredentialStore: CredentialStoring, @unchecked Sendable {
+    let displayPath = "temporary memory storage"
+    private let lock = NSLock()
+    private var entries: [String: String] = [:]
+
+    func get(account: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return entries[account]
+    }
+
+    @discardableResult func set(_ value: String, account: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.lock(); defer { lock.unlock() }
+        entries[account] = trimmed.isEmpty ? nil : trimmed
+        return true
+    }
+
+    @discardableResult func remove(account: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        entries.removeValue(forKey: account)
+        return true
+    }
+}
+
+@MainActor
+protocol MCPCredentialStoring {
+    var displayName: String { get }
+    func get(serverID: String) -> [String: Any]?
+    @discardableResult func set(_ values: [String: Any], serverID: String) -> Bool
+    @discardableResult func remove(serverID: String) -> Bool
+    func removeOrphaned(keeping liveServerIDs: Set<String>)
+}
+
+@MainActor
+struct KeychainMCPCredentialStore: MCPCredentialStoring {
+    var displayName: String { MCPCredentialStore.displayName }
+    func get(serverID: String) -> [String: Any]? { MCPCredentialStore.get(serverID: serverID) }
+    @discardableResult func set(_ values: [String: Any], serverID: String) -> Bool {
+        MCPCredentialStore.set(values, serverID: serverID)
+    }
+    @discardableResult func remove(serverID: String) -> Bool { MCPCredentialStore.remove(serverID: serverID) }
+    func removeOrphaned(keeping liveServerIDs: Set<String>) {
+        MCPCredentialStore.removeOrphaned(keeping: liveServerIDs)
+    }
+}
+
+@MainActor
+final class InMemoryMCPCredentialStore: MCPCredentialStoring {
+    let displayName = "temporary memory storage"
+    private var entries: [String: Data] = [:]
+
+    func get(serverID: String) -> [String: Any]? {
+        guard let data = entries[serverID] else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    @discardableResult func set(_ values: [String: Any], serverID: String) -> Bool {
+        guard JSONSerialization.isValidJSONObject(values),
+              let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+        else { return false }
+        entries[serverID] = data
+        return true
+    }
+
+    @discardableResult func remove(serverID: String) -> Bool {
+        entries.removeValue(forKey: serverID)
+        return true
+    }
+
+    func removeOrphaned(keeping liveServerIDs: Set<String>) {
+        entries = entries.filter { liveServerIDs.contains($0.key) }
     }
 }
 
@@ -535,16 +665,25 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
 
     private let maximumMetadataBytes = 1_048_576
     private let testConfiguration: URLSessionConfiguration?
+    private let credentialStore: any MCPCredentialStoring
     private var session: ASWebAuthenticationSession?
     private var deviceTask: Task<Void, Never>?
 
     override init() {
         testConfiguration = nil
+        credentialStore = KeychainMCPCredentialStore()
         super.init()
     }
 
-    init(configurationForTesting: URLSessionConfiguration) {
+    init(credentialStore: any MCPCredentialStoring) {
+        testConfiguration = nil
+        self.credentialStore = credentialStore
+        super.init()
+    }
+
+    init(configurationForTesting: URLSessionConfiguration, credentialStore: any MCPCredentialStoring) {
         testConfiguration = configurationForTesting
+        self.credentialStore = credentialStore
         super.init()
     }
 
@@ -976,7 +1115,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
               challengeMethods.contains("S256")
         else { throw authError("The authorization server does not advertise S256 PKCE.") }
 
-        let stored = MCPCredentialStore.get(serverID: server.id) ?? [:]
+        let stored = credentialStore.get(serverID: server.id) ?? [:]
         let storedIssuer = stored["issuer"] as? String ?? ""
         var clientID = storedIssuer == issuer ? (stored["client_id"] as? String ?? "") : ""
         var clientSecret = storedIssuer == issuer ? stored["client_secret"] as? String : nil
@@ -1021,8 +1160,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             }
             registration["token_endpoint"] = tokenURL.absoluteString
             registration["resource"] = normalizedResource
-            guard MCPCredentialStore.set(registration, serverID: server.id) else {
-                throw authError("The OAuth registration could not be stored in \(MCPCredentialStore.displayName).")
+            guard credentialStore.set(registration, serverID: server.id) else {
+                throw authError("The OAuth registration could not be stored in \(credentialStore.displayName).")
             }
         }
         return Context(

@@ -929,7 +929,7 @@ struct InspectorProxiesTab: View {
         else { return }
         let typed = typedPasswords[profile.id] ?? ""
         let password = typed.isEmpty
-            ? CredentialStore.proxyPassword(profileID: profile.id) : typed
+            ? model.credentialStore.get(account: CredentialStore.proxyCredentialKey(profileID: profile.id)) : typed
         guard let resolved = ProxyConfigurator.resolved(
             settings: candidate,
             profile: profile,

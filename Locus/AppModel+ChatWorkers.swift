@@ -356,7 +356,7 @@ extension AppModel {
             "account_id": account.id.uuidString,
             "base_url": account.resolvedBaseURL,
             "model": model,
-            "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
+            "api_key": credentialStore.get(account: account.credentialAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
             "lists_models": account.kind.listsModels,

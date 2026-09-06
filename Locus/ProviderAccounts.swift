@@ -472,8 +472,12 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     var codexReasoningEffortValue: String { codexReasoningEffort ?? "" }
 
     var hasKey: Bool {
+        hasKey(in: CredentialStore.shared)
+    }
+
+    func hasKey(in credentialStore: any CredentialStoring) -> Bool {
         kind.usesManagedChatGPTAuthentication
-            || CredentialStore.has(account: credentialAccount)
+            || credentialStore.has(account: credentialAccount)
     }
 
     /// Whether the account has the credential it needs to take traffic:
@@ -482,6 +486,10 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// `hasKey` — that stays the literal fact that a credential is stored,
     /// which display code (Key saved / No API key) still wants.
     var isCredentialReady: Bool { hasKey || kind.allowsEmptyAPIKey }
+
+    func isCredentialReady(in credentialStore: any CredentialStoring) -> Bool {
+        hasKey(in: credentialStore) || kind.allowsEmptyAPIKey
+    }
 
     /// The window to budget this account against: what the user set, else
     /// the provider's published figure for the selected model, else none.
@@ -568,12 +576,16 @@ enum ProviderAccountStore {
     /// Returns nil when there is nothing to migrate. The key is not copied: the
     /// new account points at the existing credential entry, so an interrupted
     /// migration cannot lose it.
-    static func migrateLegacyEndpoint(settings: AppSettings, existing: [ProviderAccount])
+    static func migrateLegacyEndpoint(
+        settings: AppSettings,
+        existing: [ProviderAccount],
+        credentialStore: any CredentialStoring = CredentialStore.shared
+    )
         -> ProviderAccount?
     {
         guard existing.isEmpty else { return nil }
         let base = settings.remoteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty || CredentialStore.has(account: CredentialStore.remoteAPIKeyAccount) else {
+        guard !base.isEmpty || credentialStore.has(account: CredentialStore.remoteAPIKeyAccount) else {
             return nil
         }
         var account = ProviderAccount(

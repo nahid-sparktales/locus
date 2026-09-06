@@ -1179,7 +1179,7 @@ extension AppModel {
     @discardableResult
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) -> Bool {
         if account.kind != .chatGPT {
-            let effectiveKey = apiKey ?? CredentialStore.get(account: account.credentialAccount) ?? ""
+            let effectiveKey = apiKey ?? credentialStore.get(account: account.credentialAccount) ?? ""
             if let error = RemoteEndpointTester.securityError(
                 baseURL: account.resolvedBaseURL,
                 apiKey: effectiveKey
@@ -1202,7 +1202,7 @@ extension AppModel {
         if let apiKey, updated.kind.requiresAPIKey,
            !providerCredentialWriter(apiKey, updated.credentialAccount)
         {
-            showToast("Could not save the API key to \(CredentialStore.displayPath)")
+            showToast("Could not save the API key to \(credentialStore.displayPath)")
             return false
         }
         if let index = providerAccounts.firstIndex(where: { $0.id == updated.id }) {
@@ -1228,7 +1228,7 @@ extension AppModel {
     /// routing that depended on it.
     func removeProviderAccount(_ account: ProviderAccount) {
         providerAccounts.removeAll { $0.id == account.id }
-        CredentialStore.remove(account: account.credentialAccount)
+        credentialStore.remove(account: account.credentialAccount)
         providerAccountsModel.persistProviderAccounts()
         providerAccountsModel.forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else {
@@ -1248,7 +1248,7 @@ extension AppModel {
     /// agent is told at once: it holds the key in memory, so leaving it be
     /// would keep spending a credential the user just revoked.
     func removeProviderAccountKey(_ account: ProviderAccount) {
-        CredentialStore.remove(account: account.credentialAccount)
+        credentialStore.remove(account: account.credentialAccount)
         accountStatus[account.id] = .noKey
         providerAccountsModel.forgetAccountCatalog(account.id)
         guard account.id.uuidString == settings.activeAccountID else { return }

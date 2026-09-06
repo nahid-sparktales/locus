@@ -61,6 +61,11 @@ final class AgentTeamsModel: ObservableObject {
     private var accountsProvider: () -> [ProviderAccount] = { [] }
     private var accountModelsProvider: (UUID) -> [String]? = { _ in nil }
     private var toastHandler: (String) -> Void = { _ in }
+    private let credentialStore: any CredentialStoring
+
+    init(credentialStore: any CredentialStoring = CredentialStore.shared) {
+        self.credentialStore = credentialStore
+    }
 
     var selectedAgentTeam: AgentTeam? {
         selectedAgentTeamID.flatMap { id in agentTeams.first(where: { $0.id == id }) }
@@ -176,7 +181,7 @@ final class AgentTeamsModel: ObservableObject {
                 }
             case .providerAccount(let accountID):
                 guard let account = accounts.first(where: { $0.id == accountID }),
-                      account.isCredentialReady
+                      account.isCredentialReady(in: credentialStore)
                 else {
                     return .unavailableProvider(choice.providerName)
                 }

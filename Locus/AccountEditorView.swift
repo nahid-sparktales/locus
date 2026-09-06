@@ -239,7 +239,7 @@ struct AccountEditorView: View {
         .onAppear {
             name = account.name
             baseURL = account.baseURLOverride ?? ""
-            keyStored = account.hasKey
+            keyStored = account.hasKey(in: model.credentialStore)
             contextWindow = account.contextWindow.map(String.init) ?? ""
             if kind == .chatGPT {
                 nativeMode = account.codexNativeModeEnabled
@@ -538,7 +538,7 @@ struct AccountEditorView: View {
         let typedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let usedSavedCredential = typedKey.isEmpty
         let key = usedSavedCredential
-            ? (CredentialStore.get(account: account.credentialAccount) ?? "")
+            ? (model.credentialStore.get(account: account.credentialAccount) ?? "")
             : typedKey
         let base = resolvedBaseURL
         let probeModel = account.preferredModel.isEmpty ? kind.probeModel : account.preferredModel

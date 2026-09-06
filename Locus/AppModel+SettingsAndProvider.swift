@@ -331,7 +331,7 @@ extension AppModel {
             "account_id": account.id.uuidString,
             "base_url": account.resolvedBaseURL,
             "model": account.preferredModel,
-            "api_key": CredentialStore.get(account: account.credentialAccount) ?? "",
+            "api_key": credentialStore.get(account: account.credentialAccount) ?? "",
             "auth_style": account.kind.authStyle,
             "account_label": account.displayName,
             // Kimi Code serves no model listing; without this the agent's

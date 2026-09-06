@@ -2929,7 +2929,8 @@ struct SettingsView: View {
         var candidate = draft
         applyProxyDraft(to: &candidate)
         let typedPassword = proxyPassword.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = typedPassword.isEmpty ? CredentialStore.proxyPassword() : typedPassword
+        let password = typedPassword.isEmpty
+            ? model.credentialStore.get(account: CredentialStore.proxyCredentialKey) : typedPassword
         guard let proxy = ProxyConfigurator.resolved(
             settings: candidate,
             password: password,
@@ -2975,7 +2976,8 @@ struct SettingsView: View {
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill(
-                                    providerAccounts.accountStatus[account.id]?.isHealthy ?? account.isCredentialReady
+                                    providerAccounts.accountStatus[account.id]?.isHealthy
+                                        ?? account.isCredentialReady(in: model.credentialStore)
                                         ? LocusTheme.success
                                         : LocusTheme.coral
                                 )
@@ -3325,7 +3327,7 @@ struct SettingsView: View {
 
     private func accountDetail(_ account: ProviderAccount) -> String {
         let status = providerAccounts.accountStatus[account.id]
-            ?? (account.hasKey ? .keySaved : .noKey)
+            ?? (account.hasKey(in: model.credentialStore) ? .keySaved : .noKey)
         if account.kind == .chatGPT,
            let window = providerAccounts.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
         {
