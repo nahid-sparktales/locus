@@ -2515,6 +2515,7 @@ private struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
+    @State private var realizationTarget: TranscriptScrollTarget?
     /// Owned here, outside the lazy list, so recycling a row cannot take the
     /// selection with it — and so a drag can run from one message into another.
     @StateObject private var selection = TranscriptSelectionStore()
@@ -2560,11 +2561,7 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                // Ask SwiftUI to make the target row wholly
-                                // visible, not align its still-estimated edge.
-                                // Only the measured native stage aligns the
-                                // actual terminal end with the viewport.
-                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
+                                realizationTarget = .item(token.sessionGeneration, id)
                             }
                         }
                     )
@@ -2574,7 +2571,7 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
+                                realizationTarget = .item(token.sessionGeneration, id)
                             }
                         }
                     )
@@ -2585,6 +2582,10 @@ private struct ConversationView: View {
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
             }
+            // SwiftUI's target-layout binding resolves unrealized row IDs.
+            // It also tracks reader scrolling; native geometry remains the
+            // authority for final alignment and completion, not this binding.
+            .scrollPosition(id: $realizationTarget)
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
@@ -3208,9 +3209,17 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var contentRect: NSRect?
     private var endRect: NSRect?
     private var realizationRequested = false
-    private var realizationGeometry: [(document: NSRect, viewport: NSRect)] = []
+    private struct ContainerLayoutGeometry: Equatable {
+        let container: NSRect
+        let document: NSRect
+        let viewportSize: NSSize
+    }
+
+    private var realizationGeometry: [(layout: ContainerLayoutGeometry, viewport: NSRect)] = []
     private var pendingSessionViewportReset: UInt64?
-    private var containerLayoutAcknowledgement: (token: TranscriptRenderToken, attachment: UInt64)?
+    private var containerLayoutAcknowledgement: (
+        token: TranscriptRenderToken, attachment: UInt64, geometry: ContainerLayoutGeometry
+    )?
     private var lastViewportSize: NSSize = .zero
     private var lastAlignment: (token: TranscriptRenderToken, end: NSRect, viewport: NSRect, document: NSRect)?
     // Lifecycle cancellation must not discard content queued before an
@@ -3429,6 +3438,24 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var hasCurrentContainerLayout: Bool {
         guard let renderToken, let acknowledgement = containerLayoutAcknowledgement else { return false }
         return acknowledgement.token == renderToken && acknowledgement.attachment == attachmentRevision
+            && acknowledgement.geometry == settledContainerLayoutGeometry()
+    }
+
+    private func settledContainerLayoutGeometry() -> ContainerLayoutGeometry? {
+        guard let anchor = bridgeAnchor, anchor.window != nil, !anchor.needsLayout,
+              !anchor.isHiddenOrHasHiddenAncestor, let scrollView, let documentView,
+              anchor.enclosingScrollView === scrollView, scrollView.documentView === documentView else { return nil }
+        let container = anchor.convert(anchor.bounds, to: documentView)
+        let document = documentView.bounds
+        let viewportSize = scrollView.contentView.bounds.size
+        for rect in [container, document] {
+            guard !rect.isEmpty, rect.minX.isFinite, rect.minY.isFinite,
+                  rect.width.isFinite, rect.height.isFinite else { return nil }
+        }
+        guard viewportSize.width.isFinite, viewportSize.height.isFinite,
+              viewportSize.width > 0, viewportSize.height > 0 else { return nil }
+        // A scroll's own origin change does not invalidate content layout.
+        return ContainerLayoutGeometry(container: container, document: document, viewportSize: viewportSize)
     }
 
     /// Installing a representable during a SwiftUI update does not prove its
@@ -3442,11 +3469,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
               !anchor.isHiddenOrHasHiddenAncestor,
               let scrollView, anchor.enclosingScrollView === scrollView,
               let documentView, scrollView.documentView === documentView else { return }
-        let rect = anchor.convert(anchor.bounds, to: documentView)
-        guard !rect.isEmpty, rect.minX.isFinite, rect.minY.isFinite,
-              rect.width.isFinite, rect.height.isFinite else { return }
+        guard let geometry = settledContainerLayoutGeometry() else { return }
         let alreadyAcknowledged = hasCurrentContainerLayout
-        containerLayoutAcknowledgement = (token, attachment)
+        containerLayoutAcknowledgement = (token, attachment, geometry)
         restoreSelectionViewportAfterLayout(token: token, attachment: attachment)
         #if DEBUG
         if !alreadyAcknowledged { recordGeometry("container.layoutAcknowledged") }
@@ -4009,7 +4034,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func advanceMeasuredPin(token: TranscriptRenderToken, animated: Bool) {
-        guard token.tailID != nil, let scrollView, hasCurrentContainerLayout else { return }
+        guard token.tailID != nil, let scrollView else { return }
         if measuredTailIsAtBottom() {
             pendingSessionViewportReset = nil
             isProgrammaticScroll = false
@@ -4017,21 +4042,27 @@ final class TranscriptScrollCoordinator: ObservableObject {
             return
         }
         if contentRect == nil || endRect == nil {
+            guard hasCurrentContainerLayout, let layout = containerLayoutAcknowledgement?.geometry else {
+                // An attempted discovery observed stale or unfinished layout.
+                // Its next real native acknowledgment must be able to resume
+                // the pending request even if the final size is unchanged.
+                containerLayoutAcknowledgement = nil
+                return
+            }
             if pendingSessionViewportReset == token.sessionGeneration {
                 pendingSessionViewportReset = nil
                 if resetReplacedSessionViewport() { return }
             }
-            guard let documentView, let realizeTailTarget else { return }
-            let document = documentView.bounds
+            guard let realizeTailTarget else { return }
             let viewport = scrollView.contentView.bounds
             // A logical request can first update the lazy estimate without
             // realizing the row. Only new native geometry may advance that
             // request. Remember every observed geometry, not just the last,
             // so a repeated/oscillating estimate cannot create a scroll loop.
             guard !realizationGeometry.contains(where: {
-                $0.document == document && $0.viewport == viewport
+                $0.layout == layout && $0.viewport == viewport
             }), realizationGeometry.count < 32 else { return }
-            realizationGeometry.append((document, viewport))
+            realizationGeometry.append((layout, viewport))
             realizationRequested = true
             isProgrammaticScroll = true
             #if DEBUG
