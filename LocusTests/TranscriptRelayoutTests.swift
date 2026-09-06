@@ -556,9 +556,40 @@ final class TranscriptRelayoutTests: XCTestCase {
         store.mouseDragged(event: drag)
         defer { store.mouseUp(in: leaf, event: up); store.clearSelection() }
         XCTAssertFalse(store.activeRowIDs.isEmpty, "The regression must hold a real active text-selection drag")
+        func attachSelectionGeometry(_ phase: String) {
+            let clip = scroll.contentView
+            let document = scroll.documentView
+            let pointer = clip.convert(drag.locationInWindow, from: nil)
+            var glyphRect: NSRect = .zero
+            if let layout = leaf.layoutManager, let container = leaf.textContainer {
+                let glyphs = layout.glyphRange(forCharacterRange: leaf.selectedRange(), actualCharacterRange: nil)
+                glyphRect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                    .offsetBy(dx: leaf.textContainerOrigin.x, dy: leaf.textContainerOrigin.y)
+            }
+            // Two bounded samples of geometry only. In particular this does
+            // not read accessibility trees, force a root layout, or log text.
+            let attachment = XCTAttachment(string: """
+            phase=\(phase)
+            viewport=\(NSStringFromRect(clip.bounds))
+            document=\(NSStringFromRect(document?.bounds ?? .zero))
+            leafBounds=\(NSStringFromRect(leaf.bounds))
+            leafInDocument=\(NSStringFromRect(leaf.convert(leaf.bounds, to: document)))
+            selectedGlyphInDocument=\(NSStringFromRect(leaf.convert(glyphRect, to: document)))
+            selectedGlyphInClip=\(NSStringFromRect(leaf.convert(glyphRect, to: clip)))
+            pointerInClip=\(NSStringFromPoint(pointer))
+            pointerInsideViewport=\(clip.visibleRect.contains(pointer))
+            selectedGlyphHasArea=\(!glyphRect.isEmpty)
+            leafStillOwned=\(leaf.window === window && leaf.enclosingScrollView === scroll)
+            """)
+            attachment.name = "Selection reader geometry — \(phase)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        attachSelectionGeometry("before append")
         let parked = scroll.contentView.bounds.origin.y
         model.blocks.append(ChatBlock(kind: .assistant, text: Self.body + "\n\nSelection growth tail"))
         assertViewportRemains(parked, in: scroll)
+        attachSelectionGeometry("after append observation")
     }
 
     func testRenderedSuffixProbeMeasuresStreamingGlyphsAndRejectsClippingOrTransparency() throws {

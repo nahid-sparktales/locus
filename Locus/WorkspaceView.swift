@@ -2580,6 +2580,16 @@ private struct ConversationView: View {
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
             }
+            .transaction { transaction in
+                if #available(macOS 15.0, *),
+                   !scrollCoordinator.followState.permitsAutomaticScroll || !selection.activeRowIDs.isEmpty {
+                    // Stopping our pin is not enough: SwiftUI also adjusts
+                    // the native offset when an earlier row changes height.
+                    // A reader-owned selection/viewport must stay put during
+                    // that content transaction, including terminal-row changes.
+                    transaction.scrollContentOffsetAdjustmentBehavior = .disabled
+                }
+            }
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
@@ -3451,7 +3461,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // The observer's .main queue is the main-actor admission boundary.
+            // Deferring user intent lets a pending display tick pin the old
+            // bottom after the native gesture has already moved the viewport.
+            MainActor.assumeIsolated {
                 guard let self, self.attachmentRevision == attachment else { return }
                 self.liveScrollStarted()
             }
@@ -3461,7 +3474,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, self.attachmentRevision == attachment else { return }
                 self.userViewportChanged()
             }
@@ -3471,7 +3484,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, self.attachmentRevision == attachment else { return }
                 self.liveScrollEnded()
             }

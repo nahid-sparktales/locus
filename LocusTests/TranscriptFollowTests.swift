@@ -297,6 +297,45 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(requests, initial + 2, "Queued work must not invoke a dismantled bridge's proxy")
     }
 
+    func testNativeLiveScrollNotificationsSynchronouslyAdmitAndReleaseReaderOwnership() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        let anchor = NSView(frame: .zero)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        var requests = 0
+        coordinator.setBottomTarget { requests += 1 }
+        coordinator.attach(from: anchor)
+        pump()
+        let initial = requests
+        XCTAssertGreaterThan(initial, 0)
+
+        // No run-loop drain is allowed between these native notifications
+        // and their assertions: user input must beat an already eligible pin.
+        let center = NotificationCenter.default
+        center.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        coordinator.jumpToLatest(animated: true)
+        XCTAssertEqual(requests, initial,
+            "A native gesture must cancel pin admission before its notification returns")
+
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 200))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        center.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput,
+            "An actual move away from the bottom must detach synchronously")
+        coordinator.contentMayHaveChanged()
+        center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput,
+            "Ending the gesture must preserve the reader's detached state")
+
+        coordinator.jumpToLatest(animated: true)
+        XCTAssertEqual(requests, initial + 1,
+            "A completed native gesture must release its hold before an explicit jump")
+    }
+
     func testQueuedContentInvalidationSurvivesAnOrdinaryPin() {
         let scroll = mountNativeScroll()
         let anchor = NSView(frame: .zero)
