@@ -2530,7 +2530,9 @@ private struct ConversationView: View {
         let predecessorID = items.dropLast().last?.id
         ScrollViewReader { proxy in
             let realizePredecessor: (() -> Void)? = predecessorID.map { id in
-                { proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom) }
+                // Discover the row's leading edge without using its still-
+                // estimated height. Its actual end is measured after layout.
+                { proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .top) }
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
