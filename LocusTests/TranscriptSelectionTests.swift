@@ -1,10 +1,106 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import Locus
 
 /// Coverage for the transcript-wide selection store and the geometry behind
 /// dragging through it.
 final class TranscriptSelectionTests: XCTestCase {
+    @MainActor
+    func testDecoratedLocusCardKeepsItsMeasuredButtonCenterAccessible() throws {
+        let identifier = "fixture.card.button"
+        let content = VStack(spacing: 0) {
+            Button {} label: {
+                HStack {
+                    Image(systemName: "chevron.right")
+                    Text("Expand tool")
+                    Spacer()
+                    Text("DONE")
+                }
+                .padding(.horizontal, 12)
+                .frame(width: 240, height: 39)
+            }
+            .buttonStyle(.locus())
+            .accessibilityIdentifier(identifier)
+        }
+        .locusCard(radius: 9)
+        .padding(20)
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(
+            contentRect: NSRect(x: 40, y: 50, width: 280, height: 79),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(window.isVisible)
+
+        // SwiftUI's virtual AccessibilityNode uses the public informal API
+        // without declaring NSAccessibilityProtocol conformance. Keep that
+        // compatibility path in this fixture only; never inspect private AX.
+        func attribute(_ object: NSObject, _ name: NSAccessibility.Attribute) -> Any? {
+            if let accessible = object as? any NSAccessibilityProtocol {
+                switch name {
+                case .role: return accessible.accessibilityRole()?.rawValue
+                case .identifier: return accessible.accessibilityIdentifier()
+                case .children: return accessible.accessibilityChildren()
+                case .position: return NSValue(point: accessible.accessibilityFrame().origin)
+                case .size: return NSValue(size: accessible.accessibilityFrame().size)
+                default: return nil
+                }
+            }
+            return object.accessibilityAttributeValue(name)
+        }
+        var traversalTruncated = false
+        func findButton() -> NSObject? {
+            var queue: [(NSObject, Int)] = [(host, 0)]
+            var visited: Set<ObjectIdentifier> = []
+            var match: NSObject?
+            while !queue.isEmpty {
+                let (node, depth) = queue.removeFirst()
+                guard visited.insert(ObjectIdentifier(node)).inserted else { continue }
+                guard visited.count <= 256, depth <= 16 else {
+                    traversalTruncated = true
+                    return nil
+                }
+                if attribute(node, .identifier) as? String == identifier {
+                    XCTAssertNil(match, "The fixture must expose exactly one button identity")
+                    match = node
+                }
+                let children = attribute(node, .children) as? [NSObject] ?? []
+                queue += children.map { ($0, depth + 1) }
+            }
+            return match
+        }
+        let deadline = Date().addingTimeInterval(3)
+        var button = findButton()
+        while button == nil, !traversalTruncated, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            host.layoutSubtreeIfNeeded()
+            button = findButton()
+        }
+        XCTAssertFalse(traversalTruncated)
+        let target = try XCTUnwrap(button)
+        XCTAssertEqual(attribute(target, .role) as? String, NSAccessibility.Role.button.rawValue)
+        let origin = try XCTUnwrap(attribute(target, .position) as? NSValue).pointValue
+        let size = try XCTUnwrap(attribute(target, .size) as? NSValue).sizeValue
+        let frame = NSRect(origin: origin, size: size)
+        XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        let center = NSPoint(x: frame.midX, y: frame.midY)
+        let windowPoint = window.convertPoint(fromScreen: center)
+        XCTAssertTrue(host.bounds.contains(host.convert(windowPoint, from: nil)))
+        let rootPoint = host.superview?.convert(windowPoint, from: nil) ?? windowPoint
+        let nativeHit = try XCTUnwrap(host.hitTest(rootPoint))
+        let accessibleHit = try XCTUnwrap(nativeHit.accessibilityHitTest(center) as? NSObject)
+        XCTAssertEqual(attribute(accessibleHit, .role) as? String, NSAccessibility.Role.button.rawValue)
+        XCTAssertEqual(attribute(accessibleHit, .identifier) as? String, identifier,
+            "The visible button, not an outer decorative card shape, must own its measured center")
+    }
+
     // MARK: - Noninteractive scope
 
     @MainActor

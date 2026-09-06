@@ -706,6 +706,9 @@ private struct LocusCardModifier: ViewModifier {
                             : LocusTheme.separator,
                         lineWidth: contrast == .increased ? 1.5 : 1
                     )
+                    // The border decorates the card; its content owns input.
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
     }
 }
