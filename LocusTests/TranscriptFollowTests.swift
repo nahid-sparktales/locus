@@ -236,7 +236,11 @@ final class TranscriptFollowTests: XCTestCase {
         let suffix = try XCTUnwrap(model.blocks.first(where: { $0.kind == .assistant })?.text)
         let host = mount(model, size: NSSize(width: 720, height: 588))
         let scroll = try XCTUnwrap(transcriptScrollView(in: host))
-        XCTAssertEqual(scroll.contentView.bounds.width, 360, accuracy: 1)
+        // The column is fixed; a platform scroller can reserve part of it.
+        // Visibility below must use the actual (possibly narrower) viewport.
+        XCTAssertEqual(scroll.bounds.width, 360, accuracy: 1)
+        XCTAssertGreaterThan(scroll.contentView.bounds.width, 0)
+        XCTAssertLessThanOrEqual(scroll.contentView.bounds.width, scroll.bounds.width)
         XCTAssertTrue(waitForVisibleText(suffix, in: scroll),
             "The tall plan must not strand the actual reply in an empty estimated document")
 

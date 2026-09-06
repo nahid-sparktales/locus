@@ -144,7 +144,15 @@ final class TranscriptSelectionTests: XCTestCase {
         let text = ResponseSelectableTextView.make()
         text.frame = NSRect(x: 20, y: 110, width: 300, height: 40)
         text.isEditable = false
-        text.textStorage?.setAttributedString(NSAttributedString(string: "selected text"))
+        text.isSelectable = true
+        text.isRichText = true
+        text.drawsBackground = false
+        text.textContainerInset = .zero
+        text.textContainer?.lineFragmentPadding = 0
+        text.textContainer?.heightTracksTextView = false
+        text.isVerticallyResizable = true
+        text.configureWrapping(true)
+        text.replaceAttributedTextIfNeeded(NSAttributedString(string: "selected text"))
         document.addSubview(text)
         let store = TranscriptSelectionStore()
         defer { store.reset() }
@@ -161,7 +169,25 @@ final class TranscriptSelectionTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
 
         let buttonPoint = NSPoint(x: button.frame.midX, y: button.frame.midY)
-        let textPoint = NSPoint(x: text.frame.minX + 10, y: text.frame.midY)
+        _ = text.measuredSize(for: text.bounds.width, wraps: true)
+        let layout = try XCTUnwrap(text.layoutManager)
+        let container = try XCTUnwrap(text.textContainer)
+        layout.ensureLayout(for: container)
+        let glyphs = layout.glyphRange(
+            forCharacterRange: NSRange(location: text.selectedRange().location, length: 1),
+            actualCharacterRange: nil
+        )
+        XCTAssertGreaterThan(glyphs.length, 0)
+        let glyphBounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        XCTAssertGreaterThan(glyphBounds.width, 0)
+        XCTAssertGreaterThan(glyphBounds.height, 0)
+        let pointInText = NSPoint(
+            x: glyphBounds.midX + text.textContainerOrigin.x,
+            y: glyphBounds.midY + text.textContainerOrigin.y
+        )
+        XCTAssertTrue(text.bounds.contains(pointInText))
+        let textPoint = document.convert(pointInText, from: text)
+        XCTAssertTrue(document.convert(scroll.contentView.bounds, from: scroll.contentView).contains(textPoint))
         func accessibilityTarget(at point: NSPoint) -> NSObject? {
             // A plain ignored document view's accessibilityHitTest resolves
             // its unignored scroll ancestor, not the frontmost native child.
