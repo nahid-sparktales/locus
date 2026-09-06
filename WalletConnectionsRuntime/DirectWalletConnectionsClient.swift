@@ -25,6 +25,8 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
     private var accounts: [String: WalletAccount] = [:]
     private var eventTasks: [WalletConnectionConnector: Task<Void, Never>] = [:]
     private var didRestore = false
+    private var suspensionCount = 0
+    private var suspensionRevision: UInt64 = 0
 
     init(
         drivers: [WalletConnectorDriver]? = nil,
@@ -42,7 +44,7 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
                 guard let driver else { return }
                 for await event in driver.events {
                     guard !Task.isCancelled else { return }
-                    self?.apply(event)
+                    self?.apply(event, from: driver.connector)
                 }
             }
         }
@@ -61,7 +63,12 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
     func beginPairing(
         _ request: WalletConnectorPairingRequest
     ) async throws -> WalletConnectionServiceStatus {
+        let revision = suspensionRevision
+        guard suspensionCount == 0 else { throw WalletConnectorRuntimeError.sessionNotFound }
         try await restoreIfNeeded()
+        guard suspensionCount == 0, suspensionRevision == revision else {
+            throw WalletConnectorRuntimeError.sessionNotFound
+        }
         try validate(request)
         guard connections.count < Self.maximumConnections else {
             throw WalletConnectorRuntimeError.tooManyConnections
@@ -94,12 +101,24 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
         connections[record.id] = record
         do {
             let session = try await driver.connect(request) { [weak self] proposal in
+                guard let current = self?.connections[request.requestID],
+                      [.proposalPending, .approvalPending].contains(current.state),
+                      current.expiresAt > Date(), !Task.isCancelled else { return false }
                 guard let handler = self?.proposalApprovalHandler else { return false }
-                if let current = self?.connections[request.requestID],
-                   let awaitingApproval = current.transitioning(to: .approvalPending) {
+                if let awaitingApproval = current.transitioning(to: .approvalPending) {
                     self?.connections[request.requestID] = awaitingApproval
                 }
-                return await handler(proposal)
+                guard await handler(proposal),
+                      let reviewed = self?.connections[request.requestID],
+                      reviewed.state == .approvalPending,
+                      reviewed.expiresAt > Date(), !Task.isCancelled else { return false }
+                return true
+            }
+            guard let current = connections[request.requestID],
+                  [.proposalPending, .approvalPending].contains(current.state),
+                  current.expiresAt > Date(), !Task.isCancelled else {
+                await driver.disconnect(connectionID: request.requestID)
+                throw WalletConnectorRuntimeError.sessionNotFound
             }
             try validate(session, for: request)
             record = WalletConnectionRecord(
@@ -118,7 +137,11 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
             replaceAccounts(for: record, with: session.accounts)
             return currentStatus()
         } catch {
-            connections[record.id] = record.transitioning(to: .failed) ?? record
+            // Never overwrite a revocation/expiry that happened while the SDK
+            // was suspended with a late failure (or resurrected connection).
+            if let current = connections[record.id], !current.state.isTerminal {
+                connections[record.id] = current.transitioning(to: .failed) ?? current
+            }
             throw error
         }
     }
@@ -129,16 +152,19 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
               let revoked = current.transitioning(to: .revoked) else {
             throw WalletConnectorRuntimeError.sessionNotFound
         }
-        await drivers[current.connector]?.cancel(requestID: requestID)
         connections[requestID] = revoked
         removeAccounts(for: current)
+        statusChangeHandler?(currentStatus())
+        await drivers[current.connector]?.cancel(requestID: requestID)
         return currentStatus()
     }
 
     func executeExternal(
         _ request: WalletExternalExecutionRequest
     ) async throws -> WalletExternalExecutionResult {
+        guard suspensionCount == 0 else { throw WalletConnectorRuntimeError.sessionNotFound }
         try await restoreIfNeeded()
+        guard suspensionCount == 0 else { throw WalletConnectorRuntimeError.sessionNotFound }
         let binding = request.request.binding
         guard let connection = connections[binding.connectionID],
               let account = accounts[binding.accountID],
@@ -162,29 +188,43 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
               let revoked = current.transitioning(to: .revoked) else {
             throw WalletConnectorRuntimeError.sessionNotFound
         }
-        await drivers[current.connector]?.disconnect(connectionID: connectionID)
         connections[connectionID] = revoked
         removeAccounts(for: current)
+        statusChangeHandler?(currentStatus())
+        await drivers[current.connector]?.disconnect(connectionID: connectionID)
         return currentStatus()
     }
 
     func suspendAll() async throws {
+        suspensionCount += 1
+        suspensionRevision &+= 1
+        defer { suspensionCount -= 1 }
         let now = Date()
-        for driver in drivers.values { await driver.suspend() }
         for (id, connection) in connections where !connection.state.isTerminal {
             connections[id] = connection.transitioning(
                 to: connection.state == .connected ? .reconnecting : .revoked,
                 at: now
             ) ?? connection
         }
+        statusChangeHandler?(currentStatus())
+        for driver in drivers.values { await driver.suspend() }
     }
 
     private func restoreIfNeeded() async throws {
         guard !didRestore else { return }
+        guard suspensionCount == 0 else { throw WalletConnectorRuntimeError.sessionNotFound }
+        let revision = suspensionRevision
         didRestore = true
         do {
             for driver in drivers.values where driver.isConfigured {
-                for session in try await driver.restore() {
+                let restored = try await driver.restore()
+                guard suspensionCount == 0, suspensionRevision == revision else {
+                    for session in restored {
+                        await driver.disconnect(connectionID: session.connectionID)
+                    }
+                    throw WalletConnectorRuntimeError.sessionNotFound
+                }
+                for session in restored {
                     try installRestored(session, from: driver)
                 }
             }
@@ -274,10 +314,29 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
         }
     }
 
-    private func apply(_ event: WalletConnectorEvent) {
+    private func apply(_ event: WalletConnectorEvent, from connector: WalletConnectionConnector) {
+        let connectionID: String
+        switch event {
+        case .accountsChanged(let id, _), .networksChanged(let id, _),
+             .disconnected(let id), .expired(let id):
+            connectionID = id
+        }
+        // A driver owns only its own sessions. Late SDK callbacks must not
+        // repopulate public accounts after revocation or expiry.
+        guard let current = connections[connectionID], current.connector == connector,
+              !current.state.isTerminal else { return }
+        // Publish even when validation revokes and returns early: consumers
+        // cancel pending authority from this same authoritative projection.
+        defer { statusChangeHandler?(currentStatus()) }
+        guard current.expiresAt > Date() else {
+            expire(connectionID)
+            return
+        }
         switch event {
         case .accountsChanged(let connectionID, let changed):
-            guard let current = connections[connectionID],
+            guard current.state == .connected else { return }
+            guard !changed.isEmpty, changed.count <= 32,
+                  Set(changed.map(\.id)).count == changed.count,
                   changed.allSatisfy({
                       $0.ownership == current.accountOwnership
                           && Set($0.networkIDs).isSubset(of: current.networkIDs)
@@ -299,8 +358,8 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
             connections[connectionID] = next
             replaceAccounts(for: current, with: changed)
         case .networksChanged(let connectionID, let networkIDs):
-            guard let current = connections[connectionID],
-                  networkIDs.isSubset(of: current.networkIDs) else {
+            guard current.state == .connected else { return }
+            guard !networkIDs.isEmpty, networkIDs.isSubset(of: current.networkIDs) else {
                 revoke(connectionID)
                 return
             }
@@ -311,12 +370,20 @@ final class DirectWalletConnectionsClient: WalletConnectionsClient {
                     return
                 }
             }
+            connections[connectionID] = WalletConnectionRecord(
+                id: current.id, direction: current.direction,
+                connector: current.connector, accountOwnership: current.accountOwnership,
+                peerName: current.peerName, peerURL: current.peerURL, peerID: current.peerID,
+                networkIDs: networkIDs, approvedMethods: current.approvedMethods,
+                accountIDs: current.accountIDs, state: current.state,
+                createdAt: current.createdAt, updatedAt: Date(),
+                expiresAt: current.expiresAt, revokedAt: current.revokedAt
+            )
         case .disconnected(let connectionID):
             revoke(connectionID)
         case .expired(let connectionID):
             expire(connectionID)
         }
-        statusChangeHandler?(currentStatus())
     }
 
     private func replaceAccounts(

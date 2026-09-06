@@ -65,18 +65,16 @@ final class WalletConnectorDriverTests: XCTestCase {
         XCTAssertEqual(status.connections.first?.state, .connected)
         XCTAssertEqual(status.accounts, [original])
 
-        driver.emit(.accountsChanged(
+        await emitAndWait(.accountsChanged(
             connectionID: restoredID, accounts: [replacement]
-        ))
-        await drainEvents()
+        ), from: driver, to: client)
         status = try await client.status()
         XCTAssertEqual(status.connections.first?.accountIDs, Set([replacement.id]))
         XCTAssertEqual(status.accounts, [replacement])
 
-        driver.emit(.networksChanged(
+        await emitAndWait(.networksChanged(
             connectionID: restoredID, networkIDs: []
-        ))
-        await drainEvents()
+        ), from: driver, to: client)
         status = try await client.status()
         XCTAssertEqual(status.connections.first?.state, .revoked)
         XCTAssertTrue(status.accounts.isEmpty)
@@ -111,8 +109,7 @@ final class WalletConnectorDriverTests: XCTestCase {
             drivers: [expiryDriver]
         )
         _ = try await expiryClient.status()
-        expiryDriver.emit(.expired(connectionID: expiredID))
-        await drainEvents()
+        await emitAndWait(.expired(connectionID: expiredID), from: expiryDriver, to: expiryClient)
         status = try await expiryClient.status()
         XCTAssertEqual(status.connections.first?.state, .expired)
         XCTAssertTrue(status.accounts.isEmpty)
@@ -154,6 +151,103 @@ final class WalletConnectorDriverTests: XCTestCase {
         }
     }
 
+    func testInvalidAccountEventsPublishRevocationAndRemoveAccounts() async throws {
+        let original = externalAccount(id: "metamask-1")
+        let replacement = externalAccount(id: "metamask-2")
+        for changed in [[], [replacement, replacement], [locusAccount()]] {
+            let id = UUID().uuidString
+            let driver = FixtureWalletConnectorDriver(
+                connector: .metamask,
+                restoreSessions: [session(id: id, connector: .metamask, account: original)]
+            )
+            let client = DirectWalletConnectionsClient(drivers: [driver])
+            _ = try await client.status()
+
+            let published = await emitAndWait(
+                .accountsChanged(connectionID: id, accounts: changed), from: driver, to: client
+            )
+            XCTAssertEqual(published?.connections.first?.state, .revoked)
+            XCTAssertEqual(published?.accounts, [])
+            let authoritative = try await client.status()
+            XCTAssertEqual(authoritative.connections, published?.connections)
+            XCTAssertEqual(authoritative.accounts, published?.accounts)
+        }
+    }
+
+    func testNetworkRestrictionPublishesExactNarrowedGrant() async throws {
+        let id = UUID().uuidString
+        let account = externalAccount(id: "metamask-1")
+        let original = session(id: id, connector: .metamask, account: account)
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            restoreSessions: [WalletConnectorSession(
+                connectionID: id, peerName: original.peerName,
+                peerURL: nil, peerID: nil,
+                networkIDs: [WalletGateway.sepoliaNetworkID, "eip155:1"],
+                approvedMethods: original.approvedMethods,
+                accounts: [account], expiresAt: original.expiresAt
+            )]
+        )
+        let client = DirectWalletConnectionsClient(drivers: [driver])
+        _ = try await client.status()
+        let published = await emitAndWait(
+            .networksChanged(connectionID: id, networkIDs: [WalletGateway.sepoliaNetworkID]),
+            from: driver, to: client
+        )
+        XCTAssertEqual(published?.connections.first?.networkIDs, [WalletGateway.sepoliaNetworkID])
+        XCTAssertEqual(published?.connections.first?.state, .connected)
+        XCTAssertEqual(published?.accounts, [account])
+        let authoritative = try await client.status()
+        XCTAssertEqual(authoritative.connections, published?.connections)
+    }
+
+    func testOtherDriverAndRevokedSessionCallbacksCannotReplacePublicAccounts() async throws {
+        let id = UUID().uuidString
+        let barrierID = UUID().uuidString
+        let slushID = UUID().uuidString
+        let original = externalAccount(id: "metamask-1")
+        let replacement = externalAccount(id: "metamask-2")
+        let slushAccount = WalletAccount(
+            id: "slush-fixture", chain: .sui, address: "0x" + String(repeating: "1", count: 64),
+            label: "Slush", networkIDs: ["sui:testnet"], ownership: .external(connectorID: .slush)
+        )
+        let metamask = FixtureWalletConnectorDriver(
+            connector: .metamask, restoreSessions: [
+                session(id: id, connector: .metamask, account: original),
+                session(id: barrierID, connector: .metamask, account: replacement),
+            ]
+        )
+        let slush = FixtureWalletConnectorDriver(
+            connector: .slush, restoreSessions: [WalletConnectorSession(
+                connectionID: slushID, peerName: "Slush", peerURL: nil, peerID: nil,
+                networkIDs: ["sui:testnet"], approvedMethods: [.listAccounts, .sendTransaction],
+                accounts: [slushAccount], expiresAt: Date().addingTimeInterval(3_600)
+            )]
+        )
+        let client = DirectWalletConnectionsClient(drivers: [metamask, slush])
+        _ = try await client.status()
+
+        // The valid event on the same FIFO stream acknowledges consumption of
+        // the preceding malicious event, without scheduler-yield guesses.
+        slush.emit(.accountsChanged(connectionID: id, accounts: [replacement]))
+        _ = await emitAndWait(
+            .accountsChanged(connectionID: slushID, accounts: [slushAccount]), from: slush, to: client
+        )
+        var status = try await client.status()
+        XCTAssertEqual(status.connections.first(where: { $0.id == id })?.accountIDs, [original.id])
+        XCTAssertTrue(status.accounts.contains(original))
+
+        _ = try await client.disconnect(connectionID: id)
+        metamask.emit(.accountsChanged(connectionID: id, accounts: [original]))
+        _ = await emitAndWait(
+            .accountsChanged(connectionID: barrierID, accounts: [replacement]), from: metamask, to: client
+        )
+        status = try await client.status()
+        XCTAssertEqual(status.connections.first(where: { $0.id == id })?.state, .revoked)
+        XCTAssertFalse(status.accounts.contains(original), "Late events cannot resurrect removed public accounts")
+        XCTAssertTrue(status.accounts.contains(replacement))
+    }
+
     func testFixtureSuspendCancelsAuthorityAndMovesConnectedSessionsToReconnect() async throws {
         let connectionID = UUID().uuidString
         let driver = FixtureWalletConnectorDriver(
@@ -173,6 +267,174 @@ final class WalletConnectorDriverTests: XCTestCase {
         let suspendedStatus = try await client.status()
         XCTAssertEqual(suspendedStatus.connections.first?.state, .reconnecting)
         XCTAssertEqual(driver.suspendCount, 1)
+    }
+
+    func testLatePairingApprovalCannotRestoreCanceledOrSuspendedAuthority() async throws {
+        for suspend in [false, true] {
+            let id = UUID().uuidString
+            let account = locusAccount()
+            let driver = FixtureWalletConnectorDriver(
+                connector: .walletConnect,
+                connectSession: session(id: id, connector: .walletConnect, account: account),
+                proposal: proposal(id: id)
+            )
+            let client = DirectWalletConnectionsClient(drivers: [driver])
+            let enteredReview = expectation(description: "Pairing awaits exact proposal approval")
+            var approval: CheckedContinuation<Bool, Never>?
+            client.proposalApprovalHandler = { _ in
+                await withCheckedContinuation { continuation in
+                    approval = continuation
+                    enteredReview.fulfill()
+                }
+            }
+            let pairing = Task { try await client.beginPairing(walletConnectRequest(id: id, account: account)) }
+            await fulfillment(of: [enteredReview], timeout: 1)
+            if suspend {
+                try await client.suspendAll()
+            } else {
+                _ = try await client.cancelPairing(requestID: id)
+            }
+            let canceled = try await client.status()
+            XCTAssertEqual(canceled.connections.first?.state, .revoked)
+            XCTAssertTrue(canceled.accounts.isEmpty)
+            approval?.resume(returning: true)
+            do {
+                _ = try await pairing.value
+                XCTFail("A late vendor completion must not restore canceled authority")
+            } catch let error as WalletConnectorRuntimeError {
+                XCTAssertEqual(error, .sdkFailure("rejected"))
+            }
+            let completed = try await client.status()
+            XCTAssertEqual(completed.connections, canceled.connections)
+            XCTAssertTrue(completed.accounts.isEmpty)
+            XCTAssertEqual(driver.acceptedProposalCount, 0, "Revoked review must not reach vendor approval")
+            XCTAssertTrue(driver.disconnectedIDs.isEmpty, "No vendor session was approved")
+        }
+    }
+
+    func testLateSDKConnectionCompletionIsDisconnectedWithoutRestoringAuthority() async throws {
+        let id = UUID().uuidString
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            connectSession: session(id: id, connector: .metamask, account: externalAccount(id: "metamask-1"))
+        )
+        let client = DirectWalletConnectionsClient(drivers: [driver])
+        let enteredSDK = expectation(description: "Vendor connection is pending")
+        var completion: CheckedContinuation<Void, Never>?
+        driver.connectCompletionHandler = {
+            await withCheckedContinuation { continuation in
+                completion = continuation
+                enteredSDK.fulfill()
+            }
+        }
+        let pairing = Task { try await client.beginPairing(externalRequest(id: id)) }
+        await fulfillment(of: [enteredSDK], timeout: 1)
+        _ = try await client.cancelPairing(requestID: id)
+        let canceled = try await client.status()
+        completion?.resume()
+        do {
+            _ = try await pairing.value
+            XCTFail("Canceled SDK completion must not install its returned session")
+        } catch let error as WalletConnectorRuntimeError {
+            XCTAssertEqual(error, .sessionNotFound)
+        }
+        let completed = try await client.status()
+        XCTAssertEqual(completed.connections, canceled.connections)
+        XCTAssertEqual(completed.connections.first?.state, .revoked)
+        XCTAssertTrue(completed.accounts.isEmpty)
+        XCTAssertEqual(driver.disconnectedIDs, [id])
+    }
+
+    func testDisconnectPublishesRevocationBeforeAwaitingVendorCleanup() async throws {
+        let id = UUID().uuidString
+        let account = externalAccount(id: "metamask-1")
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            restoreSessions: [session(id: id, connector: .metamask, account: account)]
+        )
+        let client = DirectWalletConnectionsClient(drivers: [driver])
+        _ = try await client.status()
+        let enteredCleanup = expectation(description: "Vendor cleanup is pending")
+        var cleanup: CheckedContinuation<Void, Never>?
+        var projection: WalletConnectionServiceStatus?
+        client.statusChangeHandler = { projection = $0 }
+        driver.disconnectHandler = {
+            await withCheckedContinuation { continuation in
+                cleanup = continuation
+                enteredCleanup.fulfill()
+            }
+        }
+        let disconnect = Task { try await client.disconnect(connectionID: id) }
+        await fulfillment(of: [enteredCleanup], timeout: 1)
+        let pending = try await client.status()
+        XCTAssertEqual(pending.connections.first?.state, .revoked)
+        XCTAssertTrue(pending.accounts.isEmpty)
+        XCTAssertEqual(projection?.connections, pending.connections)
+        XCTAssertEqual(projection?.accounts, [])
+        cleanup?.resume()
+        let completed = try await disconnect.value
+        XCTAssertEqual(completed.connections, pending.connections)
+        XCTAssertTrue(completed.accounts.isEmpty)
+    }
+
+    func testFreshPairingIsRejectedWhileVendorSuspensionIsPending() async throws {
+        let id = UUID().uuidString
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            connectSession: session(id: id, connector: .metamask, account: externalAccount(id: "metamask-1"))
+        )
+        let client = DirectWalletConnectionsClient(drivers: [driver])
+        _ = try await client.status()
+        let enteredCleanup = expectation(description: "Vendor suspension is pending")
+        var cleanup: CheckedContinuation<Void, Never>?
+        driver.suspendHandler = {
+            await withCheckedContinuation { continuation in
+                cleanup = continuation
+                enteredCleanup.fulfill()
+            }
+        }
+        let suspension = Task { try await client.suspendAll() }
+        await fulfillment(of: [enteredCleanup], timeout: 1)
+        do {
+            _ = try await client.beginPairing(externalRequest(id: id))
+            XCTFail("New pairing must not enter a driver while its sessions are being suspended")
+        } catch let error as WalletConnectorRuntimeError {
+            XCTAssertEqual(error, .sessionNotFound)
+        }
+        XCTAssertEqual(driver.connectCount, 0)
+        cleanup?.resume()
+        try await suspension.value
+        let status = try await client.status()
+        XCTAssertTrue(status.connections.isEmpty)
+        XCTAssertTrue(status.accounts.isEmpty)
+    }
+
+    func testRestorationCompletedAfterSuspensionCannotInstallStaleSessions() async throws {
+        let id = UUID().uuidString
+        let driver = FixtureWalletConnectorDriver(
+            connector: .metamask,
+            restoreSessions: [session(id: id, connector: .metamask, account: externalAccount(id: "metamask-1"))]
+        )
+        let client = DirectWalletConnectionsClient(drivers: [driver])
+        let enteredRestore = expectation(description: "Vendor restoration is pending")
+        var completion: CheckedContinuation<Void, Never>?
+        driver.restoreHandler = {
+            await withCheckedContinuation { continuation in
+                completion = continuation
+                enteredRestore.fulfill()
+            }
+        }
+        let restoration = Task { try await client.status() }
+        await fulfillment(of: [enteredRestore], timeout: 1)
+        try await client.suspendAll()
+        completion?.resume()
+        do {
+            _ = try await restoration.value
+            XCTFail("A pre-suspension restoration cannot create post-suspension authority")
+        } catch let error as WalletConnectorRuntimeError {
+            XCTAssertEqual(error, .sessionNotFound)
+        }
+        XCTAssertEqual(driver.disconnectedIDs, [id])
     }
 
     private func walletConnectRequest(
@@ -253,8 +515,26 @@ final class WalletConnectorDriverTests: XCTestCase {
         )
     }
 
-    private func drainEvents() async {
-        for _ in 0..<8 { await Task.yield() }
+    @discardableResult
+    private func emitAndWait(
+        _ event: WalletConnectorEvent,
+        from driver: FixtureWalletConnectorDriver,
+        to client: DirectWalletConnectionsClient,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async -> WalletConnectionServiceStatus? {
+        let published = expectation(description: "Connector event updates the authoritative projection")
+        published.assertForOverFulfill = true
+        var projection: WalletConnectionServiceStatus?
+        client.statusChangeHandler = { status in
+            projection = status
+            published.fulfill()
+        }
+        defer { client.statusChangeHandler = nil }
+        driver.emit(event)
+        await fulfillment(of: [published], timeout: 1)
+        XCTAssertNotNil(projection, file: file, line: line)
+        return projection
     }
 }
 
@@ -274,8 +554,14 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
     private let proposal: WalletConnectionProposalReview?
 
     private(set) var approvalCount = 0
+    private(set) var connectCount = 0
+    private(set) var acceptedProposalCount = 0
     private(set) var disconnectedIDs: [String] = []
     private(set) var suspendCount = 0
+    var disconnectHandler: (@MainActor () async -> Void)?
+    var connectCompletionHandler: (@MainActor () async -> Void)?
+    var suspendHandler: (@MainActor () async -> Void)?
+    var restoreHandler: (@MainActor () async -> Void)?
 
     init(
         connector: WalletConnectionConnector,
@@ -301,6 +587,7 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
     deinit { continuation.finish() }
 
     func restore() async throws -> [WalletConnectorSession] {
+        await restoreHandler?()
         if let restoreError { throw restoreError }
         return restoreSessions
     }
@@ -309,17 +596,20 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
         _ request: WalletConnectorPairingRequest,
         approve: @escaping @MainActor (WalletConnectionProposalReview) async -> Bool
     ) async throws -> WalletConnectorSession {
+        connectCount += 1
         if let connectError { throw connectError }
         if let proposal {
             approvalCount += 1
             guard await approve(proposal) else {
                 throw WalletConnectorRuntimeError.sdkFailure("rejected")
             }
+            acceptedProposalCount += 1
         }
         guard let connectSession,
               connectSession.connectionID == request.requestID else {
             throw WalletConnectorRuntimeError.sessionMismatch
         }
+        await connectCompletionHandler?()
         return connectSession
     }
 
@@ -333,9 +623,13 @@ private final class FixtureWalletConnectorDriver: WalletConnectorDriver {
 
     func disconnect(connectionID: String) async {
         disconnectedIDs.append(connectionID)
+        await disconnectHandler?()
     }
 
-    func suspend() async { suspendCount += 1 }
+    func suspend() async {
+        suspendCount += 1
+        await suspendHandler?()
+    }
 
     func emit(_ event: WalletConnectorEvent) {
         continuation.yield(event)
