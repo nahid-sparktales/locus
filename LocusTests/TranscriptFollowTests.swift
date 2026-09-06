@@ -336,6 +336,104 @@ final class TranscriptFollowTests: XCTestCase {
             "A completed native gesture must release its hold before an explicit jump")
     }
 
+    func testSelectedGlyphViewportRestorationUsesCurrentLayoutAndSurvivesMouseUp() throws {
+        let fixture = try makeSelectionViewportFixture()
+        defer { fixture.coordinator.detachAll() }
+        let scroll = fixture.scroll
+        let originalGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        let originalOffset = originalGlyph.minY - scroll.contentView.bounds.minY
+        let up = try selectionMouseEvent(.leftMouseUp, at: fixture.leaf.convert(.zero, to: nil), in: scroll)
+        fixture.store.mouseUp(in: fixture.leaf, event: up)
+        XCTAssertTrue(fixture.store.hasLiveSelection)
+        XCTAssertTrue(fixture.store.activeRowIDs.isEmpty)
+        XCTAssertFalse(fixture.coordinator.followState.permitsAutomaticScroll)
+
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+        fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+        fixture.leaf.setFrameOrigin(NSPoint(x: fixture.leaf.frame.minX, y: fixture.leaf.frame.minY + 37))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 67))
+        let displaced = scroll.contentView.bounds.origin
+        let attachment = fixture.coordinator.layoutAttachmentRevision
+        fixture.coordinator.renderContainerDidLayout(token: fixture.token, attachment: attachment, from: fixture.bridge)
+        fixture.coordinator.renderContainerDidLayout(token: current, attachment: attachment &+ 1, from: fixture.bridge)
+        XCTAssertEqual(scroll.contentView.bounds.origin, displaced, "Stale token/attachment evidence cannot restore a selection")
+
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        let currentGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        XCTAssertEqual(currentGlyph.minY - scroll.contentView.bounds.minY, originalOffset, accuracy: 1,
+            "Keep the actual selected glyph fixed even when its document position also changes")
+        XCTAssertNotEqual(scroll.contentView.bounds.origin, displaced)
+
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 20))
+        let repeatedOrigin = scroll.contentView.bounds.origin
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        XCTAssertEqual(scroll.contentView.bounds.origin, repeatedOrigin,
+            "The same layout geometry must not create a scroll-origin feedback loop")
+    }
+
+    func testSelectedGlyphViewportRestorationCannotOverrideNewerReaderOrNativeOwnership() throws {
+        for invalidation in ["clear", "detach", "jump", "liveScroll", "leafReplacement", "textReplacement", "session", "attachment"] {
+            let fixture = try makeSelectionViewportFixture()
+            defer { fixture.coordinator.detachAll() }
+            let scroll = fixture.scroll
+            var current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+            fixture.coordinator.installRenderTarget(current, realizeTail: {})
+            scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
+            var bridge = fixture.bridge
+            switch invalidation {
+            case "clear": fixture.store.clearSelection()
+            case "detach": fixture.coordinator.detach()
+            case "jump": fixture.coordinator.jumpToLatest()
+            case "liveScroll":
+                NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+            case "leafReplacement":
+                fixture.store.register(fixture.span, view: ResponseSelectableTextView.make())
+            case "textReplacement":
+                fixture.leaf.replaceAttributedTextIfNeeded(NSAttributedString(string: "Different native glyph content"))
+            case "session":
+                current = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 1, tailID: .block(UUID()))
+                fixture.coordinator.installRenderTarget(current, realizeTail: {})
+            default:
+                bridge = NSView(frame: fixture.bridge.bounds)
+                scroll.documentView?.addSubview(bridge)
+                fixture.coordinator.attach(from: bridge)
+            }
+            let ownedOrigin = scroll.contentView.bounds.origin
+            acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: bridge)
+            XCTAssertEqual(scroll.contentView.bounds.origin, ownedOrigin,
+                "A selection anchor must not survive \(invalidation)")
+        }
+    }
+
+    func testSelectionEdgeDragReleasesViewportAnchorWithoutDiscardingSelection() throws {
+        let fixture = try makeSelectionViewportFixture()
+        defer { fixture.coordinator.detachAll() }
+        let scroll = fixture.scroll
+        let start = fixture.leaf.convert(NSPoint(x: 4, y: 8), to: nil)
+        fixture.store.mouseDown(in: fixture.leaf, event: try selectionMouseEvent(.leftMouseDown, at: start, in: scroll))
+        let inside = NSPoint(x: start.x + 40, y: start.y)
+        fixture.store.mouseDragged(event: try selectionMouseEvent(.leftMouseDragged, at: inside, in: scroll))
+        XCTAssertTrue(fixture.store.hasLiveSelection)
+        let clip = scroll.contentView
+        let outside = clip.convert(NSPoint(x: clip.bounds.midX, y: clip.bounds.maxY + 20), to: nil)
+        XCTAssertFalse(clip.visibleRect.contains(clip.convert(outside, from: nil)))
+        let up = try selectionMouseEvent(.leftMouseUp, at: outside, in: scroll)
+        fixture.store.mouseDragged(event: try selectionMouseEvent(.leftMouseDragged, at: outside, in: scroll))
+        defer {
+            fixture.store.mouseUp(in: fixture.leaf, event: up)
+        }
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+        fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+        clip.scroll(to: NSPoint(x: 0, y: 300))
+        let readerOrigin = clip.bounds.origin
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        XCTAssertEqual(clip.bounds.origin, readerOrigin, "Layout must not counter the user's edge-autoscroll gesture")
+        XCTAssertTrue(fixture.store.hasLiveSelection, "Releasing viewport anchoring must retain the logical selection")
+    }
+
     func testQueuedContentInvalidationSurvivesAnOrdinaryPin() {
         let scroll = mountNativeScroll()
         let anchor = NSView(frame: .zero)
@@ -1086,6 +1184,71 @@ final class TranscriptFollowTests: XCTestCase {
     }
 
     // MARK: - Harness
+
+    private struct SelectionViewportFixture {
+        let scroll: NSScrollView
+        let bridge: NSView
+        let leaf: ResponseSelectableTextView
+        let store: TranscriptSelectionStore
+        let span: TranscriptSelectionSpan
+        let glyph: TranscriptSelectionViewportAnchor
+        let coordinator: TranscriptScrollCoordinator
+        let token: TranscriptRenderToken
+    }
+
+    private func makeSelectionViewportFixture() throws -> SelectionViewportFixture {
+        final class FlippedDocument: NSView { override var isFlipped: Bool { true } }
+        let scroll = mountNativeScroll()
+        let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 1_000))
+        scroll.documentView = document
+        let bridge = NSView(frame: document.bounds)
+        document.addSubview(bridge)
+        let coordinator = TranscriptScrollCoordinator()
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        coordinator.installRenderTarget(token, realizeTail: {})
+        coordinator.attach(from: bridge)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: bridge)
+        pump()
+        coordinator.detach()
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 400))
+        let leaf = ResponseSelectableTextView.make()
+        leaf.textContainerInset = .zero
+        leaf.textContainer?.lineFragmentPadding = 0
+        leaf.configureWrapping(true)
+        leaf.replaceAttributedTextIfNeeded(NSAttributedString(
+            string: "Selected glyph remains readable", attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        ))
+        leaf.frame = NSRect(x: 20, y: 550, width: 300, height: 40)
+        document.addSubview(leaf)
+        leaf.layoutSubtreeIfNeeded()
+        let store = TranscriptSelectionStore()
+        let span = TranscriptSelectionSpan(treePath: [0], displayedText: leaf.string, separatorBefore: "", copyPrefix: "", rowID: "selected-row")
+        store.syncRows([span.rowID])
+        store.register(span, view: leaf)
+        var glyph: TranscriptSelectionViewportAnchor?
+        store.onDragActiveChange = { coordinator.setSelectionDragActive($0) }
+        store.onViewportAnchorChange = { anchor in
+            glyph = anchor
+            coordinator.setSelectionViewportAnchor(anchor)
+        }
+        store.selectForTesting(
+            from: .init(spanID: span.id, utf16Offset: 0),
+            to: .init(spanID: span.id, utf16Offset: 8), dragging: true
+        )
+        return SelectionViewportFixture(
+            scroll: scroll, bridge: bridge, leaf: leaf, store: store, span: span,
+            glyph: try XCTUnwrap(glyph, "The fixture must capture a real visible selected glyph"),
+            coordinator: coordinator, token: token
+        )
+    }
+
+    private func selectionMouseEvent(_ type: NSEvent.EventType, at point: NSPoint, in scroll: NSScrollView) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: try XCTUnwrap(scroll.window).windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1
+        ))
+    }
 
     private func mountNativeScroll() -> NSScrollView {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 397))

@@ -2580,16 +2580,6 @@ private struct ConversationView: View {
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
             }
-            .transaction { transaction in
-                if #available(macOS 15.0, *),
-                   !scrollCoordinator.followState.permitsAutomaticScroll || !selection.activeRowIDs.isEmpty {
-                    // Stopping our pin is not enough: SwiftUI also adjusts
-                    // the native offset when an earlier row changes height.
-                    // A reader-owned selection/viewport must stay put during
-                    // that content transaction, including terminal-row changes.
-                    transaction.scrollContentOffsetAdjustmentBehavior = .disabled
-                }
-            }
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
@@ -2708,6 +2698,9 @@ private struct ConversationView: View {
         }
         selection.onDragActiveChange = { active in
             scrollCoordinator.setSelectionDragActive(active)
+        }
+        selection.onViewportAnchorChange = { anchor in
+            scrollCoordinator.setSelectionViewportAnchor(anchor)
         }
         selection.syncRows(items.map(\.id.stableKey))
     }
@@ -3111,6 +3104,23 @@ enum TranscriptTailLayoutKind: Equatable { case content, end }
 final class TranscriptScrollCoordinator: ObservableObject {
     @Published private(set) var followState = TranscriptFollowState()
 
+    private struct SelectionLayoutGeometry: Equatable {
+        let token: TranscriptRenderToken
+        let glyph: NSRect
+        let document: NSRect
+        let viewportSize: NSSize
+    }
+
+    private struct SelectionViewportOwnership {
+        let anchor: TranscriptSelectionViewportAnchor
+        let generation: UInt64
+        let attachment: UInt64
+        let readerRevision: UInt64
+        let glyphOffsetY: CGFloat
+        var lastRestoredGeometry: SelectionLayoutGeometry?
+    }
+
+    private var selectionViewportOwnership: SelectionViewportOwnership?
     private weak var scrollView: NSScrollView?
     private weak var documentView: NSView?
     private var observers: [NSObjectProtocol] = []
@@ -3243,6 +3253,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         let previousGeneration = renderToken?.sessionGeneration
         let changedSession = previousGeneration != token.sessionGeneration
         if changedSession {
+            selectionViewportOwnership = nil
             // Content revisions may coalesce before SwiftUI drains this
             // generation's callback. Retain its original reader lease until
             // the latest matching projection consumes it, never re-arm it on
@@ -3341,6 +3352,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
               rect.width.isFinite, rect.height.isFinite else { return }
         let alreadyAcknowledged = hasCurrentContainerLayout
         containerLayoutAcknowledgement = (token, attachment)
+        restoreSelectionViewportAfterLayout(token: token, attachment: attachment)
         #if DEBUG
         if !alreadyAcknowledged { recordGeometry("container.layoutAcknowledged") }
         #endif
@@ -3499,6 +3511,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
                 self.isRoutingVerticalWheel = false
                 return event
             }
+            self.selectionViewportOwnership = nil
 
             if let deltaY = TranscriptScrollMetrics.dominantVerticalWheelDelta(
                 scrollingDeltaX: event.scrollingDeltaX,
@@ -3554,6 +3567,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detach() {
+        selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
@@ -3576,7 +3590,58 @@ final class TranscriptScrollCoordinator: ObservableObject {
         }
     }
 
+    /// Capture only at an actual selection gesture. A completed nonempty
+    /// selection keeps this ownership; layout/registration cannot re-arm it
+    /// after newer reader input, a removed leaf, or a conversation switch.
+    func setSelectionViewportAnchor(_ anchor: TranscriptSelectionViewportAnchor?) {
+        guard let anchor, let token = renderToken, let scrollView,
+              let glyph = anchor.measuredGlyph(in: scrollView) else {
+            selectionViewportOwnership = nil
+            return
+        }
+        detach()
+        selectionViewportOwnership = SelectionViewportOwnership(
+            anchor: anchor, generation: token.sessionGeneration,
+            attachment: attachmentRevision, readerRevision: readerIntentRevision,
+            glyphOffsetY: glyph.minY - scrollView.contentView.bounds.minY
+        )
+    }
+
+    private func restoreSelectionViewportAfterLayout(token: TranscriptRenderToken, attachment: UInt64) {
+        guard var ownership = selectionViewportOwnership,
+              ownership.generation == token.sessionGeneration,
+              ownership.attachment == attachment, ownership.readerRevision == readerIntentRevision,
+              !followState.permitsAutomaticScroll, !isUserLiveScrolling,
+              let scrollView, let documentView,
+              let glyph = ownership.anchor.measuredGlyph(in: scrollView) else {
+            selectionViewportOwnership = nil
+            return
+        }
+        let clip = scrollView.contentView
+        let geometry = SelectionLayoutGeometry(
+            token: token, glyph: glyph, document: documentView.bounds, viewportSize: clip.bounds.size
+        )
+        // A framework-origin change is not new layout evidence. At most one
+        // correction per actual glyph/document/token geometry prevents an
+        // origin-notification feedback loop with native scroll anchoring.
+        guard ownership.lastRestoredGeometry != geometry else { return }
+        var proposed = clip.bounds
+        proposed.origin.y = glyph.minY - ownership.glyphOffsetY
+        let target = clip.constrainBoundsRect(proposed).origin
+        guard target.y.isFinite, target != clip.bounds.origin else { return }
+        ownership.lastRestoredGeometry = geometry
+        selectionViewportOwnership = ownership
+        #if DEBUG
+        recordGeometry("selection.restoreMeasuredGlyph", target: target)
+        #endif
+        clip.scroll(to: target)
+        scrollView.reflectScrolledClipView(clip)
+        lastOriginY = clip.bounds.origin.y
+        updateNearBottom()
+    }
+
     func jumpToLatest(animated: Bool = false) {
+        selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         mutateState { $0.jumpToLatest() }
         pinPending = false
@@ -3592,6 +3657,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func resetForSession() {
+        selectionViewportOwnership = nil
         pendingSessionFollowReset = nil
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
@@ -3633,6 +3699,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func wheelMoved(deltaY: CGFloat) {
+        selectionViewportOwnership = nil
         updateNearBottom()
         if deltaY > 0 {
             detach()
@@ -3642,6 +3709,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func liveScrollStarted() {
+        selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
@@ -3918,6 +3986,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func detachObservers() {
+        selectionViewportOwnership = nil
         attachmentRevision &+= 1
         containerLayoutAcknowledgement = nil
         scrollIntentRevision &+= 1

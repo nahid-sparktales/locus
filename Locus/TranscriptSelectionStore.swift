@@ -48,6 +48,41 @@ private final class WeakResponseSelectableTextView {
     }
 }
 
+/// One selected native glyph, not a row estimate. Both references are weak so
+/// preserving reading position never retains a recycled lazy transcript leaf.
+@MainActor
+final class TranscriptSelectionViewportAnchor {
+    fileprivate weak var view: ResponseSelectableTextView?
+    fileprivate weak var store: TranscriptSelectionStore?
+    fileprivate let spanID: String
+    fileprivate let characters: NSRange
+    fileprivate let contentRevision: UInt
+
+    fileprivate init(view: ResponseSelectableTextView, store: TranscriptSelectionStore, spanID: String, characters: NSRange) {
+        self.view = view
+        self.store = store
+        self.spanID = spanID
+        self.characters = characters
+        contentRevision = view.selectionContentRevision
+    }
+
+    func measuredGlyph(in scroll: NSScrollView) -> NSRect? {
+        guard let view, let store, store.ownsViewportAnchor(self),
+              view.window != nil, view.window === scroll.window,
+              view.enclosingScrollView === scroll, !view.isHiddenOrHasHiddenAncestor,
+              !view.needsLayout, view.selectionContentRevision == contentRevision,
+              let document = scroll.documentView,
+              let layout = view.layoutManager, let container = view.textContainer else { return nil }
+        let glyphs = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
+        let local = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+        let rect = view.convert(local, to: document)
+        guard !rect.isEmpty, rect.minX.isFinite, rect.minY.isFinite,
+              rect.width.isFinite, rect.height.isFinite else { return nil }
+        return rect
+    }
+}
+
 /// Owns the transcript's logical text selection while its visible leaves stay
 /// separate native controls.
 ///
@@ -79,6 +114,9 @@ final class TranscriptSelectionStore: ObservableObject {
     /// Told when a drag starts and stops, so the transcript can stop
     /// auto-pinning to the bottom underneath it.
     var onDragActiveChange: ((Bool) -> Void)?
+    /// A real selection gesture supplies its measured reading anchor. Layout
+    /// and registration never manufacture a replacement anchor after cancel.
+    var onViewportAnchorChange: ((TranscriptSelectionViewportAnchor?) -> Void)?
 
     private(set) var selection: TranscriptSelection?
 
@@ -100,6 +138,7 @@ final class TranscriptSelectionStore: ObservableObject {
     private var autoscrollTimer: Timer?
     private var lastDragPoint: NSPoint?
     private weak var dragView: ResponseSelectableTextView?
+    private var viewportAnchor: TranscriptSelectionViewportAnchor?
 
     // MARK: - Transcript membership
 
@@ -117,6 +156,9 @@ final class TranscriptSelectionStore: ObservableObject {
         )
         guard next != rowRank else { return }
         let removed = Set(rowRank.keys).subtracting(next.keys)
+        if let anchor = viewportAnchor, removed.contains(Self.rowID(ofSpanID: anchor.spanID)) {
+            clearViewportAnchor()
+        }
         rowRank = next
         for rowID in removed {
             for spanID in rowSpanIDs.removeValue(forKey: rowID) ?? [] {
@@ -130,6 +172,7 @@ final class TranscriptSelectionStore: ObservableObject {
     }
 
     func reset() {
+        clearViewportAnchor()
         stopAutoscroll()
         selection = nil
         spans.removeAll()
@@ -152,6 +195,10 @@ final class TranscriptSelectionStore: ObservableObject {
     /// here — which is what it used to do, alongside a full re-sort — made each
     /// render quadratic in the number of leaves in a message.
     func register(_ span: TranscriptSelectionSpan, view: ResponseSelectableTextView) {
+        if let anchor = viewportAnchor, anchor.spanID == span.id,
+           anchor.view !== view || spans[span.id] != span {
+            clearViewportAnchor()
+        }
         let existing = spans[span.id]
         if existing != span {
             spans[span.id] = span
@@ -171,6 +218,7 @@ final class TranscriptSelectionStore: ObservableObject {
     /// window impossible.
     func unregister(spanID: String, view: ResponseSelectableTextView) {
         guard views[spanID]?.value === view else { return }
+        if viewportAnchor?.view === view { clearViewportAnchor() }
         views.removeValue(forKey: spanID)
         appliedRanges.removeValue(forKey: spanID)
     }
@@ -197,6 +245,7 @@ final class TranscriptSelectionStore: ObservableObject {
     }
 
     func clearSelection() {
+        clearViewportAnchor()
         let had = selection != nil
         selection = nil
         stopAutoscroll()
@@ -210,6 +259,7 @@ final class TranscriptSelectionStore: ObservableObject {
 
     func mouseDown(in view: ResponseSelectableTextView, event: NSEvent) {
         guard let spanID = view.selectionSpanID else { return }
+        clearViewportAnchor()
         TranscriptSelectionMenu.shared.attach(store: self)
         view.window?.makeFirstResponder(view)
         dragView = view
@@ -235,6 +285,7 @@ final class TranscriptSelectionStore: ObservableObject {
         }
         invalidateProjection()
         applySelectionDiff()
+        publishViewportAnchor(in: view, pointer: event.locationInWindow)
     }
 
     func mouseDragged(event: NSEvent) {
@@ -249,6 +300,7 @@ final class TranscriptSelectionStore: ObservableObject {
         }
         lastDragPoint = event.locationInWindow
         extend(to: event.locationInWindow)
+        publishViewportAnchor(in: dragView, pointer: event.locationInWindow)
         startAutoscrollIfNeeded(event: event)
     }
 
@@ -269,6 +321,7 @@ final class TranscriptSelectionStore: ObservableObject {
             return
         }
         setDragActive(false)
+        if !hasLiveSelection { clearViewportAnchor() }
     }
 
     func rightMouseDown(in view: ResponseSelectableTextView, event: NSEvent) {
@@ -276,6 +329,7 @@ final class TranscriptSelectionStore: ObservableObject {
         let point = view.characterIndex(atWindowPoint: event.locationInWindow)
         let inSelection = currentRangesContain(spanID: spanID, offset: point)
         if !inSelection {
+            clearViewportAnchor()
             // Nothing selected under the pointer: take the word, the way a
             // right-click in native text does, so the menu has something to
             // act on instead of doing nothing at all.
@@ -284,6 +338,7 @@ final class TranscriptSelectionStore: ObservableObject {
             selectGranular(in: view, spanID: spanID, at: point, granularity: .selectByWord)
             invalidateProjection()
             applySelectionDiff()
+            publishViewportAnchor(in: view, pointer: event.locationInWindow)
         }
         guard hasLiveSelection else { return }
         TranscriptSelectionMenu.shared.presentResponseContextMenu(
@@ -301,6 +356,7 @@ final class TranscriptSelectionStore: ObservableObject {
     func selectAll(from view: ResponseSelectableTextView?) {
         let ordered = orderedSpans
         guard let first = ordered.first, let last = ordered.last else { return }
+        clearViewportAnchor()
         let rowID = view.flatMap(\.selectionSpanID).map(Self.rowID(ofSpanID:))
         if let rowID, let rowSpans = rowSpans(rowID), let rowFirst = rowSpans.first,
            let rowLast = rowSpans.last {
@@ -312,6 +368,7 @@ final class TranscriptSelectionStore: ObservableObject {
                 selection = rowWide
                 invalidateProjection()
                 applySelectionDiff()
+                publishViewportAnchor(in: view, pointer: nil)
                 return
             }
         }
@@ -321,10 +378,12 @@ final class TranscriptSelectionStore: ObservableObject {
         )
         invalidateProjection()
         applySelectionDiff()
+        publishViewportAnchor(in: view, pointer: nil)
     }
 
     func moveFocus(by delta: Int) {
         guard delta != 0, let current = selection else { return }
+        clearViewportAnchor()
         let ordered = orderedSpans
         guard let index = ordered.firstIndex(where: { $0.id == current.focus.spanID }) else {
             return
@@ -345,6 +404,7 @@ final class TranscriptSelectionStore: ObservableObject {
         )
         invalidateProjection()
         applySelectionDiff()
+        publishViewportAnchor(in: views[ordered[nextIndex].id]?.value, pointer: nil)
     }
 
     /// Testing seam: sets a selection without synthesizing mouse events, so
@@ -358,6 +418,47 @@ final class TranscriptSelectionStore: ObservableObject {
         invalidateProjection()
         applySelectionDiff()
         if dragging { setDragActive(true) }
+        publishViewportAnchor(in: views[anchor.spanID]?.value, pointer: nil)
+    }
+
+    private func clearViewportAnchor() {
+        guard viewportAnchor != nil else { return }
+        viewportAnchor = nil
+        onViewportAnchorChange?(nil)
+    }
+
+    fileprivate func ownsViewportAnchor(_ anchor: TranscriptSelectionViewportAnchor) -> Bool {
+        guard viewportAnchor === anchor, let view = anchor.view,
+              views[anchor.spanID]?.value === view, view.selectionStore === self,
+              view.selectionSpanID == anchor.spanID, hasLiveSelection else { return false }
+        let selected = range(for: anchor.spanID)
+        return selected.length > 0 && anchor.characters.location >= selected.location
+            && NSMaxRange(anchor.characters) <= NSMaxRange(selected)
+    }
+
+    private func publishViewportAnchor(in view: ResponseSelectableTextView?, pointer: NSPoint?) {
+        guard let view, let spanID = view.selectionSpanID,
+              let scroll = view.enclosingScrollView, view.window != nil,
+              hasLiveSelection else { clearViewportAnchor(); return }
+        if let pointer, !scroll.contentView.visibleRect.contains(scroll.contentView.convert(pointer, from: nil)) {
+            clearViewportAnchor()
+            return
+        }
+        let selected = range(for: spanID)
+        guard selected.length > 0, selected.location < (view.string as NSString).length else {
+            clearViewportAnchor()
+            return
+        }
+        let next = TranscriptSelectionViewportAnchor(
+            view: view, store: self, spanID: spanID,
+            characters: NSRange(location: selected.location, length: 1)
+        )
+        viewportAnchor = next
+        guard let rect = next.measuredGlyph(in: scroll), scroll.documentVisibleRect.intersects(rect) else {
+            clearViewportAnchor()
+            return
+        }
+        onViewportAnchorChange?(next)
     }
 
     // MARK: - Extension
@@ -417,6 +518,7 @@ final class TranscriptSelectionStore: ObservableObject {
         guard !clip.visibleRect.contains(clip.convert(event.locationInWindow, from: nil)) else {
             return
         }
+        clearViewportAnchor()
         autoscrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) {
             [weak self] _ in
             Task { @MainActor [weak self] in self?.tickAutoscroll(event) }
@@ -437,6 +539,7 @@ final class TranscriptSelectionStore: ObservableObject {
             stopAutoscroll()
             return
         }
+        clearViewportAnchor()
         clip.autoscroll(with: event)
         extend(to: point)
     }
@@ -609,6 +712,7 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
     var onOpenURL: ((URL) -> Void)?
 
     private var contentRevision: UInt = 0
+    fileprivate var selectionContentRevision: UInt { contentRevision }
     private var configuredWraps: Bool?
     private var measurementCache = TranscriptMeasurementCache<MeasurementKey>(capacity: 4)
     private var liveResizeMeasurementActive = false
