@@ -338,6 +338,20 @@ jobs:
           test -z "$(find "$app_store/Contents" \
             \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
             -print -quit)"
+      - name: Retain native and local-chain result bundles on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-native-chain-macos15-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # xcodebuild's generated test bundles, including failure geometry and
+          # attachments. Never upload whole DerivedData or bundled runtimes.
+          path: |
+            ${{ runner.temp }}/locus-debug-tests/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-anvil/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-solana/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-debug-sui/Logs/Test/*.xcresult/**
+          if-no-files-found: error
+          retention-days: 90
 
   mobile:
     runs-on: macos-15

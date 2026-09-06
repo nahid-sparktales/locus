@@ -33,6 +33,29 @@ def test_release_syntax_gate_checks_each_quoted_file_without_executing_it(tmp_pa
         assert invalid in result.stderr
 
 
+def test_native_failure_evidence_upload_matches_only_actual_test_result_directories():
+    source = (ROOT / ".github/workflows/ci.yml").read_text()
+    swift_job = source.split("\n  swift:\n", 1)[1].split("\n  mobile:\n", 1)[0]
+    commands, upload = swift_job.split(
+        "      - name: Retain native and local-chain result bundles on success or failure\n", 1
+    )
+    produced = set(re.findall(r'-derivedDataPath "\$RUNNER_TEMP/(locus-debug-[^"/]+)"', commands))
+    assert produced == {"locus-debug-tests", "locus-debug-anvil", "locus-debug-solana", "locus-debug-sui"}
+    paths = {
+        line.strip() for line in upload.splitlines()
+        if line.strip().startswith("${{ runner.temp }}")
+    }
+    assert paths == {f"${{{{ runner.temp }}}}/{directory}/Logs/Test/*.xcresult/**" for directory in produced}
+    assert "        if: always()\n" in upload
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in upload
+    assert "if-no-files-found: error" in upload
+    assert "retention-days: 90" in upload
+    assert "${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}" in upload
+    assert "continue-on-error" not in swift_job
+    assert "|| true" not in commands
+    assert "if: success()" not in upload
+
+
 @pytest.mark.parametrize("workflow", ["ci.yml", "wallet-fuzz.yml"])
 def test_only_superseded_pr_revisions_preempt_runs_not_explicit_campaigns(workflow):
     source = (ROOT / ".github/workflows" / workflow).read_text()
