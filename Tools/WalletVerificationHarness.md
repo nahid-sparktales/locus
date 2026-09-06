@@ -20,21 +20,31 @@ wrapper's own process group; it never kills every Locus process by bundle ID.
 
 ## Fuzz chunks
 
-The Swift runner is **not yet a working campaign gate**. The current app-hosted
-XCTest harness expects `LLVMFuzzerRunDriver` to return before writing completion
-metrics, but the pinned runtime exits the host on normal campaign completion.
-An unexpected host exit or absent metrics must remain a failed/incomplete run;
-neither is credited as successful fuzzing. A supported execution/completion
-design, actual instrumentation self-tests, successful deterministic decoder
-fixtures, and platform-supported leak checks remain implementation/verification
-blockers. No Swift campaign or 312-CPU-hour candidate result is claimed here.
+The Swift runner builds the Debug-only `WalletFuzzHost` and launches a fresh
+process directly for each replay and timed phase. It does not start XCTest or
+the normal application. The unchanged pinned runtime owns process completion;
+ordinary exit cleanup writes provisional observations, never a pass verdict.
+The parent and evidence verifier independently require the actual exit/PID,
+matching invocation identities, complete engine statistics and retained seed
+observations. The former XCTest-host exits remain failed evidence, not passes.
+
+Before phases, the runner checks production decoder coverage objects, exercises
+ordinary exit, missing metrics, crash, hang and ASan negative controls, and
+requires deterministic successful Solana/Sui decoder fixtures. Failure controls
+are separately labelled and never earn campaign credit. The host contains no
+signer/recovery embedding, production configuration, backend or connector web
+resources. Production/MAS audits reject fuzz-host code and resources. Actual
+successful receipts are required; the implementation alone proves no campaign.
+Platform-supported leak checks remain an unmet gate where unavailable. No
+312-CPU-hour candidate result or external release approval is claimed here.
 
 Both fuzz runners require clean source by default. `LOCUS_FUZZ_ALLOW_DIRTY=1`
 permits development smoke checks, but their receipts are ineligible for campaigns.
 `LOCUS_FUZZ_SECONDS` is a **wall-clock budget**, not credited CPU time. Each new
 invocation creates a unique run ID, plus distinct replay/fuzz completion records
 for each target. Build/replay time never counts toward the canary CPU requirement.
-Swift's intended receipt measures CPU inside the hosted target process; Rust
+Swift measures CPU inside the dedicated target process starting just before the
+engine, excluding build and fixture self-tests; Rust
 measures only the direct fuzzer child after building it. LLVM coverage must be
 observed in a successful fuzz phase. Swift builds request ASan with applicable
 C/C++ boundary UBSan; Rust uses ASan and checked arithmetic,

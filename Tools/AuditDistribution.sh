@@ -30,6 +30,24 @@ wallet_audit_reject_matching_output() {
 }
 # END wallet_audit_reject_matching_output
 
+# BEGIN wallet_audit_fuzz_host_exclusions
+# Fuzzing is a separate test executable, including for ordinary Debug builds.
+# Match executable/resource identities, not prose mentioning fuzzing in notices.
+wallet_fuzz_forbidden_symbols='WalletFuzzHost|WalletFuzzConfiguration|WalletFuzzMetrics|WalletLibFuzzer|WalletFuzzNoNetwork|walletSwiftFuzzerInput|walletFuzzerRunDriver|walletFuzzWriteProvisionalMetrics|__ZN6fuzzer[0-9]|(^|[[:space:]])_?LLVMFuzzer(RunDriver|TestOneInput|Initialize|CustomMutator|CustomCrossOver|Mutate)([[:space:]]|$)'
+wallet_fuzz_forbidden_strings='^(_?LLVMFuzzer(RunDriver|TestOneInput|Initialize|CustomMutator|CustomCrossOver|Mutate)|_?walletSwiftFuzzerInput|LOCUS_WALLET_FUZZ_HOST|LOCUS_FUZZ_(TARGET|CORPUS|ARTIFACTS|RECEIPT|RUN_ID|CHUNK_ID|PHASE|REVISION|SECONDS|REPLAY)|io\.sparktales\.locus\.wallet-fuzz-host|WalletFuzzHost|WalletFuzzConfiguration|WalletFuzzMetrics|WalletLibFuzzer|WalletFuzzNoNetwork)$|^_?\$s[0-9]+WalletFuzzHost'
+wallet_audit_reject_fuzz_host_resources() {
+    wallet_audit_reject_matching_output '.' \
+        'application contains a test-only wallet fuzz payload' \
+        /usr/bin/find "$1/Contents" \
+        \( -name WalletFuzzHost -o -name WalletFuzzHost.app \
+            -o -name WalletFuzzHost.swift -o -name WalletFuzzHost.debug.dylib \
+            -o -name WalletFuzzHost.swiftmodule -o -name WalletFuzzHost.o \
+            -o -name WalletLibFuzzerTests.swift -o -name WalletSwiftFuzzWorker.py \
+            -o -name 'libclang_rt.fuzzer*.a' -o -name 'libclang_rt.fuzzer*.dylib' \) \
+        -print
+}
+# END wallet_audit_fuzz_host_exclusions
+
 app="${1:?usage: AuditDistribution.sh <Locus.app>}"
 repo_root="${0:A:h:h}"
 resources="${app}/Contents/Resources"
@@ -338,6 +356,7 @@ fi
 umask 077
 audit_temp_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-distribution-inspection.XXXXXX")"
 trap 'find "$audit_temp_dir" -depth -delete' EXIT
+wallet_audit_reject_fuzz_host_resources "${app}"
 entitlements="$(/usr/bin/mktemp "${audit_temp_dir}/entitlements.XXXXXX")"
 # --xml: without it codesign writes a human-readable dump plutil cannot parse,
 # and every extraction below fails open. Dots in entitlement names must be
@@ -860,6 +879,12 @@ while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
     (( wallet_macho_count += 1 ))
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
+        "distribution executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/nm "${candidate}"
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
+        "distribution executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/strings "${candidate}"
     if [[ "${candidate}" != "${wallet_signer}/Contents/MacOS/WalletSigner" \
         && "${candidate}" != "${wallet_recovery_signer}/Contents/MacOS/WalletSigner" ]]
     then

@@ -4,6 +4,160 @@ import XCTest
 
 @MainActor
 final class WalletDecoderFuzzTests: XCTestCase {
+    private struct BranchSeed: Decodable {
+        let target: String
+        let name: String
+        let transactionBase64: String
+        let expectedKind: WalletActionKind?
+        let reads: [String]
+    }
+
+    private actor ReadRecorder {
+        var values: [String] = []
+        func append(_ value: String) { values.append(value) }
+    }
+
+    private func branchSeeds() throws -> [BranchSeed] {
+        try JSONDecoder().decode([BranchSeed].self, from: walletFuzzCorpus("transactions/decoder-branches.json"))
+    }
+
+    private func decodeBranch(
+        _ seed: BranchSeed, evidence: WalletDappTransactionDecoder.ReadOnlyEvidence
+    ) async throws -> WalletSemanticAction {
+        let bytes = try XCTUnwrap(Data(base64Encoded: seed.transactionBase64))
+        XCTAssertEqual(bytes.base64EncodedString(), seed.transactionBase64)
+        XCTAssertLessThanOrEqual(bytes.count, 16_384)
+        if seed.target == "solana_decoder" {
+            let account = WalletAccount(id: "fixture-solana", chain: .solana,
+                address: WalletFuzzDecoderFixtures.solanaOwner, label: "Synthetic", networkIDs: ["solana:devnet"])
+            return try await WalletDappTransactionDecoder.solana(
+                .init(transactionBase64: seed.transactionBase64, accountAddress: account.address, minimumContextSlot: nil),
+                networkID: "solana:devnet", account: account, evidence: evidence
+            )
+        }
+        XCTAssertEqual(seed.target, "sui_decoder")
+        let account = WalletAccount(id: "fixture-sui", chain: .sui,
+            address: WalletFuzzDecoderFixtures.suiOwner, label: "Synthetic", networkIDs: ["sui:mainnet"])
+        return try await WalletDappTransactionDecoder.sui(
+            .init(transactionBase64: seed.transactionBase64, accountAddress: account.address),
+            networkID: "sui:mainnet", account: account,
+            reviewedAssets: WalletFuzzDecoderFixtures.reviewedAssets, evidence: evidence
+        )
+    }
+
+    func testDeterministicReadOnlyFixturesReachExactDecoderBranches() async throws {
+        let seeds = try branchSeeds()
+        XCTAssertEqual(seeds.count, 10)
+        XCTAssertEqual(Set(seeds.map(\.name)).count, seeds.count)
+        for seed in seeds {
+            let recorder = ReadRecorder()
+            let evidence = WalletFuzzDecoderFixtures.evidence { await recorder.append($0) }
+            if seed.expectedKind == nil {
+                do {
+                    _ = try await decodeBranch(seed, evidence: evidence)
+                    XCTFail("Rejected seed \(seed.name) reached a semantic action.")
+                } catch WalletGateway.Error.invalidArguments { /* Expected narrow decoder rejection. */ }
+            } else {
+                let result = try await decodeBranch(seed, evidence: evidence)
+                XCTAssertEqual(result.type, seed.expectedKind, seed.name)
+                switch seed.name {
+                case "spl-existing-ata", "spl-new-ata":
+                    XCTAssertEqual(result, .fungibleTokenTransfer(
+                        assetID: "solana:devnet/spl:\(WalletFuzzDecoderFixtures.solanaAddress(13))",
+                        recipient: WalletFuzzDecoderFixtures.solanaRecipient, amountBaseUnits: "25"))
+                case "v0-native-lookup":
+                    XCTAssertEqual(result, .nativeTransfer(
+                        recipient: WalletFuzzDecoderFixtures.solanaRecipient, amountBaseUnits: "25"))
+                case "core-standalone":
+                    let asset = WalletFuzzDecoderFixtures.solanaAddress(20)
+                    XCTAssertEqual(result, .nftTransfer(assetID: "solana:devnet/nft:core:\(asset)",
+                        tokenID: asset, recipient: WalletFuzzDecoderFixtures.solanaRecipient))
+                case "coin":
+                    XCTAssertEqual(result, .fungibleTokenTransfer(assetID: WalletFuzzDecoderFixtures.suiCoinID,
+                        recipient: WalletFuzzDecoderFixtures.suiRecipient, amountBaseUnits: "25"))
+                case "public-object":
+                    let object = WalletFuzzDecoderFixtures.suiAddress(0x66)
+                    XCTAssertEqual(result, .nftTransfer(assetID: "sui:mainnet/object:\(object)",
+                        tokenID: object, recipient: WalletFuzzDecoderFixtures.suiRecipient))
+                default: XCTFail("Unasserted decoder success branch \(seed.name)")
+                }
+            }
+            let reads = await recorder.values
+            XCTAssertEqual(reads, seed.reads, "The awaited read sequence must match \(seed.name).")
+        }
+    }
+
+    func testReadOnlyDecoderFixturesRejectUnmatchedRequests() async throws {
+        let fixture = WalletFuzzDecoderFixtures.evidence()
+        for (network, address, encoding) in [
+            ("solana:mainnet", WalletFuzzDecoderFixtures.solanaAddress(11), WalletDappTransactionDecoder.SolanaAccountEncoding.jsonParsed),
+            ("solana:devnet", WalletFuzzDecoderFixtures.solanaAddress(99), .jsonParsed),
+            ("solana:devnet", WalletFuzzDecoderFixtures.solanaAddress(11), .base64),
+        ] {
+            do { _ = try await fixture.solanaAccountInfo(network, address, encoding); XCTFail("Unmatched account read accepted") }
+            catch WalletFuzzDecoderFixtures.Error.unmatchedRead { /* No fallback provider exists. */ }
+        }
+        for (network, owner, coinType) in [
+            ("sui:testnet", WalletFuzzDecoderFixtures.suiOwner, WalletFuzzDecoderFixtures.suiCoinType),
+            ("sui:mainnet", WalletFuzzDecoderFixtures.suiAddress(99), WalletFuzzDecoderFixtures.suiCoinType),
+            ("sui:mainnet", WalletFuzzDecoderFixtures.suiOwner, "0x1234::other::COIN"),
+        ] {
+            do { _ = try await fixture.suiCoinObjects(network, owner, coinType); XCTFail("Unmatched coin read accepted") }
+            catch WalletFuzzDecoderFixtures.Error.unmatchedRead { /* No fallback provider exists. */ }
+        }
+        do { _ = try await fixture.suiOwnedObjects("sui:mainnet", WalletFuzzDecoderFixtures.suiAddress(99)); XCTFail("Unmatched owner accepted") }
+        catch WalletFuzzDecoderFixtures.Error.unmatchedRead { /* No fallback provider exists. */ }
+    }
+
+    func testReadOnlySolanaEvidenceStillParsesAndRejectsSubstitution() async throws {
+        let seeds = try branchSeeds()
+        let token = try XCTUnwrap(seeds.first { $0.name == "spl-existing-ata" })
+        let base = WalletFuzzDecoderFixtures.evidence()
+        for field in ["owner", "mint", "decimals", "program"] {
+            let evidence = WalletDappTransactionDecoder.ReadOnlyEvidence(solanaAccountInfo: { network, address, encoding in
+                let data = try await base.solanaAccountInfo(network, address, encoding)
+                guard address == WalletFuzzDecoderFixtures.solanaAddress(11) else { return data }
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                var value = try XCTUnwrap(object["value"] as? [String: Any])
+                var accountData = try XCTUnwrap(value["data"] as? [String: Any])
+                var parsed = try XCTUnwrap(accountData["parsed"] as? [String: Any])
+                var info = try XCTUnwrap(parsed["info"] as? [String: Any])
+                if field == "program" { value["owner"] = WalletFuzzDecoderFixtures.solanaAddress(99) }
+                else if field == "decimals" { info["tokenAmount"] = ["decimals": 7] }
+                else { info[field] = WalletFuzzDecoderFixtures.solanaAddress(99) }
+                parsed["info"] = info; accountData["parsed"] = parsed; value["data"] = accountData; object["value"] = value
+                return try JSONSerialization.data(withJSONObject: object)
+            }, suiCoinObjects: base.suiCoinObjects, suiOwnedObjects: base.suiOwnedObjects)
+            do { _ = try await decodeBranch(token, evidence: evidence); XCTFail("Substituted \(field) accepted") }
+            catch WalletGateway.Error.invalidArguments { /* Production parser and semantic binding remain authoritative. */ }
+        }
+    }
+
+    func testReadOnlyDecoderEvidenceSizeBoundsFailClosed() async throws {
+        let seeds = try branchSeeds()
+        let token = try XCTUnwrap(seeds.first { $0.name == "spl-existing-ata" })
+        let base = WalletFuzzDecoderFixtures.evidence()
+        let oversized = WalletDappTransactionDecoder.ReadOnlyEvidence(
+            solanaAccountInfo: { _, _, _ in Data(repeating: 0x20, count: 65_537) },
+            suiCoinObjects: base.suiCoinObjects, suiOwnedObjects: base.suiOwnedObjects
+        )
+        do { _ = try await decodeBranch(token, evidence: oversized); XCTFail("Oversized evidence accepted") }
+        catch WalletGateway.Error.invalidArguments { /* The read-only seam cannot provide unbounded parser input. */ }
+    }
+
+    func testDedicatedFuzzFixtureSelfTestRequiresEverySuccessBranch() async throws {
+        let report = try await WalletFuzzDecoderFixtures.verifySuccessBranches()
+        XCTAssertEqual(report.passedBranches, [
+            "solana.core-standalone", "solana.native-transfer", "solana.spl-existing-ata", "solana.spl-new-ata",
+            "solana.v0-native-lookup", "sui.coin", "sui.native-transfer", "sui.public-object",
+        ])
+        XCTAssertEqual(report.readCounts, [
+            "solana.core-standalone": 0, "solana.native-transfer": 0, "solana.spl-existing-ata": 2,
+            "solana.spl-new-ata": 1, "solana.v0-native-lookup": 1, "sui.coin": 1,
+            "sui.native-transfer": 0, "sui.public-object": 1,
+        ])
+    }
+
     private struct SolanaSeed: Decodable {
         let amountBaseUnits: String
         let feePayer: String
@@ -86,7 +240,8 @@ final class WalletDecoderFuzzTests: XCTestCase {
                     accountAddress: solanaAccount.address,
                     minimumContextSlot: nil
                 ),
-                networkID: "solana:devnet", account: solanaAccount
+                networkID: "solana:devnet", account: solanaAccount,
+                evidence: WalletFuzzDecoderFixtures.evidence()
             )
         }
 
@@ -116,7 +271,7 @@ final class WalletDecoderFuzzTests: XCTestCase {
                     accountAddress: suiAccount.address
                 ),
                 networkID: "sui:mainnet", account: suiAccount,
-                reviewedAssets: []
+                reviewedAssets: [], evidence: WalletFuzzDecoderFixtures.evidence()
             )
         }
     }

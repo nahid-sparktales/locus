@@ -106,6 +106,7 @@ class ProcessResult:
     stdout: object
     stderr: object
     timed_out: bool
+    process_id: int | None = None
 
 
 def run_bounded(
@@ -223,7 +224,7 @@ def run_bounded(
     finally:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)
-    value = ProcessResult(arguments, result, stdout, stderr, timed_out)
+    value = ProcessResult(arguments, result, stdout, stderr, timed_out, child.pid)
     if check and result != 0:
         raise subprocess.CalledProcessError(
             result, arguments, output=stdout, stderr=stderr

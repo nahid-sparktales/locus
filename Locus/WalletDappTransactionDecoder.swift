@@ -5,6 +5,77 @@ import Foundation
 /// caller-selected instruction survives this boundary: WalletSigner rebuilds a
 /// fresh transaction after review.
 enum WalletDappTransactionDecoder {
+    enum SolanaAccountEncoding: String, Sendable { case base64, jsonParsed }
+
+    /// An explicit, internal read-only seam. Production callers omit it and
+    /// retain the existing configured providers; no environment or user input
+    /// can select an evidence source. All transaction reconstruction is later.
+    struct ReadOnlyEvidence: Sendable {
+        let solanaAccountInfo: @Sendable (String, String, SolanaAccountEncoding) async throws -> Data
+        let suiCoinObjects: @Sendable (String, String, String) async throws -> WalletSuiCoinObjectSnapshot
+        let suiOwnedObjects: @Sendable (String, String) async throws -> WalletSuiOwnedObjectSnapshot
+    }
+
+    private enum SolanaReadSource {
+        case provider(WalletSolanaProviderCoordinator)
+        case fixture(networkID: String, ReadOnlyEvidence)
+
+        init(networkID: String, bundle: Bundle, evidence: ReadOnlyEvidence?) throws {
+            if let evidence { self = .fixture(networkID: networkID, evidence); return }
+            guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+                  let configuration = WalletSolanaProviderConfiguration.bundled(network: network, bundle: bundle) else {
+                throw WalletProviderCoordinatorError.noProvider(networkID)
+            }
+            self = .provider(try WalletSolanaProviderCoordinator(network: network, configuration: configuration))
+        }
+
+        func accountInfo(_ address: String, encoding: SolanaAccountEncoding) async throws -> Any {
+            switch self {
+            case .provider(let coordinator):
+                return try await coordinator.publicRead(method: "getAccountInfo",
+                    params: [address, ["commitment": "finalized", "encoding": encoding.rawValue]])
+            case .fixture(let networkID, let evidence):
+                let data = try await evidence.solanaAccountInfo(networkID, address, encoding)
+                guard data.count <= 65_536 else { throw malformed("Decoder account evidence is excessive.") }
+                return try JSONSerialization.jsonObject(with: data)
+            }
+        }
+    }
+
+    private enum SuiReadSource {
+        case provider(WalletSuiProviderCoordinator)
+        case fixture(networkID: String, ReadOnlyEvidence)
+
+        init(networkID: String, bundle: Bundle, evidence: ReadOnlyEvidence?) throws {
+            if let evidence { self = .fixture(networkID: networkID, evidence); return }
+            guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+                  let configuration = WalletSuiProviderConfiguration.bundled(network: network, bundle: bundle) else {
+                throw WalletProviderCoordinatorError.noProvider(networkID)
+            }
+            self = .provider(try WalletSuiProviderCoordinator(network: network, configuration: configuration))
+        }
+
+        func coinObjects(owner: String, coinType: String) async throws -> WalletSuiCoinObjectSnapshot {
+            switch self {
+            case .provider(let coordinator): return try await coordinator.coinObjects(owner: owner, coinType: coinType)
+            case .fixture(let networkID, let evidence):
+                let snapshot = try await evidence.suiCoinObjects(networkID, owner, coinType)
+                guard snapshot.objects.count <= 1_000 else { throw malformed("Decoder coin evidence is excessive.") }
+                return snapshot
+            }
+        }
+
+        func ownedObjectSnapshot(owner: String) async throws -> WalletSuiOwnedObjectSnapshot {
+            switch self {
+            case .provider(let coordinator): return try await coordinator.ownedObjectSnapshot(owner: owner)
+            case .fixture(let networkID, let evidence):
+                let snapshot = try await evidence.suiOwnedObjects(networkID, owner)
+                guard snapshot.objects.count <= 1_000 else { throw malformed("Decoder object evidence is excessive.") }
+                return snapshot
+            }
+        }
+    }
+
     private static let systemProgram = "11111111111111111111111111111111"
     private static let tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
     private static let associatedTokenProgram =
@@ -248,7 +319,8 @@ enum WalletDappTransactionDecoder {
         networkID: String,
         account: WalletAccount,
         bundle: Bundle = .main,
-        allowsSubmittedSignature: Bool = false
+        allowsSubmittedSignature: Bool = false,
+        evidence: ReadOnlyEvidence? = nil
     ) async throws -> WalletSemanticAction {
         guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .solana,
               account.chain == .solana,
@@ -268,7 +340,7 @@ enum WalletDappTransactionDecoder {
             throw malformed("The Solana request has an unexpected signer set.")
         }
         let resolved = try await resolveSolanaAccounts(
-            parsed, networkID: networkID, bundle: bundle
+            parsed, networkID: networkID, bundle: bundle, evidence: evidence
         )
         guard Set(resolved.map(\.address)).count == resolved.count,
               resolved.first == ResolvedSolanaAccount(
@@ -286,7 +358,7 @@ enum WalletDappTransactionDecoder {
         }
         return try await decodeSolanaTokenTransfer(
             parsed.instructions, accounts: resolved,
-            networkID: networkID, owner: account.address, bundle: bundle
+            networkID: networkID, owner: account.address, bundle: bundle, evidence: evidence
         )
     }
 
@@ -295,7 +367,8 @@ enum WalletDappTransactionDecoder {
         networkID: String,
         account: WalletAccount,
         reviewedAssets: [WalletAsset],
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        evidence: ReadOnlyEvidence? = nil
     ) async throws -> WalletSemanticAction {
         guard WalletNetworkCatalog.descriptor(id: networkID)?.chain == .sui,
               account.chain == .sui,
@@ -337,15 +410,7 @@ enum WalletDappTransactionDecoder {
             )
         }
 
-        guard let network = WalletNetworkCatalog.descriptor(id: networkID),
-              let configuration = WalletSuiProviderConfiguration.bundled(
-                network: network, bundle: bundle
-              ) else {
-            throw WalletProviderCoordinatorError.noProvider(networkID)
-        }
-        let coordinator = try WalletSuiProviderCoordinator(
-            network: network, configuration: configuration
-        )
+        let coordinator = try SuiReadSource(networkID: networkID, bundle: bundle, evidence: evidence)
         if transaction.inputs.count == 3,
            transaction.commands == [
              .split(coin: .input(0), amounts: [.input(1)]),
@@ -644,17 +709,10 @@ enum WalletDappTransactionDecoder {
     private static func resolveSolanaAccounts(
         _ message: SolanaMessage,
         networkID: String,
-        bundle: Bundle
+        bundle: Bundle,
+        evidence: ReadOnlyEvidence?
     ) async throws -> [ResolvedSolanaAccount] {
-        guard let network = WalletNetworkCatalog.descriptor(id: networkID),
-              let configuration = WalletSolanaProviderConfiguration.bundled(
-                network: network, bundle: bundle
-              ) else {
-            throw WalletProviderCoordinatorError.noProvider(networkID)
-        }
-        let coordinator = try WalletSolanaProviderCoordinator(
-            network: network, configuration: configuration
-        )
+        let coordinator = try SolanaReadSource(networkID: networkID, bundle: bundle, evidence: evidence)
         var resolved: [ResolvedSolanaAccount] = message.staticAccounts.enumerated().map {
             index, address in
             let signer = index < message.requiredSignatures
@@ -702,12 +760,9 @@ enum WalletDappTransactionDecoder {
 
     private static func solanaLookupTable(
         _ address: String,
-        coordinator: WalletSolanaProviderCoordinator
+        coordinator: SolanaReadSource
     ) async throws -> SolanaLookupTable {
-        let raw = try await coordinator.publicRead(
-            method: "getAccountInfo",
-            params: [address, ["commitment": "finalized", "encoding": "base64"]]
-        )
+        let raw = try await coordinator.accountInfo(address, encoding: .base64)
         guard let envelope = raw as? [String: Any], envelope.count <= 4,
               let context = envelope["context"] as? [String: Any],
               let slot = unsigned(context["slot"]),
@@ -800,7 +855,8 @@ enum WalletDappTransactionDecoder {
         accounts: [ResolvedSolanaAccount],
         networkID: String,
         owner: String,
-        bundle: Bundle
+        bundle: Bundle,
+        evidence: ReadOnlyEvidence?
     ) async throws -> WalletSemanticAction {
         guard (1...2).contains(instructions.count),
               let transfer = instructions.last,
@@ -844,15 +900,7 @@ enum WalletDappTransactionDecoder {
             }
             recipient = mapped[2]
         } else {
-            guard let network = WalletNetworkCatalog.descriptor(id: networkID),
-                  let configuration = WalletSolanaProviderConfiguration.bundled(
-                    network: network, bundle: bundle
-                  ) else {
-                throw WalletProviderCoordinatorError.noProvider(networkID)
-            }
-            let coordinator = try WalletSolanaProviderCoordinator(
-                network: network, configuration: configuration
-            )
+            let coordinator = try SolanaReadSource(networkID: networkID, bundle: bundle, evidence: evidence)
             let evidence = try await solanaTokenAccount(
                 destination.address, coordinator: coordinator
             )
@@ -863,16 +911,10 @@ enum WalletDappTransactionDecoder {
             }
             recipient = evidence.owner
         }
-        guard recipient != owner,
-              let network = WalletNetworkCatalog.descriptor(id: networkID),
-              let configuration = WalletSolanaProviderConfiguration.bundled(
-                network: network, bundle: bundle
-              ) else {
+        guard recipient != owner else {
             throw WalletProviderCoordinatorError.noProvider(networkID)
         }
-        let coordinator = try WalletSolanaProviderCoordinator(
-            network: network, configuration: configuration
-        )
+        let coordinator = try SolanaReadSource(networkID: networkID, bundle: bundle, evidence: evidence)
         let sourceEvidence = try await solanaTokenAccount(
             source.address, coordinator: coordinator
         )
@@ -894,12 +936,9 @@ enum WalletDappTransactionDecoder {
 
     private static func solanaTokenAccount(
         _ address: String,
-        coordinator: WalletSolanaProviderCoordinator
+        coordinator: SolanaReadSource
     ) async throws -> SolanaTokenAccountEvidence {
-        let raw = try await coordinator.publicRead(
-            method: "getAccountInfo",
-            params: [address, ["commitment": "finalized", "encoding": "jsonParsed"]]
-        )
+        let raw = try await coordinator.accountInfo(address, encoding: .jsonParsed)
         guard let envelope = raw as? [String: Any], envelope.count <= 4,
               let context = envelope["context"] as? [String: Any],
               unsigned(context["slot"]) != nil,

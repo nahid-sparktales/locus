@@ -142,11 +142,11 @@ private struct WalletSuiSimulatedObjectState {
     let hasPublicTransfer: Bool
 }
 
-struct WalletSuiExecutionResult: Equatable, Sendable {
+/// Successful execution submission is not indexed confirmation. Checkpoint
+/// evidence is obtained later through the existing activity reconciliation.
+struct WalletSuiSubmissionResult: Equatable, Sendable {
     let transactionDigest: String
     let effectsDigest: String
-    let checkpointSequence: UInt64
-    let finalizedAt: Date
 }
 
 struct WalletSuiProviderConfiguration: Sendable {
@@ -331,7 +331,6 @@ actor WalletSuiGraphQLClient {
           effectsDigest
           status
           executionError { message }
-          checkpoint { sequenceNumber timestamp }
         }
       }
     }
@@ -1469,7 +1468,7 @@ actor WalletSuiGraphQLClient {
         transactionBCS: String,
         signature: String,
         expectedTransactionDigest: String
-    ) async throws -> WalletSuiExecutionResult {
+    ) async throws -> WalletSuiSubmissionResult {
         guard let transaction = Data(base64Encoded: transactionBCS),
               !transaction.isEmpty, transaction.count <= Self.maximumRequestBytes / 2,
               transaction.base64EncodedString() == transactionBCS,
@@ -1496,22 +1495,14 @@ actor WalletSuiGraphQLClient {
               let effectsDigest = effects["effectsDigest"] as? String,
               WalletSolanaBase58.decode(effectsDigest, exactLength: 32) != nil,
               effects["status"] as? String == "SUCCESS",
-              effects["executionError"] == nil || effects["executionError"] is NSNull,
-              let checkpoint = effects["checkpoint"] as? [String: Any],
-              let sequence = Self.unsigned53(checkpoint["sequenceNumber"]),
-              let timestampText = checkpoint["timestamp"] as? String,
-              timestampText.count <= 64,
-              let finalizedAt = Self.date(timestampText), sequence > 0,
-              finalizedAt <= now().addingTimeInterval(Self.maximumFutureDrift),
-              finalizedAt >= now().addingTimeInterval(-Self.maximumCheckpointAge) else {
+              effects["executionError"] == nil || effects["executionError"] is NSNull else {
             throw WalletRPCError.invalidResponse(
-                "Sui execution did not return matching successful finality evidence"
+                "Sui execution did not return matching successful submission evidence"
             )
         }
-        return WalletSuiExecutionResult(
+        return WalletSuiSubmissionResult(
             transactionDigest: expectedTransactionDigest,
-            effectsDigest: effectsDigest,
-            checkpointSequence: sequence, finalizedAt: finalizedAt
+            effectsDigest: effectsDigest
         )
     }
 
@@ -2541,7 +2532,7 @@ actor WalletSuiProviderCoordinator {
         transactionBCS: String,
         signature: String,
         expectedTransactionDigest: String
-    ) async throws -> WalletSuiExecutionResult {
+    ) async throws -> WalletSuiSubmissionResult {
         // Mutations never fail over automatically: once bytes leave this
         // endpoint, a transport error is an ambiguous broadcast outcome.
         try await primary.executeTransaction(
