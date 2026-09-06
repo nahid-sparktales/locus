@@ -221,6 +221,51 @@ final class TranscriptFollowTests: XCTestCase {
             "A new session must invalidate old scroll intent and realize its own final row")
     }
 
+    func testCompactDispatchPlanRealizesItsActualTailAndTranscriptOwnedActions() throws {
+        let model = AppModel(startImmediately: false)
+        // Reuse the exact UI fixture, including the tall three-job approval
+        // card, short reply, completion row and open Runs inspector. Do not
+        // mutate process environment or substitute a shorter progress card.
+        model.seedUITestState(runFixture: "dispatch-plan")
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = false
+        model.setInspectorWidth(360)
+        XCTAssertEqual(model.pendingDispatchPlan?.jobs.count, 3)
+        XCTAssertEqual(model.blocks.count, 3)
+        let suffix = try XCTUnwrap(model.blocks.first(where: { $0.kind == .assistant })?.text)
+        let host = mount(model, size: NSSize(width: 720, height: 588))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertEqual(scroll.contentView.bounds.width, 360, accuracy: 1)
+        XCTAssertTrue(waitForVisibleText(suffix, in: scroll),
+            "The tall plan must not strand the actual reply in an empty estimated document")
+
+        let identifiers = ["teamDispatch.approval", "teamDispatch.run",
+                           "teamDispatch.redispatch", "teamDispatch.cancel"]
+        let deadline = Date().addingTimeInterval(3)
+        var observations: [TranscriptVisibilityObservation] = []
+        repeat {
+            observations = identifiers.map { observeVisibility(text: suffix, identifier: $0, in: scroll) }
+            if let approval = observations.first,
+               approval.controlMatchCount > approval.rejectedControlOwnershipCount,
+               !approval.traversalTruncated,
+               observations.dropFirst().allSatisfy({ $0.textVisible && $0.controlVisible }) {
+                break
+            }
+            pump(2)
+        } while Date() < deadline
+        observations.forEach(attachVisibility)
+        let approval = try XCTUnwrap(observations.first)
+        // The header may be above the viewport on a tall card. Match the UI
+        // test's existence contract without accepting its inspector copy.
+        XCTAssertGreaterThan(approval.controlMatchCount, approval.rejectedControlOwnershipCount,
+            "The approval header must exist in the transcript's own accessibility subtree")
+        XCTAssertFalse(approval.traversalTruncated)
+        for (identifier, observation) in zip(identifiers.dropFirst(), observations.dropFirst()) {
+            XCTAssertTrue(observation.textVisible && observation.controlVisible,
+                "The actual reply and transcript-owned \(identifier) must be visible together")
+        }
+    }
+
     func testTranscriptAppendStillRealizesGlyphsAfterAnOwnedAccessibilityRead() throws {
         let model = AppModel(startImmediately: false)
         model.sidebarCollapsed = true

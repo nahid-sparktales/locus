@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 extension AppModel {
-    func seedUITestState() {
+    func seedUITestState(runFixture: String? = nil) {
         // A fixed path so UI tests see a deterministic workspace name ("tmp")
         // regardless of the runner's TMPDIR.
         let workspace = "/tmp"
@@ -644,7 +644,7 @@ extension AppModel {
                 ]
             )
         }
-        seedUITestRunFixtureIfNeeded()
+        seedUITestRunFixtureIfNeeded(runFixture: runFixture)
 
         if let simulatorFixture = ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_SIMULATOR"
@@ -1183,8 +1183,8 @@ extension AppModel {
         ]
     }
 
-    private func seedUITestRunFixtureIfNeeded() {
-        guard let fixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
+    private func seedUITestRunFixtureIfNeeded(runFixture: String? = nil) {
+        guard let fixture = runFixture ?? ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
               [
                 "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
                 "activity", "orphaned-activity", "swarm-live", "swarm-recoverable",
