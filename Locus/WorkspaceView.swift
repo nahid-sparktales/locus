@@ -2513,6 +2513,9 @@ private struct ConversationView: View {
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if DEBUG
+    @Environment(\.transcriptFirstRowDiagnosticReplacement) private var firstRowDiagnosticReplacement
+    #endif
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -2648,14 +2651,13 @@ private struct ConversationView: View {
     private func renderRow(_ row: TranscriptRenderRow, in transcript: TranscriptPresentationSnapshot) -> some View {
         let item = row.item
         let token = transcript.renderToken
-        return VStack(alignment: .leading, spacing: 0) {
-            presentationRow(
-                item,
-                assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
-                assistantActionItemIDs: transcript.assistantActionItemIDs,
-                toolActivityVisibility: transcript.toolActivityVisibility,
-                thinkingVisibility: transcript.thinkingVisibility
-            )
+        let content = presentationRow(
+            item,
+            assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
+            assistantActionItemIDs: transcript.assistantActionItemIDs,
+            toolActivityVisibility: transcript.toolActivityVisibility,
+            thinkingVisibility: transcript.thinkingVisibility
+        )
             .padding(.top, topSpacing(
                 before: item,
                 previous: row.index > 0 ? transcript.items[row.index - 1] : nil,
@@ -2667,6 +2669,22 @@ private struct ConversationView: View {
                     TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .content)
                 }
             }
+        return VStack(alignment: .leading, spacing: 0) {
+            #if DEBUG
+            if row.index == 0, firstRowDiagnosticReplacement == .measuredTallPlanPlaceholder,
+               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                // Isolates the measured 719-point card height from its subtree in
+                // one explicit native diagnostic. Not a product alternative.
+                Rectangle()
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(height: 719)
+                    .accessibilityHidden(true)
+            } else {
+                content
+            }
+            #else
+            content
+            #endif
             if item.id == token.tailID {
                 transcriptEnd(token: token, id: .end(token.sessionGeneration))
             }
@@ -3112,6 +3130,21 @@ private enum TranscriptScrollTarget: Hashable {
 }
 
 #if DEBUG
+enum TranscriptFirstRowDiagnosticReplacement: Equatable, Sendable {
+    case measuredTallPlanPlaceholder
+}
+
+private struct TranscriptFirstRowDiagnosticReplacementKey: EnvironmentKey {
+    static let defaultValue: TranscriptFirstRowDiagnosticReplacement? = nil
+}
+
+extension EnvironmentValues {
+    var transcriptFirstRowDiagnosticReplacement: TranscriptFirstRowDiagnosticReplacement? {
+        get { self[TranscriptFirstRowDiagnosticReplacementKey.self] }
+        set { self[TranscriptFirstRowDiagnosticReplacementKey.self] = newValue }
+    }
+}
+
 @MainActor
 private enum TranscriptRowGeometryDiagnostics {
     static let enabled = {
@@ -5795,6 +5828,7 @@ private struct ToolCardView: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 39)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
             .accessibilityLabel("\(tool.tool), \(statusLabel), \(expanded ? "collapse" : "expand")")

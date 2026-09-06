@@ -20,6 +20,7 @@ final class TranscriptSelectionTests: XCTestCase {
                 }
                 .padding(.horizontal, 12)
                 .frame(width: 240, height: 39)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
             .accessibilityIdentifier(identifier)

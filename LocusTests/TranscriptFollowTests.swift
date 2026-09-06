@@ -266,6 +266,36 @@ final class TranscriptFollowTests: XCTestCase {
         }
     }
 
+    func testDiagnosticPlainTallFirstRowRealizesTheUnchangedDispatchPlanSuffix() throws {
+        // Diagnostic only: this is not acceptance of the real approval card.
+        // Its measured height is retained while only its rendered subtree is
+        // substituted; the exact UI seed, trailing rows and coordinator stay.
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"])
+        let model = AppModel(startImmediately: false)
+        model.seedUITestState(runFixture: "dispatch-plan")
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = false
+        model.setInspectorWidth(360)
+        let committedSnapshot = model.transcriptPresentation.snapshot
+        XCTAssertEqual(model.pendingDispatchPlan?.jobs.count, 3)
+        XCTAssertEqual(model.blocks.count, 3)
+        XCTAssertEqual(committedSnapshot.items.count, 3)
+        XCTAssertEqual(Set(committedSnapshot.items.map(\.id)).count, 3,
+            "Every lazy row must have a unique presentation identity")
+        XCTAssertEqual(committedSnapshot.renderToken.tailID, committedSnapshot.items.last?.id)
+        let suffix = try XCTUnwrap(model.blocks.first(where: { $0.kind == .assistant })?.text)
+        let host = mount(
+            model, size: NSSize(width: 720, height: 588),
+            firstRowDiagnosticReplacement: .measuredTallPlanPlaceholder
+        )
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertEqual(scroll.contentView.bounds.width, 360, accuracy: 1)
+        XCTAssertTrue(waitForVisibleText(suffix, in: scroll),
+            "A finite plain first row must allow the actual unchanged suffix to be realized")
+        XCTAssertEqual(model.transcriptPresentation.snapshot, committedSnapshot,
+            "A render-only diagnostic must not change the real conversation or its render token")
+    }
+
     func testTranscriptAppendStillRealizesGlyphsAfterAnOwnedAccessibilityRead() throws {
         let model = AppModel(startImmediately: false)
         model.sidebarCollapsed = true
@@ -1896,8 +1926,12 @@ final class TranscriptFollowTests: XCTestCase {
     near-bottom threshold allows and hide a failure to follow.
     """
 
-    private func mount(_ model: AppModel, size: NSSize) -> NSView {
+    private func mount(
+        _ model: AppModel, size: NSSize,
+        firstRowDiagnosticReplacement: TranscriptFirstRowDiagnosticReplacement? = nil
+    ) -> NSView {
         let host = NSHostingView(rootView: FollowProbeRoot()
+            .environment(\.transcriptFirstRowDiagnosticReplacement, firstRowDiagnosticReplacement)
             .appFeatureEnvironment(from: model)
             .environmentObject(AppUpdateController(startImmediately: false)))
         host.frame = NSRect(origin: .zero, size: size)
