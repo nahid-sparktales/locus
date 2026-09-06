@@ -3,6 +3,9 @@
 This folder contains **Locus.app** and **Locus-macOS.zip**, version 2.4.0 (24),
 for Apple Silicon Macs running macOS 14 or later.
 
+This build includes the restored 920 × 680 Settings layout, which fits within
+smaller app windows when necessary.
+
 ## Install
 
 1. Quit any running copy of Locus.

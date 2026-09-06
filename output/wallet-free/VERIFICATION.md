@@ -10,18 +10,25 @@ Verified locally on September 6, 2026. Installation instructions are in
 - Developer ID signed, with hardened runtime. Notarization and public publishing
   are intentionally deferred.
 - Standalone Python 3.14.6 and the Codex 0.147.0 helpers are bundled.
-- ZIP SHA-256: `29416a77366261907ec00e6d907eed7f6996607d5e5fba7fc419a0917a95dc01`.
+- Rebuilt from clean source revision `2cfb9572f4648beb1215bcaceca6b1340d9305c5`,
+  including the restored Settings dimensions. Subsequent CI test and documentation
+  edits do not change the app payload.
+- ZIP SHA-256: `c4bb87062b2f1c05d044c405999c52e1ce3880a096e23229d6bfa7abcd3b9193`.
 
 ## Build and automated checks
 
 | Check | Result |
 |---|---|
 | Wallet-free Locus optimized Release build | Passed |
+| Restored Settings layout | 920 × 680 on a regular window, bounded by available space on smaller windows; manually inspected |
+| Full Python regression suite after CI fixes | 1,551 passed |
+| UI discovery and exact edition accounting | 68 passed; 137 standard and 153 LocusX tests compiled |
 | LocusX Debug build with full bundled backend | Passed |
 | Full LocusX edition artifact audit | Passed; 36 Mach-O files and its bundled wallet backend present |
 | App Store ReleaseMAS build, including final title changes | Passed |
 | Common native tests hosted in Locus | 1,109 passed, zero failures |
-| LocusX native tests | Full 1,410-test run covered all wallet suites; wallet suites passed. Old profile/callback fixture assertions failed, were corrected, and all affected classes plus edition regressions passed in a 315-test rerun. |
+| LocusX common and wallet native tests | 1,403 passed, zero failures in hosted CI |
+| Local-chain integration tests | Anvil: 6 passed; Solana: 5 passed; Sui: 2 passed; zero failures |
 | Backend regression group | 391 passed |
 | Product-specific backend group | 7 passed, including two simultaneous HTTP/WebSocket servers with separate temporary profiles |
 | Live bundled Release backend smoke | Passed with a disposable profile and local scripted model |
@@ -67,6 +74,11 @@ Manual native UI checks passed in isolated fixtures for both editions:
 - LocusX retains Wallets and wallet search results, with the wallet disabled.
 - Both editions show manual app-update instructions and no automatic-update
   controls. The component remains present.
+- Settings again uses its 920 × 680 layout on a regular window. The Appearance
+  page and complete wallet-free navigation were inspected in the rebuilt app.
+
+Hosted CI runs the full native UI suites for both editions. Current results and
+downloadable test receipts are available in the [CI workflow](https://github.com/nahid-sparktales/locus/actions/workflows/ci.yml).
 
 The automated macOS UI runner could not initialize automation mode on this
 machine, so its UI run is **not** counted as passing. Manual UI checks supplement
