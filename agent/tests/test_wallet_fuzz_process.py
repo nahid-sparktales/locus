@@ -6,6 +6,8 @@ import plistlib
 import signal
 import subprocess
 import sys
+import textwrap
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -107,6 +109,8 @@ def test_unresponsive_owned_child_gets_bounded_kill(tmp_path, owned_lock, monkey
 
 
 def test_cleanup_error_still_records_immutable_failure(tmp_path, owned_lock, monkeypatch):
+    monkeypatch.setattr(process, "TERMINATE_SECONDS", 0.01)
+    monkeypatch.setattr(process, "KILL_SECONDS", 0.01)
     child = Mock(pid=314159, returncode=None)
     child.communicate.side_effect = subprocess.TimeoutExpired("synthetic", 1)
     popen = Mock(return_value=child)
@@ -117,13 +121,167 @@ def test_cleanup_error_still_records_immutable_failure(tmp_path, owned_lock, mon
     receipt = json.loads((tmp_path / "timeout.json").read_text())
     assert result.returncode == 124 and result.timed_out
     assert not receipt["supervisedProcessReaped"] and not receipt["communicationComplete"]
-    assert len(receipt["cleanupErrors"]) == 2
-    assert [call.args for call in kill.call_args_list] == [
+    assert len(receipt["cleanupErrors"]) == 3
+    assert not receipt["ownedProcessGroupGone"]
+    assert [call.args for call in kill.call_args_list if call.args[1] != 0] == [
         (314159, signal.SIGTERM),
         (314159, signal.SIGKILL),
     ]
     assert popen.call_args.kwargs["start_new_session"] is True
     assert int(os.environ[execution.FD_ENV]) in popen.call_args.kwargs["pass_fds"]
+
+
+def test_keyboard_interrupt_is_retained_then_propagated(tmp_path, owned_lock, monkeypatch):
+    child = Mock(pid=314159, returncode=0)
+    child.communicate.side_effect = [KeyboardInterrupt(), ("", "")]
+    monkeypatch.setattr(process.subprocess, "Popen", Mock(return_value=child))
+    monkeypatch.setattr(process.os, "killpg", Mock(side_effect=ProcessLookupError))
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    with pytest.raises(KeyboardInterrupt):
+        invoke(tmp_path, "unused", timeout=1)
+    assert {sig: signal.getsignal(sig) for sig in previous} == previous
+    receipt = json.loads((tmp_path / "timeout.json").read_text())
+    assert receipt["reason"] == "supervisor-interrupted"
+    assert receipt["result"] == 130 and receipt["observedReturnCode"] == 0
+    assert receipt["ownedProcessGroupGone"]
+    assert receipt["targetCPUSeconds"] == 0 and not receipt["campaignCredit"]
+
+
+def wait_for_synthetic_file(path, child, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        if child.poll() is not None:
+            raise AssertionError(f"Synthetic process exited before ready: {child.returncode}")
+        time.sleep(0.01)
+    raise AssertionError("Synthetic process readiness deadline exceeded")
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+def test_external_interruption_cleans_only_owned_group_and_restores_handlers(
+    tmp_path, monkeypatch, signum
+):
+    monkeypatch.delenv(execution.FD_ENV, raising=False)
+    monkeypatch.delenv(execution.PATH_ENV, raising=False)
+    target = textwrap.dedent(f"""
+        import os, signal, sys, time
+        from pathlib import Path
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        Path({str(tmp_path / "target.ready")!r}).write_text(str(os.getpid()))
+        time.sleep(30)
+    """)
+    supervisor = textwrap.dedent(f"""
+        import json, signal, sys
+        from pathlib import Path
+        sys.path.insert(0, {str(ROOT / "Tools")!r})
+        import WalletFuzzProcess as p
+        import WalletTestExecution as e
+        p.TERMINATE_SECONDS = 0.2
+        p.KILL_SECONDS = 1
+        previous = {{sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}}
+        try:
+            with e.execution_lock(path=Path({str(tmp_path / "synthetic.lock")!r})):
+                with open({str(tmp_path / "output.log")!r}, 'w') as output:
+                    p.run_bounded([sys.executable, '-c', {target!r}], timeout=30,
+                        timeout_receipt=Path({str(tmp_path / "failure.json")!r}),
+                        context={{'operation': 'synthetic-interruption'}}, stdout=output, stderr=output)
+        finally:
+            Path({str(tmp_path / "restored.json")!r}).write_text(json.dumps(
+                {{'restored': all(signal.getsignal(sig) == value for sig, value in previous.items())}}))
+    """)
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    child = subprocess.Popen([sys.executable, "-c", supervisor])
+    target_pid = None
+    try:
+        wait_for_synthetic_file(tmp_path / "target.ready", child)
+        target_pid = int((tmp_path / "target.ready").read_text())
+        child.send_signal(signum)
+        assert child.wait(timeout=5) == 128 + signum
+        assert unrelated.poll() is None
+        receipt = json.loads((tmp_path / "failure.json").read_text())
+        assert receipt["reason"] == "supervisor-interrupted"
+        assert receipt["result"] == 128 + signum
+        assert receipt["interruptionSignal"] == signum
+        assert receipt["observedReturnCode"] == 0
+        assert receipt["ownedProcessGroupGone"] and receipt["communicationComplete"]
+        assert receipt["targetCPUSeconds"] == 0 and not receipt["campaignCredit"]
+        claimed = receipt.pop("receiptSHA256")
+        assert claimed == evidence.digest(receipt)
+        assert json.loads((tmp_path / "restored.json").read_text())["restored"]
+        with execution.execution_lock(timeout=0.1, path=tmp_path / "synthetic.lock"):
+            pass
+    finally:
+        if target_pid is not None:
+            try:
+                os.killpg(target_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+
+
+def test_file_output_descendant_is_killed_even_after_parent_exits(
+    tmp_path, owned_lock, monkeypatch
+):
+    monkeypatch.setattr(process, "TERMINATE_SECONDS", 0.1)
+    monkeypatch.setattr(process, "KILL_SECONDS", 1)
+    heartbeat = tmp_path / "descendant.heartbeat"
+    identities = tmp_path / "group.json"
+    descendant = textwrap.dedent(f"""
+        import signal, time
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with open({str(heartbeat)!r}, 'a', buffering=1) as output:
+            while True:
+                output.write('tick\\n')
+                time.sleep(0.01)
+    """)
+    target = textwrap.dedent(f"""
+        import json, os, signal, subprocess, sys, time
+        from pathlib import Path
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        child = subprocess.Popen([sys.executable, '-c', {descendant!r}],
+            pass_fds=(int(os.environ[{execution.FD_ENV!r}]),))
+        Path({str(identities)!r}).write_text(json.dumps({{'parent': os.getpid(), 'child': child.pid}}))
+        time.sleep(30)
+    """)
+    try:
+        with (tmp_path / "output.log").open("w") as output:
+            result = process.run_bounded(
+                [sys.executable, "-c", target],
+                timeout=0.5,
+                timeout_receipt=tmp_path / "timeout.json",
+                context={"operation": "synthetic-file-output-descendant"},
+                stdout=output,
+                stderr=output,
+            )
+        receipt = json.loads((tmp_path / "timeout.json").read_text())
+        assert result.returncode == 124 and result.timed_out
+        assert receipt["observedReturnCode"] == 0
+        assert receipt["supervisedProcessReaped"] and receipt["communicationComplete"]
+        assert heartbeat.stat().st_size > 0
+        size = heartbeat.stat().st_size
+        time.sleep(0.15)
+        assert heartbeat.stat().st_size == size
+        child_pid = json.loads(identities.read_text())["child"]
+        # A killed orphan may briefly remain a zombie on minimal Linux test hosts.
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(child_pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        assert state.returncode in (0, 1)
+        assert not state.stdout.strip() or state.stdout.strip().startswith("Z")
+    finally:
+        if identities.exists():
+            try:
+                os.killpg(json.loads(identities.read_text())["parent"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_late_reaped_success_is_failed_without_signalling(tmp_path, owned_lock, monkeypatch):
