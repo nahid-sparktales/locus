@@ -4890,6 +4890,9 @@ private struct MessageBlockView: View, Equatable {
                                     // double-clicked and never dragged across.
                                     .allowsHitTesting(false)
                             }
+                            // The bubble owns decoration; its native text
+                            // children keep their own selection and hit targets.
+                            .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("message.\(block.id.uuidString).bubble")
                         }
                         messageActionBar(name: "You")
@@ -5930,6 +5933,8 @@ private struct ToolCardView: View {
             }
         }
         .locusCard(radius: 9)
+        // Keep the disclosure button distinct from its clipped card wrapper.
+        .accessibilityElement(children: .contain)
     }
 
     private var statusSymbol: String {
