@@ -1189,7 +1189,9 @@ final class LocusUITests: XCTestCase {
 
     func testUpdatesSettingsShowManualLocalControls() {
         app.menuBars.menuBarItems[productName].firstMatch.click()
-        XCTAssertTrue(app.menuItems["Check for Updates…"].exists)
+        XCTAssertTrue(app.menuItems["Settings…"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.menuItems["Check for Updates…"].exists,
+            "Manual local editions must not offer the legacy app-feed command")
         app.typeKey(.escape, modifierFlags: [])
 
         anyElement("workspace.modelPicker").click()
