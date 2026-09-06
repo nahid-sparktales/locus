@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "libfuzzer-sys",
+  "version": "0.4.13",
+  "scope": "Rust fuzz-test workspace only; never production signer",
+  "upstreamURL": "https://static.crates.io/crates/libfuzzer-sys/libfuzzer-sys-0.4.13.crate",
+  "upstreamCommit": "719e4efb9b8857ebaa782ae59376c8cbb78fed0f",
+  "archiveSHA256": "a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2",
+  "patch": "patches/rss-monitor-shutdown.patch",
+  "patchSHA256": "096017926a81c92da9a0bfe476bf8517a13ba417fb6a31e313a4e9e1003ea6b9",
+  "patchedTreeSHA256": "9dea3e2f7b5722e67717030ab4548e9a62403b716ce01ef01ebebac2d67788cf",
+  "treeDigestAlgorithm": "SHA-256 of canonical JSON sorted [relative path, SHA-256 file bytes] entries plus newline; symlinks rejected",
+  "declaredPackageLicense": "(MIT OR Apache-2.0) AND NCSA",
+  "sourceHeaderLicense": "Apache-2.0 WITH LLVM-exception",
+  "licenseNote": "Preserve the crate's original license declaration and README plus LLVM source-header notices. The upstream compiler-rt license includes both modern LLVM exceptions and legacy NCSA terms; this inventory is not counsel approval.",
+  "licenses": [
+    {
+      "path": "libfuzzer-sys-0.4.13/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "source": "exact upstream crate"
+    },
+    {
+      "path": "libfuzzer-sys-0.4.13/LICENSE-MIT",
+      "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720",
+      "source": "exact upstream crate"
+    },
+    {
+      "path": "upstream/compiler-rt-LICENSE.TXT",
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d",
+      "source": "https://raw.githubusercontent.com/llvm/llvm-project/2078da43e25a4623cab2d0d60decddf709aaea28/compiler-rt/LICENSE.TXT"
+    }
+  ],
+  "evidenceInvalidation": "This explicit test-engine patch changes the fuzz lock, engine binary, source tree and receipt toolchain identity. All prior affected fuzz campaign receipts remain bound to their old identity and cannot provide credit for this candidate. Regenerate applicable SBOM/source/license/reproducibility review and run fresh clean-source verification. No existing failing finding is waived."
+}

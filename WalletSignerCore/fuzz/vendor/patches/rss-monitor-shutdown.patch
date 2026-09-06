@@ -1,0 +1,67 @@
+--- a/libfuzzer/FuzzerDriver.cpp
++++ b/libfuzzer/FuzzerDriver.cpp
+@@ -22,6 +22,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
++#include <condition_variable>
+ #include <cstdlib>
+ #include <cstring>
+ #include <fstream>
+@@ -311,20 +312,46 @@
+ // Fuchsia needs to do some book checking before starting the RssThread,
+ // so it has its own implementation.
+ #if !LIBFUZZER_FUCHSIA
+-static void RssThread(Fuzzer *F, size_t RssLimitMb) {
+-  while (true) {
+-    SleepSeconds(1);
+-    size_t Peak = GetPeakRSSMb();
+-    if (Peak > RssLimitMb)
+-      F->RssLimitCallback();
+-  }
+-}
++// Locus test-only patch: own the monitor until normal exit. A detached
++// monitor can leave its C++ thread/TLS allocations live during the automatic
++// LeakSanitizer exit check after a short corpus replay. Stop and join it;
++// never suppress leak reports or alter the target's failure callbacks.
++class RssMonitor {
++  std::mutex Mutex;
++  std::condition_variable Wake;
++  bool Stopping = false;
++  std::thread Worker;
++
++public:
++  RssMonitor(Fuzzer *F, size_t RssLimitMb)
++      : Worker([this, F, RssLimitMb] {
++          std::unique_lock<std::mutex> Lock(Mutex);
++          while (!Wake.wait_for(Lock, std::chrono::seconds(1),
++                                [this] { return Stopping; })) {
++            Lock.unlock();
++            if (GetPeakRSSMb() > RssLimitMb)
++              F->RssLimitCallback();
++            Lock.lock();
++          }
++        }) {}
++
++  ~RssMonitor() {
++    {
++      std::lock_guard<std::mutex> Lock(Mutex);
++      Stopping = true;
++    }
++    Wake.notify_one();
++    Worker.join();
++  }
++};
+ 
+ void StartRssThread(Fuzzer *F, size_t RssLimitMb) {
+   if (!RssLimitMb)
+     return;
+-  std::thread T(RssThread, F, RssLimitMb);
+-  T.detach();
++  // Function-static destruction precedes sanitizer exit checking. The
++  // upstream Fuzzer stays alive through exit; fatal callbacks still use
++  // _Exit and therefore never attempt to join the reporting monitor itself.
++  static RssMonitor Monitor(F, RssLimitMb);
+ }
+ #endif
+ 

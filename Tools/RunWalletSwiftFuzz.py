@@ -14,19 +14,52 @@ from WalletFuzzEvidence import (
     TARGETS,
     directory_digest,
     finish_receipt,
+    immutable_json,
     new_run,
     require_source,
     sha256,
     source_identity,
     utc_now,
 )
-from WalletTestExecution import execution_lock, run_locked
+from WalletFuzzProcess import (
+    BUILD_SECONDS,
+    CORPUS_SECONDS,
+    VERSION_SECONDS,
+    phase_deadline,
+    run_bounded,
+)
+from WalletTestExecution import execution_lock
 
-SWIFT_COVERAGE = "-sanitize-coverage=edge,trace-pc-guard,trace-cmp"
+# LLVM 21 libFuzzer rejects the old trace-pc-guard callbacks at process startup.
+# Register inline counters together with their PC table, retaining edge mode
+# and comparison tracing. The linked runtime itself is not re-instrumented.
+SWIFT_COVERAGE = "-sanitize-coverage=edge,inline-8bit-counters,pc-table,trace-cmp"
 
 
 def run(arguments: list[str], **kwargs):
-    return run_locked(arguments, cwd=ROOT, check=True, **kwargs)
+    return run_bounded(arguments, cwd=ROOT, check=True, **kwargs)
+
+
+def retain_test_configuration(configured: Path, phase: Path, context: dict) -> str:
+    """Retain exactly the bytes invoked at their original relative-path base."""
+    content = configured.read_bytes()
+    retained = phase / "invoked.xctestrun"
+    with retained.open("xb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    identity = sha256(retained)
+    immutable_json(
+        phase / "invocation.json",
+        {
+            **context,
+            "xctestrunSHA256": identity,
+            "invokedPath": str(configured),
+            "retainedPath": retained.name,
+            "relativePathBase": str(configured.parent),
+        },
+    )
+    return identity
 
 
 def configure_tests(value: object, environment: dict[str, str]) -> int:
@@ -45,7 +78,7 @@ def configure_tests(value: object, environment: dict[str, str]) -> int:
     return count
 
 
-def main() -> None:
+def main_locked() -> None:
     seconds = int(os.environ.get("LOCUS_FUZZ_SECONDS", "60"))
     if not 1 <= seconds <= 86400:
         raise SystemExit("LOCUS_FUZZ_SECONDS must be 1...86400 wall seconds per chunk")
@@ -64,9 +97,23 @@ def main() -> None:
     derived = Path(
         os.environ.get("LOCUS_FUZZ_DERIVED_DATA", output / "DerivedData-Debug-ASan")
     ).resolve()
+    source = require_source()
+    startup_failures = output / "runs" / f"startup-{uuid.uuid4()}"
+
+    def tool_output(arguments, operation):
+        return run(
+            arguments,
+            timeout=VERSION_SECONDS,
+            timeout_receipt=startup_failures / f"{operation}-timeout.json",
+            context={"language": "swift", "operation": operation, "source": source},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout
+
     llvm = Path(os.environ.get("LOCUS_FUZZ_LLVM_PREFIX", "/opt/homebrew/opt/llvm@21"))
     compiler = llvm / "bin/clang"
-    version = subprocess.check_output([str(compiler), "--version"], text=True)
+    version = tool_output([str(compiler), "--version"], "clang-version")
     if "clang version 21.1.8" not in version:
         raise SystemExit(
             "Install reviewed test-only llvm@21 21.1.8 or set LOCUS_FUZZ_LLVM_PREFIX"
@@ -86,16 +133,14 @@ def main() -> None:
         "-timeout=10",
         "-rss_limit_mb=4096",
     ]
-    swift = Path(
-        subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
-    )
+    swift = Path(tool_output(["xcrun", "--find", "swiftc"], "swift-location").strip())
     toolchain = {
         "clangVersion": version,
         "clangSHA256": sha256(compiler),
         "fuzzerRuntimeSHA256": sha256(runtimes[0]),
         "swiftSHA256": sha256(swift),
-        "swiftVersion": subprocess.check_output([str(swift), "--version"], text=True),
-        "xcodeVersion": subprocess.check_output(["xcodebuild", "-version"], text=True),
+        "swiftVersion": tool_output([str(swift), "--version"], "swift-version"),
+        "xcodeVersion": tool_output(["xcodebuild", "-version"], "xcode-version"),
     }
     environment = os.environ | {"LOCUS_BUNDLE_MODE": "skip"}
     build_args = [
@@ -127,15 +172,32 @@ def main() -> None:
     with execution_lock(timeout=600):
         # A queued run binds the source only after obtaining its execution slot;
         # edits while another test session runs must not create a stale request.
-        source = require_source()
+        if require_source() != source:
+            raise SystemExit("Source changed during fuzz toolchain identification")
         run_path, manifest = new_run(output, "swift", source, toolchain, flags, targets)
-        run(["python3", "Tools/WalletFuzzCorpus.py", str(run_path / "seeds")])
+        run(
+            ["python3", "Tools/WalletFuzzCorpus.py", str(run_path / "seeds")],
+            timeout=CORPUS_SECONDS,
+            timeout_receipt=run_path / "corpus-timeout.json",
+            context={
+                "runID": manifest["runID"],
+                "operation": "corpus",
+                "source": source,
+            },
+        )
         with (run_path / "build.log").open("x") as log:
             run(
                 ["xcodebuild", "build-for-testing", *build_args],
                 env=environment,
                 stdout=log,
                 stderr=subprocess.STDOUT,
+                timeout=BUILD_SECONDS,
+                timeout_receipt=run_path / "build-timeout.json",
+                context={
+                    "runID": manifest["runID"],
+                    "operation": "build",
+                    "source": source,
+                },
             )
         if source_identity() != source:
             raise SystemExit(
@@ -194,10 +256,20 @@ def main() -> None:
                 configured = products / f"wallet-fuzz-{chunk_id}.xctestrun"
                 with configured.open("xb") as stream:
                     plistlib.dump(configuration, stream)
+                invocation = {
+                    "runID": manifest["runID"],
+                    "chunkID": chunk_id,
+                    "target": target,
+                    "phase": kind,
+                    "source": source,
+                }
+                configured_digest = retain_test_configuration(
+                    configured, phase, invocation
+                )
                 start = utc_now()
                 try:
                     with (phase / "process.log").open("x") as log:
-                        result = run_locked(
+                        process = run_bounded(
                             [
                                 "xcodebuild",
                                 "test-without-building",
@@ -215,13 +287,36 @@ def main() -> None:
                             env=environment,
                             stdout=log,
                             stderr=subprocess.STDOUT,
-                        ).returncode
+                            timeout=phase_deadline(kind, seconds),
+                            timeout_receipt=phase / "timeout.json",
+                            context=invocation,
+                        )
+                    try:
+                        observed_configuration_digest = sha256(configured)
+                    except OSError:
+                        observed_configuration_digest = None
+                    configuration_unchanged = (
+                        observed_configuration_digest == configured_digest
+                    )
+                    immutable_json(
+                        phase / "invocation-result.json",
+                        {
+                            **invocation,
+                            "xctestrunSHA256": observed_configuration_digest,
+                            "configurationUnchanged": configuration_unchanged,
+                        },
+                    )
                 finally:
                     configured.unlink(missing_ok=True)
                 end = utc_now()
+                result = process.returncode
                 try:
                     metrics = json.loads((phase / "metrics.json").read_text())
                 except (OSError, ValueError):
+                    metrics = None
+                if process.timed_out or not configuration_unchanged:
+                    # Keep any emitted target metrics untouched, but never use
+                    # them as completion evidence for an incomplete invocation.
                     metrics = None
                 receipt = finish_receipt(
                     run_path,
@@ -250,6 +345,11 @@ def main() -> None:
                 print(
                     f"Completed {target}/{kind}: {receipt['iterations']} inputs; {receipt['targetCPUSeconds']:.3f} target CPU seconds"
                 )
+
+
+def main() -> None:
+    with execution_lock(timeout=600):
+        main_locked()
 
 
 if __name__ == "__main__":

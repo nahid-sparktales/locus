@@ -21,12 +21,21 @@ from WalletFuzzEvidence import (
     source_identity,
     utc_now,
 )
-from WalletTestExecution import execution_lock, run_locked
+from WalletFuzzProcess import (
+    BUILD_SECONDS,
+    CORPUS_SECONDS,
+    FETCH_SECONDS,
+    VERSION_SECONDS,
+    phase_deadline,
+    run_bounded,
+)
+from WalletRustFuzzerDependency import verify as verify_fuzzer_dependency
+from WalletTestExecution import execution_lock
 
 NIGHTLY = "nightly-2026-09-01"
 
 
-def main():
+def main_locked():
     seconds = int(os.environ.get("LOCUS_FUZZ_SECONDS", "60"))
     if not 1 <= seconds <= 86400:
         raise SystemExit("LOCUS_FUZZ_SECONDS must be 1...86400 wall seconds per chunk")
@@ -38,15 +47,33 @@ def main():
     if not set(targets).issubset(TARGETS["rust"]):
         raise SystemExit("Unknown Rust fuzz target")
     source = require_source()
-    version = subprocess.check_output(["cargo", "fuzz", "--version"], text=True).strip()
+    fuzzer_dependency = verify_fuzzer_dependency()
+    output = Path(
+        os.environ.get("LOCUS_FUZZ_OUTPUT", ROOT / "build/wallet-fuzz-rust")
+    ).resolve()
+    startup_failures = output / "runs" / f"startup-{uuid.uuid4()}"
+
+    def tool_output(arguments, operation):
+        return run_bounded(
+            arguments,
+            check=True,
+            timeout=VERSION_SECONDS,
+            timeout_receipt=startup_failures / f"{operation}-timeout.json",
+            context={"language": "rust", "operation": operation, "source": source},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout
+
+    version = tool_output(["cargo", "fuzz", "--version"], "cargo-fuzz-version").strip()
     if version != "cargo-fuzz 0.13.2":
         raise SystemExit("Install cargo-fuzz 0.13.2 with --locked")
     rustc = Path(
-        subprocess.check_output(
-            ["rustup", "which", "--toolchain", NIGHTLY, "rustc"], text=True
+        tool_output(
+            ["rustup", "which", "--toolchain", NIGHTLY, "rustc"], "rust-location"
         ).strip()
     )
-    rust_version = subprocess.check_output([str(rustc), "-vV"], text=True)
+    rust_version = tool_output([str(rustc), "-vV"], "rust-version")
     triple = next(
         line.removeprefix("host: ")
         for line in rust_version.splitlines()
@@ -60,6 +87,7 @@ def main():
         "cargoFuzzVersion": version,
         "cargoFuzzSHA256": sha256(cargo_fuzz),
         "targetTriple": triple,
+        "libfuzzerDependency": fuzzer_dependency,
     }
     # cargo-fuzz's reviewed defaults are optimized + debug assertions/overflow
     # checks. Rust ASan is not claimed as UBSan instrumentation.
@@ -72,9 +100,6 @@ def main():
         "-timeout=10",
         "-rss_limit_mb=4096",
     ]
-    output = Path(
-        os.environ.get("LOCUS_FUZZ_OUTPUT", ROOT / "build/wallet-fuzz-rust")
-    ).resolve()
     run_path, manifest = new_run(output, "rust", source, toolchain, flags, targets)
     build_cache = Path(
         os.environ.get(
@@ -87,7 +112,7 @@ def main():
     }
     core = ROOT / "WalletSignerCore"
     with execution_lock(timeout=600):
-        run_locked(
+        run_bounded(
             [
                 "cargo",
                 f"+{NIGHTLY}",
@@ -98,15 +123,29 @@ def main():
             ],
             cwd=core,
             check=True,
+            timeout=FETCH_SECONDS,
+            timeout_receipt=run_path / "fetch-timeout.json",
+            context={
+                "runID": manifest["runID"],
+                "operation": "fetch",
+                "source": source,
+            },
         )
-        run_locked(
+        run_bounded(
             ["python3", "Tools/WalletFuzzCorpus.py", str(run_path / "seeds")],
             cwd=ROOT,
             check=True,
+            timeout=CORPUS_SECONDS,
+            timeout_receipt=run_path / "corpus-timeout.json",
+            context={
+                "runID": manifest["runID"],
+                "operation": "corpus",
+                "source": source,
+            },
         )
         for target in targets:
             with (run_path / f"build-{target}.log").open("x") as log:
-                run_locked(
+                run_bounded(
                     [
                         "cargo",
                         f"+{NIGHTLY}",
@@ -126,6 +165,14 @@ def main():
                     check=True,
                     stdout=log,
                     stderr=subprocess.STDOUT,
+                    timeout=BUILD_SECONDS,
+                    timeout_receipt=run_path / f"build-{target}-timeout.json",
+                    context={
+                        "runID": manifest["runID"],
+                        "operation": "build",
+                        "target": target,
+                        "source": source,
+                    },
                 )
             if source_identity() != source:
                 raise SystemExit(
@@ -145,7 +192,7 @@ def main():
                 # This runner owns exactly one direct subprocess in this scope.
                 before = resource.getrusage(resource.RUSAGE_CHILDREN)
                 with (phase / "process.log").open("x") as log:
-                    result = run_locked(
+                    process = run_bounded(
                         [
                             str(executable),
                             str(phase / "corpus"),
@@ -162,7 +209,17 @@ def main():
                         env=environment,
                         stdout=log,
                         stderr=subprocess.STDOUT,
-                    ).returncode
+                        timeout=phase_deadline(kind, seconds),
+                        timeout_receipt=phase / "timeout.json",
+                        context={
+                            "runID": manifest["runID"],
+                            "chunkID": chunk_id,
+                            "target": target,
+                            "phase": kind,
+                            "source": source,
+                        },
+                    )
+                result = process.returncode
                 after = resource.getrusage(resource.RUSAGE_CHILDREN)
                 end = utc_now()
                 stats = coverage((phase / "process.log").read_text(errors="replace"))
@@ -205,6 +262,11 @@ def main():
                 print(
                     f"Completed {target}/{kind}: {metrics['iterations']} inputs; {metrics['processCPUSeconds']:.3f} target CPU seconds"
                 )
+
+
+def main():
+    with execution_lock(timeout=600):
+        main_locked()
 
 
 if __name__ == "__main__":

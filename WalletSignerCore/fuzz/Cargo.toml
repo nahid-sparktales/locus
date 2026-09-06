@@ -16,6 +16,11 @@ serde_json = "=1.0.145"
 [workspace]
 members = ["."]
 
+# Test-only engine patch. Production signer dependency resolution is unchanged.
+# The exact archive, license and patched-tree identities are verified before use.
+[patch.crates-io]
+libfuzzer-sys = { path = "vendor/libfuzzer-sys-0.4.13" }
+
 [[bin]]
 name = "evm_ffi"
 path = "fuzz_targets/evm_ffi.rs"

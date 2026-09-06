@@ -225,7 +225,7 @@ def test_failure_receipt_never_counts_despite_return_zero(campaign):
 
 
 def test_swift_flag_has_required_edge_mode_and_preserves_test_configuration():
-    assert swift_runner.SWIFT_COVERAGE == "-sanitize-coverage=edge,trace-pc-guard,trace-cmp"
+    assert swift_runner.SWIFT_COVERAGE == "-sanitize-coverage=edge,inline-8bit-counters,pc-table,trace-cmp"
     original = {
         "TestConfigurations": [
             {
