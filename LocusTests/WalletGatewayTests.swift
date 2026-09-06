@@ -2493,6 +2493,95 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(refreshedBalance, "1007")
     }
 
+    func testSuiGraphQLNormalizesPinnedOfficialMoveTypeRepresentationsOnlyAtWireBoundary() {
+        // Exact repr examples from Sui 1.79.0 commit 46f18562f1f5af2438d35828e8b62d5e0b972db7:
+        // crates/sui-indexer-alt-e2e-tests/tests/graphql/addressable/coins.snap.
+        let native = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+        let coin = "0x0000000000000000000000000000000000000000000000000000000000000002::coin::Coin<0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI>"
+        let empty = "0x0000000000000000000000000000000000000000000000000000000000000042::empty::COIN"
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(native), "0x2::sui::SUI")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(coin), "0x2::coin::Coin<0x2::sui::SUI>")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(empty), "0x42::empty::COIN")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType("0x2::sui::SUI"), "0x2::sui::SUI")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType("0x0::example::Object"), "0x0::example::Object")
+        XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(
+            "0x2::example::Object<vector<\(empty)>,u64>"
+        ), "0x2::example::Object<vector<0x42::empty::COIN>,u64>")
+        XCTAssertFalse(WalletSuiAssetIdentity.isCanonicalCoinType(native))
+        XCTAssertNil(WalletSuiAssetIdentity.parse("sui:testnet/coin:\(native)"))
+        XCTAssertNil(WalletSuiAssetIdentity.parse("sui:testnet/coin:0x2::coin::Coin<0x2::sui::SUI>"))
+    }
+
+    func testSuiGraphQLWireTypeNormalizerRejectsMalformedAndExcessiveGrammar() {
+        let invalid = [
+            "", "u64", "vector<u8>", "0x02::sui::SUI", "0X2::sui::SUI", "0xA::sui::SUI",
+            "0x::sui::SUI", "0x2::sui", "0x2::::SUI", "0x2::2sui::SUI", "0x2::sui::SUI::Extra",
+            "0x2::sui::SUI ", "0x2::sui::SUI\n", "0x2::sui::SUİ", "0x2::sui::SUI/extra",
+            "0x2::coin::Coin<>", "0x2::coin::Coin<u64,>", "0x2::coin::Coin<,u64>",
+            "0x2::coin::Coin<u64", "0x2::coin::Coin<u64>>", "0x2::coin::Coin<unknown>",
+            "0x2::coin::Coin<vector<u8,u64>>", "0x2::coin::Coin<0x02::sui::SUI>",
+            "0x" + String(repeating: "1", count: 65) + "::sui::SUI",
+            "0x2::example::Object<" + String(repeating: "vector<", count: 16) + "u8" + String(repeating: ">", count: 17),
+            "0x2::example::Object<" + Array(repeating: "u8", count: 17).joined(separator: ",") + ">",
+            "0x2::example::" + String(repeating: "A", count: 512),
+        ]
+        for value in invalid {
+            XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(value), "Malformed type must not normalize")
+        }
+        XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(NSNull()))
+        XCTAssertNil(WalletSuiGraphQLClient.normalizedWireMoveType(2))
+    }
+
+    func testSuiGraphQLWireNormalizationPreservesNumericAddressModuleAndTypeIdentity() {
+        let address = "0x" + String(repeating: "0", count: 63) + "2"
+        for (wire, expected) in [
+            ("0x" + String(repeating: "0", count: 63) + "3::sui::SUI", "0x3::sui::SUI"),
+            ("\(address)::Sui::SUI", "0x2::Sui::SUI"),
+            ("\(address)::sui::Sui", "0x2::sui::Sui"),
+            ("\(address)::coin::Coin<0x3::sui::SUI>", "0x2::coin::Coin<0x3::sui::SUI>"),
+        ] {
+            XCTAssertEqual(WalletSuiGraphQLClient.normalizedWireMoveType(wire), expected)
+            XCTAssertNotEqual(WalletSuiGraphQLClient.normalizedWireMoveType(wire), "0x2::sui::SUI")
+        }
+    }
+
+    func testSuiGraphQLRejectsShortAndPaddedDuplicateBalanceIdentities() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let padded = "0x" + String(repeating: "0", count: 63) + "2::sui::SUI"
+        let client = makeSuiGraphQLClient(now: now, paddedWireTypes: false) { _ in
+            try self.suiBalancesResponse(address: owner, balances: [
+                ("0x2::sui::SUI", "1", "1", "0"), (padded, "2", "2", "0"),
+            ], hasNextPage: false, endCursor: nil)
+        }
+        do {
+            _ = try await client.balances(owner: owner)
+            XCTFail("Wire aliases must remain one identity and duplicate evidence must fail")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertTrue(message.contains("duplicate"))
+        }
+    }
+
+    func testSuiGraphQLPaddedGasEvidenceRejectsPackageModuleAndTypeSubstitution() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let objectID = "0x" + String(repeating: "2", count: 64)
+        for wrongType in ["0x3::sui::SUI", "0x2::Sui::SUI", "0x2::sui::Sui"] {
+            let client = makeSuiGraphQLClient(now: now) { _ in
+                try self.suiGasCoinsResponse(owner: owner, total: "100", coinsBalance: "100", accumulator: "0",
+                    coins: [self.suiGasCoinJSON(objectID: objectID, owner: owner, version: 1,
+                                               digestByte: 13, balance: 100, coinType: wrongType)],
+                    hasNextPage: false, endCursor: nil)
+            }
+            do {
+                _ = try await client.selectNativeGasCoin(owner: owner, requiredBalanceBaseUnits: "1")
+                XCTFail("Padded package/module/type substitution must fail exact gas-coin identity")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("malformed"))
+            }
+        }
+    }
+
     func testSuiGraphQLRejectsWrongChainAndInconsistentBalance() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
@@ -6519,9 +6608,15 @@ final class WalletGatewayTests: XCTestCase {
     private func makeSuiGraphQLClient(
         network: WalletNetworkDescriptor = WalletNetworkCatalog.suiTestnet,
         now: Date,
+        paddedWireTypes: Bool = true,
         response: @escaping (URLRequest) throws -> Data
     ) -> WalletSuiGraphQLClient {
-        WalletRPCURLProtocol.handler = { request in (200, try response(request)) }
+        WalletRPCURLProtocol.handler = { request in
+            let data = try response(request)
+            guard paddedWireTypes,
+                  let object = try? JSONSerialization.jsonObject(with: data) else { return (200, data) }
+            return (200, try JSONSerialization.data(withJSONObject: Self.suiOfficialWireRepresentations(object)))
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [WalletRPCURLProtocol.self]
         return try! WalletSuiGraphQLClient(
@@ -6530,6 +6625,31 @@ final class WalletGatewayTests: XCTestCase {
             session: URLSession(configuration: configuration),
             now: { now }
         )
+    }
+
+    // The real GraphQL server emits padded addresses in every MoveType.repr,
+    // including nested Coin<T>, simulation, and indexed activity. Keep outgoing
+    // requests and expected internal identities unchanged. Invalid fixture
+    // spellings (including partial leading-zero padding) are never repaired.
+    private static func suiOfficialWireRepresentations(_ value: Any) -> Any {
+        if let values = value as? [Any] { return values.map(suiOfficialWireRepresentations) }
+        guard let object = value as? [String: Any] else { return value }
+        var result: [String: Any] = [:]
+        for (key, field) in object {
+            guard key == "repr", let type = field as? String else {
+                result[key] = suiOfficialWireRepresentations(field)
+                continue
+            }
+            let expression = try! NSRegularExpression(pattern: "0x(?:0|[1-9a-f][0-9a-f]{0,63})(?=::)")
+            let padded = NSMutableString(string: type)
+            for match in expression.matches(in: type, range: NSRange(type.startIndex..., in: type)).reversed() {
+                let address = (type as NSString).substring(with: match.range)
+                let hex = String(address.dropFirst(2))
+                padded.replaceCharacters(in: match.range, with: "0x" + String(repeating: "0", count: 64 - hex.count) + hex)
+            }
+            result[key] = padded as String
+        }
+        return result
     }
 
     private func suiNetworkStatusResponse(

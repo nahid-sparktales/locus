@@ -48,7 +48,19 @@ final class WalletSuiIntegrationTests: XCTestCase {
 
         var selection: WalletSuiGasCoinSelection?
         for _ in 0..<100 {
-            selection = try? await client.selectNativeGasCoin(owner: sender, requiredBalanceBaseUnits: "11234567")
+            // Only a successfully decoded, not-yet-funded snapshot is retryable.
+            // Schema, identity, ownership, or balance-reconciliation errors must
+            // fail at their real boundary instead of becoming an indexing timeout.
+            let snapshot: WalletSuiGasCoinSnapshot
+            do { snapshot = try await client.nativeGasCoins(owner: sender) }
+            catch { throw Self.readinessFailure(error, stage: "funding") }
+            if let coin = snapshot.coins.first(where: {
+                WalletBaseUnits.lessThanOrEqual("11234567", $0.balanceBaseUnits)
+            }) {
+                selection = WalletSuiGasCoinSelection(
+                    snapshot: snapshot, coin: coin, requiredBalanceBaseUnits: "11234567"
+                )
+            }
             if selection != nil { break }
             try await Task.sleep(for: .milliseconds(200))
         }
@@ -88,7 +100,9 @@ final class WalletSuiIntegrationTests: XCTestCase {
         let restarted = try WalletSuiGraphQLClient(testLoopbackEndpoint: endpoint, expectedChainIdentifier: chain)
         var reconciled: WalletSuiIndexedActivity?
         for _ in 0..<100 {
-            reconciled = try? await restarted.activity(owner: Self.recipient).first { $0.transactionDigest == digest }
+            do {
+                reconciled = try await restarted.activity(owner: Self.recipient).first { $0.transactionDigest == digest }
+            } catch { throw Self.readinessFailure(error, stage: "reconciliation") }
             if reconciled != nil { break }
             try await Task.sleep(for: .milliseconds(200))
         }
@@ -102,6 +116,30 @@ final class WalletSuiIntegrationTests: XCTestCase {
                 maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
             XCTFail("Consumed gas object version remained valid")
         } catch { /* The signed object's former version is stale after settlement. */ }
+    }
+
+    private static func readinessFailure(_ error: Error, stage: String) -> Error {
+        if error is CancellationError { return error }
+        let reason: String
+        switch error {
+        case WalletRPCError.invalidResponse(let message):
+            switch message {
+            case "Sui returned malformed gas-coin evidence": reason = "malformedGasCoinEvidence"
+            case "Sui returned a malformed, misowned, or duplicate gas coin": reason = "invalidGasCoinIdentity"
+            case "Sui gas coins did not reconcile with checkpoint balance evidence": reason = "inconsistentCoinBalance"
+            case "Sui returned a malformed activity balance change": reason = "invalidActivityBalance"
+            default: reason = "invalidProviderEvidence"
+            }
+        case WalletRPCError.wrongChain: reason = "wrongChain"
+        case WalletRPCError.rpc: reason = "graphqlError"
+        case let transport as URLError:
+            if transport.code == .cancelled { return transport }
+            reason = "transportError"
+        default: reason = "unexpectedReadinessError"
+        }
+        // Never attach provider strings, URLs, addresses, or response bytes.
+        return NSError(domain: "WalletSuiLocalFixture", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Sui \(stage) readiness failed: \(reason)"])
     }
 
     private func fixtureSigner(operation: String, transactionBCS: String? = nil) throws -> [String: Any] {

@@ -1146,7 +1146,7 @@ actor WalletSuiGraphQLClient {
                   let address = owner["address"] as? String,
                   address == sender || address == recipient,
                   let coinType = node["coinType"] as? [String: Any],
-                  coinType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+                  Self.normalizedWireCoinType(coinType["repr"]) == WalletSuiAssetIdentity.nativeCoinType,
                   let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui simulation returned an unexpected balance change"
@@ -1259,7 +1259,7 @@ actor WalletSuiGraphQLClient {
             guard let owner = node["owner"] as? [String: Any],
                   let address = owner["address"] as? String,
                   let coinType = node["coinType"] as? [String: Any],
-                  let representation = coinType["repr"] as? String,
+                  let representation = Self.normalizedWireCoinType(coinType["repr"]),
                   let signed = Self.canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui simulation returned an undecodable Coin balance change"
@@ -1377,7 +1377,7 @@ actor WalletSuiGraphQLClient {
               let balanceOwner = balanceNodes[0]["owner"] as? [String: Any],
               balanceOwner["address"] as? String == sender,
               let balanceType = balanceNodes[0]["coinType"] as? [String: Any],
-              balanceType["repr"] as? String == WalletSuiAssetIdentity.nativeCoinType,
+              Self.normalizedWireCoinType(balanceType["repr"]) == WalletSuiAssetIdentity.nativeCoinType,
               let signedGas = Self.canonicalSignedBaseUnits(balanceNodes[0]["amount"]),
               signedGas == "-\(actualFee)",
               let changes = effects["objectChanges"] as? [String: Any],
@@ -1686,13 +1686,102 @@ actor WalletSuiGraphQLClient {
         return value
     }
 
+    // GraphQL MoveType.repr uses fully padded package addresses (Sui 1.79.0,
+    // 46f18562f1f5af2438d35828e8b62d5e0b972db7, TypeInput::to_canonical_string).
+    // This is a wire representation conversion, never a public manifest parser
+    // or authority grant. Only package address padding changes; identifiers,
+    // generic structure, case, and numeric address identity remain exact.
+    static func normalizedWireMoveType(_ value: Any?) -> String? {
+        guard let value = value as? String, !value.isEmpty,
+              value.utf8.count <= 512,
+              value.utf8.allSatisfy({ (0x21...0x7e).contains($0) }) else { return nil }
+        var parser = WireMoveTypeParser(bytes: Array(value.utf8))
+        guard let result = parser.parseType(depth: 0, requiresStruct: true),
+              parser.offset == parser.bytes.count else { return nil }
+        return result
+    }
+
+    private static func normalizedWireCoinType(_ value: Any?) -> String? {
+        guard let result = normalizedWireMoveType(value),
+              WalletSuiAssetIdentity.isCanonicalCoinType(result) else { return nil }
+        return result
+    }
+
+    private struct WireMoveTypeParser {
+        let bytes: [UInt8]
+        var offset = 0
+        var nodes = 0
+
+        mutating func parseType(depth: Int, requiresStruct: Bool = false) -> String? {
+            guard depth < 16, nodes < 64 else { return nil }
+            nodes += 1
+            if take("0x") {
+                let start = offset
+                while offset < bytes.count, Self.isHex(bytes[offset]) { offset += 1 }
+                let hex = bytes[start..<offset]
+                // Accept the stable upstream 32-byte spelling or the existing
+                // canonical short spelling, never arbitrary partial padding.
+                guard !hex.isEmpty, hex.count <= 64,
+                      hex.count == 64 || hex.first != 48 || hex.count == 1,
+                      take("::"), let module = identifier(), take("::"),
+                      let name = identifier() else { return nil }
+                let significant = hex.drop(while: { $0 == 48 })
+                let address = significant.isEmpty ? "0" : String(decoding: significant, as: UTF8.self)
+                var result = "0x\(address)::\(module)::\(name)"
+                if take("<") {
+                    var arguments: [String] = []
+                    repeat {
+                        guard arguments.count < 16,
+                              let argument = parseType(depth: depth + 1) else { return nil }
+                        arguments.append(argument)
+                    } while take(",")
+                    guard take(">") else { return nil }
+                    result += "<\(arguments.joined(separator: ","))>"
+                }
+                return result
+            }
+            guard !requiresStruct, let name = identifier() else { return nil }
+            if name == "vector" {
+                guard take("<"), let element = parseType(depth: depth + 1), take(">") else { return nil }
+                return "vector<\(element)>"
+            }
+            return ["bool", "u8", "u16", "u32", "u64", "u128", "u256", "address", "signer"]
+                .contains(name) ? name : nil
+        }
+
+        mutating func identifier() -> String? {
+            guard offset < bytes.count, Self.isIdentifierStart(bytes[offset]) else { return nil }
+            let start = offset
+            offset += 1
+            while offset < bytes.count,
+                  Self.isIdentifierStart(bytes[offset]) || (48...57).contains(bytes[offset]) {
+                offset += 1
+            }
+            return String(decoding: bytes[start..<offset], as: UTF8.self)
+        }
+
+        mutating func take(_ token: String) -> Bool {
+            let tokenBytes = Array(token.utf8)
+            guard bytes[offset...].starts(with: tokenBytes) else { return false }
+            offset += tokenBytes.count
+            return true
+        }
+
+        static func isHex(_ byte: UInt8) -> Bool {
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
+
+        static func isIdentifierStart(_ byte: UInt8) -> Bool {
+            byte == 95 || (65...90).contains(byte) || (97...122).contains(byte)
+        }
+    }
+
     private static func parseBalance(
         _ value: [String: Any],
         networkID: String
     ) -> WalletSuiBalance? {
         guard let coinType = value["coinType"] as? [String: Any],
-              let representation = coinType["repr"] as? String,
-              WalletSuiAssetIdentity.isCanonicalCoinType(representation),
+              let representation = normalizedWireCoinType(coinType["repr"]),
               let total = canonicalBaseUnits(value["totalBalance"]),
               let coins = canonicalBaseUnits(value["coinBalance"]),
               let accumulator = canonicalBaseUnits(value["addressBalance"]),
@@ -1719,7 +1808,7 @@ actor WalletSuiGraphQLClient {
               let hasPublicTransfer = value["hasPublicTransfer"] as? Bool,
               let contents = value["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              let moveType = type["repr"] as? String,
+              let moveType = normalizedWireMoveType(type["repr"]),
               isSafeMoveTypeLabel(moveType),
               let ownerValue = value["owner"] as? [String: Any],
               ownerValue["__typename"] as? String == "AddressOwner",
@@ -1751,7 +1840,7 @@ actor WalletSuiGraphQLClient {
               let hasPublicTransfer = moveObject["hasPublicTransfer"] as? Bool,
               let contents = moveObject["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              let moveType = type["repr"] as? String,
+              let moveType = normalizedWireMoveType(type["repr"]),
               isSafeMoveTypeLabel(moveType) else { return nil }
         return WalletSuiSimulatedObjectState(
             reference: WalletSuiObjectReference(
@@ -1793,7 +1882,7 @@ actor WalletSuiGraphQLClient {
               WalletSolanaBase58.decode(digest, exactLength: 32) != nil,
               let contents = value["contents"] as? [String: Any],
               let type = contents["type"] as? [String: Any],
-              type["repr"] as? String == objectType,
+              normalizedWireMoveType(type["repr"]) == objectType,
               let encodedBCS = contents["bcs"] as? String,
               let bcs = Data(base64Encoded: encodedBCS), bcs.count == 40,
               bcs.base64EncodedString() == encodedBCS,
@@ -1948,8 +2037,7 @@ actor WalletSuiGraphQLClient {
                   let ownerAddress = changeOwner["address"] as? String,
                   WalletSuiAddress.isCanonical(ownerAddress),
                   let coinType = node["coinType"] as? [String: Any],
-                  let representation = coinType["repr"] as? String,
-                  WalletSuiAssetIdentity.isCanonicalCoinType(representation),
+                  let representation = normalizedWireCoinType(coinType["repr"]),
                   let signed = canonicalSignedBaseUnits(node["amount"]) else {
                 throw WalletRPCError.invalidResponse(
                     "Sui returned a malformed activity balance change"
