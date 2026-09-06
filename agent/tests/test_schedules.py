@@ -149,7 +149,7 @@ def test_pause_resume_and_persistence_across_restart(tmp_path) -> None:
 
     resumed = store.update_schedule(created["id"], {"enabled": True}, now=2_000)
     assert resumed["enabled"] is True
-    assert resumed["last_error"] is None
+    assert resumed["last_error"] == "Model was removed"
     assert RunStore(path).schedule(created["id"])["name"] == "Morning review"
 
 

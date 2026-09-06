@@ -463,7 +463,7 @@ private struct WorkflowSimulationSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.locus(size: 9, weight: .semibold))
             TextEditor(text: text)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.locus(size: 12, design: .monospaced))
                 .frame(minHeight: 160)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
         }

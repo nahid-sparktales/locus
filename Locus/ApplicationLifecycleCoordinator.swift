@@ -17,6 +17,7 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
 
     private var hasRunningWork: () -> Bool = { false }
     private var terminalHasForegroundJob: () -> Bool = { false }
+    private var hasCaptureWork: () -> Bool = { false }
     private var stopRunningWork: (@escaping @MainActor () -> Void) -> Void = { completion in
         completion()
     }
@@ -27,6 +28,7 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
 
     func connect(model: AppModel) {
         hasRunningWork = { [weak model] in model?.hasRunningWorkForQuit == true }
+        hasCaptureWork = { [weak model] in model?.outputsLibrary.hasCaptureWork == true }
         terminalHasForegroundJob = { [weak model] in
             model?.terminal.hasForegroundJob == true
         }
@@ -93,7 +95,15 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
 
         guard hasRunningWork() else {
             lockSensitiveServices()
-            return .terminateNow
+            guard hasCaptureWork() else { return .terminateNow }
+            state = .quitting
+            // A just-finished task may still be saving its final snapshot.
+            // Flush quietly; only running work requires the existing alert.
+            stopRunningWork { [weak self, weak application] in
+                guard self?.state == .quitting else { return }
+                application?.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
         }
 
         let alert = NSAlert()

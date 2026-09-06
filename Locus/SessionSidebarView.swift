@@ -13,6 +13,8 @@ private struct ChatFolderEditorRequest: Identifiable {
 
 private struct AgentSidebarGroupModel: Identifiable {
     let id: String
+    let reference: AgentInspectorAgent?
+    let accessibilityID: String
     let name: String
     let tasks: [SessionSummary]
 }
@@ -156,6 +158,17 @@ struct SessionSidebarView: View {
         VStack(spacing: 0) {
             header
             controls
+
+            Button { model.openLibrary() } label: {
+                Label("Library", systemImage: "books.vertical")
+                    .font(.locus(size: 12, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityIdentifier("sidebar.library")
 
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -867,12 +880,18 @@ struct SessionSidebarView: View {
     }
 
     private func agentGroups(snapshot: SessionCatalogSnapshot) -> [AgentSidebarGroupModel] {
-        Dictionary(grouping: snapshot.agentSessions) { session in
-            session.agentTriggerID ?? session.id
+        let definitions = model.agentDefinitions
+        return Dictionary(grouping: snapshot.agentSessions) { session in
+            session.agentReference(in: definitions)?.id ?? "unassigned:\(session.id)"
         }
-        .map { triggerID, tasks in
-            AgentSidebarGroupModel(
-                id: triggerID,
+        .map { identity, tasks in
+            let reference = tasks[0].agentReference(in: definitions)
+            let rawID = reference?.agentID ?? tasks[0].agentTriggerID ?? tasks[0].id
+            let hasCollision = definitions.filter { $0.id == rawID }.count > 1
+            return AgentSidebarGroupModel(
+                id: identity,
+                reference: reference,
+                accessibilityID: hasCollision ? identity : rawID,
                 name: tasks.compactMap(\.agentName).first?.nilIfBlank
                     ?? tasks[0].displayTitle,
                 tasks: tasks.sorted {
@@ -889,7 +908,7 @@ struct SessionSidebarView: View {
             agent: agent,
             automation: model.eventAutomations,
             expanded: !collapsedAgentIDs.contains(agent.id),
-            selected: model.inspectedAgentID == agent.id,
+            selected: agent.reference != nil && model.inspectedAgentReference == agent.reference,
             toggle: {
                 withAnimation(LocusMotion.spatial) {
                     if collapsedAgentIDs.contains(agent.id) {
@@ -903,7 +922,8 @@ struct SessionSidebarView: View {
                 withAnimation(LocusMotion.spatial) {
                     _ = collapsedAgentIDs.remove(agent.id)
                 }
-                model.selectAgent(agent.id)
+                if let reference = agent.reference { model.selectAgent(reference) }
+                else { model.showToast("This saved chat’s agent kind is unavailable. Its conversation is still available below.") }
             },
             confirmDelete: { agentToDelete = $0 }
         )
@@ -1116,18 +1136,18 @@ struct SessionSidebarView: View {
             )
         }
 
-        private var selectedID: String? { model.inspectedAgentID }
+        private var selectedReference: AgentInspectorAgent? { model.inspectedAgentReference }
 
         private var selectedEntry: AgentFleetEntry? {
-            guard let selectedID else { return nil }
-            return entries.first { $0.id == selectedID }
+            guard let selectedReference else { return nil }
+            return entries.first { $0.inspectorID == selectedReference }
         }
 
         private var selectedName: String {
             if let selectedEntry { return selectedEntry.name }
-            guard let selectedID else { return "Choose Agent" }
+            guard let selectedReference else { return "Choose Agent" }
             return sessionCatalog.snapshot.agentSessions.first {
-                $0.agentTriggerID == selectedID
+                $0.agentReference(in: model.agentDefinitions) == selectedReference
             }?.agentName?.nilIfBlank ?? "Choose Agent"
         }
 
@@ -1142,13 +1162,13 @@ struct SessionSidebarView: View {
                         .disabled(true)
                 } else {
                     Section("Agents") {
-                        ForEach(entries) { entry in
+                        ForEach(entries, id: \.inspectorID) { entry in
                             Button {
-                                model.selectAgent(entry.id)
+                                model.selectAgent(entry.inspectorID)
                             } label: {
                                 Label(
                                     entry.name,
-                                    systemImage: entry.id == selectedID
+                                    systemImage: entry.inspectorID == selectedReference
                                         ? "checkmark.circle.fill"
                                         : Self.statusSymbol(entry.status)
                                 )
@@ -2077,11 +2097,7 @@ private struct AgentGroupRow: View {
     }
 
     private var definition: AgentDefinition? {
-        AgentDefinition.resolve(
-            agentID: agent.id,
-            triggers: automation.triggers,
-            schedules: schedule.scheduledTasks
-        )
+        agent.reference.flatMap(model.inspectorAgentDefinition)
     }
 
     var body: some View {
@@ -2099,7 +2115,7 @@ private struct AgentGroupRow: View {
             .buttonStyle(.locus())
             .help(expanded ? "Collapse \(agent.name)" : "Expand \(agent.name)")
             .accessibilityLabel(expanded ? "Collapse \(agent.name)" : "Expand \(agent.name)")
-            .accessibilityIdentifier("agent.\(agent.id).disclosure")
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).disclosure")
 
             Button(action: select) {
                 HStack(spacing: 7) {
@@ -2135,7 +2151,7 @@ private struct AgentGroupRow: View {
                     + "\(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
                     + (selected ? "selected" : "not selected")
             )
-            .accessibilityIdentifier("agent.\(agent.id)")
+            .accessibilityIdentifier("agent.\(agent.accessibilityID)")
         }
         .padding(.horizontal, 5)
         .frame(height: 34)
@@ -2144,33 +2160,35 @@ private struct AgentGroupRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("New Chat with \(agent.name)") {
-                model.newAgentChat(triggerID: agent.id)
+                if let reference = agent.reference { model.newAgentChat(reference: reference) }
             }
-            .accessibilityIdentifier("agent.\(agent.id).newChat")
+            .disabled(agent.reference == nil)
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
             if let record {
                 if record.isSchedule {
                     Button("Run Now") { model.runAgentNow(record) }
-                        .accessibilityIdentifier("agent.\(agent.id).runNow")
+                        .accessibilityIdentifier("agent.\(agent.accessibilityID).runNow")
                 }
                 Button("Edit Agent…") { model.editAgent(record) }
-                    .accessibilityIdentifier("agent.\(agent.id).edit")
+                    .accessibilityIdentifier("agent.\(agent.accessibilityID).edit")
                 if record.lastError?.nilIfEmpty != nil {
                     Button(model.isClearingAgentWarning(record)
                         ? "Clearing Warning…" : "Clear Warning") {
                         model.clearAgentWarning(record)
                     }
                     .disabled(model.isClearingAgentWarning(record))
-                    .accessibilityIdentifier("agent.\(agent.id).clearWarning")
+                    .accessibilityIdentifier("agent.\(agent.accessibilityID).clearWarning")
                 }
                 Button(record.enabled ? "Pause Agent" : "Resume Agent") {
                     model.setAgentEnabled(record, enabled: !record.enabled)
                 }
-                .accessibilityIdentifier("agent.\(agent.id).toggle")
+                .disabled(model.isChangingAgentEnabled(record))
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).toggle")
                 Divider()
                 Button("Delete Agent…", role: .destructive) {
                     confirmDelete(record)
                 }
-                .accessibilityIdentifier("agent.\(agent.id).delete")
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).delete")
             }
         }
         .help(status.detail(for: words))

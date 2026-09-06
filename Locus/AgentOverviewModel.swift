@@ -82,9 +82,9 @@ enum AgentDefinition: Equatable {
         schedules: [ScheduledTask]
     ) -> AgentDefinition? {
         guard let agentID, !agentID.isEmpty else { return nil }
-        if let trigger = triggers.first(where: { $0.id == agentID }) { return .trigger(trigger) }
-        if let task = schedules.first(where: { $0.id == agentID }) { return .schedule(task) }
-        return nil
+        let matches = triggers.filter { $0.id == agentID }.map(AgentDefinition.trigger)
+            + schedules.filter { $0.id == agentID }.map(AgentDefinition.schedule)
+        return matches.count == 1 ? matches[0] : nil
     }
 
     /// "Incoming Event", "Price Alert", or "Schedule".
@@ -225,7 +225,7 @@ struct AgentOverview: Equatable {
             title = !subject.isEmpty ? subject : (!text.isEmpty ? String(text.prefix(120)) : fallback)
             // Delivery states are backend strings; the terminal ones are stable
             // (`TERMINAL_STATES` in runstore), the rest describe dispatch.
-            stateTitle = delivery.displayState
+            stateTitle = AgentInspectorCopy.state(delivery.runState ?? delivery.state)
             isFailed = delivery.error != nil
                 || ["failed", "interrupted", "cancelled"].contains(delivery.state)
             isInFlight = ["pending", "claiming", "queued", "dispatching", "running"]
@@ -249,7 +249,7 @@ struct AgentOverview: Equatable {
                 + " · " + when.formatted(date: .abbreviated, time: .shortened)
             let skipped = occurrence.state == "skipped"
             isSkipped = skipped
-            stateTitle = occurrence.state.replacingOccurrences(of: "_", with: " ").capitalized
+            stateTitle = AgentInspectorCopy.state(occurrence.state)
             // An overlap with the run before it is a normal outcome, not a
             // failure: the agent kept working, this slot simply passed.
             isFailed = !skipped
@@ -309,6 +309,10 @@ struct AgentOverview: Equatable {
     var isPriceAlert: Bool { trigger?.triggerKind == .price }
     var canRearm: Bool { isPriceAlert && trigger?.runtimeState.fired == true }
     var canRunNow: Bool { schedule != nil }
+    var purpose: String {
+        let firstParagraph = instruction.components(separatedBy: "\n\n").first ?? ""
+        return firstParagraph.isEmpty ? summary : firstParagraph
+    }
 
     static let recentEventLimit = 8
 
@@ -345,6 +349,7 @@ struct AgentOverview: Equatable {
     static func resolve(
         agentID: String,
         definition: AgentDefinition?,
+        ownershipDefinitions: [AgentDefinition]? = nil,
         connections: [ConnectorConnection],
         actionConnections: [ConnectorConnection] = [],
         sessions: [SessionSummary],
@@ -358,7 +363,14 @@ struct AgentOverview: Equatable {
         let trigger = definition?.trigger
         let schedule = definition?.schedule
         let ownChats = sessions
-            .filter { $0.agentTriggerID == agentID }
+            .filter { session in
+                guard session.agentTriggerID == agentID else { return false }
+                if let ownershipDefinitions, let definition {
+                    return session.agentReference(in: ownershipDefinitions) == AgentInspectorAgent(definition)
+                }
+                guard let definition, let kind = session.agentKind else { return true }
+                return kind == (definition.isSchedule ? "schedule" : "event")
+            }
             .sorted { lhs, rhs in
                 if lhs.mtime != rhs.mtime { return lhs.mtime > rhs.mtime }
                 return lhs.id < rhs.id
@@ -382,7 +394,8 @@ struct AgentOverview: Equatable {
         }
 
         // Every event or run that reached the agent, newest first. The panel
-        // shows a handful, but the counts describe the whole history.
+        // shows a handful. These fallback counts describe only loaded rows;
+        // the contextual inspector obtains retained-history totals separately.
         let allEvents: [Event]
         let lastEventAt: Date?
         if schedule != nil {
@@ -677,6 +690,7 @@ struct AgentFleetEntry: Identifiable, Equatable {
     let lastEventAt: Date?
 
     var id: String { definition.id }
+    var inspectorID: AgentInspectorAgent { AgentInspectorAgent(definition) }
     var name: String { definition.name }
     var trigger: EventTrigger? { definition.trigger }
     var summary: String { AgentOverview.summary(definition: definition, connection: connection) }
@@ -690,13 +704,13 @@ enum AgentFleet {
         sessions: [SessionSummary],
         runningSessionIDs: Set<String>
     ) -> [AgentFleetEntry] {
-        let chatsByAgent = Dictionary(grouping: sessions.filter(\.isAgentChat)) {
-            $0.agentTriggerID ?? ""
-        }
         let definitions = triggers.map(AgentDefinition.trigger) + schedules.map(AgentDefinition.schedule)
+        let chatsByAgent = Dictionary(grouping: sessions.filter { $0.agentReference(in: definitions) != nil }) {
+            $0.agentReference(in: definitions)!
+        }
         return definitions
             .map { definition in
-                let chats = (chatsByAgent[definition.id] ?? []).sorted { $0.mtime > $1.mtime }
+                let chats = (chatsByAgent[AgentInspectorAgent(definition)] ?? []).sorted { $0.mtime > $1.mtime }
                 return AgentFleetEntry(
                     definition: definition,
                     connection: definition.trigger.flatMap { trigger in

@@ -164,11 +164,20 @@ async def _watch_parent(expected_pid: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Only the primary app backend eagerly restores workspace jobs. Separate
+    # chat workers may submit jobs, with process-wide filesystem leases still
+    # enforcing the global extraction budget. Ordinary test app lifespans do
+    # not inspect or resume the user's persisted workspace library.
+    if os.environ.get("LOCUS_DOCUMENT_COORDINATOR") == "1":
+        from .document_library import restore_document_jobs
+        await asyncio.to_thread(restore_document_jobs)
     parent_pid = _configured_parent_pid()
     parent_watch = asyncio.create_task(_watch_parent(parent_pid)) if parent_pid else None
     try:
         yield
     finally:
+        from .document_library import stop_document_jobs
+        await asyncio.to_thread(stop_document_jobs)
         if parent_watch is not None:
             parent_watch.cancel()
         svc: ChatService | None = getattr(app.state, "service", None)
@@ -224,7 +233,10 @@ async def block_browser_origins(request: Request, call_next):
     content_length = request.headers.get("content-length")
     if content_length:
         try:
-            if int(content_length) > MAX_HTTP_BODY_BYTES:
+            limit = 100 * 1024 * 1024 if request.url.path == "/api/document-jobs/upload" and request.method == "POST" else MAX_HTTP_BODY_BYTES
+            if int(content_length) < 0:
+                return JSONResponse({"detail": "invalid content-length"}, status_code=400)
+            if int(content_length) > limit:
                 return JSONResponse({"detail": "request body is too large"}, status_code=413)
         except ValueError:
             return JSONResponse({"detail": "invalid content-length"}, status_code=400)

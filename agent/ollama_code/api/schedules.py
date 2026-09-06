@@ -14,7 +14,7 @@ from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..runstore import RunStoreError
 from ..schedules import timezone as schedule_timezone
-from ..sessions import SessionMeta, SessionStore
+from ..sessions import SessionMeta, SessionStore, session_agent_kind
 from ..worktrees import (
     TaskCheckout,
     TaskCheckoutStore,
@@ -94,6 +94,7 @@ def _schedule_session_id(schedule_id: str) -> str | None:
     for session_id, entry in SessionMeta.all().items():
         if (
             entry.get("agent_trigger_id") == schedule_id
+            and session_agent_kind(entry) == "schedule"
             and entry.get("agent_primary")
             and SessionStore.path_for(session_id) is not None
         ):
@@ -232,6 +233,7 @@ def _ensure_schedule_session(schedule: dict[str, Any]) -> tuple[str, dict[str, A
     identity: dict[str, Any] = {
         "title": name,
         "agent_name": name,
+        "agent_kind": "schedule",
         "provider": provider,
         "model": model,
         "provider_account_id": account_id or None,
@@ -683,6 +685,7 @@ def _adopt_pre_agent_schedules(schedules: list[dict[str, Any]]) -> None:
             str(entry.get("agent_trigger_id")): session_id
             for session_id, entry in entries.items()
             if entry.get("agent_primary") and entry.get("agent_trigger_id")
+            and session_agent_kind(entry) == "schedule"
         }
         for schedule in pending:
             schedule_id = str(schedule["id"])
@@ -704,10 +707,11 @@ def _adopt_earlier_run_chats(
     for session_id, entry in entries.items():
         if (
             str(entry.get("schedule_id") or "") == schedule_id
-            and not entry.get("agent_trigger_id")
+            and session_agent_kind(entry) == "schedule"
+            and entry.get("agent_trigger_id") in (None, "", schedule_id)
             and SessionStore.path_for(session_id) is not None
         ):
-            SessionMeta.update(session_id, agent_trigger_id=schedule_id, agent_name=name)
+            SessionMeta.update(session_id, agent_trigger_id=schedule_id, agent_name=name, agent_kind="schedule")
 
 
 def schedule_list(service: ServiceDependency) -> dict[str, Any]:
@@ -815,6 +819,7 @@ def schedule_task_create(
         provider_account_id=account_id or None,
         schedule_id=schedule_id,
         agent_trigger_id=schedule_id,
+        agent_kind="schedule",
         agent_name=str(schedule["name"]),
     )
     _detach_agent_session(session_id, workspace_root)
@@ -848,6 +853,29 @@ def schedule_occurrence_list(
     ):
         raise HTTPException(404, "schedule not found")
     return {"occurrences": store.schedule_occurrences(schedule_id, limit=limit)}
+
+
+def agent_history(
+    schedule_id: str, service: ServiceDependency,
+    cursor: str = Query(default="", max_length=2048),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    try:
+        return service.run_store.agent_history_page("schedule", schedule_id, cursor=cursor, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def occurrence_detail(occurrence_id: str, service: ServiceDependency) -> dict[str, Any]:
+    _require_capability("durable_runs")
+    occurrence = service.run_store.schedule_occurrence(occurrence_id)
+    if occurrence is None:
+        raise HTTPException(404, "scheduled run not found")
+    context = service.run_store.inspector_item_context("schedule", occurrence_id)
+    return {"occurrence": occurrence, "executions": service.run_store.inspector_execution_links("schedule", occurrence_id),
+            "workflow_execution_id": context.get("workflow_execution_id"),
+            "delivery_state": context.get("delivery_state"), "execution_state": context.get("execution_state")}
 
 
 def schedule_pause(
@@ -900,6 +928,8 @@ def companion_chat_dispatch(
 
 
 def register_routes(router: APIRouter) -> None:
+    router.add_api_route("/api/schedules/{schedule_id}/history", agent_history, methods=["GET"])
+    router.add_api_route("/api/schedule-occurrences/{occurrence_id}", occurrence_detail, methods=["GET"])
     router.add_api_route("/api/schedules", schedule_list, methods=["GET"])
     router.add_api_route("/api/schedules", schedule_create, methods=["POST"])
     router.add_api_route(

@@ -1696,6 +1696,7 @@ struct InspectorRunsTab: View {
 
     private func runListRow(_ run: OrchestrationRun) -> some View {
         Button {
+            model.inspectAgentRun(run, reveal: false)
             detailRunID = run.id
             viewMode = "overview"
             filter = ""

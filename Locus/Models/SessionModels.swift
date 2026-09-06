@@ -37,6 +37,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let folderID: String?
     let sortOrder: Int?
     let agentTriggerID: String?
+    /// Added after event agents and schedules began sharing the same UI.
+    /// Unknown and absent values remain decodable for older saved chats.
+    let agentKind: String?
     let agentName: String?
     /// The one chat an agent's events (or scheduled runs) land in. Side
     /// conversations under the same agent carry the id but not this flag.
@@ -64,6 +67,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         folderID: String? = nil,
         sortOrder: Int? = nil,
         agentTriggerID: String? = nil,
+        agentKind: String? = nil,
         agentName: String? = nil,
         agentPrimary: Bool? = nil,
         model: String? = nil,
@@ -86,6 +90,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.folderID = folderID
         self.sortOrder = sortOrder
         self.agentTriggerID = agentTriggerID
+        self.agentKind = agentKind
         self.agentName = agentName
         self.agentPrimary = agentPrimary
         self.model = model
@@ -99,6 +104,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         case folderID = "folder_id"
         case sortOrder = "sort_order"
         case agentTriggerID = "agent_trigger_id"
+        case agentKind = "agent_kind"
         case agentName = "agent_name"
         case agentPrimary = "agent_primary"
         case model, provider
@@ -164,6 +170,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
             folderID: folderID,
             sortOrder: sortOrder,
             agentTriggerID: agentTriggerID,
+            agentKind: agentKind,
             agentName: agentName,
             agentPrimary: agentPrimary,
             model: model,

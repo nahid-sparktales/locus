@@ -1,11 +1,15 @@
 """Workspace knowledge indexing and retrieval routes."""
 
+import tempfile
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
+from ..document_extract import MAX_SOURCE_BYTES
+from ..document_library import DocumentError, DocumentStore
 from ..knowledge import KnowledgeError, KnowledgeStore
 from ..knowledge_runtime import knowledge_store
 from ..memory import MemoryError
@@ -48,12 +52,16 @@ def knowledge_settings(
         if "exclusions" in body
         else None
     )
-    return store.configure(
+    result = store.configure(
         enabled=enabled,
         embedding_model=embedding_model,
         ollama_host=ollama_host,
         exclusions=exclusions,
+        documents_enabled=body.get("documents_enabled") if isinstance(body.get("documents_enabled"), bool) else None,
     )
+    if body.get("documents_enabled") is False or body.get("enabled") is False:
+        DocumentStore(str(store.root)).cancel_persistent()
+    return result
 
 
 def knowledge_reindex(
@@ -153,7 +161,101 @@ def knowledge_delete_all(
     return {"ok": True}
 
 
+def _documents(service: ChatService, workspace: str) -> DocumentStore:
+    store = _knowledge_store(service, workspace)
+    return DocumentStore(str(store.root))
+
+
+def document_list(service: ServiceDependency, workspace: str = Query(default=""), limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0), query: str = Query(default="", max_length=512)) -> dict[str, Any]:
+    return _documents(service, workspace).documents(limit=limit, offset=offset, query=query)
+
+
+def document_jobs(service: ServiceDependency, workspace: str = Query(default=""), limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+    return {"jobs": _documents(service, workspace).jobs(limit=limit)}
+
+
+def document_submit(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        languages = body.get("ocr_languages") or []
+        if not isinstance(languages, list) or any(not isinstance(item, str) for item in languages):
+            raise DocumentError("OCR languages must be a list of language identifiers.")
+        if "persistent" in body and not isinstance(body["persistent"], bool):
+            raise DocumentError("persistent must be true or false.")
+        return {"job": _documents(service, str(body.get("workspace") or "")).submit(
+            str(body.get("path") or ""), persistent=body.get("persistent", True),
+            ocr_mode=str(body.get("ocr_mode") or "auto"), ocr_languages=languages,
+        )}
+    except (DocumentError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+async def document_upload(request: Request, service: ServiceDependency, workspace: str = Query(default=""), filename: str = Query(min_length=1, max_length=255), persistent: bool = Query(default=False), ocr_mode: str = Query(default="auto")) -> dict[str, Any]:
+    store = _documents(service, workspace)
+    size = 0
+    try:
+        with tempfile.NamedTemporaryFile(dir=store.job_directory, prefix="upload-", delete=True) as handle:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_SOURCE_BYTES:
+                    raise HTTPException(413, "Document exceeds the 100 MB limit.")
+                handle.write(chunk)
+            handle.flush()
+            # Copying a bounded file belongs off the asyncio request loop.
+            from starlette.concurrency import run_in_threadpool
+            job = await run_in_threadpool(store.submit_upload, Path(handle.name), filename, persistent=persistent, ocr_mode=ocr_mode)
+            return {"job": job}
+    except (DocumentError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def document_job(job_id: str, service: ServiceDependency, workspace: str = Query(default="")) -> dict[str, Any]:
+    try:
+        return {"job": _documents(service, workspace).job(job_id)}
+    except DocumentError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+def document_result(job_id: str, service: ServiceDependency, workspace: str = Query(default="")) -> dict[str, Any]:
+    try:
+        return _documents(service, workspace).result(job_id)
+    except DocumentError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def document_cancel(job_id: str, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        return {"job": _documents(service, str(body.get("workspace") or "")).cancel(job_id)}
+    except DocumentError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+def document_exclude(document_id: str, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        if not isinstance(body.get("excluded"), bool):
+            raise DocumentError("excluded must be true or false.")
+        return {"ok": True, "document": _documents(service, str(body.get("workspace") or "")).exclude(document_id, body["excluded"])}
+    except DocumentError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def document_delete(document_id: str, service: ServiceDependency, workspace: str = Query(default="")) -> dict[str, Any]:
+    try:
+        _documents(service, workspace).remove(document_id)
+        return {"ok": True}
+    except DocumentError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 def register_routes(router: APIRouter) -> None:
+    router.add_api_route("/api/documents", document_list, methods=["GET"])
+    router.add_api_route("/api/documents/{document_id}", document_delete, methods=["DELETE"])
+    router.add_api_route("/api/documents/{document_id}/exclude", document_exclude, methods=["POST"])
+    router.add_api_route("/api/document-jobs", document_jobs, methods=["GET"])
+    router.add_api_route("/api/document-jobs", document_submit, methods=["POST"])
+    router.add_api_route("/api/document-jobs/upload", document_upload, methods=["POST"])
+    router.add_api_route("/api/document-jobs/{job_id}", document_job, methods=["GET"])
+    router.add_api_route("/api/document-jobs/{job_id}/result", document_result, methods=["GET"])
+    router.add_api_route("/api/document-jobs/{job_id}/cancel", document_cancel, methods=["POST"])
     router.add_api_route("/api/knowledge/status", knowledge_status, methods=["GET"])
     router.add_api_route("/api/knowledge/settings", knowledge_settings, methods=["POST"])
     router.add_api_route("/api/knowledge/reindex", knowledge_reindex, methods=["POST"])

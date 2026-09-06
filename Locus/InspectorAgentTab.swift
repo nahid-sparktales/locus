@@ -16,7 +16,8 @@ struct InspectorAgentTab: View {
         AgentInspectorPanel(
             automation: model.eventAutomations,
             schedule: schedule,
-            sessionCatalog: sessionCatalog
+            sessionCatalog: sessionCatalog,
+            inspector: model.agentInspector
         )
         .environmentObject(model)
     }
@@ -27,47 +28,60 @@ private struct AgentInspectorPanel: View {
     @ObservedObject var automation: EventAutomationModel
     @ObservedObject var schedule: ScheduleModel
     @ObservedObject var sessionCatalog: SessionCatalogModel
+    @ObservedObject var inspector: AgentInspectorModel
 
     private var inspectedAgentID: String? { model.inspectedAgentID }
 
     var body: some View {
         Group {
-            if let agentID = inspectedAgentID {
-                AgentDetailView(overview: overview(for: agentID), automation: automation)
-                    .id(agentID)
-            } else {
+            switch inspector.context {
+            case .fleet:
                 AgentFleetView(entries: fleet, automation: automation)
+            case .agent(let reference):
+                if model.inspectorAgentDefinition(reference) != nil || (automation.hasLoaded && schedule.hasLoaded) {
+                    AgentDetailView(
+                        overview: overview(for: reference), automation: automation,
+                        inspector: inspector, reference: reference
+                    ).id(reference)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView("Loading agent…")
+                        AgentInspectorLoadStatus(inspector: inspector)
+                    }
+                }
+            case .chat, .event, .occurrence, .run:
+                AgentInspectorDetailView(inspector: inspector, context: inspector.context)
+                    .id(inspector.context)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LocusTheme.paperDeep)
         .foregroundStyle(LocusTheme.ink)
-        .font(.locus(size: 11))
+        .font(.locus(size: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent overview")
         .accessibilityIdentifier("agentOverview")
         // Deliveries and trigger state change without a chat event, so the
-        // panel keeps itself current while it is on screen. The poll lives as
-        // long as the tab does; a chat switch asks for one extra refresh on
-        // its own task, so switching never cancels a request mid-flight and
-        // leaves the automation model holding "cancelled" as its last error.
+        // panel keeps itself current while it is on screen. The selected
+        // context owns this task and the model rejects stale responses.
         // Fixtures carry their own state and have no backend to ask.
-        .task {
-            guard !model.isUITesting else { return }
+        .onAppear {
+            if inspector.context == .fleet, !inspector.hasSelectedContext,
+               let reference = model.inspectedAgentReference {
+                inspector.show(.agent(reference))
+            }
+        }
+        .task(id: inspector.context) {
+            guard !model.isUITesting else {
+                model.seedAgentInspectorContextForUITesting()
+                return
+            }
             await refreshAll()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { return }
                 await refreshAll()
             }
-        }
-        .onChange(of: model.currentSessionID) {
-            guard !model.isUITesting else { return }
-            Task { await refreshAll() }
-        }
-        .onChange(of: model.selectedAgentID) {
-            guard !model.isUITesting else { return }
-            Task { await refreshAll() }
         }
     }
 
@@ -76,21 +90,21 @@ private struct AgentInspectorPanel: View {
     private func refreshAll() async {
         async let automations: Void = automation.refresh(announceFailure: false)
         async let schedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
-        _ = await (automations, schedules)
-        if let task = model.agentDefinition(for: inspectedAgentID)?.schedule {
-            await schedule.refreshOccurrences(for: task, announceFailure: false)
-        }
+        async let detail: Void = inspector.refresh(backend: model.backend)
+        _ = await (automations, schedules, detail)
     }
 
-    private func overview(for agentID: String) -> AgentOverview {
+    private func overview(for reference: AgentInspectorAgent) -> AgentOverview {
         AgentOverview.resolve(
-            agentID: agentID,
-            definition: model.agentDefinition(for: agentID),
+            agentID: reference.agentID,
+            definition: model.inspectorAgentDefinition(reference),
+            ownershipDefinitions: model.agentDefinitions,
             connections: automation.connections,
             actionConnections: automation.connections,
-            sessions: sessionCatalog.snapshot.sessions,
-            deliveries: automation.deliveries,
-            occurrences: schedule.occurrencesBySchedule[agentID] ?? [],
+            sessions: sessionCatalog.snapshot.sessions.filter { $0.agentReference(in: model.agentDefinitions) == reference },
+            deliveries: inspector.snapshot.history?.deliveries ?? automation.deliveries,
+            occurrences: inspector.snapshot.history?.occurrences
+                ?? schedule.occurrencesBySchedule[reference.agentID] ?? [],
             currentSessionID: model.currentSessionID,
             runningSessionIDs: model.runningChatSessionIDs,
             startedAt: model.runningChatStartTimes
@@ -115,25 +129,73 @@ private struct AgentDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let overview: AgentOverview
     @ObservedObject var automation: EventAutomationModel
-    @State private var instructionExpanded = false
+    @ObservedObject var inspector: AgentInspectorModel
+    let reference: AgentInspectorAgent
     @State private var confirmsDelete = false
+    private var context: AgentInspectorContext { .agent(reference) }
+    private var instructionExpanded: Bool {
+        inspector.presentation[context]?.expandedInstructions ?? false
+    }
+    private var configurationExpanded: Binding<Bool> {
+        Binding(get: { inspector.presentation[context]?.expandedDetails ?? false },
+                set: { inspector.presentation[context, default: AgentInspectorPresentation()].expandedDetails = $0 })
+    }
+    private var scrollAnchor: Binding<String?> {
+        Binding(get: { inspector.presentation[context]?.scrollAnchor },
+                set: { inspector.presentation[context, default: AgentInspectorPresentation()].scrollAnchor = $0 })
+    }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 12) {
-                identityCard
+            LazyVStack(spacing: 12) {
+                Button { inspector.back() } label: {
+                    Label("All agents", systemImage: "chevron.left")
+                }
+                .buttonStyle(.locus())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("agentOverview.back")
+                identityCard.id("identity")
+                AgentInspectorLoadStatus(inspector: inspector)
                 if let error = overview.lastError {
                     attentionBanner(error)
                 }
-                statsStrip
-                triggerCard
-                behaviorCard
-                chatsCard
-                eventsCard
+                workingCard.id("working")
+                statsStrip.id("stats")
+                eventsCard.id("events")
+                chatsCard.id("chats")
+                VStack(spacing: 10) {
+                    Button {
+                        configurationExpanded.wrappedValue.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: configurationExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+                                .font(.locus(size: 10, weight: .semibold))
+                                .accessibilityHidden(true)
+                            Text("How it works")
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 13, weight: .semibold))
+                    .accessibilityLabel("How it works")
+                    .accessibilityValue(configurationExpanded.wrappedValue ? "Expanded" : "Collapsed")
+                    .accessibilityHint("Shows or hides the agent's source and instructions")
+                    .accessibilityIdentifier("agentOverview.configuration")
+                    if configurationExpanded.wrappedValue {
+                        triggerCard
+                        behaviorCard
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .id("configuration")
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollTargetLayout()
         }
+        .scrollPosition(id: scrollAnchor, anchor: .top)
         .animation(reduceMotion ? nil : LocusMotion.spatial, value: instructionExpanded)
         .alert("Delete \(overview.name)?", isPresented: $confirmsDelete) {
             Button("Cancel", role: .cancel) {}
@@ -163,10 +225,10 @@ private struct AgentDetailView: View {
                         AgentStatusPill(status: overview.status, vocabulary: overview.vocabulary)
                             .accessibilityIdentifier("agentOverview.status")
                     }
-                    Text(overview.summary)
-                        .font(.locus(size: 8, weight: .medium))
+                    Text(overview.purpose)
+                        .font(.locus(size: 13))
                         .foregroundStyle(LocusTheme.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .accessibilityIdentifier("agentOverview.summary")
                 }
             }
@@ -181,7 +243,7 @@ private struct AgentDetailView: View {
                             + " It does not receive \(overview.vocabulary.arrivals).",
                         identifier: "agentOverview.newChat"
                     ) {
-                        model.newAgentChat(triggerID: overview.agentID)
+                        model.newAgentChat(reference: reference)
                     }
                 }
                 if let definition = overview.definition {
@@ -210,14 +272,15 @@ private struct AgentDetailView: View {
                         help: definition.isSchedule
                             ? (definition.enabled
                                 ? "Skip scheduled runs until you resume it"
-                                : "Run on schedule again, and clear the error")
+                                : "Run on schedule again")
                             : (definition.enabled
                                 ? "Keep recording events without starting chats"
-                                : "Start chats for matching events again, and clear the error"),
+                                : "Start chats for matching events again"),
                         identifier: "agentOverview.toggle"
                     ) {
                         model.setAgentEnabled(definition, enabled: !definition.enabled)
                     }
+                    .disabled(model.isChangingAgentEnabled(definition))
                     if overview.canRearm, let trigger = overview.trigger {
                         AgentActionButton(
                             title: "Re-arm",
@@ -275,7 +338,7 @@ private struct AgentDetailView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.locus(size: 11, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(LocusTheme.textSecondary)
                 .frame(width: 26, height: 26)
                 .background(LocusTheme.white.opacity(0.82))
@@ -299,24 +362,37 @@ private struct AgentDetailView: View {
     private func attentionBanner(_ error: String) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.locus(size: 11, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(LocusTheme.warning)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(overview.status.isWarning
                     ? overview.status.detail(for: overview.vocabulary)
                     : "Last error")
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(error)
-                    .font(.locus(size: 8))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
+                if let definition = overview.definition {
+                    Button("Review agent settings") { model.editAgent(definition) }
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("agentOverview.attention.settings")
+                    if definition.lastError?.nilIfEmpty != nil {
+                        Button(model.isClearingAgentWarning(definition) ? "Clearing warning…" : "Clear warning") {
+                            model.clearAgentWarning(definition)
+                        }
+                        .disabled(model.isClearingAgentWarning(definition))
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("agentOverview.attention.clear")
+                    }
+                }
                 if overview.hasLostEventChat {
                     Text("Its chat cannot be restored. Delete this agent and configure a new one.")
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -331,45 +407,81 @@ private struct AgentDetailView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(LocusTheme.warning.opacity(0.35), lineWidth: 1)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agentOverview.attention")
     }
 
     // MARK: Stats
 
+    @ViewBuilder
+    private var workingCard: some View {
+        let working = overview.chats.filter(\.isRunning)
+        if !working.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                AgentEyebrow(title: "Working on")
+                ForEach(working) { chat in
+                    Button(chat.session.displayTitle) {
+                        inspector.show(.chat(reference, sessionID: chat.id))
+                    }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 12, weight: .medium))
+                    .accessibilityIdentifier("agentOverview.working.\(chat.id)")
+                }
+            }.agentCard()
+        } else if let task = overview.schedule, task.enabled, let next = task.nextRunDate {
+            VStack(alignment: .leading, spacing: 6) {
+                AgentEyebrow(title: "Up next")
+                Text(AgentOverviewFormatting.absolute(next))
+                    .font(.locus(size: 12, weight: .medium))
+                Text(AgentOverviewFormatting.rule(task.rule))
+                    .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+            }.agentCard()
+        }
+    }
+
     private var statsStrip: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
-            AgentStatTile(
+        VStack(alignment: .leading, spacing: 16) {
+            activityFact(
+                overview.chats.count == 1 ? "Chat" : "Chats",
                 value: "\(overview.chats.count)",
-                label: overview.chats.count == 1 ? "Chat" : "Chats",
-                caption: overview.runningChatCount > 0
-                    ? "\(overview.runningChatCount) running" : "none running",
-                captionColor: overview.runningChatCount > 0 ? LocusTheme.success : LocusTheme.textSecondary,
+                detail: overview.runningChatCount > 0 ? "\(overview.runningChatCount) working now" : "No chats are running",
                 identifier: "agentOverview.stats.chats"
             )
-            AgentStatTile(
-                value: "\(overview.eventCount)",
-                label: overview.schedule != nil
-                    ? (overview.eventCount == 1 ? "Run" : "Runs")
-                    : (overview.eventCount == 1 ? "Event" : "Events"),
-                caption: overview.failedEventCount > 0
-                    ? "\(overview.failedEventCount) failed"
-                    : (overview.schedule != nil ? "all ran" : "all delivered"),
-                captionColor: overview.failedEventCount > 0 ? LocusTheme.warning : LocusTheme.textSecondary,
+            activityFact(
+                overview.schedule != nil ? "Runs" : "Events",
+                value: "\(inspector.snapshot.history?.total ?? overview.eventCount)",
+                detail: inspector.snapshot.history.map {
+                    "Across saved history: \($0.completedCount) completed, \($0.activeCount) in progress, \($0.attentionCount) need attention."
+                } ?? "Recent loaded history only.",
                 identifier: "agentOverview.stats.events"
             )
-            AgentStatTile(
-                value: overview.lastEventAt.map { AgentOverviewFormatting.relative($0) } ?? "—",
-                label: overview.schedule != nil ? "Last run" : "Last event",
-                caption: overview.lastEventAt.map { AgentOverviewFormatting.absolute($0) }
-                    ?? "nothing yet",
-                captionColor: LocusTheme.textSecondary,
-                identifier: "agentOverview.stats.lastEvent",
-                compactValue: true
+            activityFact(
+                overview.schedule != nil ? "Last run" : "Last event",
+                value: overview.lastEventAt.map { AgentOverviewFormatting.relative($0) } ?? "None yet",
+                detail: overview.lastEventAt.map { $0.formatted(date: .abbreviated, time: .shortened) },
+                identifier: "agentOverview.stats.lastEvent"
             )
         }
+        .agentCard()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agentOverview.stats")
+    }
+
+    private func activityFact(_ title: String, value: String, detail: String?, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.locus(size: 13, weight: .medium))
+                Spacer(minLength: 8)
+                Text(value).font(.locus(size: 13, weight: .semibold))
+            }
+            if let detail {
+                Text(detail).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title): \(value). \(detail ?? "")")
+        .accessibilityIdentifier(identifier)
     }
 
     // MARK: Trigger
@@ -394,7 +506,7 @@ private struct AgentDetailView: View {
                         Text(task.nextRunDate.map {
                             "Next run \(AgentOverviewFormatting.absolute($0))"
                         } ?? (task.enabled ? "No next run" : "Paused"))
-                            .font(.locus(size: 8))
+                            .font(.locus(size: 12))
                             .foregroundStyle(LocusTheme.textSecondary)
                             .lineLimit(2)
                     }
@@ -422,7 +534,7 @@ private struct AgentDetailView: View {
                             .foregroundStyle(LocusTheme.ink)
                             .lineLimit(1)
                         Text(triggerSourceDetail(trigger))
-                            .font(.locus(size: 8))
+                            .font(.locus(size: 12))
                             .foregroundStyle(LocusTheme.textSecondary)
                             .lineLimit(2)
                     }
@@ -437,11 +549,11 @@ private struct AgentDetailView: View {
                 if let priceState = overview.priceState {
                     HStack(spacing: 6) {
                         Image(systemName: "waveform.path.ecg")
-                            .font(.locus(size: 9, weight: .semibold))
+                            .font(.locus(size: 12, weight: .semibold))
                             .foregroundStyle(LocusTheme.signalDeep)
                             .accessibilityHidden(true)
                         Text(priceState)
-                            .font(.locus(size: 8, weight: .medium, design: .monospaced))
+                            .font(.locus(size: 12, weight: .medium, design: .monospaced))
                             .foregroundStyle(LocusTheme.textSecondary)
                             .lineLimit(2)
                     }
@@ -449,7 +561,7 @@ private struct AgentDetailView: View {
                 }
             } else {
                 Text(overview.status.detail(for: overview.vocabulary))
-                    .font(.locus(size: 9))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -481,13 +593,13 @@ private struct AgentDetailView: View {
                 Text(overview.definition == nil
                     ? "No instruction is stored without a trigger."
                     : "No instruction yet — the agent receives each event as is.")
-                    .font(.locus(size: 9))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(overview.instruction)
-                        .font(.locus(size: 9))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.ink)
                         .lineSpacing(2)
                         .lineLimit(instructionExpanded ? nil : 5)
@@ -496,10 +608,10 @@ private struct AgentDetailView: View {
                         .accessibilityIdentifier("agentOverview.instruction")
                     if overview.instruction.count > 220 || overview.instruction.contains("\n") {
                         Button(instructionExpanded ? "Show less" : "Show more") {
-                            instructionExpanded.toggle()
+                            inspector.presentation[context, default: AgentInspectorPresentation()].expandedInstructions.toggle()
                         }
                         .buttonStyle(.locus())
-                        .font(.locus(size: 8, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityIdentifier("agentOverview.instruction.toggle")
                     }
@@ -529,10 +641,10 @@ private struct AgentDetailView: View {
                 Spacer(minLength: 4)
                 if overview.definition != nil {
                     Button {
-                        model.newAgentChat(triggerID: overview.agentID)
+                        model.newAgentChat(reference: reference)
                     } label: {
                         Label("New", systemImage: "plus")
-                            .font(.locus(size: 8, weight: .semibold))
+                            .font(.locus(size: 12, weight: .semibold))
                             .foregroundStyle(LocusTheme.signalDeep)
                             .padding(.horizontal, 6)
                             .frame(minHeight: 22)
@@ -548,7 +660,7 @@ private struct AgentDetailView: View {
             if let eventChat = overview.eventChat, overview.chats.count > 1 {
                 Text("\(overview.vocabulary.arrivals.capitalized) arrive in"
                     + " \(eventChat.session.displayTitle). Other chats are side conversations.")
-                    .font(.locus(size: 8))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agentOverview.chats.explainer")
@@ -559,15 +671,14 @@ private struct AgentDetailView: View {
                     : "No chats yet. Every \(overview.vocabulary.arrival) arrives in this agent's"
                         + " \(overview.vocabulary.arrival) chat; New chat starts a side conversation"
                         + " that does not receive \(overview.vocabulary.arrivals).")
-                    .font(.locus(size: 9))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 2) {
                     ForEach(overview.chats) { chat in
                         AgentChatRow(chat: chat, vocabulary: overview.vocabulary) {
-                            guard !chat.isCurrent else { return }
-                            model.resume(chat.session)
+                            inspector.show(.chat(reference, sessionID: chat.id))
                         }
                     }
                 }
@@ -585,38 +696,44 @@ private struct AgentDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 AgentEyebrow(
-                    title: overview.schedule != nil ? "Recent runs" : "Recent events",
-                    count: overview.eventCount
+                    title: overview.schedule != nil ? "Runs" : "Events",
+                    count: inspector.snapshot.history?.total ?? overview.eventCount
                 )
                 Spacer(minLength: 4)
-                if overview.eventCount > overview.events.count, let trigger = overview.trigger {
-                    Button("View all") {
-                        model.presentConfigureAgent(focusing: trigger, tab: .runHistory)
-                    }
-                    .buttonStyle(.locus())
-                    .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
-                    .accessibilityIdentifier("agentOverview.events.viewAll")
-                }
             }
-            if overview.events.isEmpty {
+            if historyEvents.isEmpty {
                 Text(overview.schedule != nil
                     ? "No runs yet. Each run continues this agent's chat and appears here with its outcome."
                     : (overview.definition?.enabled == false
                         ? "Paused agents keep recording events; none have arrived yet."
                         : "Nothing has reached this agent yet. Matching events will appear here with their outcome."))
-                    .font(.locus(size: 9))
+                    .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 6) {
-                    ForEach(overview.events) { event in
+                    ForEach(historyEvents) { event in
                         AgentEventRow(
                             event: event,
                             retrying: automation.retryingDeliveryIDs.contains(event.id),
+                            allowsRetry: inspector.snapshot.history?.workflowExecutionIDs?[event.id] == nil
+                                && overview.trigger?.workflowPersisted != true,
                             onRetry: { if let delivery = event.delivery { automation.retry(delivery) } },
-                            onOpenChat: openChat(for: event)
+                            onOpenChat: nil,
+                            onInspect: {
+                                inspector.show(reference.kind == .event
+                                    ? .event(reference, deliveryID: event.id)
+                                    : .occurrence(reference, occurrenceID: event.id))
+                            }
                         )
+                    }
+                    if inspector.snapshot.history?.nextCursor != nil {
+                        Button(inspector.isLoading ? "Loading…" : "Load more") {
+                            Task { await inspector.refresh(backend: model.backend, append: true) }
+                        }
+                        .disabled(inspector.isLoading)
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("agentOverview.events.loadMore")
                     }
                 }
             }
@@ -625,6 +742,13 @@ private struct AgentDetailView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Recent \(overview.vocabulary.arrivals)")
         .accessibilityIdentifier("agentOverview.events")
+    }
+
+    private var historyEvents: [AgentOverview.Event] {
+        guard let history = inspector.snapshot.history else { return overview.events }
+        return reference.kind == .event
+            ? (history.deliveries ?? []).map(AgentOverview.Event.init(delivery:))
+            : (history.occurrences ?? []).map(AgentOverview.Event.init(occurrence:))
     }
 
     private func openChat(for event: AgentOverview.Event) -> (() -> Void)? {
@@ -654,7 +778,7 @@ private struct AgentFleetView: View {
                 header
                 if let error = automation.lastError, !error.isEmpty, entries.isEmpty {
                     Text(error)
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.warning)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .agentCard()
@@ -663,7 +787,7 @@ private struct AgentFleetView: View {
                     emptyState
                 } else {
                     VStack(spacing: 6) {
-                        ForEach(entries) { entry in
+                        ForEach(entries, id: \.inspectorID) { entry in
                             AgentFleetRow(entry: entry) { open(entry) }
                         }
                     }
@@ -684,7 +808,7 @@ private struct AgentFleetView: View {
                         .font(.locus(size: 13, weight: .bold))
                         .foregroundStyle(LocusTheme.ink)
                     Text(fleetSummary)
-                        .font(.locus(size: 8, weight: .medium))
+                        .font(.locus(size: 12, weight: .medium))
                         .foregroundStyle(LocusTheme.textSecondary)
                         .lineLimit(2)
                         .accessibilityIdentifier("agentOverview.fleet.summary")
@@ -737,7 +861,7 @@ private struct AgentFleetView: View {
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
             Text("An agent waits on something — Gmail, Telegram, a webhook, a price, or a schedule — and does its own work in its own chats. Configure one and it appears here.")
-                .font(.locus(size: 9))
+                .font(.locus(size: 12))
                 .foregroundStyle(LocusTheme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -750,7 +874,7 @@ private struct AgentFleetView: View {
     }
 
     private func open(_ entry: AgentFleetEntry) {
-        model.selectAgent(entry.id)
+        model.selectAgent(AgentInspectorAgent(entry.definition))
     }
 }
 
@@ -800,7 +924,7 @@ private struct AgentStatusPill: View {
                 .fill(color)
                 .frame(width: 6, height: 6)
             Text(status.title(for: vocabulary))
-                .font(.locus(size: 8, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
                 .lineLimit(1)
         }
@@ -828,12 +952,12 @@ private struct AgentActionButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.locus(size: 8, weight: .bold))
+                    .font(.locus(size: 12, weight: .bold))
                     .accessibilityHidden(true)
                 Text(title)
                     .lineLimit(1)
             }
-            .font(.locus(size: 8, weight: .semibold))
+            .font(.locus(size: 12, weight: .semibold))
             .foregroundStyle(prominent ? LocusTheme.paper : LocusTheme.textSecondary)
             .padding(.horizontal, 9)
             .frame(height: 26)
@@ -871,12 +995,12 @@ private struct AgentStatTile: View {
                 .minimumScaleFactor(0.7)
                 .frame(height: 18, alignment: .leading)
             Text(label.uppercased())
-                .font(.locus(size: 7, weight: .bold))
+                .font(.locus(size: 10, weight: .bold))
                 .tracking(0.5)
                 .foregroundStyle(LocusTheme.muted)
                 .lineLimit(1)
             Text(caption)
-                .font(.locus(size: 7, weight: .medium))
+                .font(.locus(size: 10, weight: .medium))
                 .foregroundStyle(captionColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
@@ -903,7 +1027,7 @@ private struct AgentEyebrow: View {
 
     var body: some View {
         Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())
-            .font(.locus(size: 7, weight: .bold))
+            .font(.locus(size: 10, weight: .bold))
             .tracking(0.5)
             .foregroundStyle(LocusTheme.muted)
             .lineLimit(1)
@@ -916,12 +1040,12 @@ private struct AgentFactRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(fact.label)
-                .font(.locus(size: 8))
+                .font(.locus(size: 12))
                 .foregroundStyle(LocusTheme.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 4)
             Text(fact.value)
-                .font(.locus(size: 8, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(fact.isWarning ? LocusTheme.warning : LocusTheme.textSecondary)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(2)
@@ -953,7 +1077,7 @@ private struct AgentChatRow: View {
                             .lineLimit(1)
                         if chat.isEventTarget {
                             Text(vocabulary.badge)
-                                .font(.locus(size: 7, weight: .bold))
+                                .font(.locus(size: 10, weight: .bold))
                                 .tracking(0.4)
                                 .foregroundStyle(LocusTheme.signalDeep)
                                 .padding(.horizontal, 5)
@@ -978,13 +1102,13 @@ private struct AgentChatRow: View {
                         }
                     }
                     .lineLimit(1)
-                    .font(.locus(size: 8))
+                    .font(.locus(size: 12))
                     .foregroundStyle(chat.isRunning ? LocusTheme.success : LocusTheme.textSecondary)
                 }
                 Spacer(minLength: 4)
                 if !chat.isCurrent {
                     Image(systemName: "chevron.right")
-                        .font(.locus(size: 8, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityHidden(true)
                 }
@@ -1010,8 +1134,10 @@ private struct AgentChatRow: View {
 private struct AgentEventRow: View {
     let event: AgentOverview.Event
     let retrying: Bool
+    var allowsRetry = true
     let onRetry: () -> Void
     let onOpenChat: (() -> Void)?
+    var onInspect: (() -> Void)? = nil
 
     private var stateColor: Color {
         if event.isFailed { return LocusTheme.warning }
@@ -1026,19 +1152,19 @@ private struct AgentEventRow: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Image(systemName: event.sourceSymbol)
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .frame(width: 14)
                     .accessibilityHidden(true)
                 Text(event.title)
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.ink)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 HStack(spacing: 4) {
                     Circle().fill(stateColor).frame(width: 5, height: 5)
                     Text(event.stateTitle)
-                        .font(.locus(size: 7, weight: .bold))
+                        .font(.locus(size: 10, weight: .bold))
                         .foregroundStyle(stateColor)
                 }
                 .accessibilityHidden(true)
@@ -1047,7 +1173,7 @@ private struct AgentEventRow: View {
                 Text(AgentOverviewFormatting.relative(event.receivedAt))
                 if let price = event.observedPrice {
                     Text("· \(price)")
-                        .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                        .font(.locus(size: 12, weight: .semibold, design: .monospaced))
                 }
                 if event.attempt > 1 {
                     Text("· attempt \(event.attempt)")
@@ -1057,28 +1183,33 @@ private struct AgentEventRow: View {
                         .foregroundStyle(LocusTheme.signalDeep)
                 }
                 Spacer(minLength: 0)
-                if event.canRetry {
+                if let onInspect {
+                    Button("Details", action: onInspect)
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("agentOverview.event.\(event.id).details")
+                }
+                if event.canRetry && allowsRetry {
                     Button(retrying ? "Retrying…" : "Retry", action: onRetry)
                         .disabled(retrying)
                         .buttonStyle(.locus())
-                        .font(.locus(size: 8, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityIdentifier("agentOverview.event.\(event.id).retry")
                 }
                 if let onOpenChat {
                     Button("Open chat", action: onOpenChat)
                         .buttonStyle(.locus())
-                        .font(.locus(size: 8, weight: .semibold))
+                        .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityIdentifier("agentOverview.event.\(event.id).open")
                 }
             }
-            .font(.locus(size: 8))
+            .font(.locus(size: 12))
             .foregroundStyle(LocusTheme.textSecondary)
             .padding(.leading, 21)
             if let error = event.error?.nilIfEmpty {
                 Text(error)
-                    .font(.locus(size: 8))
+                    .font(.locus(size: 12))
                     .foregroundStyle(event.isSkipped ? LocusTheme.textSecondary : LocusTheme.warning)
                     .lineLimit(2)
                     .padding(.leading, 21)
@@ -1121,11 +1252,11 @@ private struct AgentFleetRow: View {
                         .foregroundStyle(LocusTheme.ink)
                         .lineLimit(1)
                     Text(entry.summary)
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 12))
                         .foregroundStyle(LocusTheme.textSecondary)
                         .lineLimit(1)
                     Text(detail)
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 12))
                         .foregroundStyle(entry.runningChatCount > 0 ? LocusTheme.success : LocusTheme.textSecondary)
                         .lineLimit(1)
                 }
@@ -1159,7 +1290,7 @@ private struct AgentChipFlow: View {
         AgentFlowLayout(spacing: 5) {
             ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                 Text(chip)
-                    .font(.locus(size: 8, weight: .medium))
+                    .font(.locus(size: 12, weight: .medium))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(1)
                     .padding(.horizontal, 7)

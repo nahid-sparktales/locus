@@ -40,6 +40,7 @@ Each package's complete license text is retained in its installed
 | charset-normalizer | 3.4.9 | MIT |
 | click | 8.4.2 | BSD-3-Clause |
 | cryptography | 50.0.0 | Apache-2.0 OR BSD-3-Clause |
+| et-xmlfile | 2.0.0 | MIT |
 | fastapi | 0.141.1 | MIT |
 | googleapis-common-protos | 1.75.1 | Apache-2.0 |
 | h11 | 0.16.0 | MIT |
@@ -48,10 +49,12 @@ Each package's complete license text is retained in its installed
 | idna | 3.18 | BSD-3-Clause |
 | jsonschema | 4.26.0 | MIT |
 | jsonschema-specifications | 2025.9.1 | MIT |
+| lxml | 6.1.3 | BSD-3-Clause and bundled permissive library licenses |
 | markdown-it-py | 4.2.0 | MIT |
 | mcp | 2.0.0 | MIT |
 | mcp-types | 2.0.0 | MIT |
 | mdurl | 0.1.2 | MIT |
+| openpyxl | 3.1.5 | MIT |
 | opentelemetry-api | 1.44.0 | Apache-2.0 |
 | opentelemetry-exporter-otlp-proto-common | 1.44.0 | Apache-2.0 |
 | opentelemetry-exporter-otlp-proto-http | 1.44.0 | Apache-2.0 |
@@ -66,6 +69,7 @@ Each package's complete license text is retained in its installed
 | Pygments | 2.20.0 | BSD-2-Clause |
 | PyJWT | 2.13.0 | MIT |
 | PySocks | 1.7.1 | BSD-3-Clause |
+| python-docx | 1.2.0 | MIT |
 | python-multipart | 0.0.32 | Apache-2.0 |
 | referencing | 0.37.0 | MIT |
 | requests | 2.34.2 | Apache-2.0 |

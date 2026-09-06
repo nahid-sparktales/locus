@@ -193,3 +193,16 @@ POST /api/config
 POST /api/context/reload
 WEBSOCKET /ws/internal/codex
 WEBSOCKET /ws/chat
+DELETE /api/documents/{document_id}
+GET /api/document-jobs
+GET /api/document-jobs/{job_id}
+GET /api/document-jobs/{job_id}/result
+GET /api/documents
+GET /api/event-deliveries/{delivery_id}
+GET /api/event-triggers/{trigger_id}/history
+GET /api/schedule-occurrences/{occurrence_id}
+GET /api/schedules/{schedule_id}/history
+POST /api/document-jobs
+POST /api/document-jobs/upload
+POST /api/document-jobs/{job_id}/cancel
+POST /api/documents/{document_id}/exclude

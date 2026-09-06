@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Workspace Library.** Documents and Outputs share one home without replacing
+  the open chat or its draft. Opt-in document knowledge supports PDF, Word,
+  spreadsheets, and delimited tables, including local PDF text recognition.
+- **Saved output versions.** Deliverables have immutable snapshots, source-chat
+  links, export, comparisons, and revision drafts. Existing available outputs
+  are imported as their current version; unavailable originals remain visible.
+- **Resumable Getting Started.** Document/research and coding examples reuse
+  existing model connections and workspaces. A first task succeeds only when
+  its response finishes and its output has been saved.
+- **Contextual Agent inspector.** Agent, chat, event, scheduled occurrence, and
+  run selections retain their exact identity, with scoped history, execution
+  attempts, useful results, and recovery actions.
+
+### Changed
+
+- Generated reports inside build folders can be captured in Outputs. Saved
+  history remains available when original workspace files disappear.
+- Agent progress and outcomes appear before configuration. Automation state,
+  delivery state, and execution outcomes have distinct labels.
+
+
 ## 2.3.0 — 2026-09-03
 
 ### Added

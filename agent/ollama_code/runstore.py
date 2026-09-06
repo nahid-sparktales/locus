@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import paths
+from .agent_inspector_store import AgentInspectorStore
 from .automation_workflows import (
     WorkflowValidationError,
     agent_prompt,
@@ -49,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -136,7 +137,7 @@ def _alive(pid: int) -> bool:
         return False
 
 
-class RunStore:
+class RunStore(AgentInspectorStore):
     """Thread-safe SQLite facade shared by the control and worker services."""
 
     def __init__(self, path: Path | None = None) -> None:
@@ -684,6 +685,46 @@ class RunStore:
                     """
                 )
                 connection.execute("UPDATE schema_meta SET version=11 WHERE singleton=1")
+                connection.commit()
+            if version < 12:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS agent_execution_links ("
+                    "kind TEXT NOT NULL, item_id TEXT NOT NULL, run_id TEXT NOT NULL,"
+                    "attempt INTEGER NOT NULL, created_at REAL NOT NULL,"
+                    "PRIMARY KEY(kind, item_id, run_id))"
+                )
+                # Preserve known associations before retries can clear the
+                # current pointer. Missing runs remain honest unavailable links.
+                connection.execute(
+                    "INSERT OR IGNORE INTO agent_execution_links"
+                    " SELECT 'event', id, run_id, attempt, created_at FROM event_deliveries"
+                    " WHERE run_id IS NOT NULL AND run_id != ''"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO agent_execution_links"
+                    " SELECT 'schedule', id, run_id, 0, created_at FROM schedule_occurrences"
+                    " WHERE run_id IS NOT NULL AND run_id != ''"
+                )
+                # Older attempts can also be recovered from authoritative run
+                # provenance, never guessed from a shared chat or timestamp.
+                for row in connection.execute("SELECT id, manifest_json, occurrence_id, created_at FROM runs").fetchall():
+                    try:
+                        manifest = json.loads(row["manifest_json"] or "{}")
+                    except (TypeError, ValueError):
+                        manifest = {}
+                    if not isinstance(manifest, dict):
+                        manifest = {}
+                    delivery_id = manifest.get("event_delivery_id")
+                    item_id = delivery_id or row["occurrence_id"]
+                    if item_id:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO agent_execution_links VALUES(?, ?, ?, ?, ?)",
+                            ("event" if delivery_id else "schedule", item_id, row["id"],
+                             manifest.get("event_attempt") if isinstance(manifest.get("event_attempt"), int) else 0,
+                             row["created_at"]),
+                        )
+                connection.execute("UPDATE schema_meta SET version=12 WHERE singleton=1")
                 connection.commit()
             # A model turn that died with the previous app process is never
             # silently replayed. Keep the session lease and make the exact
@@ -1726,8 +1767,7 @@ class RunStore:
                 """
                 UPDATE event_triggers SET name=?, connection_id=?, target_session_id=?,
                     instruction=?, mode=?, runner=?, team_id=?, team_name=?, trigger_kind=?, filters_json=?,
-                    action_connection_ids_json=?, workflow_json=?, enabled=?, updated_at=?,
-                    last_error=CASE WHEN ? THEN NULL ELSE last_error END
+                    action_connection_ids_json=?, workflow_json=?, enabled=?, updated_at=?
                 WHERE id=?
                 """,
                 (
@@ -1739,7 +1779,7 @@ class RunStore:
                     _json(normalized["action_connection_ids"]),
                     _json(workflow) if workflow is not None else None,
                     int(normalized["enabled"]),
-                    current, int(normalized["enabled"] and not existing["enabled"]),
+                    current,
                     trigger_id,
                 ),
             )
@@ -1991,7 +2031,19 @@ class RunStore:
         return self._event_delivery_row(row) if row is not None else None
 
     def pending_event_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        return list(reversed(self.event_deliveries(state="pending", limit=limit)))
+        # An explicit retry is one delivery, even while future arrivals remain
+        # paused. Held arrivals must not occupy the dispatch page or FIFO head.
+        with self._lock, self._connect(readonly=True) as connection:
+            rows = connection.execute(
+                "SELECT deliveries.id FROM event_deliveries deliveries"
+                " JOIN event_triggers triggers ON triggers.id=deliveries.trigger_id"
+                " JOIN connector_connections sources ON sources.id=triggers.connection_id"
+                " WHERE deliveries.state='pending' AND triggers.deleted=0"
+                " AND sources.enabled=1 AND (triggers.enabled=1 OR deliveries.attempt>0)"
+                " ORDER BY deliveries.received_at, deliveries.created_at, deliveries.id LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        return [item for row in rows if (item := self.event_delivery(row["id"])) is not None]
 
     def claim_event_delivery(
         self, delivery_id: str, *, now: float | None = None
@@ -2016,7 +2068,7 @@ class RunStore:
                 raise RunStoreError("event delivery not found")
             if row["state"] != "pending":
                 raise RunStoreError("event delivery is not pending")
-            if not row["trigger_enabled"] or not row["connection_enabled"]:
+            if (not row["trigger_enabled"] and row["attempt"] == 0) or not row["connection_enabled"]:
                 raise RunStoreError("event trigger or connector is paused")
             session_id = str(row["target_session_id"])
             claiming = connection.execute(
@@ -2034,7 +2086,10 @@ class RunStore:
                 """
                 SELECT deliveries.id FROM event_deliveries AS deliveries
                 JOIN event_triggers AS triggers ON triggers.id=deliveries.trigger_id
+                JOIN connector_connections AS sources ON sources.id=triggers.connection_id
                 WHERE triggers.target_session_id=? AND deliveries.state='pending'
+                    AND triggers.deleted=0 AND sources.enabled=1
+                    AND (triggers.enabled=1 OR deliveries.attempt>0)
                 ORDER BY deliveries.received_at, deliveries.created_at, deliveries.id LIMIT 1
                 """,
                 (session_id,),
@@ -2077,10 +2132,15 @@ class RunStore:
         current = time.time()
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT trigger_id FROM event_deliveries WHERE id=?", (delivery_id,)
+                "SELECT trigger_id, attempt FROM event_deliveries WHERE id=?", (delivery_id,)
             ).fetchone()
             if row is None:
                 raise RunStoreError("event delivery not found")
+            if run_id:
+                connection.execute(
+                    "INSERT OR IGNORE INTO agent_execution_links VALUES('event', ?, ?, ?, ?)",
+                    (delivery_id, run_id, row["attempt"], current),
+                )
             connection.execute(
                 "UPDATE event_deliveries SET state=?, run_id=?, error=?, updated_at=? WHERE id=?",
                 (state, run_id or None, error[:4_000] or None, current, delivery_id),
@@ -2092,13 +2152,10 @@ class RunStore:
         return self.event_delivery(delivery_id) or {}
 
     def retry_event_delivery(self, delivery_id: str) -> dict[str, Any]:
-        """Atomically reset one failed event and the warning it caused.
+        """Atomically queue one explicit attempt without resuming the agent.
 
-        The delivery state check used to happen before the write lock. Two
-        quick Retry presses could both approve the same old state and advance
-        the attempt twice. The trigger also stayed paused with ``last_error``
-        set, so the reset delivery could never be claimed and every warning UI
-        remained visible.
+        Pause and warning acknowledgement are independent actions. The
+        positive attempt authorizes dispatch of this item while paused.
         """
         if self.read_only:
             raise RunStoreError("the run database is read-only")
@@ -2124,6 +2181,12 @@ class RunStore:
                 effective_state = str(row["run_state"])
             if effective_state not in {"failed", "interrupted", "cancelled"}:
                 raise RunStoreError("only stopped event deliveries can be retried")
+            workflow = connection.execute(
+                "SELECT id FROM automation_executions WHERE automation_kind='event' AND occurrence_id=?",
+                (delivery_id,),
+            ).fetchone()
+            if workflow is not None:
+                raise RunStoreError("review the workflow to retry its failed step")
             cursor = connection.execute(
                 """
                 UPDATE event_deliveries
@@ -2135,16 +2198,6 @@ class RunStore:
             )
             if cursor.rowcount != 1:
                 raise RunStoreError("event delivery changed before it could be retried")
-            # Reset only the warning produced by this delivery. A newer failed
-            # run must keep its own warning even if someone retries old history.
-            connection.execute(
-                """
-                UPDATE event_triggers
-                SET enabled=1, last_error=NULL, updated_at=?
-                WHERE id=? AND last_run_id IS ?
-                """,
-                (current, row["trigger_id"], row["run_id"]),
-            )
         return self.event_delivery(delivery_id) or {}
 
     def acknowledge_event_delivery(
@@ -2352,8 +2405,11 @@ class RunStore:
             ).fetchall()
         return [self._automation_execution_row(row) for row in rows]
 
-    def attention_items(self, *, limit: int = 500) -> list[dict[str, Any]]:
+    def attention_items(
+        self, *, limit: int = 500, run_id: str = "", workflow_execution_id: str = ""
+    ) -> list[dict[str, Any]]:
         """Project unresolved action state without creating a second inbox store."""
+        selected_run_id = run_id
         bounded = max(1, min(int(limit), 1_000))
         items: list[dict[str, Any]] = []
         workflow_run_ids: set[str] = set()
@@ -2559,6 +2615,10 @@ class RunStore:
                     detail_priority.get(str(existing["kind"]), 4):
                 deduplicated[key] = item
         items = list(deduplicated.values())
+        if selected_run_id or workflow_execution_id:
+            items = [item for item in items if
+                     (not selected_run_id or item.get("run_id") == selected_run_id)
+                     and (not workflow_execution_id or item.get("workflow_execution_id") == workflow_execution_id)]
         group_order = {"decisions": 0, "recoveries": 1, "configuration": 2}
         items.sort(key=lambda item: (
             group_order.get(str(item.get("group")), 3),
@@ -3122,8 +3182,7 @@ class RunStore:
                     name=?, prompt=?, workspace_root=?, mode=?,
                     execution_environment=?, runner=?, team_id=?, team_name=?,
                     provider=?, provider_account_id=?, model=?, timezone=?,
-                    rule_json=?, workflow_json=?, enabled=?, next_run_at=?, updated_at=?,
-                    last_error=CASE WHEN ? THEN NULL ELSE last_error END
+                    rule_json=?, workflow_json=?, enabled=?, next_run_at=?, updated_at=?
                 WHERE id=?
                 """,
                 (
@@ -3135,7 +3194,7 @@ class RunStore:
                     schedule["timezone"], _json(schedule["rule"]),
                     _json(workflow) if workflow is not None else None,
                     int(schedule["enabled"]), schedule["next_run_at"], current,
-                    int(reenabled), schedule_id,
+                    schedule_id,
                 ),
             )
         return self.schedule(schedule_id) or existing
@@ -3310,6 +3369,11 @@ class RunStore:
             if row is None:
                 raise RunStoreError("schedule occurrence not found")
             occurrence = self._occurrence_row(row)
+            if run_id:
+                connection.execute(
+                    "INSERT OR IGNORE INTO agent_execution_links VALUES('schedule', ?, ?, 0, ?)",
+                    (occurrence_id, run_id, current),
+                )
             connection.execute(
                 """
                 UPDATE schedule_occurrences SET state=?, session_id=?, run_id=?,
@@ -3415,6 +3479,13 @@ class RunStore:
                         " retry_parent_id=? WHERE id=?",
                         (position, message_id[:160], retry_parent_id[:160] or None, run_id),
                     )
+                    if retry_parent_id:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO agent_execution_links"
+                            " SELECT kind, item_id, ?, attempt+1, ? FROM agent_execution_links"
+                            " WHERE run_id=?",
+                            (run_id, time.time(), retry_parent_id),
+                        )
         return self.run(run_id) or {}
 
     def queue_run_if_idle(self, run_id: str, *, session_id: str, **fields: Any) -> dict[str, Any]:

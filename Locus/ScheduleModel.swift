@@ -14,6 +14,7 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var isRefreshingSchedules = false
     @Published private(set) var occurrencesBySchedule: [String: [ScheduleOccurrence]] = [:]
     @Published private(set) var clearingWarningIDs: Set<String> = []
+    @Published private(set) var changingEnabledIDs: Set<String> = []
     /// Whether the schedule list has ever loaded. Until it has, a schedule
     /// that is not in `scheduledTasks` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
@@ -184,9 +185,10 @@ final class ScheduleModel: ObservableObject {
     }
 
     func setScheduleEnabled(_ task: ScheduledTask, enabled: Bool) {
-        guard let backend else { return }
+        guard let backend, changingEnabledIDs.insert(task.id).inserted else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { changingEnabledIDs.remove(task.id) }
             do {
                 let updated: ScheduledTask = try await backend.patch(
                     "/api/schedules/\(task.id)", body: ["enabled": enabled],

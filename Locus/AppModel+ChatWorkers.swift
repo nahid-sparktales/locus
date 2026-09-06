@@ -33,6 +33,7 @@ extension AppModel {
             providerAccountID: routedAccountID
         )
         workerEnvironment["LOCUS_MODEL_CALL_LIMIT"] = String(globalAgentConcurrency)
+        workerEnvironment["LOCUS_DOCUMENT_COORDINATOR"] = "0"
         var brokerComponents = URLComponents(
             url: backend.currentBaseURL,
             resolvingAgainstBaseURL: false
@@ -68,6 +69,7 @@ extension AppModel {
         runtime.process.onUnexpectedExit = { [weak self, weak runtime] _, output in
             Task { @MainActor in
                 guard let self, let runtime else { return }
+                self.outputsLibrary.endRun(sessionID: runtime.sessionID)
                 if let key = self.taskWorkers.first(where: { $0.value === runtime })?.key {
                     self.taskWorkers.removeValue(forKey: key)
                 }
@@ -428,6 +430,10 @@ extension AppModel {
                 runtime.recordTurnAcceptance(requestID)
             } else if type == "run_started" || type == "orchestration_started",
                       let runID = event["run_id"] as? String {
+                if (event["session_id"] as? String ?? runtime.sessionID) == runtime.sessionID {
+                    outputsLibrary.bindRunIdentity(workspace: runtime.workspacePath, sessionID: runtime.sessionID,
+                        runID: runID, occurredAt: (event["occurred_at"] as? Double).map { Date(timeIntervalSince1970: $0) })
+                }
                 // The start boundary is also sufficient acknowledgement and
                 // keeps a mixed-version development runtime from timing out.
                 runtime.recordTurnAcceptance(runID)
@@ -451,6 +457,10 @@ extension AppModel {
         runtime: ChatWorkerRuntime
     ) {
         guard let type = event["type"] as? String else { return }
+        outputsLibrary.recordToolEffects(
+            event, workspace: runtime.workspacePath, sessionID: runtime.sessionID,
+            runID: (event["run_id"] as? String) ?? runtime.reservedRunID
+        )
         let previous = taskConversationStates[runtime.sessionID]
         var state = previous?.state ?? runtime.executionState
         if type == "message_start" || type == "assistant_item_start" {
@@ -565,6 +575,19 @@ extension AppModel {
         if type == "turn_done" {
             completeAutomationWorkflowStep(from: event)
             let reason = event["reason"] as? String ?? "complete"
+            outputsLibrary.endRun(sessionID: runtime.sessionID)
+            if let overview = sessionOverview.states[runtime.sessionID] {
+                let summary = SessionRunSummary(
+                    completedSteps: overview.plan.filter { $0.state == .done }.count,
+                    totalSteps: overview.plan.count,
+                    durationMs: (event["duration_ms"] as? Int)
+                        ?? runtime.startedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) } ?? 0,
+                    endedAt: Self.sessionTimestamp,
+                    summary: reason == "complete" ? "The task completed." : "The task stopped before finishing.",
+                    outcome: reason == "complete" ? .completed : .failed
+                )
+                sessionOverview.emit(.runFinished(summary: summary, suggestions: nil, at: Self.sessionTimestamp), sessionID: runtime.sessionID)
+            }
             recordAutomaticModelRoutingOutcome(
                 sessionID: runtime.sessionID,
                 reason: reason,

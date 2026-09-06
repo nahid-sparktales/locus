@@ -20,6 +20,7 @@ final class EventAutomationModel: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var retryingDeliveryIDs: Set<String> = []
     @Published private(set) var clearingWarningIDs: Set<String> = []
+    @Published private(set) var changingEnabledIDs: Set<String> = []
     /// Whether the trigger list has ever loaded. Until it has, an agent that
     /// is not in `triggers` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
@@ -395,8 +396,11 @@ final class EventAutomationModel: ObservableObject {
     }
 
     func setTrigger(_ trigger: EventTrigger, enabled: Bool) {
+        guard changingEnabledIDs.insert(trigger.id).inserted else { return }
         Task { [weak self] in
-            guard let self, let backend else { return }
+            guard let self else { return }
+            defer { changingEnabledIDs.remove(trigger.id) }
+            guard let backend else { return }
             do {
                 let updated: EventTrigger = try await backend.patch(
                     "/api/event-triggers/\(trigger.id)", body: ["enabled": enabled],
@@ -482,7 +486,6 @@ final class EventAutomationModel: ObservableObject {
             )
             replace(response.delivery)
             replace(response.trigger)
-            onWarningResolved?(previousRunID)
             wakeDispatcher()
             return true
         } catch {

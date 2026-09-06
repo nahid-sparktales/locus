@@ -13,6 +13,15 @@ struct PendingEventTriggerEdit: Equatable {
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
+    var agentDefinitions: [AgentDefinition] {
+        eventAutomations.triggers.map(AgentDefinition.trigger) + schedule.scheduledTasks.map(AgentDefinition.schedule)
+    }
+
+    var inspectedAgentReference: AgentInspectorAgent? {
+        agentInspector.selectedAgent
+            ?? agentDefinition(for: selectedAgentID).map(AgentInspectorAgent.init)
+            ?? sessionCatalog.snapshot.sessionsByID[currentSessionID]?.agentReference(in: agentDefinitions)
+    }
     /// The agent represented by the Agent inspector and footer picker. A
     /// directly resumed agent chat supplies the initial selection for older
     /// state and test fixtures that predate explicit agent selection.
@@ -26,9 +35,68 @@ extension AppModel {
     /// retargeted to this agent.
     func selectAgent(_ agentID: String) {
         guard let agentID = agentID.nilIfEmpty else { return }
+        guard let definition = agentDefinition(for: agentID) else {
+            showToast("Choose the event agent or schedule from its own row.")
+            return
+        }
+        selectAgent(AgentInspectorAgent(definition))
+    }
+
+    func selectAgent(_ reference: AgentInspectorAgent) {
+        let agentID = reference.agentID
         selectedAgentID = agentID
+        agentInspector.show(.agent(reference))
         sidebarDestination = .agents
         selectInspectorTab(.agent)
+    }
+
+    func inspectAgentChat(_ session: SessionSummary) {
+        guard session.isAgentChat else { return }
+        guard let reference = session.agentReference(in: agentDefinitions) else {
+            agentInspector.clearAgentSelection()
+            selectedAgentID = nil
+            agentInspector.show(.fleet)
+            showToast("This saved chat’s agent kind is unavailable. Choose an agent to start a new conversation.")
+            return
+        }
+        agentInspector.show(.chat(reference, sessionID: session.id))
+    }
+
+    func inspectorAgentDefinition(_ reference: AgentInspectorAgent) -> AgentDefinition? {
+        switch reference.kind {
+        case .event: eventAutomations.triggers.first { $0.id == reference.agentID }.map(AgentDefinition.trigger)
+        case .schedule: schedule.scheduledTasks.first { $0.id == reference.agentID }.map(AgentDefinition.schedule)
+        }
+    }
+
+    func inspectAgentEvent(_ context: EventTranscriptContext) {
+        let agent = AgentInspectorAgent(kind: .event, agentID: context.triggerID)
+        selectedAgentID = agent.agentID
+        agentInspector.show(.event(agent, deliveryID: context.deliveryID))
+        selectInspectorTab(.agent)
+    }
+
+    /// Resolve from durable provenance, never from whichever run happens to
+    /// be selected in the Runs tab or newest in the chat.
+    func inspectAgentRun(_ run: OrchestrationRun, reveal: Bool = true) {
+        let agent: AgentInspectorAgent
+        let origin: AgentInspectorOrigin?
+        if let scheduleID = run.scheduleID?.nilIfEmpty {
+            agent = AgentInspectorAgent(kind: .schedule, agentID: scheduleID)
+            origin = run.occurrenceID.map(AgentInspectorOrigin.occurrence)
+        } else if let triggerID = run.manifest?["event_trigger_id"]?.string?.nilIfEmpty {
+            agent = AgentInspectorAgent(kind: .event, agentID: triggerID)
+            origin = run.manifest?["event_delivery_id"]?.string.map(AgentInspectorOrigin.event)
+        } else if let sessionID = run.sessionID,
+                  let session = sessionCatalog.snapshot.sessionsByID[sessionID],
+                  let reference = session.agentReference(in: agentDefinitions),
+                  let definition = inspectorAgentDefinition(reference) {
+            agent = AgentInspectorAgent(definition)
+            origin = .chat(sessionID)
+        } else { return }
+        selectedAgentID = agent.agentID
+        agentInspector.show(.run(agent, runID: run.id, origin: origin))
+        if reveal { selectInspectorTab(.agent) }
     }
 
     /// The sidebar's primary button and ⌘N share this. Both destinations start
@@ -75,22 +143,51 @@ extension AppModel {
     /// agent; with no agents at all it opens Manage Agents, where one is made.
     func newAgentChat(triggerID: String? = nil) {
         let snapshot = sessionCatalog.snapshot
-        let requestedAgentID = triggerID?.nilIfEmpty ?? inspectedAgentID
-        guard let agent = agentSession(for: requestedAgentID, in: snapshot) else {
+        let reference: AgentInspectorAgent?
+        if let triggerID = triggerID?.nilIfEmpty {
+            reference = inspectedAgentReference.flatMap { $0.agentID == triggerID ? $0 : nil }
+                ?? agentDefinition(for: triggerID).map(AgentInspectorAgent.init)
+        } else {
+            reference = inspectedAgentReference
+                ?? agentSession(for: nil, in: snapshot)?.agentReference(in: agentDefinitions)
+        }
+        guard let reference else {
+            if let oldID = triggerID ?? snapshot.sessionsByID[currentSessionID]?.agentTriggerID,
+               agentDefinitionsLoaded {
+                showToast(agentDefinitions.contains(where: { $0.id == oldID })
+                    ? "This saved chat’s agent kind is unavailable. Choose the event agent or schedule from its own row."
+                    : "This agent was deleted. Configure a new agent to start chats.")
+                return
+            }
             presentConfigureAgent(draftText: draftText)
             return
         }
-        // Chats outlive their agent. Once the definitions are in, a missing
-        // one means the backend would refuse the chat anyway.
-        if agentDefinition(for: agent.agentTriggerID) == nil, agentDefinitionsLoaded {
+        newAgentChat(reference: reference)
+    }
+
+    func newAgentChat(reference: AgentInspectorAgent) {
+        if agentDefinitionsLoaded && inspectorAgentDefinition(reference) == nil {
             showToast("This agent was deleted. Configure a new agent to start chats.")
             return
         }
-        let number = snapshot.sessions.filter {
-            $0.agentTriggerID == agent.agentTriggerID
-        }.count + 1
         Task { @MainActor [weak self] in
-            await self?.openAgentSideChat(for: agent, name: "Chat \(number)")
+            guard let self else { return }
+            if !agentDefinitionsLoaded {
+                await eventAutomations.refresh(announceFailure: false)
+                await schedule.refreshScheduledTasks(announceFailure: false)
+            }
+            guard let definition = inspectorAgentDefinition(reference) else {
+                showToast("This agent was deleted. Configure a new agent to start chats.")
+                return
+            }
+            let chats = sessionCatalog.snapshot.sessions.filter { $0.agentReference(in: self.agentDefinitions) == reference }
+            let name = "Chat \(chats.count + 1)"
+            if let task = definition.schedule { await createScheduleChat(task, name: name); return }
+            guard let chat = chats.first(where: { $0.id == self.currentSessionID }) ?? chats.max(by: { $0.mtime < $1.mtime }) else {
+                showToast("This agent’s receiving chat is unavailable. Review its settings.")
+                return
+            }
+            await eventAutomations.createTask(for: chat, name: name)
         }
     }
 
@@ -98,11 +195,11 @@ extension AppModel {
     /// kinds have different endpoints, so guessing before both stores have
     /// answered would post a schedule's chat to the trigger route.
     private func openAgentSideChat(for agent: SessionSummary, name: String) async {
-        var definition = agentDefinition(for: agent.agentTriggerID)
+        var definition = agent.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)
         if definition == nil, !agentDefinitionsLoaded {
             await eventAutomations.refresh(announceFailure: false)
             await schedule.refreshScheduledTasks(announceFailure: false)
-            definition = agentDefinition(for: agent.agentTriggerID)
+            definition = agent.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)
         }
         guard let definition else {
             showToast("This agent was deleted. Configure a new agent to start chats.")
@@ -162,6 +259,13 @@ extension AppModel {
         }
     }
 
+    func isChangingAgentEnabled(_ definition: AgentDefinition) -> Bool {
+        switch definition {
+        case .trigger(let trigger): eventAutomations.changingEnabledIDs.contains(trigger.id)
+        case .schedule(let task): schedule.changingEnabledIDs.contains(task.id)
+        }
+    }
+
     func isClearingAgentWarning(_ definition: AgentDefinition) -> Bool {
         switch definition {
         case .trigger(let trigger):
@@ -194,7 +298,7 @@ extension AppModel {
             return .trigger(trigger)
         }
         guard session.isAgentEventChat else { return nil }
-        return agentDefinition(for: session.agentTriggerID)
+        return session.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)
     }
 
     /// Any existing chat of the agent, which is what the backend's task
@@ -206,14 +310,17 @@ extension AppModel {
     ) -> SessionSummary? {
         let current = snapshot.sessionsByID[currentSessionID]
         if let triggerID = triggerID?.nilIfEmpty {
-            if current?.agentTriggerID == triggerID { return current }
+            let reference = inspectedAgentReference.flatMap { $0.agentID == triggerID ? $0 : nil }
+                ?? agentDefinition(for: triggerID).map(AgentInspectorAgent.init)
+            guard let reference else { return nil }
+            if current?.agentReference(in: agentDefinitions) == reference { return current }
             return snapshot.sessions
-                .filter { $0.agentTriggerID == triggerID }
+                .filter { $0.agentReference(in: agentDefinitions) == reference }
                 .max { $0.mtime < $1.mtime }
         }
-        if current?.isAgentChat == true { return current }
+        if current?.agentReference(in: agentDefinitions) != nil { return current }
         return snapshot.sessions
-            .filter(\.isAgentChat)
+            .filter { $0.agentReference(in: agentDefinitions) != nil }
             .max { $0.mtime < $1.mtime }
     }
 

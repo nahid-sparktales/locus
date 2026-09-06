@@ -81,6 +81,11 @@ final class BackendProcess {
         environment["PYTHONUNBUFFERED"] = "1"
         environment["LOCUS_AGENT_TOKEN"] = BackendSecurity.launchToken
         environment["LOCUS_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        environment["LOCUS_DOCUMENT_COORDINATOR"] = "1"
+        let documentHelper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/LocusDocumentExtractor")
+        if FileManager.default.isExecutableFile(atPath: documentHelper.path) {
+            environment["LOCUS_DOCUMENT_EXTRACTOR_PATH"] = documentHelper.path
+        }
         // The bundled runtime lives inside the signed, sealed .app. A .pyc
         // written there at import time would invalidate the code signature,
         // so byte-code writing must stay off no matter where we run from.

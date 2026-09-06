@@ -86,6 +86,10 @@ targetTemplates:
         script: |
           "$SRCROOT/Tools/CleanStaleBuildProducts.sh"
     postBuildScripts:
+      - name: Build local document extractor
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/Tools/BuildDocumentExtractor.sh"
       - name: Build pinned Simulator bridge
         basedOnDependencyAnalysis: false
         script: |

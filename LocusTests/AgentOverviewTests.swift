@@ -10,6 +10,7 @@ final class AgentOverviewTests: XCTestCase {
         triggerID: String? = "weather",
         name: String? = "Weather",
         title: String? = nil,
+        kind: String? = nil,
         age: TimeInterval
     ) -> SessionSummary {
         SessionSummary(
@@ -21,6 +22,7 @@ final class AgentOverviewTests: XCTestCase {
             title: title,
             cwd: "/tmp/weather-workspace",
             agentTriggerID: triggerID,
+            agentKind: kind,
             agentName: name
         )
     }
@@ -509,7 +511,7 @@ final class AgentOverviewTests: XCTestCase {
         XCTAssertFalse(overview.events[0].isFailed)
         XCTAssertFalse(overview.events[0].isInFlight)
         XCTAssertTrue(overview.events[0].isSkipped)
-        XCTAssertEqual(overview.events[0].stateTitle, "Skipped")
+        XCTAssertEqual(overview.events[0].stateTitle, "Skipped this time")
     }
 
     func testAgentCopySaysRunsForSchedulesAndEventsForTriggers() {
@@ -818,8 +820,43 @@ final class AgentOverviewTests: XCTestCase {
     // MARK: Inspector sync
 
     @MainActor
+    func testCollidingAgentIDsKeepTheirChatsAndSelectionSeparate() {
+        let event = trigger(id: "shared")
+        let scheduled = scheduledTask(id: "shared")
+        let definitions: [AgentDefinition] = [.trigger(event), .schedule(scheduled)]
+        let eventChat = session("event-chat", triggerID: "shared", kind: "event", age: 10)
+        let scheduleChat = session("schedule-chat", triggerID: "shared", kind: "schedule", age: 20)
+        let ambiguous = session("legacy-chat", triggerID: "shared", age: 5)
+        let entries = AgentFleet.entries(triggers: [event], connections: [], schedules: [scheduled],
+            sessions: [eventChat, scheduleChat, ambiguous], runningSessionIDs: [scheduleChat.id])
+        XCTAssertEqual(Set(entries.map(\.inspectorID)).count, 2)
+        XCTAssertEqual(entries.first(where: { $0.definition.isSchedule })?.chatCount, 1)
+        XCTAssertEqual(entries.first(where: { !$0.definition.isSchedule })?.chatCount, 1)
+        XCTAssertEqual(entries.first(where: { $0.definition.isSchedule })?.runningChatCount, 1)
+        XCTAssertNil(ambiguous.agentReference(in: definitions))
+        XCTAssertEqual(ambiguous.agentReference(in: [.trigger(event)]), AgentInspectorAgent(.trigger(event)))
+        XCTAssertEqual(scheduleChat.withOrganization(folderID: "folder", sortOrder: 1).agentKind, "schedule")
+
+        let model = AppModel(startImmediately: false)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [event], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [scheduled])
+        model.sessions = [eventChat, scheduleChat, ambiguous]
+        model.currentSessionID = eventChat.id
+        model.selectAgent(AgentInspectorAgent(.schedule(scheduled)))
+        XCTAssertEqual(model.inspectedAgentReference, AgentInspectorAgent(.schedule(scheduled)))
+        XCTAssertEqual(model.agentSession(for: "shared", in: model.sessionCatalog.snapshot)?.id, scheduleChat.id)
+        XCTAssertNil(model.agentDefinition(for: "shared"))
+        model.inspectAgentChat(eventChat)
+        XCTAssertEqual(model.agentInspector.context, .chat(AgentInspectorAgent(.trigger(event)), sessionID: eventChat.id))
+        model.inspectAgentChat(ambiguous)
+        XCTAssertEqual(model.agentInspector.context, .fleet)
+        XCTAssertNil(model.agentInspector.selectedAgent)
+    }
+
+    @MainActor
     func testSelectingAnAgentKeepsTheOpenChatAndRetargetsTheInspector() {
         let model = AppModel(startImmediately: false)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [trigger(), trigger(id: "inbox")], deliveries: [])
         let weatherChat = session("weather-chat", triggerID: "weather", name: "Weather", age: 60)
         let inboxChat = session("inbox-chat", triggerID: "inbox", name: "Inbox", age: 120)
         model.sessions = [weatherChat, inboxChat]
@@ -1007,6 +1044,7 @@ final class AgentOverviewTests: XCTestCase {
     @MainActor
     func testNewChatFollowsTheSidebarDestination() {
         let model = AppModel(startImmediately: false)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [trigger()], deliveries: [])
         let agentChat = session("chat-new", age: 60)
         model.sessions = [session("plain", triggerID: nil, name: nil, age: 5), agentChat]
         let snapshot = model.sessionCatalog.snapshot

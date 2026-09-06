@@ -1143,19 +1143,19 @@ struct ActivityCenterView: View {
                         .foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
-                if activityCenter.selectedTab == .activity,
+                if activityCenter.focus == nil, activityCenter.selectedTab == .activity,
                    activityCenter.visibleActivityRuns.contains(where: { activityCenter.activityIsUnseen($0) }) {
                     Button("Mark All Seen") { activityCenter.markAllActivitySeen() }
                         .accessibilityIdentifier("activity.markAllSeen")
                 }
-                if activityCenter.selectedTab == .activity,
+                if activityCenter.focus == nil, activityCenter.selectedTab == .activity,
                    activityCenter.visibleActivityRuns.contains(where: {
                     TeamRunState(rawValue: $0.state)?.isTerminal == true
                 }) {
                     Button("Clear Finished") { model.clearFinishedActivityRuns() }
                         .accessibilityIdentifier("activity.clearFinished")
                 }
-                if activityCenter.selectedTab == .attention,
+                if activityCenter.focus == nil, activityCenter.selectedTab == .attention,
                    !unavailableAttentionItems.isEmpty {
                     Button("Clear Unavailable") {
                         clearUnavailableConfirmationPresented = true
@@ -1199,9 +1199,24 @@ struct ActivityCenterView: View {
             .padding(.vertical, 10)
             .accessibilityIdentifier("activity.tabSwitcher")
 
+            if let focus = activityCenter.focus {
+                HStack {
+                    Text(focusLabel(focus)).font(.locus(size: 13))
+                    Spacer()
+                    Button("Show all") { activityCenter.clearFocus() }
+                        .accessibilityIdentifier("activity.showAll")
+                }
+                .padding(.horizontal, 20).padding(.vertical, 8)
+                .accessibilityIdentifier("activity.focus")
+                if let error = activityCenter.focusError {
+                    Text(error).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        .padding(.horizontal, 20)
+                }
+            }
+
             if activityCenter.selectedTab == .attention {
                 attentionContent
-            } else if activityCenter.visibleActivityRuns.isEmpty {
+            } else if activityCenter.displayedActivityRuns.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
                     systemImage: "waveform.path.ecg.rectangle",
@@ -1292,11 +1307,17 @@ struct ActivityCenterView: View {
 
     private var attentionContent: some View {
         Group {
-            if activityCenter.attentionItems.isEmpty {
+            if activityCenter.displayedAttentionItems.isEmpty && activityCenter.isRefreshingFocus {
+                ProgressView("Loading this work’s requests…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if activityCenter.displayedAttentionItems.isEmpty {
                 ContentUnavailableView(
-                    "Nothing Needs Attention",
+                    activityCenter.focusError != nil ? "Requests Unavailable"
+                        : activityCenter.focus == nil ? "Nothing Needs Attention" : "No Pending Request",
                     systemImage: "checkmark.circle",
-                    description: Text("Approvals, questions, recoveries, and configuration warnings appear here.")
+                    description: Text(activityCenter.focus == nil
+                        ? "Approvals, questions, recoveries, and configuration warnings appear here."
+                        : "No unresolved request is available for the work you selected.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("attention.empty")
@@ -1304,7 +1325,7 @@ struct ActivityCenterView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(AttentionGroup.allCases) { group in
-                            let items = activityCenter.attentionItems.filter { $0.group == group }
+                            let items = activityCenter.displayedAttentionItems.filter { $0.group == group }
                             if !items.isEmpty {
                                 VStack(alignment: .leading, spacing: 7) {
                                     HStack {
@@ -1441,7 +1462,7 @@ struct ActivityCenterView: View {
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
-        let values = activityCenter.visibleActivityRuns.filter { activityGroup(for: $0) == group }
+        let values = activityCenter.displayedActivityRuns.filter { activityGroup(for: $0) == group }
         if group == .queued {
             return values.sorted {
                 ($0.queuePosition ?? .max, $0.createdAt)
@@ -1449,6 +1470,13 @@ struct ActivityCenterView: View {
             }
         }
         return values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func focusLabel(_ focus: ActivityCenterModel.Focus) -> String {
+        switch focus {
+        case .run: "Showing the selected run"
+        case .workflow: "Showing the selected workflow"
+        }
     }
 
     private func activityGroup(for run: OrchestrationRun) -> ActivityGroup {
@@ -3574,6 +3602,7 @@ struct LocusMessageMarker: View {
 }
 
 private struct IncomingEventTranscriptCard: View {
+    @EnvironmentObject private var model: AppModel
     let context: EventTranscriptContext
 
     private var actor: String {
@@ -3638,6 +3667,10 @@ private struct IncomingEventTranscriptCard: View {
             Text("Normal chat permissions still apply · source event \(context.sourceEventID)")
                 .font(.locus(size: 7, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted)
+            Button("View event") { model.inspectAgentEvent(context) }
+                .buttonStyle(.locus())
+                .font(.locus(size: 12, weight: .medium))
+                .accessibilityIdentifier("eventTranscript.\(context.deliveryID).details")
         }
         .padding(12)
         .frame(maxWidth: 620, alignment: .leading)

@@ -196,6 +196,7 @@ extension AppModel {
     }
 
     func resume(_ session: SessionSummary) {
+        inspectAgentChat(session)
         activity.activityCenterPresented = false
         if let agentID = session.agentTriggerID?.nilIfEmpty {
             selectedAgentID = agentID

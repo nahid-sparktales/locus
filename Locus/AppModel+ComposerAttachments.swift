@@ -47,19 +47,44 @@ extension AppModel {
         let existing = Set(chatAttachments.map { $0.url.standardizedFileURL })
         let selected = Array(urls.prefix(remainingSlots))
         let scopedURLs = selected.filter { $0.startAccessingSecurityScopedResource() }
+        let targetSession = currentSessionID
+        let targetWorkspace = workspacePath
+        let documents = selected.filter { ["pdf", "docx", "xlsx", "csv", "tsv"].contains($0.pathExtension.lowercased()) }
+        let ordinary = selected.filter { !documents.contains($0) }
         Task { [weak self] in
+            defer { scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() } }
             let result = await Task.detached(priority: .userInitiated) {
-                ChatAttachmentLoader.readChatAttachments(selected, excluding: existing)
+                ChatAttachmentLoader.readChatAttachments(ordinary, excluding: existing)
             }.value
-            scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
             guard let self else { return }
-            chatAttachments.append(contentsOf: result.attachments)
-            chatAttachmentNotice = result.notice
+            var attachments = result.attachments
+            var issues = [result.notice].compactMap { $0 }
+            var textBudget = max(750_000 - attachments.reduce(0) { $0 + ($1.textContent?.utf8.count ?? 0) }, 0)
+            for document in documents where !existing.contains(document.standardizedFileURL) {
+                guard targetSession == currentSessionID, targetWorkspace == workspacePath else { break }
+                do {
+                    let extracted = try await library.extractTemporary(document, workspace: targetWorkspace)
+                    let fullText = extracted.segments.map { "[\($0.locator.label)]\n\($0.text)" }.joined(separator: "\n\n")
+                    guard textBudget > 0 else { issues.append("Attachment text limit reached"); break }
+                    let bytes = Array(fullText.utf8.prefix(textBudget))
+                    let text = String(decoding: bytes, as: UTF8.self)
+                    textBudget -= bytes.count
+                    attachments.append(ChatAttachment(url: document, kind: .text, textContent: text))
+                    if extracted.truncated || bytes.count < fullText.utf8.count { issues.append("\(document.lastPathComponent): partial text attached") }
+                    issues.append(contentsOf: extracted.warnings)
+                } catch { issues.append("\(document.lastPathComponent): \(error.localizedDescription)") }
+            }
+            guard targetSession == currentSessionID, targetWorkspace == workspacePath else {
+                isLoadingChatAttachments = false
+                return
+            }
+            chatAttachments.append(contentsOf: attachments)
+            chatAttachmentNotice = issues.isEmpty ? nil : issues.joined(separator: " · ")
             isLoadingChatAttachments = false
             showToast(
-                result.attachments.isEmpty
-                    ? (result.notice ?? "No supported attachments were added")
-                    : "Attached \(result.attachments.count) file\(result.attachments.count == 1 ? "" : "s")"
+                attachments.isEmpty
+                    ? (chatAttachmentNotice ?? "No supported attachments were added")
+                    : "Attached \(attachments.count) file\(attachments.count == 1 ? "" : "s")"
             )
         }
     }

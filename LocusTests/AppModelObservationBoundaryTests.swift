@@ -44,7 +44,7 @@ final class AppModelObservationBoundaryTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(events.count, 20, "Keep this table complete as feature ownership grows")
+        XCTAssertEqual(events.count, 24, "Keep this table complete as feature ownership grows")
         withExtendedLifetime(subscription) {}
     }
 
@@ -93,6 +93,10 @@ final class AppModelObservationBoundaryTests: XCTestCase {
             FeatureEvent(name: "toasts") { app.toastCenter.objectWillChange.send() },
             FeatureEvent(name: "computer control") { app.computerControl.objectWillChange.send() },
             FeatureEvent(name: "simulator control") { app.simulatorControl.objectWillChange.send() },
+            FeatureEvent(name: "workspace library") { app.library.objectWillChange.send() },
+            FeatureEvent(name: "outputs library") { app.outputsLibrary.objectWillChange.send() },
+            FeatureEvent(name: "getting started") { app.onboarding.objectWillChange.send() },
+            FeatureEvent(name: "agent inspector") { app.agentInspector.objectWillChange.send() },
         ]
 #if !LOCUS_APP_STORE
         events.append(FeatureEvent(name: "component installer") {

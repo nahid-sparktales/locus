@@ -7,19 +7,15 @@ enum WorkspaceArtifactDestination: Equatable {
     /// named. `WorkspaceFileModel.preview` decodes UTF-8 only, so this is for
     /// text the app can actually render.
     case filesTab(line: Int?, column: Int?)
-    /// Whatever the user has chosen to open this file type with.
-    case defaultApp
+    /// An owned Library preview (PDFKit or embedded Quick Look), with explicit
+    /// Open in App and Reveal actions available in its header.
+    case libraryPreview
 }
 
 /// The single decision point for "the user activated a produced file".
 ///
-/// Previously each surface decided for itself, and the binary branch drove the
-/// shared `QLPreviewPanel` by assigning its data source directly. That panel
-/// resolves its controller from the responder chain whenever it becomes key, so
-/// with no `QLPreviewPanelController` anywhere in the app AppKit took it back
-/// and showed a blank or previously-previewed item. Routing through one
-/// function keeps the transcript link, the artifact card, and the Outputs row
-/// behaving identically.
+/// Binary artifacts use an owned Library preview. They never take control of
+/// the shared Quick Look panel or discard the user's open chat and draft.
 enum WorkspaceArtifactOpener {
     static func destination(for reference: WorkspaceArtifactReference) -> WorkspaceArtifactDestination {
         destination(kind: reference.kind, sourceLocation: reference.sourceLocation)
@@ -35,7 +31,7 @@ enum WorkspaceArtifactOpener {
         if let sourceLocation {
             return .filesTab(line: sourceLocation.line, column: sourceLocation.column)
         }
-        return kind == .source ? .filesTab(line: nil, column: nil) : .defaultApp
+        return kind == .source ? .filesTab(line: nil, column: nil) : .libraryPreview
     }
 
     /// Opens `url` in the user's default application.

@@ -316,6 +316,9 @@ extension AppModel {
                         request["solo_swarm"] = ["enabled": true]
                     }
                 }
+                outputsLibrary.beginRun(workspace: worker.workspacePath, sessionID: sessionID, runID: retry.id)
+                await outputsLibrary.flush()
+                guard !Task.isCancelled else { return }
                 worker.prepareForTurnAcceptance(retry.id)
                 guard worker.service.send(request) else {
                     worker.cancelTurnAcceptance(retry.id)
@@ -574,6 +577,9 @@ extension AppModel {
                 splitPaneBlocks[sessionID] = blocks
                 paneState(containing: sessionID)?.blocks = blocks
             }
+            outputsLibrary.beginRun(workspace: worker.workspacePath, sessionID: sessionID, runID: run.id)
+            await outputsLibrary.flush()
+            guard !Task.isCancelled else { return }
             worker.prepareForTurnAcceptance(run.id)
             guard worker.service.send(request) else {
                 worker.cancelTurnAcceptance(run.id)
@@ -645,6 +651,7 @@ extension AppModel {
         activity.markActivitySeen(run)
         activity.activityCenterPresented = false
         resume(session)
+        inspectAgentRun(run)
         Task { await loadOrchestrationRun(run.id) }
     }
 

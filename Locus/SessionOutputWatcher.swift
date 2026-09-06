@@ -36,6 +36,10 @@ final class SessionOutputWatcher {
     private var since = Date.distantPast
     private var reported: Set<String> = []
     private let lock = NSLock()
+    private let callbackQueue = DispatchQueue(label: "com.locus.output-watcher", qos: .utility)
+    private let callbackQueueKey = DispatchSpecificKey<Bool>()
+
+    init() { callbackQueue.setSpecific(key: callbackQueueKey, value: true) }
 
     /// - Parameter since: run start. Anything created at or after it is new;
     ///   anything older that changed is an edit.
@@ -94,7 +98,7 @@ final class SessionOutputWatcher {
         // up front. Nested copies still fall to `isIgnored`.
         _ = FSEventStreamSetExclusionPaths(stream, Self.exclusionPaths(root: self.root) as CFArray)
         self.stream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.global(qos: .utility))
+        FSEventStreamSetDispatchQueue(stream, callbackQueue)
         FSEventStreamStart(stream)
     }
 
@@ -102,10 +106,27 @@ final class SessionOutputWatcher {
         guard let stream else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
+        // Finish callbacks from the old stream before clearing its handler or
+        // reusing this watcher for a new run. A global concurrent queue could
+        // otherwise deliver an earlier run's paths into the next run's scope.
+        if DispatchQueue.getSpecific(key: callbackQueueKey) == nil { callbackQueue.sync {} }
         FSEventStreamRelease(stream)
         self.stream = nil
         handler = nil
         reported.removeAll()
+    }
+
+    /// Drain the kernel's pending batch and return all paths observed during
+    /// this run. The caller snapshots these again at the boundary, capturing
+    /// a final edit even when FSEvents coalesced several writes to one path.
+    func finish() -> [Change] {
+        if let stream { FSEventStreamFlushSync(stream) }
+        lock.lock()
+        let paths = Array(reported)
+        lock.unlock()
+        let changes = paths.compactMap { Self.classify(path: $0, root: root, runStart: since) }
+        stop()
+        return changes
     }
 
     deinit { stop() }
@@ -132,7 +153,9 @@ final class SessionOutputWatcher {
 
     /// FSEvents exclusion takes at most eight paths.
     static func exclusionPaths(root: String) -> [String] {
-        [".git", "node_modules", ".venv", "build", "dist", ".next", "target", "DerivedData"]
+        // Deliverables inside build/dist/target must reach `isIgnored`, which
+        // keeps reports while filtering compiler and bundler debris.
+        [".git", "node_modules", ".venv", ".next", "DerivedData", "__pycache__"]
             .map { URL(fileURLWithPath: root, isDirectory: true).appending(path: $0).path }
     }
 

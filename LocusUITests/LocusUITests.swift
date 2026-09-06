@@ -1993,22 +1993,25 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("agentOverview.edit").exists)
         XCTAssertTrue(anyElement("agentOverview.toggle").exists)
         XCTAssertFalse(anyElement("agentOverview.rearm").exists, "only fired price alerts re-arm")
-        XCTAssertTrue(anyElement("agentOverview.stats.chats").exists)
-        XCTAssertTrue(anyElement("agentOverview.source").exists)
-        XCTAssertTrue(anyElement("agentOverview.instruction").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.stats.chats").exists)
+        let configuration = revealAgentOverviewItem("agentOverview.configuration")
+        configuration.click()
+        XCTAssertTrue(waitUntil { configuration.value as? String == "Expanded" })
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.source").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.instruction").exists)
         // Exactly one chat receives events, and the panel says which.
-        let eventChat = anyElement("agentOverview.chat.seed-agent-chat")
+        let eventChat = revealAgentOverviewItem("agentOverview.chat.seed-agent-chat")
         XCTAssertTrue(eventChat.exists)
         XCTAssertTrue(
             eventChat.label.contains("receives events"),
             "the event chat is named as such, not left to guesswork"
         )
-        let sideChat = anyElement("agentOverview.chat.seed-agent-chat-older")
+        let sideChat = revealAgentOverviewItem("agentOverview.chat.seed-agent-chat-older")
         XCTAssertTrue(sideChat.exists)
         XCTAssertFalse(sideChat.label.contains("receives events"))
-        XCTAssertTrue(anyElement("agentOverview.chats.explainer").exists)
-        XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-done").exists)
-        XCTAssertTrue(anyElement("agentOverview.event.seed-delivery-failed.retry").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.chats.explainer").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.event.seed-delivery-done").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.event.seed-delivery-failed.retry").exists)
 
         // The parent row is independently selectable from its disclosure
         // control. It changes the complete Agent inspector without replacing
@@ -2019,7 +2022,7 @@ final class LocusUITests: XCTestCase {
             return (selectedName.label + " " + (selectedName.value as? String ?? ""))
                 .contains("Morning Review")
         })
-        XCTAssertTrue(anyElement("agentOverview.chat.seed-schedule-chat").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.chat.seed-schedule-chat").exists)
         XCTAssertTrue(
             ((agentMenu.value as? String) ?? "").contains("Morning Review"),
             "the footer follows the selected agent"
@@ -2030,9 +2033,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(inboxAgent.waitForExistence(timeout: 3))
         inboxAgent.click()
         XCTAssertTrue(waitUntil {
-            let selectedName = self.anyElement("agentOverview.name")
-            return (selectedName.label + " " + (selectedName.value as? String ?? ""))
-                .contains("Inbox Triage")
+            ((agentMenu.value as? String) ?? "").contains("Inbox Triage")
         })
 
         // Leaving Agent takes the tab and its rail button away again;
@@ -2046,7 +2047,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
 
         anyElement("sidebar.mode.agents").click()
-        XCTAssertTrue(anyElement("agentOverview.identity").waitForExistence(timeout: 3))
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.identity").exists)
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
     }
@@ -2079,21 +2080,24 @@ final class LocusUITests: XCTestCase {
         relaunchWithAgentFixture("schedule")
 
         // A schedule is an agent: same panel, its own words.
-        let source = anyElement("agentOverview.source")
+        let configuration = revealAgentOverviewItem("agentOverview.configuration")
+        configuration.click()
+        XCTAssertTrue(waitUntil { configuration.value as? String == "Expanded" })
+        let source = revealAgentOverviewItem("agentOverview.source")
         XCTAssertTrue(source.waitForExistence(timeout: Self.launchContentTimeout))
         let sourceText = source.label + " " + (source.value as? String ?? "")
         XCTAssertTrue(sourceText.contains("Weekdays at 09:00"), "the cadence is what starts it")
 
         // Run Now is the action only a schedule has.
-        XCTAssertTrue(anyElement("agentOverview.runNow").exists)
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.runNow").exists)
 
         // Its arrivals are runs, not events.
-        let runs = anyElement("agentOverview.stats.events")
+        let runs = revealAgentOverviewItem("agentOverview.stats.events")
         XCTAssertTrue((runs.label + " " + (runs.value as? String ?? "")).contains("Runs"))
 
         // The slot that was skipped left the agent healthy: a run overlapping
         // the one before it is a normal outcome, not something to look at.
-        let status = anyElement("agentOverview.status")
+        let status = revealAgentOverviewItem("agentOverview.status")
         XCTAssertTrue(
             (status.label + " " + (status.value as? String ?? "")).contains("Active"),
             "a skipped run is not a failure"
@@ -2101,7 +2105,7 @@ final class LocusUITests: XCTestCase {
 
         // Both tiles speak of runs, so the panel never calls a scheduled run
         // an event.
-        let last = anyElement("agentOverview.stats.lastEvent")
+        let last = revealAgentOverviewItem("agentOverview.stats.lastEvent")
         XCTAssertTrue((last.label + " " + (last.value as? String ?? "")).contains("Last run"))
     }
 
@@ -2834,6 +2838,35 @@ final class LocusUITests: XCTestCase {
         try auditCurrentSurface()
     }
 
+    func testLibraryAndGettingStartedPassAccessibilityAudit() throws {
+        relaunchForAccessibilitySurface("onboarding", anchor: "onboarding.continue")
+        try auditCurrentSurface()
+        relaunchForAccessibilitySurface("library", anchor: "library.documentSearch")
+        try auditCurrentSurface()
+    }
+
+    func testAgentConfigurationPassesAccessibilityAudit() throws {
+        relaunchWithAgentFixture("schedule")
+        let configuration = revealAgentOverviewItem("agentOverview.configuration")
+        configuration.click()
+        let expanded = waitUntil { configuration.value as? String == "Expanded" }
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "Agent configuration accessibility tree"
+        tree.lifetime = .keepAlways
+        add(tree)
+        XCTAssertTrue(expanded)
+
+        let source = revealAgentOverviewItem("agentOverview.source")
+        XCTAssertTrue((source.label + " \(source.value ?? "")").contains("Weekdays at 09:00"))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Expanded agent configuration"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        try auditCurrentSurface()
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.instruction").exists)
+        try auditCurrentSurface()
+    }
+
     func testModelLibraryPassesAccessibilityAudit() throws {
         relaunchForAccessibilitySurface("model-library", anchor: "modelLibrary.search")
         XCTAssertTrue(
@@ -3357,6 +3390,21 @@ final class LocusUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = variant
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    @discardableResult
+    private func revealAgentOverviewItem(_ identifier: String) -> XCUIElement {
+        let item = anyElement(identifier)
+        let panel = anyElement("agentOverview")
+        XCTAssertTrue(panel.waitForExistence(timeout: Self.launchContentTimeout))
+        if item.exists && item.isHittable { return item }
+        panel.scroll(byDeltaX: 0, deltaY: 2500)
+        for _ in 0..<15 {
+            if item.exists && item.isHittable { return item }
+            panel.scroll(byDeltaX: 0, deltaY: -200)
+        }
+        XCTAssertTrue(item.exists, "Could not reach \(identifier)")
+        return item
     }
 
     private func relaunchWithRunFixture(

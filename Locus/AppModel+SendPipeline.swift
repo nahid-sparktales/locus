@@ -179,7 +179,7 @@ extension AppModel {
             reason: nil,
             at: Self.sessionTimestamp
         ))
-        beginSessionFileCapture()
+        beginSessionFileCapture(runID: reservedRunID)
         // Agent-side slash commands go out as raw text: no context pack, so
         // none of it counts as provided.
         let providedItems = Self.providedSourceItems(
@@ -384,6 +384,8 @@ extension AppModel {
                 self.finishChatRuntime(worker, state: .failed, error: "The queued run could not start")
                 return
             }
+            await self.outputsLibrary.flush()
+            guard !Task.isCancelled else { return }
             worker.prepareForTurnAcceptance(reservedRunID)
             guard worker.service.send(request) else {
                 worker.cancelTurnAcceptance(reservedRunID)
@@ -594,6 +596,7 @@ extension AppModel {
         state: TeamRunState,
         error: String? = nil
     ) {
+        outputsLibrary.endRun(sessionID: runtime.sessionID)
         runtime.executionState = state
         runtime.startedAt = nil
         runtime.lastError = error
@@ -809,10 +812,8 @@ extension AppModel {
         guard !isBusy, !hasPendingPermission,
               blocks.contains(where: { $0.kind == .user })
         else { return }
-        guard conversationBackend.send(["type": "retry_last"]) else {
-            showToast("Reconnect the local agent before retrying")
-            return
-        }
+        let retryBackend = conversationBackend
+        let retrySessionID = currentSessionID
         pendingRetry = true
         isBusy = true
         turnStartedAt = Date()
@@ -828,7 +829,20 @@ extension AppModel {
             at: Self.sessionTimestamp
         ))
         beginSessionFileCapture()
-        showToast("Regenerating the last response")
+        Task { @MainActor in
+            await outputsLibrary.flush()
+            guard retryBackend.send(["type": "retry_last"]) else {
+                outputsLibrary.endRun(sessionID: retrySessionID)
+                if currentSessionID == retrySessionID {
+                    pendingRetry = false
+                    isBusy = false
+                    turnStartedAt = nil
+                }
+                showToast("Reconnect the local agent before retrying")
+                return
+            }
+            showToast("Regenerating the last response")
+        }
     }
 
     func stop() {
@@ -944,7 +958,7 @@ extension AppModel {
         cancelSimulatorActions()
         simulatorControl.detachAll()
         browser.cancelPendingActions()
-        guard hasRunningWorkForQuit else {
+        if !hasRunningWorkForQuit, !outputsLibrary.hasCaptureWork {
             completion()
             return
         }
@@ -955,6 +969,8 @@ extension AppModel {
                 if !hasRunningWorkForQuit { break }
                 try? await Task.sleep(for: .milliseconds(150))
             }
+            await outputsLibrary.finishCapturesForShutdown()
+            sessionOverview.persistNow()
             completion()
         }
     }

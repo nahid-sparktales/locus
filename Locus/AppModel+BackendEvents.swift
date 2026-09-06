@@ -11,6 +11,12 @@ import UserNotifications
 extension AppModel {
     func handle(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
+        if type == "run_started" || type == "orchestration_started",
+           let runID = event["run_id"] as? String,
+           (event["session_id"] as? String ?? currentSessionID) == currentSessionID {
+            outputsLibrary.bindRunIdentity(workspace: workspacePath, sessionID: currentSessionID,
+                runID: runID, occurredAt: (event["occurred_at"] as? Double).map { Date(timeIntervalSince1970: $0) })
+        }
         if type != "agent_job_stream",
            event["event_id"] != nil,
            let runEvent = decode(OrchestrationEvent.self, from: event),

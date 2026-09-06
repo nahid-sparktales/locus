@@ -16,7 +16,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import requests
 
@@ -42,6 +42,8 @@ SECRET_NAMES = re.compile(
     r"credentials?(?:\..*)?|secrets?(?:\..*)?)$",
     re.IGNORECASE,
 )
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
 
 
 class KnowledgeError(RuntimeError):
@@ -66,7 +68,8 @@ class KnowledgeStore:
         self.root = canonical_workspace(workspace)
         self.path = path or workspace_database(str(self.root))
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
+        with _LOCKS_GUARD:
+            self._lock = _LOCKS.setdefault(str(self.path), threading.RLock())
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -77,7 +80,7 @@ class KnowledgeStore:
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(
                 """
@@ -136,6 +139,14 @@ class KnowledgeStore:
                 connection.execute(
                     "ALTER TABLE settings ADD COLUMN exclusions_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "documents_enabled" not in columns:
+                connection.execute("ALTER TABLE settings ADD COLUMN documents_enabled INTEGER NOT NULL DEFAULT 0")
+            document_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(documents)")}
+            if "format" not in document_columns:
+                connection.execute("ALTER TABLE documents ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
+            chunk_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(chunks)")}
+            if "locator_json" not in chunk_columns:
+                connection.execute("ALTER TABLE chunks ADD COLUMN locator_json TEXT")
             connection.execute(
                 "UPDATE settings SET workspace=? WHERE singleton=1", (str(self.root),)
             )
@@ -152,6 +163,7 @@ class KnowledgeStore:
             memory_count = int(connection.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
         return {
             "workspace": str(self.root), "enabled": bool(row["enabled"]),
+            "documents_enabled": bool(row["documents_enabled"]),
             "embedding_model": row["embedding_model"], "ollama_host": row["ollama_host"],
             "exclusions": json.loads(row["exclusions_json"] or "[]"),
             "vector_generation": row["vector_generation"], "last_indexed": row["last_indexed"],
@@ -163,6 +175,7 @@ class KnowledgeStore:
     def configure(
         self, *, enabled: bool | None = None, embedding_model: str | None = None,
         ollama_host: str | None = None, exclusions: list[str] | None = None,
+        documents_enabled: bool | None = None,
     ) -> dict[str, Any]:
         with self._lock, self._connect() as connection:
             row = connection.execute("SELECT * FROM settings WHERE singleton=1").fetchone()
@@ -194,6 +207,13 @@ class KnowledgeStore:
                     generation,
                 ),
             )
+            if documents_enabled is not None:
+                connection.execute("UPDATE settings SET documents_enabled=? WHERE singleton=1", (int(documents_enabled),))
+            # A disabled library must stop being searchable immediately, even
+            # before an extraction job observes its cancellation.
+            if documents_enabled is False or enabled is False:
+                connection.execute("DELETE FROM chunks_fts WHERE path IN (SELECT path FROM documents WHERE format!='text')")
+                connection.execute("DELETE FROM documents WHERE format!='text'")
         return self.settings()
 
     def reindex(self, changed_paths: list[str] | None = None) -> dict[str, Any]:
@@ -202,6 +222,7 @@ class KnowledgeStore:
         if not config["enabled"]:
             return {**config, "updated": 0, "removed": 0, "duration_ms": 0}
         candidates = self._candidate_paths(changed_paths)
+        document_candidates: list[Path] = []
         seen: set[str] = set()
         updated = 0
         embedded = 0
@@ -210,6 +231,9 @@ class KnowledgeStore:
             for path in candidates[:MAX_FILES]:
                 relative = path.relative_to(self.root).as_posix()
                 seen.add(relative)
+                if path.suffix.lower().lstrip(".") in {"pdf", "docx", "xlsx", "csv", "tsv"}:
+                    document_candidates.append(path)
+                    continue
                 try:
                     stat = path.stat()
                     if stat.st_size > MAX_FILE_BYTES or not path.is_file() or path.is_symlink():
@@ -253,7 +277,7 @@ class KnowledgeStore:
                     break
             removed = 0
             if changed_paths is None:
-                stored = {str(row[0]) for row in connection.execute("SELECT path FROM documents")}
+                stored = {str(row[0]) for row in connection.execute("SELECT path FROM documents WHERE format='text'")}
                 for relative in stored - seen:
                     connection.execute("DELETE FROM chunks_fts WHERE path=?", (relative,))
                     connection.execute("DELETE FROM documents WHERE path=?", (relative,))
@@ -272,6 +296,15 @@ class KnowledgeStore:
                     connection.execute(
                         "UPDATE settings SET last_error=? WHERE singleton=1", (str(exc)[:2_000],)
                     )
+        if config["documents_enabled"]:
+            from .document_library import DocumentError, DocumentStore
+            library = DocumentStore(str(self.root))
+            library.reconcile()
+            for candidate in document_candidates:
+                try:
+                    library.submit(candidate.relative_to(self.root).as_posix(), automatic=True)
+                except (DocumentError, OSError):
+                    continue
         return {
             **self.settings(), "updated": updated, "removed": removed, "embedded": embedded,
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
@@ -329,7 +362,55 @@ class KnowledgeStore:
         relative_name = relative.as_posix()
         if any(fnmatch.fnmatchcase(relative_name, pattern) for pattern in exclusions):
             return False
-        return path.suffix.lower().lstrip(".") in ALLOWED_EXTENSIONS
+        extension = path.suffix.lower().lstrip(".")
+        return extension in ALLOWED_EXTENSIONS or (
+            extension in {"pdf", "docx", "xlsx", "csv", "tsv"}
+            and self.settings()["documents_enabled"]
+        )
+
+    def document_path_allowed(self, path: Path) -> bool:
+        return self._eligible(path, self.settings()["exclusions"])
+
+    def remove_document_chunks(self, relative: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM chunks_fts WHERE path=?", (relative,))
+            connection.execute("DELETE FROM documents WHERE path=?", (relative,))
+
+    def has_document_hash(self, relative: str, digest: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute("SELECT 1 FROM documents WHERE path=? AND content_hash=?", (relative, digest)).fetchone() is not None
+
+    def index_extracted_document(self, relative: str, digest: str, segments: list[dict[str, Any]], format: str) -> None:
+        config = self.settings()
+        if not config["enabled"] or not config["documents_enabled"]:
+            raise KnowledgeError("Document knowledge is disabled for this workspace.")
+        path = self.root / relative
+        if not self.document_path_allowed(path):
+            raise KnowledgeError("Document is excluded from workspace knowledge.")
+        stat = path.stat()
+        with self._lock, self._connect() as connection:
+            # Settings can change while the native parser is finishing. Check
+            # them again under the same lock as publication, so disabling the
+            # library cannot be followed by a late re-insertion.
+            current = connection.execute("SELECT enabled,documents_enabled,exclusions_json FROM settings WHERE singleton=1").fetchone()
+            if not current["enabled"] or not current["documents_enabled"] or not self._eligible(path, json.loads(current["exclusions_json"])):
+                raise KnowledgeError("Document knowledge was disabled or this document was excluded.")
+            connection.execute("DELETE FROM chunks_fts WHERE path=?", (relative,))
+            connection.execute("DELETE FROM documents WHERE path=?", (relative,))
+            connection.execute("INSERT INTO documents(path,content_hash,size,mtime,indexed_at,format) VALUES(?,?,?,?,?,?)", (relative, digest, stat.st_size, stat.st_mtime, time.time(), format))
+            existing_count = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            for segment in segments:
+                # Preserve one semantic locator across bounded text chunks;
+                # line numbers are never invented for a binary source file.
+                content = str(segment["text"])
+                for offset in range(0, len(content), CHUNK_CHARS):
+                    text = content[offset:offset + CHUNK_CHARS]
+                    if existing_count >= MAX_CHUNKS:
+                        raise KnowledgeError("Workspace knowledge reached its 100,000 chunk limit.")
+                    locator = segment["locator"]
+                    cursor = connection.execute("INSERT INTO chunks(path,line_start,line_end,content,content_hash,locator_json) VALUES(?,0,0,?,?,?)", (relative, text, hashlib.sha256(text.encode()).hexdigest(), json.dumps(locator)))
+                    connection.execute("INSERT INTO chunks_fts(content,path,chunk_id) VALUES(?,?,?)", (text, relative, cursor.lastrowid))
+                    existing_count += 1
 
     def _embed_missing(self, model: str, host: str) -> int:
         with self._connect() as connection:
@@ -379,9 +460,11 @@ class KnowledgeStore:
                 ).fetchall()
                 for position, row in enumerate(rows):
                     chunk = connection.execute(
-                        "SELECT line_start, line_end FROM chunks WHERE id=?", (row["chunk_id"],)
+                        "SELECT chunks.line_start,chunks.line_end,chunks.locator_json,documents.content_hash,documents.format FROM chunks JOIN documents ON documents.path=chunks.path WHERE chunks.id=?", (row["chunk_id"],)
                     ).fetchone()
                     if chunk is None:
+                        continue
+                    if chunk["format"] != "text" and not config["documents_enabled"]:
                         continue
                     key = f"file:{row['chunk_id']}"
                     results[key] = {
@@ -389,6 +472,8 @@ class KnowledgeStore:
                         "line_start": chunk["line_start"], "line_end": chunk["line_end"],
                         "snippet": str(row["content"])[:6_000], "score": 1.0 / (position + 1),
                         "freshness": config["last_indexed"],
+                        "locator": json.loads(chunk["locator_json"]) if chunk["locator_json"] else {"kind": "line", "line_start": chunk["line_start"], "line_end": chunk["line_end"]},
+                        "content_hash": chunk["content_hash"], "format": chunk["format"],
                     }
             memories = connection.execute(
                 "SELECT * FROM memories WHERE lower(title || ' ' || content || ' ' || tags_json) LIKE ? "
@@ -421,16 +506,19 @@ class KnowledgeStore:
         if not vectors:
             return []
         query_vector = vectors[0]
-        generation = int(self.settings()["vector_generation"])
+        config = self.settings()
+        generation = int(config["vector_generation"])
         candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT id, path, line_start, line_end, content, embedding,
-                   embedding_dimension FROM chunks WHERE embedding IS NOT NULL
+                """SELECT chunks.id,chunks.path,line_start,line_end,content,embedding,locator_json,
+                   embedding_dimension,documents.content_hash,documents.format FROM chunks JOIN documents ON documents.path=chunks.path WHERE embedding IS NOT NULL
                    AND vector_generation=? LIMIT ?""",
                 (generation, MAX_CHUNKS),
             ).fetchall()
         for row in rows:
+            if row["format"] != "text" and not config["documents_enabled"]:
+                continue
             vector = array.array("f")
             vector.frombytes(row["embedding"])
             if len(vector) != len(query_vector):
@@ -443,7 +531,9 @@ class KnowledgeStore:
             "id": f"file:{row['id']}", "kind": "file", "source": "vector",
             "path": row["path"], "line_start": row["line_start"], "line_end": row["line_end"],
             "snippet": str(row["content"])[:6_000], "score": float(score),
-            "freshness": self.settings()["last_indexed"],
+            "freshness": config["last_indexed"],
+            "locator": json.loads(row["locator_json"]) if row["locator_json"] else {"kind": "line", "line_start": row["line_start"], "line_end": row["line_end"]},
+            "content_hash": row["content_hash"], "format": row["format"],
         } for score, row in candidates[:limit]]
 
     def list_memories(self) -> list[dict[str, Any]]:
@@ -600,7 +690,24 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
         if item["kind"] == "memory":
             location = f"approved memory: {item.get('title') or item['id']}"
         else:
-            location = f"{item['path']}:{item['line_start']}-{item['line_end']}"
+            locator = item.get("locator") or {}
+            kind = locator.get("kind", "line")
+            if kind == "pdf":
+                detail = f"page {locator.get('page', 1)}"
+            elif kind == "paragraph":
+                detail = f"paragraph {locator.get('paragraph_start', 1)}"
+                if locator.get("heading"):
+                    detail += f", {locator['heading']}"
+            elif kind == "sheet":
+                detail = f"{locator.get('sheet', 'Sheet')}!{locator.get('cell_range', '')}"
+            else:
+                detail = ""
+            if detail:
+                parameters = urlencode({"locator": json.dumps(locator, separators=(",", ":")), "hash": item.get("content_hash", "")})
+                url = "locus-workspace://open/" + quote(item["path"], safe="/") + "?" + parameters
+                location = f"[{item['path']} · {detail}]({url})"
+            else:
+                location = f"{item['path']}:{item['line_start']}-{item['line_end']}"
         lines.append(f"\n## {location} [{item['source']}]\n{item['snippet']}")
     return "\n".join(lines)[:30_000]
 

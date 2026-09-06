@@ -157,16 +157,20 @@ extension AppModel {
         _ reference: WorkspaceArtifactReference,
         at url: URL
     ) {
+        if let document = reference.documentReference {
+            library.activate(workspace: workspacePath)
+            library.isPresented = true
+            library.open(document)
+            return
+        }
         switch WorkspaceArtifactOpener.destination(for: reference) {
         case .filesTab(let line, let column):
             selectInspectorTab(.files)
             workspaceFiles.preview(url, line: line, column: column)
-        case .defaultApp:
-            guard WorkspaceArtifactOpener.openInDefaultApp(url) else {
-                showToast("No app is set to open \(url.lastPathComponent)")
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-                return
-            }
+        case .libraryPreview:
+            library.activate(workspace: workspacePath)
+            library.isPresented = true
+            library.showPreview(url: url, title: url.lastPathComponent)
         }
     }
 

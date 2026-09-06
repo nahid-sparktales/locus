@@ -1998,6 +1998,7 @@ struct EvaluationReport: Identifiable, Codable, Hashable {
 struct WorkspaceKnowledgeStatus: Codable, Hashable {
     let workspace: String
     var enabled: Bool
+    var documentsEnabled: Bool? = nil
     var embeddingModel: String
     var ollamaHost: String
     var exclusions: [String]?
@@ -2012,6 +2013,7 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case workspace, enabled, exclusions
+        case documentsEnabled = "documents_enabled"
         case embeddingModel = "embedding_model"
         case ollamaHost = "ollama_host"
         case vectorGeneration = "vector_generation"

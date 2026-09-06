@@ -29,6 +29,8 @@ dependencies = [
     # way the bundled runtime does.
     "pysocks>=1.7.1",
     "socksio>=1.0",
+    "python-docx==1.2.0",
+    "openpyxl==3.1.5",
 ]
 
 [project.optional-dependencies]

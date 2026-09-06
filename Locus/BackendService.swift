@@ -130,6 +130,25 @@ final class BackendService {
         try await request(path, method: "PATCH", body: body, timeout: 10, as: type)
     }
 
+    /// Bounded temporary document extraction uses the same authenticated,
+    /// proxy-free connection as every other local backend operation.
+    func upload<T: Decodable>(
+        _ path: String, query: [URLQueryItem] = [], data: Data, as type: T.Type
+    ) async throws -> T {
+        guard data.count <= 100_000_000 else {
+            throw OutputsLibraryStore.StoreError("Documents must be 100 MB or smaller")
+        }
+        var request = URLRequest(url: try endpointURL(path, query: query))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let (responseData, response) = try await session.data(for: request)
+        try validate(response, data: responseData)
+        return try JSONDecoder().decode(type, from: responseData)
+    }
+
     func put<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
         try await request(path, method: "PUT", body: body, timeout: 10, as: type)
     }

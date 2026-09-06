@@ -88,8 +88,10 @@ def execution_list(
 def attention_list(
     service: ServiceDependency,
     limit: int = Query(default=500, ge=1, le=1_000),
+    run_id: str = "",
+    workflow_execution_id: str = "",
 ) -> dict[str, Any]:
-    all_items = _attention_items(service)
+    all_items = _attention_items(service, run_id=run_id, workflow_execution_id=workflow_execution_id)
     return {
         "items": all_items[:limit],
         "unresolved_count": len(all_items),
@@ -105,8 +107,12 @@ def _orphaned_recovery(item: dict[str, Any]) -> bool:
     )
 
 
-def _attention_items(service: ChatService) -> list[dict[str, Any]]:
-    items = service.run_store.attention_items(limit=1_000)
+def _attention_items(
+    service: ChatService, *, run_id: str = "", workflow_execution_id: str = ""
+) -> list[dict[str, Any]]:
+    items = service.run_store.attention_items(
+        limit=1_000, run_id=run_id, workflow_execution_id=workflow_execution_id
+    )
     projected: list[dict[str, Any]] = []
     for item in items:
         if _orphaned_recovery(item):

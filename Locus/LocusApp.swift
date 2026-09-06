@@ -94,6 +94,10 @@ struct LocusApp: App {
             height: LocusWindowSizing.defaultSize.height
         )
         .commands {
+            CommandGroup(replacing: .help) {
+                Button("Getting Started…") { model.onboarding.present() }
+                    .accessibilityIdentifier("menu.gettingStarted")
+            }
             CommandGroup(after: .appInfo) {
                 if updates.isAvailable {
                     Button("Check for Updates…") { updates.checkForUpdates() }
@@ -146,6 +150,9 @@ struct LocusApp: App {
                 .accessibilityIdentifier("menu.showArchived")
                 Button("Browse Hugging Face Models") { model.modelLibraryPresented = true }
                     .accessibilityIdentifier("menu.modelLibrary")
+                Button("Workspace Library…") { model.openLibrary() }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                    .accessibilityIdentifier("menu.workspaceLibrary")
                 Button("Review Changes") { model.selectInspectorTab(.changes) }
                     .keyboardShortcut("r", modifiers: .command)
                 Button("Session Checkpoints…") { model.checkpointPresented = true }
@@ -234,6 +241,11 @@ struct LocusApp: App {
     @ViewBuilder
     private var sceneContent: some View {
         switch locusEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] {
+        case "onboarding":
+            OnboardingView()
+        case "library":
+            LibraryWorkspaceView()
+                .onAppear { model.library.activate(workspace: model.workspacePath) }
         case "settings":
             SettingsView(presentationContext: .sheet)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -573,6 +585,8 @@ private final class MainWindowMarkerView: NSView {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var library: WorkspaceLibraryModel
+    @EnvironmentObject private var onboarding: OnboardingModel
     @EnvironmentObject private var updates: AppUpdateController
     @EnvironmentObject private var toastCenter: ToastCenter
     @EnvironmentObject private var landingFlow: LandingFlowModel
@@ -761,6 +775,22 @@ struct RootView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Locus workspace")
+        .sheet(isPresented: $library.isPresented) {
+            if model.isUITesting, locusEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
+                LibraryUITestFixtureView().appFeatureEnvironment(from: model)
+            } else {
+                LibraryWorkspaceView().appFeatureEnvironment(from: model)
+            }
+        }
+        .sheet(isPresented: $onboarding.isPresented, onDismiss: {
+            onboarding.dismiss()
+            // Wait for the setup sheet to close before presenting its sibling.
+            if let run = onboarding.takeOutputRequest() {
+                model.openOutputsLibrary(workspace: run.workspace, sessionID: run.sessionID, runID: run.runID)
+            }
+        }) {
+            OnboardingView().appFeatureEnvironment(from: model)
+        }
         .sheet(isPresented: $model.commandPalettePresented) {
             CommandPaletteView()
                 .environmentObject(model)

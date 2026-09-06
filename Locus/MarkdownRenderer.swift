@@ -1310,6 +1310,7 @@ struct WorkspaceArtifactReference: Hashable, Sendable {
     let kind: WorkspaceArtifactKind
     let byteCount: Int64?
     let sourceLocation: WorkspaceSourceLocation?
+    var documentReference: DocumentReference? = nil
 
     var displaySize: String? {
         guard let byteCount else { return nil }
@@ -1317,6 +1318,7 @@ struct WorkspaceArtifactReference: Hashable, Sendable {
     }
 
     var navigationURL: URL {
+        if let url = documentReference?.navigationURL { return url }
         var components = URLComponents()
         components.scheme = "locus-workspace"
         components.host = "open"
@@ -1360,6 +1362,13 @@ struct WorkspaceArtifactReference: Hashable, Sendable {
 
     static func fromNavigationURL(_ url: URL, workspacePath: String?) -> Self? {
         guard url.scheme == "locus-workspace", url.host == "open" else { return nil }
+        if let named = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "workspace" })?.value,
+           let workspacePath, OutputsLibraryStore.canonical(named) != OutputsLibraryStore.canonical(workspacePath) { return nil }
+        if let workspacePath, let document = DocumentReference.fromNavigationURL(url, workspace: workspacePath),
+           var reference = classify(document.path, workspacePath: workspacePath) {
+            reference.documentReference = document
+            return reference
+        }
         var raw = String(url.path.dropFirst())
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         if let line = items.first(where: { $0.name == "line" })?.value {
@@ -1458,6 +1467,9 @@ enum MarkdownLinkPolicy {
         else { return nil }
         if let url = URL(string: raw), let scheme = url.scheme?.lowercased() {
             if remoteSchemes.contains(scheme) { return url }
+            if scheme == "locus-workspace" {
+                return WorkspaceArtifactReference.fromNavigationURL(url, workspacePath: workspacePath)?.navigationURL
+            }
             if scheme == "file" {
                 guard let parsed = WorkspacePathReferenceParser.parse(raw) else { return nil }
                 return containedWorkspaceFileURL(parsed.path, workspacePath: workspacePath)

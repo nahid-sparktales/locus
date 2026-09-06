@@ -15,7 +15,7 @@ from ollama_code.automation_workflows import (
     validate_workflow,
 )
 from ollama_code.extensions import ExtensionManager
-from ollama_code.runstore import RunStore, RunStoreError
+from ollama_code.runstore import SCHEMA_VERSION, RunStore, RunStoreError
 from ollama_code.tool_registry import ToolRegistry
 from ollama_code.tools import ToolContext, execute_tool
 
@@ -421,7 +421,7 @@ def test_newer_schema_opens_read_only_before_any_initializer_write(tmp_path) -> 
     store = RunStore(path)
     store.start_run("preserved", state="completed")
     with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE schema_meta SET version=12 WHERE singleton=1")
+        connection.execute("UPDATE schema_meta SET version=? WHERE singleton=1", (SCHEMA_VERSION + 1,))
         connection.commit()
     before = os.stat(path).st_mtime_ns
 

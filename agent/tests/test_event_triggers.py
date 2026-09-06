@@ -261,7 +261,7 @@ def test_schema_upgrade_adds_price_state_without_losing_schedules(tmp_path) -> N
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert version == 11
+    assert version == runstore_module.SCHEMA_VERSION
     assert {
         "connector_connections",
         "event_triggers",
@@ -669,8 +669,8 @@ def test_failed_delivery_requires_explicit_retry_and_action_receipts_are_idempot
     assert retried["state"] == "pending"
     assert retried["attempt"] == 1
     reset_trigger = store.event_trigger("trigger")
-    assert reset_trigger["enabled"] is True
-    assert reset_trigger["last_error"] is None
+    assert reset_trigger["enabled"] is False
+    assert reset_trigger["last_error"] == "offline"
     with pytest.raises(RunStoreError, match="only stopped"):
         store.retry_event_delivery(delivery["id"])
 

@@ -1120,11 +1120,9 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
-    func testWorkspaceArtifactsRouteBinariesToTheDefaultAppAndTextToTheFilesTab() {
-        // The Files peek decodes UTF-8 only, so anything that is not source has
-        // to leave the app. The previous binary branch drove the shared
-        // QLPreviewPanel without owning it through the responder chain, which
-        // is what showed a blank or stale preview.
+    func testWorkspaceArtifactsRouteBinariesToLibraryAndTextToTheFilesTab() {
+        // Binary artifacts use owned PDFKit/Quick Look views in the Library;
+        // text references retain the Files inspector's line navigation.
         for kind in [
             WorkspaceArtifactKind.pdf,
             .image,
@@ -1137,8 +1135,8 @@ final class FeatureLogicTests: XCTestCase {
         ] {
             XCTAssertEqual(
                 WorkspaceArtifactOpener.destination(kind: kind, sourceLocation: nil),
-                .defaultApp,
-                "\(kind.rawValue) has no in-app renderer and must open externally"
+                .libraryPreview,
+                "\(kind.rawValue) uses an owned Library preview"
             )
         }
 

@@ -256,6 +256,13 @@ fi
 /usr/bin/codesign --force --timestamp --options runtime \
     --entitlements "${repo_root}/Config/WalletSigner.entitlements" \
     --sign "${identity}" "${wallet_signer}"
+document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
+[[ -x "${document_helper}" ]] || {
+    echo "error: release is missing the local document extractor" >&2
+    exit 1
+}
+/usr/bin/codesign --force --timestamp --options runtime \
+    --sign "${identity}" "${document_helper}"
 for simulator_helper in \
     "${app}/Contents/Helpers/LocusSimulatorTouch" \
     "${app}/Contents/Helpers/LocusSimulatorTree"
@@ -295,7 +302,7 @@ if [[ -d "${runtime}" ]]; then
     done
     if [[ -n "${interp}" ]]; then
         PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${runtime}/source:${runtime}/site-packages" \
-            "${interp}" -B -c "import ollama_code.server" \
+            "${interp}" -B -c "import ollama_code.server; import docx; import openpyxl; import lxml.etree" \
             || { echo "error: bundled runtime failed its import check." >&2; exit 1; }
         /usr/bin/codesign --verify --deep --strict "${app}" \
             || { echo "error: exercising the runtime modified the bundle — seal broken." >&2; exit 1; }

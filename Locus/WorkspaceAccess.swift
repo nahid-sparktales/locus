@@ -34,6 +34,10 @@ final class WorkspaceAccess {
     func rememberAndActivate(_ selectedURL: URL) -> Bool {
         let url = selectedURL.standardizedFileURL
         let canonical = Self.canonicalPath(url.path)
+        if Self.isAppOwnedWorkspace(canonical) {
+            activeURLs[canonical] = url
+            return true
+        }
         guard url.startAccessingSecurityScopedResource() || !Self.isSandboxed else {
             return false
         }
@@ -60,7 +64,7 @@ final class WorkspaceAccess {
     @discardableResult
     func activateStored(path: String) -> Bool {
         let canonical = Self.canonicalPath(path)
-        if activeURLs[canonical] != nil || !Self.isSandboxed {
+        if activeURLs[canonical] != nil || !Self.isSandboxed || Self.isAppOwnedWorkspace(canonical) {
             return true
         }
         // Bookmarks saved by older builds used the selected spelling of the
@@ -93,6 +97,15 @@ final class WorkspaceAccess {
             return standardized.path
         }
         return standardized.resolvingSymlinksInPath().path
+    }
+
+    /// App-created sample workspaces need no external-folder bookmark.
+    private static func isAppOwnedWorkspace(_ path: String) -> Bool {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return false }
+        return ["Quickstart", "Workspace"].contains { folder in
+            let root = canonicalPath(support.appendingPathComponent("Locus/\(folder)").path)
+            return path == root || path.hasPrefix(root + "/")
+        }
     }
 
     static func sandboxWorkspaceURL() -> URL? {

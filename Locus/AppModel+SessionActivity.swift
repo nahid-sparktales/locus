@@ -157,6 +157,8 @@ extension AppModel {
 
     func recordSessionToolActivity(_ event: [String: Any]) {
         guard !sessionOverview.activeSessionID.isEmpty else { return }
+        outputsLibrary.recordToolEffects(event, workspace: workspacePath, sessionID: sessionOverview.activeSessionID,
+                                         runID: (event["run_id"] as? String) ?? taskWorkers[currentSessionID]?.reservedRunID)
         let toolID = event["id"] as? String
         let payload = toolID.flatMap { id in
             blocks.reversed().compactMap(\.tool).first(where: { $0.toolID == id })
@@ -320,7 +322,7 @@ extension AppModel {
     /// which file activity is attributed to this run, and where its activity
     /// list begins. Both send paths — a new message and a retry — come
     /// through here.
-    func beginSessionFileCapture() {
+    func beginSessionFileCapture(runID: String? = nil) {
         synchronizeSessionIdentity()
         sessionOverview.emit(.requestStarted(at: Self.sessionTimestamp))
         fileCaptureSessionID = sessionOverview.activeSessionID
@@ -329,11 +331,16 @@ extension AppModel {
         sessionOutputWatchTeardown?.cancel()
         sessionOutputWatchTeardown = nil
         guard persistenceEnabled else { return }
+        outputsLibrary.beginRun(workspace: workspacePath, sessionID: fileCaptureSessionID, runID: runID)
         let started = Date()
         let root = workspacePath
+        let originatingSessionID = fileCaptureSessionID
+        let captureBoundary = fileCaptureStartedAt
         sessionOutputWatcher.start(path: root, since: started) { [weak self] changes in
             Task { @MainActor [weak self] in
-                self?.recordWatchedFileChanges(changes, watchedRoot: root)
+                guard let self, self.fileCaptureSessionID == originatingSessionID,
+                      self.fileCaptureStartedAt == captureBoundary else { return }
+                self.recordWatchedFileChanges(changes, watchedRoot: root, originatingSessionID: originatingSessionID)
             }
         }
     }
@@ -343,6 +350,7 @@ extension AppModel {
     /// describe a run's own output arrive slightly after it ends.
     private func endSessionFileCapture() {
         guard fileCaptureUntil == .max else { return }
+        outputsLibrary.endRun(sessionID: fileCaptureSessionID)
         fileCaptureUntil = Self.sessionTimestamp + 4_000
         sessionOutputWatchTeardown?.cancel()
         sessionOutputWatchTeardown = Task { @MainActor [weak self] in
@@ -357,11 +365,13 @@ extension AppModel {
     /// attribution is decided here.
     private func recordWatchedFileChanges(
         _ changes: [SessionOutputWatcher.Change],
-        watchedRoot: String
+        watchedRoot: String,
+        originatingSessionID: String
     ) {
         guard watchedRoot == workspacePath,
-              let sessionID = sessionFileCaptureTarget
+              sessionFileCaptureTarget == originatingSessionID
         else { return }
+        let sessionID = originatingSessionID
         let now = Self.sessionTimestamp
         for change in changes {
             guard let path = sessionRelativePath(change.path) else { continue }

@@ -29,6 +29,15 @@ fi
     echo "error: bundled agent runtime is missing" >&2
     exit 1
 }
+document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
+[[ -x "${document_helper}" ]] || {
+    echo "error: bundled local document extractor is missing" >&2
+    exit 1
+}
+/usr/bin/codesign --verify --strict "${document_helper}" || {
+    echo "error: local document extractor signature is invalid" >&2
+    exit 1
+}
 [[ -f "${resources}/ThirdPartyNotices.md" ]] || {
     echo "error: ThirdPartyNotices.md is missing from the app" >&2
     exit 1

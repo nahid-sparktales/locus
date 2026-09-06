@@ -231,6 +231,10 @@ final class AppModel: ObservableObject {
     var capturedQuestionThisTurn: UserQuestion?  // internal(for: AppModel extension files)
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
+    let library = WorkspaceLibraryModel()
+    let outputsLibrary = OutputsLibraryModel()
+    let onboarding = OnboardingModel()
+    let agentInspector = AgentInspectorModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
     /// observes this directly, and republishing here would invalidate the whole
     /// workspace view every time its list changed.
@@ -581,6 +585,8 @@ final class AppModel: ObservableObject {
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
         let defaults = UserDefaults.standard
+        let existingInstallation = defaults.data(forKey: "Locus.settings") != nil
+            || defaults.data(forKey: "Locus.sessionOverviewStates.v1") != nil
         activity.restore(persistenceEnabled: !isUITesting && persistenceEnabled)
         if !isUITesting, persistenceEnabled {
             if let data = defaults.data(forKey: Self.splitRestorationKey),
@@ -1069,6 +1075,12 @@ final class AppModel: ObservableObject {
                 self?.announceSimulatorControlCapability()
             }
         }
+
+        configureLibraryFeatures()
+        configureOnboarding(
+            defaults: persistenceEnabled ? defaults : nil,
+            existingInstallation: existingInstallation
+        )
 
         browser.onUserNotice = { [weak self] notice in
             self?.showToast(notice)

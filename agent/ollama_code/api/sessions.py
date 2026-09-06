@@ -16,6 +16,7 @@ from ..sessions import (
     SessionMeta,
     SessionStore,
     SessionTooLargeError,
+    session_agent_kind,
     update_session_metadata,
 )
 from ..transcript_search import TranscriptSearchError
@@ -56,9 +57,16 @@ def _agent_owning_chat(service: ChatService, session_id: str) -> str | None:
             return str(trigger.get("name") or "an agent")
     entry = SessionMeta.get(session_id)
     if entry.get("agent_primary") and entry.get("agent_trigger_id"):
-        schedule = service.run_store.schedule(str(entry["agent_trigger_id"]))
-        if schedule is not None:
+        identifier = str(entry["agent_trigger_id"])
+        kind = session_agent_kind(entry)
+        schedule = service.run_store.schedule(identifier) if kind != "event" else None
+        if schedule is not None and kind == "schedule":
             return str(schedule.get("name") or entry.get("agent_name") or "an agent")
+        if schedule is not None and kind is None:
+            # Protect an ambiguous legacy primary without assigning it to
+            # whichever namespace happened to be checked first.
+            trigger = service.run_store.event_trigger(identifier)
+            return "an agent" if trigger is not None else str(schedule.get("name") or "an agent")
     return None
 
 

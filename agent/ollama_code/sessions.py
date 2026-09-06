@@ -110,6 +110,22 @@ def _organization_guard():
                     handle.close()
 
 
+def session_agent_kind(entry: dict[str, Any]) -> str | None:
+    """Read typed identity, retaining authoritative pre-kind schedule metadata.
+
+    An agent ID alone is deliberately insufficient: the event and schedule
+    namespaces may contain the same value. Event targets are resolved by the
+    caller that has the trigger record, never guessed from a chat's title.
+    """
+    kind = entry.get("agent_kind")
+    if isinstance(kind, str) and kind in {"event", "schedule"}:
+        return str(kind)
+    identifier = entry.get("agent_trigger_id")
+    if entry.get("schedule_id") and (not identifier or entry["schedule_id"] == identifier):
+        return "schedule"
+    return None
+
+
 class SessionMeta:
     """Organizer metadata keyed by session id, persisted as one JSON file."""
 
@@ -1196,6 +1212,7 @@ class SessionStore:
                 "execution_path": entry.get("execution_path"),
                 "environment": entry.get("environment"),
                 "agent_trigger_id": entry.get("agent_trigger_id"),
+                "agent_kind": session_agent_kind(entry),
                 "agent_name": entry.get("agent_name"),
                 # The one chat an agent's events land in, as opposed to a side
                 # conversation started under the same identity.

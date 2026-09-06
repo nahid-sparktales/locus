@@ -177,7 +177,7 @@ final class EventAutomationTests: XCTestCase {
     }
 
     @MainActor
-    func testRetryIsSingleFlightAndImmediatelyClearsTheMatchingAgentWarning() async {
+    func testRetryIsSingleFlightAndRequeuesOnlyTheDeliveryWhilePreservingPauseAndWarning() async {
         BackendStub.reset()
         var retried = deliveryPayload(
             id: "failed", triggerID: "trigger-a", targetSessionID: "chat-a",
@@ -190,18 +190,21 @@ final class EventAutomationTests: XCTestCase {
             [
                 "delivery": retried,
                 "trigger": self.triggerPayload(
-                    id: "trigger-a", enabled: true, lastError: nil
+                    id: "trigger-a", enabled: false, lastError: "worker stopped"
                 ),
             ]
         }
         let model = EventAutomationModel()
         var resolvedRunIDs: [String?] = []
+        let unrelated = decode(EventDelivery.self, from: deliveryPayload(
+            id: "other-failed", triggerID: "trigger-a", targetSessionID: "chat-a", state: "failed"
+        ))!
         model.seedForUITesting(
             connections: [],
             triggers: [decode(EventTrigger.self, from: triggerPayload(
                 id: "trigger-a", enabled: false, lastError: "worker stopped"
             ))!],
-            deliveries: []
+            deliveries: [unrelated]
         )
         model.configure(
             backend: stubbedBackendService(),
@@ -233,11 +236,16 @@ final class EventAutomationTests: XCTestCase {
             BackendStub.requestPaths.filter { $0 == "/api/event-deliveries/failed/retry" }.count,
             1
         )
-        XCTAssertEqual(model.triggers.first?.enabled, true)
-        XCTAssertNil(model.triggers.first?.lastError)
+        XCTAssertEqual(model.triggers.first?.enabled, false)
+        XCTAssertEqual(model.triggers.first?.lastError, "worker stopped")
+        XCTAssertEqual(model.deliveries.first?.id, "failed")
         XCTAssertEqual(model.deliveries.first?.state, "pending")
+        XCTAssertEqual(model.deliveries.first?.attempt, 2)
+        XCTAssertNil(model.deliveries.first?.runID)
+        XCTAssertEqual(model.deliveries.first(where: { $0.id == unrelated.id }), unrelated)
         XCTAssertTrue(model.retryingDeliveryIDs.isEmpty)
-        XCTAssertEqual(resolvedRunIDs.compactMap { $0 }, ["run-failed"])
+        XCTAssertTrue(resolvedRunIDs.isEmpty)
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0.hasPrefix("/api/event-triggers/") })
     }
 
     @MainActor

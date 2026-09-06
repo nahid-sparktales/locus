@@ -170,6 +170,62 @@ relative path, line range, freshness, and text/vector source.
 Every result is labelled untrusted and cannot alter instructions, permissions,
 or team membership.
 
+Document knowledge is a separate per-workspace opt-in: `documents_enabled`
+defaults to `false`, including migrated indexes. When enabled, the same index
+can receive PDF, DOCX, XLSX, CSV and TSV text. Existing code/text indexing keeps
+its settings. A document result carries `content_hash`, `format`, and a typed
+`locator`: `pdf` has one-based `page`, zero-based `page_index` and optional
+normalized bottom-left `bounds`; `paragraph` has paragraph numbers and an
+optional heading; `sheet` has a sheet name and cell range. Binary documents
+never receive invented source line numbers. The search tool emits
+`locus-workspace://open/<relative-path>?locator=<encoded-JSON>&hash=<SHA256>`
+links. Native previews verify the hash before presenting a citation as current.
+DOCX indexing includes body paragraphs and nested tables, not headers, footers,
+notes, or image text. XLSX indexing skips hidden sheets and reads cached values;
+formula cells without cached values are omitted, and no formula calculation is
+performed. CSV and TSV inputs require UTF-8 (an optional BOM is accepted).
+
+- `GET /api/documents?workspace=&limit=&offset=&query=` returns the paginated catalog. Optional `query` filters all filenames and relative paths case-insensitively before pagination; `total` counts matching documents.
+- `POST /api/document-jobs` accepts `workspace`, a contained relative `path`,
+  `persistent` (default true), `ocr_mode` (`auto` or `always`) and optional
+  `ocr_languages`. It returns `{job}` immediately after snapshotting the source.
+- `POST /api/document-jobs/upload?workspace=&filename=&persistent=false` accepts
+  a bounded raw body. Temporary extraction does not enter the catalog/index;
+  persistent imports copy into the visible workspace `Locus Documents` folder
+  without replacing an existing file.
+- `GET /api/document-jobs`, `GET /api/document-jobs/{id}`, and
+  `GET /api/document-jobs/{id}/result` expose job state and bounded segments.
+  `POST /api/document-jobs/{id}/cancel` accepts `workspace` in its JSON body.
+- `POST /api/documents/{id}/exclude` accepts `workspace` and `excluded`.
+  `DELETE /api/documents/{id}?workspace=` removes it from searchable knowledge;
+  source files remain intact. Reindexing an excluded document requires inclusion.
+
+Jobs transition through `queued`, `running`, and `ready`/`partial`/`failed`/
+`cancelled`. Catalog rows can also be `excluded` or `unavailable`. Parsing occurs
+outside index transactions; source hashes and current job identity are rechecked
+before publication. Crash/shutdown recovery preserves queued work. Cross-process
+filesystem leases allow two extractions globally and one per workspace, including
+when multiple chat backends are running. Limits are 100 MB per source, 500 PDF
+pages, 200,000 table cells, and 5 MB extracted text; partial results explain their
+limits. Temporary results expire after 24 hours. Completed source snapshots are
+discarded, and neither formulas nor macros nor external workbook links execute.
+Background discovery compares device/inode, size, modification time, and change
+time before creating a snapshot. Matching sources also require current extraction
+options/version and the indexed content hash; unchanged failures stay failed
+until an explicit retry or content change. A workspace-local extraction cache
+matches source hash, format, and options including extractor version, excludes
+expired temporary jobs, and publishes through the normal source-generation and
+opt-in checks. Delimited-table filename labels are rebound to each destination.
+
+PDFKit/Vision extraction and local OCR run in the signed bundled
+`Contents/Helpers/LocusDocumentExtractor` on both Mac distributions, reached via
+`LOCUS_DOCUMENT_EXTRACTOR_PATH`. DOCX/XLSX use pinned python-docx/openpyxl in a
+disposable Python child. All children use the same versioned JSONL result
+contract, cooperative cancellation and a hard deadline. Helper absence is an
+explicit PDF error, never a silent alternative parser. The primary backend's
+`LOCUS_DOCUMENT_COORDINATOR=1` restores saved jobs at startup; ordinary chat
+workers do not eagerly restore unrelated workspace jobs.
+
 `/api/memory` is the separate local memory vault. Payloads are authenticated
 with AES-256-GCM; the agent keeps the master key in a user-only local file at
 `$OLLAMA_CODE_HOME/memory/master.key` (mode `0600`, inside a `0700` directory).

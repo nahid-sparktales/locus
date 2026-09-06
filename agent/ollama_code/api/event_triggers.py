@@ -10,7 +10,7 @@ from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..event_triggers import EventTriggerValidationError, valid_identifier
 from ..runstore import TERMINAL_STATES, RunStoreError
-from ..sessions import ChatOrganizationStore, SessionMeta, SessionStore
+from ..sessions import ChatOrganizationStore, SessionMeta, SessionStore, session_agent_kind
 from .automation_workflows import start_execution
 from .dependencies import get_service
 
@@ -186,6 +186,7 @@ def trigger_target_create(
     # must not move to whichever side chat was touched most recently.
     trigger = service.run_store.event_trigger(trigger_id)
     current_target = str((trigger or {}).get("target_session_id") or "")
+    has_schedule_collision = service.run_store.schedule(trigger_id) is not None
     candidates.sort(
         key=lambda item: (
             str(item.get("id")) != current_target,
@@ -194,7 +195,14 @@ def trigger_target_create(
     )
     for summary in candidates:
         metadata = SessionMeta.get(str(summary["id"]))
-        if metadata.get("agent_trigger_id") == trigger_id:
+        kind = session_agent_kind(metadata)
+        owns_target = str(summary["id"]) == current_target
+        if (
+            metadata.get("agent_trigger_id") == trigger_id
+            and kind != "schedule"
+            and (owns_target or metadata.get("agent_primary"))
+            and (kind == "event" or owns_target or not has_schedule_collision)
+        ):
             workspace = str(summary.get("cwd") or "")
             if workspace:
                 path = SessionStore.path_for(str(summary["id"]))
@@ -211,6 +219,7 @@ def trigger_target_create(
                         provider_account_id=account_id or None,
                         provider_account_label=account_label or None,
                         agent_name=name,
+                        agent_kind="event",
                         agent_primary=True,
                     )
                 _detach_agent_session(str(summary["id"]), workspace)
@@ -252,6 +261,7 @@ def trigger_target_create(
         provider_account_id=account_id or None,
         provider_account_label=account_label or None,
         agent_trigger_id=trigger_id,
+        agent_kind="event",
         agent_name=name,
         agent_primary=True,
     )
@@ -283,8 +293,13 @@ def trigger_task_create(
         raise HTTPException(404, "event trigger not found")
     target_id = str(trigger.get("target_session_id") or "")
     header, metadata = _existing_session(target_id)
-    if str(metadata.get("agent_trigger_id") or "") != trigger_id:
+    if (
+        str(metadata.get("agent_trigger_id") or "") != trigger_id
+        or session_agent_kind(metadata) == "schedule"
+    ):
         raise HTTPException(409, "this configuration does not own a dedicated agent")
+    # The trigger target is authoritative for an older untyped event chat.
+    SessionMeta.update(target_id, agent_kind="event", agent_primary=True)
 
     cwd = str(header.get("cwd") or metadata.get("workspace_root") or "")
     workspace_root = str(metadata.get("workspace_root") or cwd)
@@ -314,6 +329,7 @@ def trigger_task_create(
         provider_account_id=account_id or None,
         provider_account_label=account_label or None,
         agent_trigger_id=trigger_id,
+        agent_kind="event",
         agent_name=agent_name,
     )
     _detach_agent_session(session_id, cwd)
@@ -437,6 +453,29 @@ def delivery_pending(
     return {"deliveries": service.run_store.pending_event_deliveries(limit=limit)}
 
 
+def agent_history(
+    trigger_id: str, service: ServiceDependency,
+    cursor: str = Query(default="", max_length=2048),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    _require_capability()
+    try:
+        return service.run_store.agent_history_page("event", trigger_id, cursor=cursor, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def delivery_detail(delivery_id: str, service: ServiceDependency) -> dict[str, Any]:
+    _require_capability()
+    delivery = service.run_store.event_delivery(delivery_id)
+    if delivery is None:
+        raise HTTPException(404, "event delivery not found")
+    context = service.run_store.inspector_item_context("event", delivery_id)
+    return {"delivery": delivery, "executions": service.run_store.inspector_execution_links("event", delivery_id),
+            "workflow_execution_id": context.get("workflow_execution_id"),
+            "delivery_state": context.get("delivery_state"), "execution_state": context.get("execution_state")}
+
+
 def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str, Any]:
     _require_capability()
     store = service.run_store
@@ -513,6 +552,7 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
             "event_triggered": True,
             "event_trigger_id": trigger["id"],
             "event_delivery_id": delivery["id"],
+            "event_attempt": delivery["attempt"],
             "source": delivery["source"],
             "source_event_id": delivery["source_event_id"],
             "event_trigger_kind": trigger["trigger_kind"],
@@ -529,6 +569,11 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
             "provider_account_id": account,
             "model": model,
         }
+        prior_attempts = [
+            link for link in store.inspector_execution_links("event", delivery["id"])
+            if int(link["attempt"]) < int(delivery["attempt"])
+        ]
+        retry_parent_id = str(prior_attempts[-1]["run_id"]) if prior_attempts else ""
         run = store.queue_run(
             run_id,
             session_id=session_id,
@@ -537,6 +582,7 @@ def delivery_dispatch(delivery_id: str, service: ServiceDependency) -> dict[str,
             request=_event_prompt(trigger, delivery),
             run_kind="solo",
             execution_environment=environment,
+            retry_parent_id=retry_parent_id,
             manifest=manifest,
         )
         updated = store.finish_event_dispatch(delivery_id, state="queued", run_id=run_id)
@@ -662,6 +708,8 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/event-triggers/ingest", event_ingest, methods=["POST"])
     router.add_api_route("/api/event-deliveries", delivery_list, methods=["GET"])
     router.add_api_route("/api/event-deliveries/pending", delivery_pending, methods=["GET"])
+    router.add_api_route("/api/event-triggers/{trigger_id}/history", agent_history, methods=["GET"])
+    router.add_api_route("/api/event-deliveries/{delivery_id}", delivery_detail, methods=["GET"])
     router.add_api_route(
         "/api/event-deliveries/{delivery_id}/dispatch", delivery_dispatch, methods=["POST"]
     )
