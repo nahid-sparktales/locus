@@ -2530,7 +2530,11 @@ private struct ConversationView: View {
             TranscriptRenderRow(index: $0.offset, item: $0.element, generation: token.sessionGeneration)
         }
         let bottomID = TranscriptScrollTarget.end(token.sessionGeneration)
+        let predecessorID = items.dropLast().last?.id
         ScrollViewReader { proxy in
+            let realizePredecessor: (() -> Void)? = predecessorID.map { id in
+                { proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom) }
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if transcript.isEmpty {
@@ -2560,7 +2564,8 @@ private struct ConversationView: View {
                             if let id = token.tailID {
                                 proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
-                        }
+                        },
+                        realizePredecessor: realizePredecessor
                     )
                     #else
                     TranscriptScrollBridge(
@@ -2570,7 +2575,8 @@ private struct ConversationView: View {
                             if let id = token.tailID {
                                 proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
-                        }
+                        },
+                        realizePredecessor: realizePredecessor
                     )
                     #endif
                 }
@@ -2667,6 +2673,8 @@ private struct ConversationView: View {
             .background {
                 if item.id == token.tailID {
                     TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .content)
+                } else if row.index == transcript.items.count - 2 {
+                    TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .predecessor)
                 }
             }
         return VStack(alignment: .leading, spacing: 0) {
@@ -3175,7 +3183,7 @@ private struct TranscriptRenderRow: Identifiable {
     var id: TranscriptScrollTarget { .item(generation, item.id) }
 }
 
-enum TranscriptTailLayoutKind: Equatable { case content, end }
+enum TranscriptTailLayoutKind: Equatable { case content, end, predecessor }
 
 /// Observes the native viewport and coalesces following to one logical-bottom
 /// request per display refresh. LazyVStack's native document extent is only an
@@ -3215,6 +3223,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var lastOriginY: CGFloat = 0
     private var scrollToBottomTarget: (() -> Void)?
     private var realizeTailTarget: (() -> Void)?
+    private var realizePredecessorTarget: (() -> Void)?
     private var renderToken: TranscriptRenderToken?
     private weak var bridgeAnchor: NSView?
     private var attachmentRevision: UInt64 = 0
@@ -3233,8 +3242,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var tailProbeRegistrations: [TailProbeRegistration] = []
     private var contentProbe: TranscriptTailLayoutView? { tailProbe(kind: .content) }
     private var endProbe: TranscriptTailLayoutView? { tailProbe(kind: .end) }
+    private var predecessorProbe: TranscriptTailLayoutView? { tailProbe(kind: .predecessor) }
     private var contentRect: NSRect?
     private var endRect: NSRect?
+    private var predecessorRect: NSRect?
     private var realizationRequested = false
     private struct ContainerLayoutGeometry: Equatable {
         let container: NSRect
@@ -3242,7 +3253,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         let viewportSize: NSSize
     }
 
-    private var realizationGeometry: [(layout: ContainerLayoutGeometry, viewport: NSRect)] = []
+    private var realizationGeometry: [(layout: ContainerLayoutGeometry, viewport: NSRect, predecessor: NSRect?)] = []
     private var pendingSessionViewportReset: UInt64?
     private var containerLayoutAcknowledgement: (
         token: TranscriptRenderToken, attachment: UInt64, geometry: ContainerLayoutGeometry
@@ -3303,6 +3314,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         ]
         if let contentRect { record["tailContentRect"] = rect(contentRect) }
         if let endRect { record["tailEndRect"] = rect(endRect) }
+        if let predecessorRect { record["predecessorRect"] = rect(predecessorRect) }
         if let scrollView {
             record["scrollFrame"] = rect(scrollView.frame)
             record["scrollBounds"] = rect(scrollView.bounds)
@@ -3344,9 +3356,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
     func installRenderTarget(
         _ token: TranscriptRenderToken,
         realizeTail: @escaping () -> Void,
+        realizePredecessor: (() -> Void)? = nil,
         scrollToBottom: (() -> Void)? = nil
     ) {
         realizeTailTarget = realizeTail
+        realizePredecessorTarget = realizePredecessor
         scrollToBottomTarget = scrollToBottom
         guard renderToken != token else { return }
         let previousGeneration = renderToken?.sessionGeneration
@@ -3370,6 +3384,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         displayLink?.isPaused = true
         contentRect = nil
         endRect = nil
+        predecessorRect = nil
         realizationRequested = false
         realizationGeometry.removeAll(keepingCapacity: true)
         containerLayoutAcknowledgement = nil
@@ -3410,6 +3425,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     func unregisterTailProbe(_ view: TranscriptTailLayoutView) {
         if contentProbe === view { contentRect = nil }
         if endProbe === view { endRect = nil }
+        if predecessorProbe === view { predecessorRect = nil }
         tailProbeRegistrations.removeAll { $0.view == nil || $0.view === view }
         // Dismantling is inside a SwiftUI graph mutation. Do not publish or
         // schedule a replacement scroll from this cleanup callback.
@@ -3446,8 +3462,12 @@ final class TranscriptScrollCoordinator: ObservableObject {
         guard token == renderToken, scroll === scrollView,
               !rect.isEmpty, rect.origin.x.isFinite, rect.origin.y.isFinite,
               rect.width.isFinite, rect.height.isFinite else { return }
-        let previous = kind == .content ? contentRect : endRect
-        if kind == .content { contentRect = rect } else { endRect = rect }
+        let previous: NSRect?
+        switch kind {
+        case .content: previous = contentRect; contentRect = rect
+        case .end: previous = endRect; endRect = rect
+        case .predecessor: previous = predecessorRect; predecessorRect = rect
+        }
         updateNearBottom()
         if measuredTailIsAtBottom() {
             isProgrammaticScroll = false
@@ -3456,7 +3476,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
             schedulePin()
         }
         #if DEBUG
-        recordGeometry(kind == .content ? "tail.contentLaidOut" : "tail.endLaidOut")
+        switch kind {
+        case .content: recordGeometry("tail.contentLaidOut")
+        case .end: recordGeometry("tail.endLaidOut")
+        case .predecessor: recordGeometry("predecessor.laidOut")
+        }
         #endif
     }
 
@@ -3514,9 +3538,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
         // new coordinates with the footer's previous lazy-layout estimate.
         let content = contentProbe?.measuredRect(token: token, in: scroll)
         let end = endProbe?.measuredRect(token: token, in: scroll)
-        let changed = content != contentRect || end != endRect
+        let predecessor = predecessorProbe?.measuredRect(token: token, in: scroll)
+        let changed = content != contentRect || end != endRect || predecessor != predecessorRect
         contentRect = content
         endRect = end
+        predecessorRect = predecessor
         updateNearBottom()
         if measuredTailIsAtBottom() {
             isProgrammaticScroll = false
@@ -3574,6 +3600,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         lastViewportSize = candidate.contentView.bounds.size
         contentRect = nil
         endRect = nil
+        predecessorRect = nil
         realizationRequested = false
         realizationGeometry.removeAll(keepingCapacity: true)
         containerLayoutAcknowledgement = nil
@@ -3706,6 +3733,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         anchor.needsLayout = true
         contentProbe?.requestObservation()
         endProbe?.requestObservation()
+        predecessorProbe?.requestObservation()
         contentMayHaveChanged()
     }
 
@@ -3842,6 +3870,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         isRoutingVerticalWheel = false
         contentRect = nil
         endRect = nil
+        predecessorRect = nil
         realizationRequested = false
         realizationGeometry.removeAll(keepingCapacity: true)
         lastAlignment = nil
@@ -3859,11 +3888,13 @@ final class TranscriptScrollCoordinator: ObservableObject {
         documentView = nil
         scrollToBottomTarget = nil
         realizeTailTarget = nil
+        realizePredecessorTarget = nil
         pendingSessionFollowReset = nil
         pendingSessionViewportReset = nil
         bridgeAnchor = nil
         contentRect = nil
         endRect = nil
+        predecessorRect = nil
         lastAlignment = nil
     }
 
@@ -3924,10 +3955,12 @@ final class TranscriptScrollCoordinator: ObservableObject {
             if viewport.width != lastViewportSize.width {
                 contentRect = nil
                 endRect = nil
+                predecessorRect = nil
                 realizationRequested = false
                 realizationGeometry.removeAll(keepingCapacity: true)
                 contentProbe?.requestObservation()
                 endProbe?.requestObservation()
+                predecessorProbe?.requestObservation()
             }
             lastViewportSize = viewport
             lastAlignment = nil
@@ -4087,17 +4120,25 @@ final class TranscriptScrollCoordinator: ObservableObject {
             // request. Remember every observed geometry, not just the last,
             // so a repeated/oscillating estimate cannot create a scroll loop.
             guard !realizationGeometry.contains(where: {
-                $0.layout == layout && $0.viewport == viewport
+                $0.layout == layout && $0.viewport == viewport && $0.predecessor == predecessorRect
             }), realizationGeometry.count < 32 else { return }
-            realizationGeometry.append((layout, viewport))
+            realizationGeometry.append((layout, viewport, predecessorRect))
+            // Approach a heterogeneous lazy tail through its immediate
+            // predecessor. A measured predecessor already proves that stage;
+            // otherwise only the first discovery requests it. Later new
+            // native geometry advances to the actual terminal row.
+            let requestPredecessor = !realizationRequested && predecessorRect == nil
+                && realizePredecessorTarget != nil
             realizationRequested = true
             isProgrammaticScroll = true
             #if DEBUG
-            recordGeometry("tail.requestRealization")
+            recordGeometry(requestPredecessor ? "predecessor.requestRealization" : "tail.requestRealization")
             #endif
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
-            withTransaction(transaction) { realizeTailTarget() }
+            withTransaction(transaction) {
+                if requestPredecessor { realizePredecessorTarget?() } else { realizeTailTarget() }
+            }
             return
         }
         guard let endRect, let documentView else { return }
@@ -4197,9 +4238,10 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     #endif
     let token: TranscriptRenderToken
     let realizeTail: () -> Void
+    let realizePredecessor: (() -> Void)?
 
     func makeNSView(context: Context) -> TranscriptScrollAnchorView {
-        coordinator.installRenderTarget(token, realizeTail: realizeTail)
+        coordinator.installRenderTarget(token, realizeTail: realizeTail, realizePredecessor: realizePredecessor)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
@@ -4216,7 +4258,7 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
 
     func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
         let needsCurrentLayout = view.renderToken != token
-        coordinator.installRenderTarget(token, realizeTail: realizeTail)
+        coordinator.installRenderTarget(token, realizeTail: realizeTail, realizePredecessor: realizePredecessor)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif

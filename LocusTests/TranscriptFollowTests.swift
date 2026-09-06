@@ -853,6 +853,117 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertTrue(coordinator.followState.isNearBottom)
     }
 
+    func testRenderPinApproachesPredecessorThenTailOnlyOnNewMeasuredGeometry() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var requests: [String] = []
+        var alignments = 0
+        coordinator.installRenderTarget(
+            token, realizeTail: { requests.append("tail") },
+            realizePredecessor: { requests.append("predecessor") },
+            scrollToBottom: { alignments += 1 }
+        )
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(requests, ["predecessor"])
+        for _ in 0..<100 { coordinator.contentMayHaveChanged() }
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(requests, ["predecessor"], "A request alone cannot advance the discovery stage")
+
+        let viewport = scroll.contentView.bounds
+        let documentBounds = document.bounds
+        let predecessor = TranscriptTailLayoutView(frame: NSRect(x: 0, y: 600, width: 300, height: 40))
+        predecessor.token = token
+        predecessor.kind = .predecessor
+        document.addSubview(predecessor)
+        coordinator.registerTailProbe(predecessor)
+        predecessor.layoutSubtreeIfNeeded()
+        XCTAssertFalse(predecessor.needsLayout)
+        coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        pump()
+        XCTAssertEqual(scroll.contentView.bounds, viewport)
+        XCTAssertEqual(document.bounds, documentBounds)
+        XCTAssertEqual(requests, ["predecessor", "tail"],
+            "A real predecessor measurement advances discovery even when the overall estimate is unchanged")
+        XCTAssertFalse(coordinator.followState.isNearBottom)
+        XCTAssertEqual(alignments, 0, "Predecessor geometry is not terminal-content evidence")
+        for _ in 0..<100 {
+            coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+            coordinator.contentMayHaveChanged()
+        }
+        pump()
+        XCTAssertEqual(requests, ["predecessor", "tail"], "Repeated measurements cannot create another request")
+
+        coordinator.tailDidLayout(
+            token: token, kind: .content, rect: NSRect(x: 0, y: 800, width: 300, height: 40), in: scroll
+        )
+        pump()
+        XCTAssertEqual(alignments, 0, "The predecessor must never substitute for the end probe")
+        coordinator.tailDidLayout(
+            token: token, kind: .end, rect: NSRect(x: 0, y: 759, width: 300, height: 41), in: scroll
+        )
+        pump()
+        XCTAssertEqual(alignments, 1, "Only the actual content and end enable measured alignment")
+    }
+
+    func testRenderPinPredecessorProgressRejectsStaleEvidenceAndReaderCancellation() throws {
+        for selecting in [false, true] {
+            let scroll = mountNativeScroll()
+            let otherScroll = mountNativeScroll()
+            let document = try XCTUnwrap(scroll.documentView)
+            document.setFrameSize(NSSize(width: 360, height: 1_000))
+            scroll.contentView.scroll(to: .zero)
+            let anchor = NSView(frame: document.bounds)
+            document.addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: .block(UUID()))
+            let old = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: token.tailID)
+            var requests: [String] = []
+            coordinator.installRenderTarget(
+                token, realizeTail: { requests.append("tail") },
+                realizePredecessor: { requests.append("predecessor") }
+            )
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+            pump()
+            XCTAssertEqual(requests, ["predecessor"])
+            let rect = NSRect(x: 0, y: 600, width: 300, height: 40)
+            coordinator.tailDidLayout(token: old, kind: .predecessor, rect: rect, in: scroll)
+            coordinator.tailDidLayout(token: token, kind: .predecessor, rect: rect, in: otherScroll)
+            pump()
+            XCTAssertEqual(requests, ["predecessor"], "Neither a stale row nor a different scroll may advance discovery")
+
+            if selecting { coordinator.setSelectionDragActive(true) } else { coordinator.detach() }
+            coordinator.tailDidLayout(token: token, kind: .predecessor, rect: rect, in: scroll)
+            acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+            pump()
+            XCTAssertEqual(requests, ["predecessor"], "Reader intent cancels the pending terminal-row request")
+            XCTAssertFalse(coordinator.followState.isFollowingOutput)
+            if selecting { coordinator.setSelectionDragActive(false) }
+            coordinator.contentMayHaveChanged()
+            pump()
+            XCTAssertEqual(requests, ["predecessor"], "Ending selection does not restore following")
+            coordinator.jumpToLatest()
+            pump()
+            XCTAssertEqual(requests, ["predecessor", "tail"],
+                "Explicit Jump may use the already measured predecessor without requesting it again")
+            coordinator.contentMayHaveChanged()
+            pump()
+            XCTAssertEqual(requests, ["predecessor", "tail"])
+            XCTAssertFalse(coordinator.followState.isNearBottom, "Neither stage certifies actual terminal visibility")
+        }
+    }
+
     func testRenderPinRejectsStaleRevisionAndWrongScrollGeometry() throws {
         let scroll = mountNativeScroll()
         let otherScroll = mountNativeScroll()
