@@ -41,6 +41,19 @@ def main() -> None:
     message += bytes([seed["recentBlockhashByte"]]) * 32
     message += bytes([1, 2, 2, 0, 1, 12]) + (2).to_bytes(4, "little") + int(seed["amountBaseUnits"]).to_bytes(8, "little")
     seeds["solana_decoder"] = [bytes([1]) + bytes(64) + message]
+    branches = json.loads((CORPUS / "transactions/decoder-branches.json").read_text())
+    if not isinstance(branches, list) or not 1 <= len(branches) <= 64:
+        raise ValueError("Invalid synthetic decoder branch catalog")
+    names = set()
+    for branch in branches:
+        target, name = branch["target"], branch["name"]
+        if target not in ("solana_decoder", "sui_decoder") or (target, name) in names:
+            raise ValueError("Unknown or duplicate synthetic decoder branch")
+        names.add((target, name))
+        value = base64.b64decode(branch["transactionBase64"], validate=True)
+        if not value or len(value) > 16_384 or base64.b64encode(value).decode() != branch["transactionBase64"]:
+            raise ValueError("Invalid synthetic decoder transaction")
+        seeds[target].append(value)
     for target, values in seeds.items():
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)

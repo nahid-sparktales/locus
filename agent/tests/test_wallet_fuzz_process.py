@@ -2,7 +2,6 @@
 
 import json
 import os
-import plistlib
 import signal
 import subprocess
 import sys
@@ -69,6 +68,7 @@ def test_success_keeps_output_and_inherited_lock(tmp_path, owned_lock):
     )
     result = invoke(tmp_path, script, timeout=5)
     assert result.returncode == 0 and not result.timed_out
+    assert type(result.process_id) is int and result.process_id > 0
     assert result.stdout.strip() == "True"
     assert not (tmp_path / "timeout.json").exists()
 
@@ -295,29 +295,72 @@ def test_late_reaped_success_is_failed_without_signalling(tmp_path, owned_lock, 
     kill.assert_not_called()
 
 
-def test_exact_invoked_configuration_is_retained_without_rebasing(tmp_path):
-    products = tmp_path / "products"
+def test_direct_worker_invocation_and_actual_pid_are_retained(tmp_path, monkeypatch):
     phase = tmp_path / "phase"
-    products.mkdir()
-    phase.mkdir()
-    invoked = products / "unique.xctestrun"
-    configuration = {
-        "TestBundlePath": "__TESTROOT__/Debug/Locus.app/PlugIns/LocusTests.xctest",
-        "EnvironmentVariables": {"LOCUS_FUZZ_PHASE": "replay"},
+    (phase / "corpus").mkdir(parents=True)
+    (phase / "corpus/seed").write_bytes(b"synthetic-only")
+    invoked = tmp_path / "WalletFuzzHost"
+    invoked.write_bytes(b"not-executed")
+    context = {
+        "runID": "run",
+        "chunkID": "chunk",
+        "target": "evm_decoder",
+        "phase": "replay",
+        "sourceRevision": "a" * 40,
     }
-    content = plistlib.dumps(configuration, fmt=plistlib.FMT_BINARY)
-    invoked.write_bytes(content)
-    identity = swift.retain_test_configuration(invoked, phase, {"chunkID": "synthetic"})
-    assert (phase / "invoked.xctestrun").read_bytes() == content
-    receipt = json.loads((phase / "invocation.json").read_text())
-    assert receipt["xctestrunSHA256"] == identity == evidence.sha256(invoked)
-    assert receipt["relativePathBase"] == str(products)
-    assert receipt["invokedPath"] == str(invoked)
-    invoked.unlink()
-    assert evidence.sha256(phase / "invoked.xctestrun") == identity
-    invoked.write_bytes(content)
+    observed = process.ProcessResult([str(invoked)], 7, None, None, False, 314159)
+    supervisor = Mock(return_value=observed)
+    monkeypatch.setattr(swift, "run_bounded", supervisor)
+    assert swift.invoke_worker(invoked, phase, context, 60) == observed
+    invocation = json.loads((phase / "invocation.json").read_text())
+    result = json.loads((phase / "invocation-result.json").read_text())
+    assert invocation["command"] == [str(invoked)]
+    assert invocation["seedSHA256"] == [evidence.sha256(phase / "corpus/seed")]
+    assert invocation["seedCorpusSHA256"] == evidence.directory_digest(phase / "corpus")
+    assert invocation["executableSHA256"] == evidence.sha256(invoked)
+    assert result["invocationSHA256"] == evidence.sha256(phase / "invocation.json")
+    assert result["processID"] == 314159 and result["result"] == 7
+    assert result["timedOut"] is False
+    assert not (phase / "metrics.json").exists()
+    assert supervisor.call_args.args == ([str(invoked)],)
     with pytest.raises(FileExistsError):
-        swift.retain_test_configuration(invoked, phase, {})
+        swift.invoke_worker(invoked, phase, context, 60)
+
+
+def test_worker_environment_excludes_credentials_and_loader_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCUS_REOWN_PROJECT_ID", "secret-not-for-worker")
+    monkeypatch.setenv("DYLD_INSERT_LIBRARIES", "untrusted-library")
+    monkeypatch.setenv("LOCUS_WALLET_ALCHEMY_SUI_MAINNET_GRAPHQL_URL", "private-endpoint")
+    monkeypatch.setenv("LOCUS_FUZZ_RECEIPT", "/wrong/receipt")
+    context = {
+        "runID": "run",
+        "chunkID": "chunk",
+        "target": "evm_decoder",
+        "phase": "replay",
+        "sourceRevision": "a" * 40,
+    }
+    environment = swift.worker_environment(tmp_path, context, 60)
+    assert "LOCUS_REOWN_PROJECT_ID" not in environment
+    assert not any(name.startswith("DYLD_") for name in environment)
+    assert not any(name.startswith("LOCUS_WALLET_") for name in environment)
+    assert environment["LOCUS_FUZZ_RECEIPT"] == str(tmp_path / "worker-metrics.json")
+    assert environment["LOCUS_FUZZ_REPLAY"] == "1"
+
+
+def test_bundle_identity_binds_resources_and_rejects_escaping_links(tmp_path):
+    app = tmp_path / "host.app"
+    app.mkdir()
+    (app / "binary").write_bytes(b"synthetic")
+    (app / "alias").symlink_to("binary")
+    assert swift.bundle_identity(app) == {
+        "alias": evidence.sha256(app / "binary"),
+        "binary": evidence.sha256(app / "binary"),
+    }
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"unowned")
+    (app / "escape").symlink_to(outside)
+    with pytest.raises(ValueError, match="escaping"):
+        swift.bundle_identity(app)
 
 
 def test_timeout_cannot_accrue_even_with_apparently_successful_metrics(tmp_path):

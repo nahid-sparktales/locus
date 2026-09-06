@@ -30,6 +30,24 @@ wallet_audit_reject_matching_output() {
 }
 # END wallet_audit_reject_matching_output
 
+# BEGIN wallet_audit_fuzz_host_exclusions
+# Fuzzing is a separate test executable, including for ordinary Debug builds.
+# Match executable/resource identities, not prose mentioning fuzzing in notices.
+wallet_fuzz_forbidden_symbols='WalletFuzzHost|WalletFuzzConfiguration|WalletFuzzMetrics|WalletLibFuzzer|WalletFuzzNoNetwork|walletSwiftFuzzerInput|walletFuzzerRunDriver|walletFuzzWriteProvisionalMetrics|__ZN6fuzzer[0-9]|(^|[[:space:]])_?LLVMFuzzer(RunDriver|TestOneInput|Initialize|CustomMutator|CustomCrossOver|Mutate)([[:space:]]|$)'
+wallet_fuzz_forbidden_strings='^(_?LLVMFuzzer(RunDriver|TestOneInput|Initialize|CustomMutator|CustomCrossOver|Mutate)|_?walletSwiftFuzzerInput|LOCUS_WALLET_FUZZ_HOST|LOCUS_FUZZ_(TARGET|CORPUS|ARTIFACTS|RECEIPT|RUN_ID|CHUNK_ID|PHASE|REVISION|SECONDS|REPLAY)|io\.sparktales\.locus\.wallet-fuzz-host|WalletFuzzHost|WalletFuzzConfiguration|WalletFuzzMetrics|WalletLibFuzzer|WalletFuzzNoNetwork)$|^_?\$s[0-9]+WalletFuzzHost'
+wallet_audit_reject_fuzz_host_resources() {
+    wallet_audit_reject_matching_output '.' \
+        'application contains a test-only wallet fuzz payload' \
+        /usr/bin/find "$1/Contents" \
+        \( -name WalletFuzzHost -o -name WalletFuzzHost.app \
+            -o -name WalletFuzzHost.swift -o -name WalletFuzzHost.debug.dylib \
+            -o -name WalletFuzzHost.swiftmodule -o -name WalletFuzzHost.o \
+            -o -name WalletLibFuzzerTests.swift -o -name WalletSwiftFuzzWorker.py \
+            -o -name 'libclang_rt.fuzzer*.a' -o -name 'libclang_rt.fuzzer*.dylib' \) \
+        -print
+}
+# END wallet_audit_fuzz_host_exclusions
+
 direct_app="${1:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
 mas_app="${2:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
 repo_root="${0:A:h:h}"
@@ -55,6 +73,9 @@ done
 umask 077
 audit_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/locus-wallet-binary-text.XXXXXX")"
 trap 'find "$audit_temp_dir" -depth -delete' EXIT
+
+wallet_audit_reject_fuzz_host_resources "${direct_app}"
+wallet_audit_reject_fuzz_host_resources "${mas_app}"
 
 [[ ! -e "${direct_app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
     echo "error: obsolete WalletConnections.xpc remains in the Direct app" >&2
@@ -136,6 +157,12 @@ while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
     (( direct_macho_count += 1 ))
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
+        "Direct executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/nm "${candidate}"
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
+        "Direct executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/strings "${candidate}"
     if [[ "${candidate}" != "${direct_signer}" \
         && "${candidate}" != "${recovery_signer}" ]]
     then
@@ -152,6 +179,12 @@ while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
     (( mas_macho_count += 1 ))
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
+        "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/nm "${candidate}"
+    wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
+        "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        /usr/bin/strings "${candidate}"
     unexpected="$(/usr/bin/nm -gU "${candidate}" 2>/dev/null \
         | /usr/bin/awk '$NF ~ /^_locus_wallet_/ { print $NF }')"
     [[ -z "${unexpected}" ]] || {

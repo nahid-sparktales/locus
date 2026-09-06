@@ -1,7 +1,7 @@
 name: Wallet coverage-guided fuzzing
 on:
   pull_request:
-    paths: ["Locus/**", "LocusTests/Wallet*", "WalletSignerCore/**", "WalletSignerService/**", "WalletConnectionsRuntime/**", "WalletConnectionsWeb/**", "Vendor/**", "Config/**", "FuzzCorpus/**", "Tools/*Wallet*", "agent/tests/test_wallet_fuzz*", "agent/tests/test_wallet_test_execution.py", "project.yml", "Locus.xcodeproj/**", ".github/workflows/wallet-fuzz.yml"]
+    paths: ["Locus/**", "LocusTests/Wallet*", "WalletFuzzHost/**", "WalletSignerCore/**", "WalletSignerService/**", "WalletConnectionsRuntime/**", "WalletConnectionsWeb/**", "Vendor/**", "Config/**", "FuzzCorpus/**", "Tools/*Wallet*", "agent/tests/test_wallet_fuzz*", "agent/tests/test_wallet_test_execution.py", "project.yml", "Locus.xcodeproj/**", ".github/workflows/wallet-fuzz.yml"]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -93,7 +93,7 @@ jobs:
         run: |
           xcodegen generate
           git diff --exit-code -- Locus.xcodeproj/project.pbxproj
-      - name: Replay corpora and fuzz production Swift with ASan and boundary UBSan
+      - name: Verify dedicated host, replay corpora and fuzz production Swift with ASan
         env:
           LOCUS_FUZZ_TARGET: ${{ matrix.target }}
           LOCUS_FUZZ_SECONDS: ${{ inputs.chunk_wall_seconds || (github.event_name == 'pull_request' && '60' || '1800') }}

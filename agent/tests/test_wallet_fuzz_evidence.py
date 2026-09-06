@@ -1,6 +1,5 @@
 """Receipt/accounting checks use synthetic processes, never release evidence."""
 
-import copy
 import json
 import shutil
 import subprocess
@@ -224,26 +223,21 @@ def test_failure_receipt_never_counts_despite_return_zero(campaign):
         aggregate(paths)
 
 
-def test_swift_flag_has_required_edge_mode_and_preserves_test_configuration():
+def test_swift_flag_has_required_edge_mode_and_dedicated_worker_environment(tmp_path, monkeypatch):
     assert swift_runner.SWIFT_COVERAGE == "-sanitize-coverage=edge,inline-8bit-counters,pc-table,trace-cmp"
-    original = {
-        "TestConfigurations": [
-            {
-                "TestTargets": [
-                    {
-                        "BlueprintName": "LocusTests",
-                        "EnvironmentVariables": {"existing": "retained"},
-                    },
-                    {"BlueprintName": "LocusUITests"},
-                ]
-            }
-        ]
+    assert swift_runner.EXECUTION_MODEL == "wallet-fuzz-host-v1"
+    monkeypatch.setenv("LOCUS_REOWN_PROJECT_ID", "synthetic-do-not-forward")
+    monkeypatch.setenv("DYLD_INSERT_LIBRARIES", "/synthetic/not-a-library")
+    context = {
+        "runID": str(uuid.uuid4()), "chunkID": str(uuid.uuid4()),
+        "target": "evm_decoder", "phase": "replay", "sourceRevision": "a" * 40,
     }
-    value = copy.deepcopy(original)
-    assert swift_runner.configure_tests(value, {"LOCUS_FUZZ_PHASE": "replay"}) == 1
-    target = value["TestConfigurations"][0]["TestTargets"][0]
-    assert target["EnvironmentVariables"] == {"existing": "retained", "LOCUS_FUZZ_PHASE": "replay"}
-    assert "LOCUS_FUZZ_PHASE" not in str(original)
+    environment = swift_runner.worker_environment(tmp_path, context, 60)
+    assert environment["LOCUS_FUZZ_RECEIPT"] == str(tmp_path / "worker-metrics.json")
+    assert environment["LOCUS_FUZZ_REPLAY"] == "1"
+    assert environment["LOCUS_FUZZ_CHUNK_ID"] == context["chunkID"]
+    assert "LOCUS_REOWN_PROJECT_ID" not in environment
+    assert "DYLD_INSERT_LIBRARIES" not in environment
 
 
 def test_source_identity_rejects_untracked_and_tracked_dirty_tree(tmp_path, monkeypatch):

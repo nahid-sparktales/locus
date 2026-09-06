@@ -53,7 +53,9 @@ enum LocusWindowSizing {
     }
 }
 
+#if !LOCUS_WALLET_FUZZ_HOST
 @main
+#endif
 struct LocusApp: App {
     @NSApplicationDelegateAdaptor(LocusApplicationDelegate.self) private var appDelegate
     // XCTest injects the test bundle into the normal app host. Keep that host

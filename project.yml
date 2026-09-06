@@ -69,13 +69,31 @@ packages:
   ReownSwift:
     path: Vendor/ReownSwift
 targetTemplates:
-  LocusApplication:
-    type: application
-    platform: macOS
+  # Source-only templates keep the test-only fuzz executable on the exact
+  # production implementation without inheriting app resources or side effects.
+  LocusSwiftSources:
     sources:
       - path: Locus
         excludes:
           - Resources
+  LocusSharedPackages:
+    dependencies:
+      - package: SwiftTerm
+      - package: SwiftMarkdown
+        product: Markdown
+  LocusDirectSwiftSources:
+    sources:
+      - path: WalletConnectionsRuntime
+        excludes:
+          - Resources
+    dependencies:
+      - package: Sparkle
+      - package: ReownSwift
+        product: WalletConnect
+  LocusApplication:
+    type: application
+    platform: macOS
+    sources:
       - path: Locus/Resources
         buildPhase: resources
         excludes:
@@ -211,11 +229,11 @@ targets:
           ENABLE_HARDENED_RUNTIME: YES
   Locus:
     templates:
+      - LocusSwiftSources
+      - LocusSharedPackages
+      - LocusDirectSwiftSources
       - LocusApplication
     sources:
-      - path: WalletConnectionsRuntime
-        excludes:
-          - Resources
       - path: WalletConnectionsRuntime/Resources
         buildPhase: resources
       - path: WalletConnectionsWeb/licenses
@@ -259,18 +277,14 @@ targets:
       - target: WalletSignerService
         embed: true
         codeSign: true
-      - package: Sparkle
-      - package: SwiftTerm
-      - package: SwiftMarkdown
-        product: Markdown
-      - package: ReownSwift
-        product: WalletConnect
     scheme:
       testTargets:
         - LocusTests
         - LocusUITests
   LocusMAS:
     templates:
+      - LocusSwiftSources
+      - LocusSharedPackages
       - LocusApplication
     settings:
       base:
@@ -281,15 +295,36 @@ targets:
         ReleaseMAS:
           CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
-    dependencies:
-      - package: SwiftTerm
-      - package: SwiftMarkdown
-        product: Markdown
+  WalletFuzzHost:
+    type: application
+    platform: macOS
+    templates:
+      - LocusSwiftSources
+      - LocusSharedPackages
+      - LocusDirectSwiftSources
+    sources:
+      - path: WalletFuzzHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.wallet-fuzz-host
+        PRODUCT_NAME: WalletFuzzHost
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WalletFuzzHost/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ""
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_DEBUG_DYLIB: NO
+        SKIP_INSTALL: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET_FUZZ_HOST"
   LocusTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: LocusTests
+      - path: WalletFuzzHost/WalletFuzzDecoderFixtures.swift
       - path: ProtocolFixtures/companion-v1.json
         buildPhase: resources
     dependencies:
@@ -337,6 +372,12 @@ targets:
         TEST_TARGET_NAME: LocusMAS
         GENERATE_INFOPLIST_FILE: YES
 schemes:
+  WalletFuzzHost:
+    build:
+      targets:
+        WalletFuzzHost: [run]
+    run:
+      config: Debug
   WalletChainIntegration:
     build:
       targets:

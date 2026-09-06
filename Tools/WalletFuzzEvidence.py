@@ -17,6 +17,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import WalletSwiftFuzzWorker as swift_worker
+
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "swift": (
@@ -181,6 +183,72 @@ def coverage(log: str) -> dict:
     }
 
 
+def validate_swift_host_evidence(
+    run: Path,
+    phase: Path,
+    expected: dict,
+    log: str,
+    findings: bool,
+    *,
+    binary: dict,
+    corpus_before: str,
+    result: int,
+) -> dict:
+    """Reproduce completion from retained observations, not a normalized pass claim.
+
+    The worker validator checks the supervisor's exit/PID, invocation identities,
+    engine completion and seed observations. This independent evidence boundary
+    also binds those observations to the retained binary/corpus and requires all
+    final engine statistics, even when the receipt/file hashes were resealed.
+    """
+    if type(result) is not int or result != 0:
+        raise ValueError("Worker process did not exit successfully")
+    if (phase / "timeout.json").exists() or (phase / "timeout.json").is_symlink():
+        raise ValueError("Retained worker timeout blocks completion")
+    try:
+        normalized = swift_worker.validate_phase(phase, expected, log, findings)
+    except (OverflowError, KeyError, TypeError) as error:
+        raise ValueError("Malformed worker completion observations") from error
+    invocation = swift_worker.read_record(phase / "invocation.json")
+    if (
+        not isinstance(binary, dict)
+        or not isinstance(invocation.get("executableSHA256"), str)
+        or invocation.get("executableSHA256")
+        != binary.get("Contents/MacOS/WalletFuzzHost")
+        or not re.fullmatch(r"[0-9a-f]{64}", invocation.get("executableSHA256", ""))
+    ):
+        raise ValueError("Worker executable identity does not match the receipt")
+    if type(normalized.get("schemaVersion")) is not int or normalized["schemaVersion"] != 1:
+        raise ValueError("Invalid worker metrics schema")
+    seeds_root = run / "seeds"
+    seeds = seeds_root / expected["target"]
+    if seeds_root.is_symlink() or not seeds_root.is_dir():
+        raise ValueError("Missing or linked retained seed directory")
+    if invocation.get("seedSHA256") != swift_worker.seed_hashes(seeds):
+        raise ValueError("Invocation does not match the retained seed corpus")
+    if (
+        directory_digest(seeds) != corpus_before
+        or invocation.get("seedCorpusSHA256") != corpus_before
+    ):
+        raise ValueError("Retained seed corpus identity does not match the receipt")
+    for statistic in (
+        "number_of_executed_units",
+        "average_exec_per_sec",
+        "new_units_added",
+        "slowest_unit_time_sec",
+        "peak_rss_mb",
+    ):
+        lines = [line for line in log.splitlines() if line.startswith(f"stat::{statistic}:")]
+        if len(lines) != 1 or not re.fullmatch(rf"stat::{statistic}:[ \t]*[0-9]+[ \t]*", lines[0]):
+            raise ValueError("Missing, duplicate or malformed final libFuzzer statistics")
+    metrics = swift_worker.read_record(phase / "metrics.json")
+    # JSON canonical bytes preserve Boolean-vs-integer distinctions that normal
+    # Python dictionary equality would accept (for example, True == 1).
+    if canonical(metrics) != canonical(normalized):
+        raise ValueError("Normalized metrics differ from independently validated observations")
+    return normalized
+
+
 def finish_receipt(
     run: Path,
     manifest: dict,
@@ -208,6 +276,25 @@ def finish_receipt(
         "target": target,
         "sourceRevision": manifest["source"]["revision"],
     }
+    findings = bool(FINDING.search(log)) or any((phase / "artifacts").iterdir())
+    dedicated_host = swift_worker.EXECUTION_MODEL in manifest["flags"]
+    completion_valid = True
+    if dedicated_host:
+        try:
+            if manifest["language"] != "swift":
+                raise ValueError("Dedicated Swift host used for another language")
+            verified = validate_swift_host_evidence(
+                run, phase, expected, log, findings,
+                binary=binary, corpus_before=corpus_before, result=result,
+            )
+            if canonical(metrics) != canonical(verified):
+                raise ValueError("Caller metrics differ from retained worker evidence")
+            metrics = verified
+        except (OSError, ValueError, TypeError, KeyError):
+            # Keep failures as immutable evidence, including an early zero exit
+            # that did not leave complete observations. They earn no CPU credit.
+            completion_valid = False
+            metrics = None
     metrics_valid = (
         isinstance(metrics, dict)
         and bool(metrics)
@@ -223,9 +310,9 @@ def finish_receipt(
     metrics_valid = (
         metrics_valid and type(metrics.get("result")) is int and metrics["result"] == 0
     )
-    findings = bool(FINDING.search(log)) or any((phase / "artifacts").iterdir())
     passed = (
         result == 0
+        and completion_valid
         and metrics_valid
         and not findings
         and source_after == manifest["source"]
@@ -264,6 +351,8 @@ def finish_receipt(
         "status": "passed" if passed else "failed",
         "files": files,
     }
+    if dedicated_host:
+        payload["completionValidation"] = "verified" if completion_valid else "failed"
     payload["receiptSHA256"] = digest(payload)
     immutable_json(phase / "receipt.json", payload)
     return payload
@@ -424,6 +513,19 @@ def aggregate(
         ):
             raise ValueError("Sanitizer finding or altered coverage")
         metrics = json.loads((phase / "metrics.json").read_text())
+        if swift_worker.EXECUTION_MODEL in receipt["flags"]:
+            if receipt["language"] != "swift" or receipt.get("completionValidation") != "verified":
+                raise ValueError("Missing dedicated Swift host validation")
+            metrics = validate_swift_host_evidence(
+                run,
+                phase,
+                {field: receipt[field] for field in swift_worker.IDENTITY_FIELDS},
+                log,
+                bool(receipt["findings"]),
+                binary=receipt["binary"],
+                corpus_before=receipt["corpusBeforeSHA256"],
+                result=receipt["result"],
+            )
         for field in (
             "runID",
             "chunkID",
