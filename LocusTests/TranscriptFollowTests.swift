@@ -858,6 +858,100 @@ final class TranscriptFollowTests: XCTestCase {
             "A previously settled projection cannot certify a new revision without its layout")
     }
 
+    func testTailProbeLateOlderRegistrationCannotReplaceCurrentGeometry() throws {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let tail = TranscriptPresentationItem.ID.block(UUID())
+        let current = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: tail)
+        coordinator.installRenderTarget(current, realizeTail: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: current, anchor: anchor)
+        _ = try makeRegisteredTailProbes(coordinator, token: current, in: scroll)
+        coordinator.tailProbesDidLayout(token: current, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+
+        let invalidTokens = [
+            TranscriptRenderToken(sessionGeneration: 1, contentRevision: 99, tailID: tail),
+            TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: tail),
+            TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: .block(UUID())),
+        ]
+        for stale in invalidTokens {
+            let staleProbes = try makeRegisteredTailProbes(coordinator, token: stale, in: scroll)
+            coordinator.tailProbesDidLayout(token: current, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+            XCTAssertTrue(coordinator.followState.isNearBottom,
+                "A late old-row registration cannot erase the current row's measured end")
+            coordinator.unregisterTailProbe(staleProbes.content)
+            coordinator.unregisterTailProbe(staleProbes.end)
+            coordinator.tailProbesDidLayout(token: current, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+            XCTAssertTrue(coordinator.followState.isNearBottom,
+                "Dismantling an older row cannot clear a newer row's registered probes")
+        }
+    }
+
+    func testTailProbesRegisteredBeforeTheirBridgeTokenRemainAvailable() throws {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let tail = TranscriptPresentationItem.ID.block(UUID())
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+        let next = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: tail)
+        // SwiftUI may construct the new rows before updating their bridge.
+        _ = try makeRegisteredTailProbes(coordinator, token: next, in: scroll)
+        coordinator.installRenderTarget(current, realizeTail: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: current, anchor: anchor)
+        let oldProbes = try makeRegisteredTailProbes(coordinator, token: current, in: scroll)
+        coordinator.tailProbesDidLayout(token: current, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        coordinator.installRenderTarget(next, realizeTail: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: next, anchor: anchor)
+        // Attaching requests native observation; finish that actual layout
+        // before sampling rather than manufacturing a layout acknowledgment.
+        try XCTUnwrap(scroll.documentView).layoutSubtreeIfNeeded()
+        coordinator.unregisterTailProbe(oldProbes.content)
+        coordinator.unregisterTailProbe(oldProbes.end)
+        coordinator.tailProbesDidLayout(token: next, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom,
+            "Installing a bridge must select its pre-registered probes without another representable update")
+    }
+
+    func testTailProbeReplacementCleanupIsExactAndRegistrationsStayWeak() throws {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        coordinator.installRenderTarget(token, realizeTail: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        let replaced = try makeRegisteredTailProbes(coordinator, token: token, in: scroll)
+        let replacement = try makeRegisteredTailProbes(coordinator, token: token, in: scroll)
+        coordinator.unregisterTailProbe(replaced.content)
+        coordinator.unregisterTailProbe(replaced.end)
+        coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        coordinator.unregisterTailProbe(replacement.content)
+        coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+        XCTAssertFalse(coordinator.followState.isNearBottom,
+            "Removing the selected current probe must invalidate its geometry")
+
+        weak var released: TranscriptTailLayoutView?
+        autoreleasepool {
+            let transient = TranscriptTailLayoutView(frame: .zero)
+            transient.token = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: token.tailID)
+            released = transient
+            coordinator.registerTailProbe(transient)
+        }
+        XCTAssertNil(released, "Future registrations must not retain a recycled native row")
+    }
+
     func testRenderPinAdvancesOnlyForNewNativeGeometryAndPreservesReaderOwnership() throws {
         let scroll = mountNativeScroll()
         let document = try XCTUnwrap(scroll.documentView)
@@ -1313,6 +1407,23 @@ final class TranscriptFollowTests: XCTestCase {
         coordinator.renderContainerDidLayout(
             token: token, attachment: coordinator.layoutAttachmentRevision, from: anchor
         )
+    }
+
+    private func makeRegisteredTailProbes(
+        _ coordinator: TranscriptScrollCoordinator, token: TranscriptRenderToken, in scroll: NSScrollView
+    ) throws -> (content: TranscriptTailLayoutView, end: TranscriptTailLayoutView) {
+        let document = try XCTUnwrap(scroll.documentView)
+        func make(_ kind: TranscriptTailLayoutKind, y: CGFloat) -> TranscriptTailLayoutView {
+            let view = TranscriptTailLayoutView(frame: NSRect(x: 0, y: y, width: 300, height: 41))
+            view.token = token
+            view.kind = kind
+            document.addSubview(view)
+            coordinator.registerTailProbe(view)
+            view.layoutSubtreeIfNeeded()
+            XCTAssertFalse(view.needsLayout)
+            return view
+        }
+        return (make(.content, y: 41), make(.end, y: 0))
     }
 
     // MARK: - Harness

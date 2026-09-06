@@ -2672,6 +2672,29 @@ private struct ConversationView: View {
                 transcriptEnd(token: token, id: .end(token.sessionGeneration))
             }
         }
+        #if DEBUG
+        .background {
+            if model.pendingDispatchPlan != nil, TranscriptRowGeometryDiagnostics.enabled {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear {
+                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
+                                frame: geometry.frame(in: .global), event: "appear")
+                        }
+                        .onChange(of: geometry.frame(in: .global)) { _, frame in
+                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
+                                frame: frame, event: "geometry")
+                        }
+                        .onDisappear {
+                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
+                                frame: geometry.frame(in: .global), event: "disappear")
+                        }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+        #endif
         .id(row.id)
     }
 
@@ -3089,6 +3112,30 @@ private enum TranscriptScrollTarget: Hashable {
     case end(UInt64)
 }
 
+#if DEBUG
+@MainActor
+private enum TranscriptRowGeometryDiagnostics {
+    static let enabled = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            && environment["LOCUS_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
+    }()
+    private static var records = 0
+
+    static func record(row: Int, token: TranscriptRenderToken, frame: CGRect, event: String) {
+        guard enabled, records < 128 else { return }
+        records += 1
+        let metadata: [String: Any] = ["record": records, "row": row, "event": event,
+            "generation": token.sessionGeneration, "revision": token.contentRevision,
+            "frame": [frame.minX, frame.minY, frame.width, frame.height]]
+        if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            try? FileHandle.standardError.write(contentsOf: Data(("LocusTranscriptRowGeometry " + json + "\n").utf8))
+        }
+    }
+}
+#endif
+
 private struct TranscriptRenderRow: Identifiable {
     let index: Int
     let item: TranscriptPresentationItem
@@ -3142,8 +3189,18 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var observerSessionGeneration: UInt64?
     private var readerIntentRevision: UInt64 = 0
     private var pendingSessionFollowReset: (generation: UInt64, readerRevision: UInt64)?
-    private weak var contentProbe: TranscriptTailLayoutView?
-    private weak var endProbe: TranscriptTailLayoutView?
+    private struct TailProbeRegistration {
+        weak var view: TranscriptTailLayoutView?
+        let token: TranscriptRenderToken
+        let kind: TranscriptTailLayoutKind
+    }
+
+    // A representable can register before its token's bridge update. Keep
+    // those future registrations without allowing a late older row to replace
+    // the current row's probes. These entries never retain native views.
+    private var tailProbeRegistrations: [TailProbeRegistration] = []
+    private var contentProbe: TranscriptTailLayoutView? { tailProbe(kind: .content) }
+    private var endProbe: TranscriptTailLayoutView? { tailProbe(kind: .end) }
     private var contentRect: NSRect?
     private var endRect: NSRect?
     private var realizationRequested = false
@@ -3266,6 +3323,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
             }
         }
         renderToken = token
+        pruneTailProbeRegistrations()
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
         pinPending = false
@@ -3299,15 +3357,46 @@ final class TranscriptScrollCoordinator: ObservableObject {
         }
     }
 
-    fileprivate func registerTailProbe(_ view: TranscriptTailLayoutView) {
-        if view.kind == .content { contentProbe = view } else { endProbe = view }
+    func registerTailProbe(_ view: TranscriptTailLayoutView) {
+        pruneTailProbeRegistrations()
+        // A reused representable has only its newest registration. Removing
+        // an old key must not remove a different view at the current key.
+        tailProbeRegistrations.removeAll { $0.view === view }
+        guard let token = view.token, admitsTailProbeToken(token) else { return }
+        tailProbeRegistrations.removeAll { $0.token == token && $0.kind == view.kind }
+        tailProbeRegistrations.append(TailProbeRegistration(view: view, token: token, kind: view.kind))
     }
 
-    fileprivate func unregisterTailProbe(_ view: TranscriptTailLayoutView) {
-        if contentProbe === view { contentProbe = nil; contentRect = nil }
-        if endProbe === view { endProbe = nil; endRect = nil }
+    func unregisterTailProbe(_ view: TranscriptTailLayoutView) {
+        if contentProbe === view { contentRect = nil }
+        if endProbe === view { endRect = nil }
+        tailProbeRegistrations.removeAll { $0.view == nil || $0.view === view }
         // Dismantling is inside a SwiftUI graph mutation. Do not publish or
         // schedule a replacement scroll from this cleanup callback.
+    }
+
+    private func admitsTailProbeToken(_ token: TranscriptRenderToken) -> Bool {
+        guard let current = renderToken else { return true }
+        if token.sessionGeneration != current.sessionGeneration {
+            return token.sessionGeneration > current.sessionGeneration
+        }
+        if token.contentRevision != current.contentRevision {
+            return token.contentRevision > current.contentRevision
+        }
+        return token == current
+    }
+
+    private func pruneTailProbeRegistrations() {
+        tailProbeRegistrations.removeAll {
+            guard let view = $0.view else { return true }
+            return view.token != $0.token || view.kind != $0.kind || !admitsTailProbeToken($0.token)
+        }
+    }
+
+    private func tailProbe(kind: TranscriptTailLayoutKind) -> TranscriptTailLayoutView? {
+        pruneTailProbeRegistrations()
+        guard let token = renderToken else { return nil }
+        return tailProbeRegistrations.first { $0.token == token && $0.kind == kind }?.view
     }
 
     func tailDidLayout(
@@ -3361,7 +3450,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
         if !alreadyAcknowledged { schedulePin() }
     }
 
-    fileprivate func tailProbesDidLayout(
+    func tailProbesDidLayout(
         token: TranscriptRenderToken, attachment: UInt64, in scroll: NSScrollView
     ) {
         guard token == renderToken, attachment == attachmentRevision, scroll === scrollView else { return }
@@ -4173,7 +4262,7 @@ private struct TranscriptTailLayoutProbe: NSViewRepresentable {
     }
 }
 
-private final class TranscriptTailLayoutView: NSView {
+final class TranscriptTailLayoutView: NSView {
     weak var transcriptCoordinator: TranscriptScrollCoordinator?
     var token: TranscriptRenderToken?
     var kind: TranscriptTailLayoutKind = .content
@@ -5500,6 +5589,7 @@ private struct ToolHeaderHitTestDiagnostics: NSViewRepresentable {
         let environment = ProcessInfo.processInfo.environment
         return environment["LOCUS_UI_TESTING"] == "1"
             && environment["LOCUS_UI_TESTING_SCROLL"] == "1"
+            && environment["LOCUS_UI_TESTING_TOOL_HEADER_HIT_TEST"] == "1"
     }()
 
     func makeNSView(context: Context) -> ToolHeaderHitTestDiagnosticView {
