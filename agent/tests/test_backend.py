@@ -31,7 +31,14 @@ from ollama_code.chat_transport_runtime import event_pump
 from ollama_code.continuity import ContinuityStore
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, OllamaError, process_chunk
-from ollama_code.orchestration import AgentResult, TeamOrchestrator
+from ollama_code.orchestration import (
+    GLOBAL_MODEL_SCHEDULER,
+    LEASE_DATABASE_PREFIX,
+    LEASE_DATABASE_SUFFIX,
+    AgentResult,
+    CrossProcessModelCallScheduler,
+    TeamOrchestrator,
+)
 from ollama_code.permissions import PermissionManager, build_preview, file_effects
 from ollama_code.render import ThinkFilter, strip_think
 from ollama_code.sessions import SessionMeta, SessionStore, strip_prompt_decoration
@@ -3731,6 +3738,27 @@ def test_run_turn_names_a_smaller_team_call_limit_instead_of_iteration_limit(tmp
     assert done["model_call_limit"] == 2
     assert done["iteration_limit"] == 5
     assert core.last_turn_result == done
+
+
+def test_starting_a_service_sweeps_the_lease_databases_of_earlier_launches(
+    tmp_path, monkeypatch
+):
+    """The sweep only reclaims anything if startup is what runs it."""
+    home = tmp_path / "agent-home"
+    home.mkdir()
+    monkeypatch.setattr(
+        GLOBAL_MODEL_SCHEDULER,
+        "path",
+        home / f"{LEASE_DATABASE_PREFIX}this-launch{LEASE_DATABASE_SUFFIX}",
+    )
+    earlier = home / f"{LEASE_DATABASE_PREFIX}earlier-launch{LEASE_DATABASE_SUFFIX}"
+    CrossProcessModelCallScheduler(limit=1, path=earlier)
+    long_ago = time.time() - 30 * 86_400
+    os.utime(earlier, (long_ago, long_ago))
+
+    server_mod.ChatService(_core(tmp_path, []))
+
+    assert not earlier.exists()
 
 
 def test_ask_user_question_blocks_until_answered(tmp_path):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import subprocess
 import threading
 import time
@@ -12,6 +14,8 @@ import pytest
 from ollama_code.ollama import OllamaError
 from ollama_code.openai_responses_multi_agent import OpenAIResponsesMultiAgentError
 from ollama_code.orchestration import (
+    LEASE_DATABASE_PREFIX,
+    LEASE_DATABASE_SUFFIX,
     AgentJob,
     AgentResult,
     CrossProcessModelCallScheduler,
@@ -20,6 +24,7 @@ from ollama_code.orchestration import (
     OrchestrationError,
     TeamOrchestrator,
     TeamPreparation,
+    lease_database_path,
     normalize_dispatch_candidate,
     orchestration_fingerprint,
     ordered_writer_jobs,
@@ -904,6 +909,110 @@ def test_cross_process_scheduler_instances_share_leases_and_reap_expiry(tmp_path
     two.join()
     assert order == ["a", "b"]
     assert first.active_count == 0
+
+
+def test_lease_database_path_is_one_file_per_launch_under_the_data_root(
+    monkeypatch, tmp_path
+):
+    """Workers of one launch share a file; a new launch never reuses one."""
+    monkeypatch.setenv("OLLAMA_CODE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCUS_AGENT_TOKEN", "launch-one")
+    first = lease_database_path()
+    sibling_worker = lease_database_path()
+    monkeypatch.setenv("LOCUS_AGENT_TOKEN", "launch-two")
+    next_launch = lease_database_path()
+
+    assert first.parent == tmp_path
+    assert first.name.startswith(LEASE_DATABASE_PREFIX)
+    assert first.suffix == ".sqlite3"
+    assert sibling_worker == first
+    assert next_launch != first
+
+
+def _lease_database(directory: Path, namespace: str) -> Path:
+    return directory / f"{LEASE_DATABASE_PREFIX}{namespace}{LEASE_DATABASE_SUFFIX}"
+
+
+def _launch_ended_long_ago(path: Path) -> Path:
+    """Backdate *path* to a launch that exited a month before this one started."""
+    when = time.time() - 30 * 86_400
+    os.utime(path, (when, when))
+    return path
+
+
+def test_sweep_removes_the_lease_databases_of_launches_that_have_ended(tmp_path):
+    """Nothing reopens a finished launch's database, so it is pure accumulation."""
+    scheduler = CrossProcessModelCallScheduler(
+        limit=1, path=_lease_database(tmp_path, "live")
+    )
+    finished = _lease_database(tmp_path, "finished")
+    CrossProcessModelCallScheduler(limit=1, path=finished)
+    _launch_ended_long_ago(finished)
+    # Truncated by whatever killed the launch that owned it: still garbage.
+    unreadable = _lease_database(tmp_path, "unreadable")
+    unreadable.write_text("not a database")
+    _launch_ended_long_ago(unreadable)
+    running = _lease_database(tmp_path, "running")
+    CrossProcessModelCallScheduler(limit=1, path=running)
+    unrelated = tmp_path / "agent-runs.sqlite3"
+    unrelated.write_text("a database this scheduler does not own")
+    _launch_ended_long_ago(unrelated)
+
+    assert scheduler.sweep_stale_databases() == 2
+
+    assert not finished.exists()
+    assert not unreadable.exists()
+    assert running.exists(), "inside the idle window, so possibly a live Locus"
+    assert scheduler.path.exists(), "the sweeping launch's own database"
+    assert unrelated.exists(), "not a lease database"
+
+
+def test_sweep_spares_an_idle_database_that_still_holds_a_lease(tmp_path):
+    """Idleness alone would delete the file a long model call is throttling on."""
+    scheduler = CrossProcessModelCallScheduler(
+        limit=1, path=_lease_database(tmp_path, "live")
+    )
+    other = _lease_database(tmp_path, "other")
+    holder = CrossProcessModelCallScheduler(limit=1, lease_seconds=600, path=other)
+
+    with holder.lease("chat-a"):
+        _launch_ended_long_ago(other)
+        assert scheduler.sweep_stale_databases() == 0
+        assert other.exists()
+
+    _launch_ended_long_ago(other)
+    assert scheduler.sweep_stale_databases() == 1
+    assert not other.exists()
+
+
+def test_sweep_spares_an_idle_database_with_a_queued_waiter(tmp_path):
+    """A worker still queued for a lease is a live namespace holding no lease."""
+    scheduler = CrossProcessModelCallScheduler(
+        limit=1, path=_lease_database(tmp_path, "live")
+    )
+    other = _lease_database(tmp_path, "other")
+    CrossProcessModelCallScheduler(limit=1, path=other)
+    with sqlite3.connect(other) as connection:
+        connection.execute(
+            "INSERT INTO waiters(id, run_id, created_at, owner_pid) VALUES (?, ?, ?, ?)",
+            ("waiter-1", "chat-a", time.time(), os.getpid()),
+        )
+    _launch_ended_long_ago(other)
+
+    assert scheduler.sweep_stale_databases() == 0
+    assert other.exists()
+
+
+def test_a_lease_outlives_its_database_being_swept_away(tmp_path):
+    """Losing that race must not wedge model calls for the rest of the launch."""
+    path = _lease_database(tmp_path, "live")
+    scheduler = CrossProcessModelCallScheduler(limit=1, path=path)
+    path.unlink()
+
+    with scheduler.lease("chat-a") as lease_id:
+        assert scheduler.heartbeat(lease_id)
+    assert path.exists()
+    assert scheduler.active_count == 0
 
 
 def _git(cwd: Path, *args: str) -> str:

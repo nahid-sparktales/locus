@@ -32,6 +32,7 @@ from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
     OpenAIResponsesMultiAgentError,
 )
+from .paths import app_dir
 from .proxy import sanitized_child_environment
 from .remote import AUTH_ANTHROPIC, RemoteClient
 from .runstore import RunStore
@@ -465,16 +466,77 @@ class ModelCallScheduler:
             self._condition.notify_all()
 
 
+LEASE_DATABASE_PREFIX = "model-call-leases-"
+LEASE_DATABASE_SUFFIX = ".sqlite3"
+#: How long a lease database may sit untouched before a sweep may delete it. A
+#: namespace lives exactly as long as the launch whose token named it, so a day
+#: is already far past "nobody will open this again". The window exists for the
+#: one case that inference does not cover — a second Locus running alongside
+#: this one — whose database is spared until it has been quiet this long.
+LEASE_DATABASE_MAX_IDLE_SECONDS = 24 * 60 * 60
+
+
+def lease_namespace() -> str:
+    """The lease namespace this process shares with its sibling workers.
+
+    Leases are only comparable between processes that speak for the same
+    authenticated agent, so the namespace is the launch token's digest: every
+    worker Locus starts for one launch derives the same one, and a different
+    launch — which mints a fresh token — can never collide with it.
+    """
+    token = os.environ.get("LOCUS_AGENT_TOKEN") or "standalone"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def lease_database_path(namespace: str | None = None) -> Path:
+    """The lease database for *namespace* under the current agent data root."""
+    return app_dir() / (
+        f"{LEASE_DATABASE_PREFIX}{namespace or lease_namespace()}{LEASE_DATABASE_SUFFIX}"
+    )
+
+
+def _lease_database_is_unused(path: Path) -> bool:
+    """Whether *path* holds no lease or queued waiter a live process could own."""
+    try:
+        connection = sqlite3.connect(path, timeout=1)
+    except sqlite3.Error:
+        return True
+    try:
+        pending = int(connection.execute(
+            "SELECT (SELECT COUNT(*) FROM leases WHERE expires_at > ?)"
+            " + (SELECT COUNT(*) FROM waiters)",
+            (time.time(),),
+        ).fetchone()[0])
+    except sqlite3.Error:
+        # No schema, or no longer readable as a database: whatever it is, it can
+        # no longer hand a lease to anybody.
+        return True
+    finally:
+        connection.close()
+    return pending == 0
+
+
+def _remove_lease_database(path: Path) -> bool:
+    """Delete *path* with any SQLite sidecar left beside it."""
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            path.with_name(path.name + suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return True
+
+
 class CrossProcessModelCallScheduler:
     """Crash-recoverable leases shared by every local task-worker process."""
 
     def __init__(self, limit: int = 3, lease_seconds: int = 660, path: Path | None = None) -> None:
         self.limit = max(1, min(limit, MAX_TEAM_CONCURRENCY))
         self.lease_seconds = max(30, lease_seconds)
-        home = Path(os.environ.get("OLLAMA_CODE_HOME") or Path.home() / ".ollama-code")
-        token = os.environ.get("LOCUS_AGENT_TOKEN") or "standalone"
-        namespace = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
-        self.path = path or (home / f"model-call-leases-{namespace}.sqlite3")
+        self.path = path or lease_database_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.path.parent.chmod(0o700)
@@ -482,13 +544,22 @@ class CrossProcessModelCallScheduler:
             pass
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5, isolation_level=None)
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
+    def _connect(self) -> sqlite3.Connection:
+        if not self.path.exists():
+            # Another launch's sweep, a cleared data root, or a temp cleaner can
+            # take the file away mid-launch. sqlite3 would then hand back a new
+            # empty database and every statement after it would fail on a
+            # missing table, wedging model calls for the rest of the launch.
+            self._initialize()
+        return self._open()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._open() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS leases (
@@ -586,6 +657,43 @@ class CrossProcessModelCallScheduler:
                 (run_id, time.time()),
             ).fetchone()
         return row is not None
+
+    def sweep_stale_databases(
+        self, *, max_idle_seconds: float = LEASE_DATABASE_MAX_IDLE_SECONDS
+    ) -> int:
+        """Delete the lease databases left behind by launches that have ended.
+
+        Locus mints an agent token per launch and the namespace is its digest,
+        so a database is only ever opened by the launch that named it: once that
+        launch exits its file is unreachable, and without this the data root
+        gains one more of them every time Locus starts.
+
+        A token cannot be observed from outside the launch holding it, so
+        staleness is what a finished launch leaves behind: a file untouched past
+        *max_idle_seconds* that holds neither an unexpired lease nor a queued
+        waiter. This process's own database is never a candidate, and a live
+        namespace that loses a race here recreates its schema on the next
+        connection rather than failing.
+        """
+        cutoff = time.time() - max(max_idle_seconds, 60.0)
+        try:
+            candidates = sorted(self.path.parent.glob(
+                f"{LEASE_DATABASE_PREFIX}*{LEASE_DATABASE_SUFFIX}"
+            ))
+        except OSError:
+            return 0
+        removed = 0
+        for candidate in candidates:
+            if candidate == self.path:
+                continue
+            try:
+                if candidate.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
+                continue
+            if _lease_database_is_unused(candidate) and _remove_lease_database(candidate):
+                removed += 1
+        return removed
 
 
 try:
