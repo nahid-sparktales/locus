@@ -40,8 +40,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 # Isolated test-only executable: no Locus signer library, production allowlist
-# change, runtime key import, or release-artifact embedding. Locked/offline so
-# running localnet never resolves a new dependency graph.
+# change, runtime key import, or release-artifact embedding. Fetch this separate
+# locked graph explicitly: a clean CI runner's production signer cache does not
+# contain every fixture version. The subsequent build remains locked/offline.
+cargo fetch --locked \
+  --manifest-path "$repo_root/Tools/Fixtures/SuiLocalSigner/Cargo.toml"
 cargo build --offline --locked \
   --manifest-path "$repo_root/Tools/Fixtures/SuiLocalSigner/Cargo.toml" \
   --target-dir "$temp_dir/fixture-build"

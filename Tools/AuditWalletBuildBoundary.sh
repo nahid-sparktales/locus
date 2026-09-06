@@ -3,6 +3,33 @@
 # complements AuditDistribution.sh by proving target separation in CI.
 set -euo pipefail
 
+# BEGIN wallet_audit_reject_matching_output
+wallet_audit_reject_matching_output() {
+    local pattern="$1"
+    local failure_message="$2"
+    shift 2
+    local output_path="${audit_temp_dir}/inspection.stdout"
+    # Capture the complete producer result first. grep -q on a live pipe can
+    # close it early and turn a forbidden match into SIGPIPE under pipefail.
+    # An inspection-tool error must never mean that forbidden content is absent.
+    if ! "$@" >"${output_path}" 2>/dev/null; then
+        echo "error: wallet binary inspection tool failed" >&2
+        return 1
+    fi
+    if /usr/bin/grep -E -- "${pattern}" "${output_path}" >/dev/null; then
+        echo "error: ${failure_message}" >&2
+        return 1
+    else
+        local match_status=$?
+        if (( match_status != 1 )); then
+            echo "error: wallet binary output inspection failed" >&2
+            return 1
+        fi
+    fi
+    return 0
+}
+# END wallet_audit_reject_matching_output
+
 direct_app="${1:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
 mas_app="${2:?usage: AuditWalletBuildBoundary.sh <Direct Locus.app> <MAS Locus.app>}"
 repo_root="${0:A:h:h}"
@@ -24,6 +51,10 @@ do
         exit 1
     }
 done
+
+umask 077
+audit_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/locus-wallet-binary-text.XXXXXX")"
+trap 'find "$audit_temp_dir" -depth -delete' EXIT
 
 [[ ! -e "${direct_app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
     echo "error: obsolete WalletConnections.xpc remains in the Direct app" >&2
@@ -89,11 +120,10 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
     exit 1
 }
 
-! /usr/bin/plutil -p "${mas_app}/Contents/Info.plist" | /usr/bin/grep -Eq \
-    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' || {
-    echo "error: Mac App Store Info.plist contains connector configuration" >&2
-    exit 1
-}
+wallet_audit_reject_matching_output \
+    'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' \
+    'Mac App Store Info.plist contains connector configuration' \
+    /usr/bin/plutil -p "${mas_app}/Contents/Info.plist"
 
 mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
 mas_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
@@ -128,12 +158,12 @@ do
         echo "error: Mac App Store executable links signer-core exports: ${candidate}" >&2
         exit 1
     }
-    if /usr/bin/nm "${candidate}" 2>/dev/null | /usr/bin/grep -Eq "${mas_forbidden}" \
-        || /usr/bin/strings "${candidate}" | /usr/bin/grep -Eq "${mas_forbidden}"
-    then
-        echo "error: Mac App Store executable contains Direct connector code or credentials: ${candidate}" >&2
-        exit 1
-    fi
+    wallet_audit_reject_matching_output "${mas_forbidden}" \
+        "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+        /usr/bin/nm "${candidate}"
+    wallet_audit_reject_matching_output "${mas_forbidden}" \
+        "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+        /usr/bin/strings "${candidate}"
 done < <(/usr/bin/find "${mas_app}/Contents" -type f -print)
 
 (( direct_macho_count > 0 && mas_macho_count > 0 )) || {

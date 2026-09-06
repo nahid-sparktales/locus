@@ -36,8 +36,9 @@ source, tool and fixture identities after executing the relevant runner.
 Use `Tools/RunWalletChainTests.sh`, `Tools/RunWalletSolanaTests.sh`, and
 `Tools/RunWalletSuiTests.sh`. All cooperate with `WalletTestExecution.py` for
 exclusive app-test/service sessions. Supply separate DerivedData paths. The
-Sui runner compiles its fixture signer offline from its lockfile; dependencies
-must already be available. It never changes the user's Sui client configuration.
+Sui runner fetches its independent fixture's exact locked dependencies before
+the locked, offline build; it does not rely on the production signer's cache.
+It never changes the user's Sui client configuration.
 
 Before promoting any scenario from missing to implemented:
 

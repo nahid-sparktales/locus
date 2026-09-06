@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,22 @@ class WalletLocalFixtureVerificationTests(unittest.TestCase):
         self.assertIn("solana.core.plugin-free", blockers)
         self.assertIn("sui.coin.stateful", blockers)
         self.assertIn("compiled-fixture-artifacts", blockers)
+
+    def test_sui_runner_fetches_only_locked_fixture_graph_before_offline_build(self):
+        source = (ROOT / "Tools" / "RunWalletSuiTests.sh").read_text()
+        commands = [shlex.split(line) for line in source.replace("\\\n", " ").splitlines()
+                    if line.startswith("cargo ")]
+        self.assertEqual([command[:2] for command in commands],
+                         [["cargo", "fetch"], ["cargo", "build"]])
+        for command in commands:
+            self.assertIn("--locked", command)
+            self.assertEqual(command[command.index("--manifest-path") + 1],
+                             "$repo_root/Tools/Fixtures/SuiLocalSigner/Cargo.toml")
+        self.assertNotIn("--offline", commands[0])
+        self.assertIn("--offline", commands[1])
+        self.assertEqual(commands[1][commands[1].index("--target-dir") + 1],
+                         "$temp_dir/fixture-build")
+        self.assertLess(source.index("cargo fetch --locked"), source.index("cargo build --offline --locked"))
 
     def test_readiness_cli_fails_even_when_input_hashes_pass(self):
         result = subprocess.run(
