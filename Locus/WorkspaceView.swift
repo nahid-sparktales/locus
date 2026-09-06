@@ -2556,10 +2556,11 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                // Address the actual terminal row, never an
-                                // estimated document offset. Its measured end
-                                // is aligned separately after realization.
-                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom)
+                                // Ask SwiftUI to make the target row wholly
+                                // visible, not align its still-estimated edge.
+                                // Only the measured native stage aligns the
+                                // actual terminal end with the viewport.
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
                         }
                     )
@@ -2569,7 +2570,7 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom)
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
                         }
                     )
