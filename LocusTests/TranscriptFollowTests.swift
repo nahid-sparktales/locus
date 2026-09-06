@@ -372,6 +372,57 @@ final class TranscriptFollowTests: XCTestCase {
             "The same layout geometry must not create a scroll-origin feedback loop")
     }
 
+    func testSelectedGlyphViewportRestorationWaitsForSelectedLeafLayout() throws {
+        let fixture = try makeSelectionViewportFixture()
+        defer { fixture.coordinator.detachAll() }
+        let scroll = fixture.scroll
+        let originalGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        let originalOffset = originalGlyph.minY - scroll.contentView.bounds.minY
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+        fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+        fixture.leaf.setFrameOrigin(NSPoint(x: fixture.leaf.frame.minX, y: fixture.leaf.frame.minY + 37))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 67))
+        let displaced = scroll.contentView.bounds.origin
+
+        fixture.leaf.needsLayout = true
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        XCTAssertTrue(fixture.leaf.needsLayout, "The bridge acknowledgement must precede the selected leaf's layout")
+        XCTAssertEqual(scroll.contentView.bounds.origin, displaced, "Incomplete glyph geometry cannot authorize a correction")
+        XCTAssertNil(fixture.glyph.measuredGlyph(in: scroll))
+
+        fixture.leaf.layoutSubtreeIfNeeded()
+        XCTAssertFalse(fixture.leaf.needsLayout)
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        let currentGlyph = try XCTUnwrap(fixture.glyph.measuredGlyph(in: scroll))
+        XCTAssertEqual(currentGlyph.minY - scroll.contentView.bounds.minY, originalOffset, accuracy: 1,
+            "Finishing real layout must preserve the still-valid selected glyph lease")
+        XCTAssertNotEqual(scroll.contentView.bounds.origin, displaced)
+    }
+
+    func testSelectedGlyphWaitingForLayoutCannotSurviveContentReplacement() throws {
+        let fixture = try makeSelectionViewportFixture()
+        defer { fixture.coordinator.detachAll() }
+        let scroll = fixture.scroll
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: fixture.token.tailID)
+        fixture.coordinator.installRenderTarget(current, realizeTail: {})
+        scroll.documentView?.setFrameSize(NSSize(width: 360, height: 1_200))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 300))
+        fixture.leaf.needsLayout = true
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        let ownedOrigin = scroll.contentView.bounds.origin
+
+        fixture.leaf.replaceAttributedTextIfNeeded(NSAttributedString(string: "Changed selected native text"))
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        guard case .invalid = fixture.glyph.measureGlyph(in: scroll) else {
+            return XCTFail("Changed text invalidates the lease even while its layout remains pending")
+        }
+        fixture.leaf.layoutSubtreeIfNeeded()
+        acknowledgeContainerLayout(fixture.coordinator, token: current, anchor: fixture.bridge)
+        XCTAssertEqual(scroll.contentView.bounds.origin, ownedOrigin,
+            "A stale selected glyph must not regain authority when replacement layout finishes")
+    }
+
     func testSelectedGlyphViewportRestorationCannotOverrideNewerReaderOrNativeOwnership() throws {
         for invalidation in ["clear", "detach", "jump", "liveScroll", "leafReplacement", "textReplacement", "session", "attachment"] {
             let fixture = try makeSelectionViewportFixture()

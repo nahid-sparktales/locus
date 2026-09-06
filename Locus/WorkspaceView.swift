@@ -3612,10 +3612,21 @@ final class TranscriptScrollCoordinator: ObservableObject {
               ownership.generation == token.sessionGeneration,
               ownership.attachment == attachment, ownership.readerRevision == readerIntentRevision,
               !followState.permitsAutomaticScroll, !isUserLiveScrolling,
-              let scrollView, let documentView,
-              let glyph = ownership.anchor.measuredGlyph(in: scrollView) else {
+              let scrollView, let documentView else {
             selectionViewportOwnership = nil
             return
+        }
+        let glyph: NSRect
+        switch ownership.anchor.measureGlyph(in: scrollView) {
+        case .invalid:
+            selectionViewportOwnership = nil
+            return
+        case .awaitingLayout:
+            // Keep only this still-valid lease until another authenticated
+            // native layout observation; never poll or publish a new anchor.
+            return
+        case let .measured(rect):
+            glyph = rect
         }
         let clip = scrollView.contentView
         let geometry = SelectionLayoutGeometry(

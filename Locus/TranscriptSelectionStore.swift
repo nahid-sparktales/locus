@@ -52,6 +52,12 @@ private final class WeakResponseSelectableTextView {
 /// preserving reading position never retains a recycled lazy transcript leaf.
 @MainActor
 final class TranscriptSelectionViewportAnchor {
+    enum Measurement {
+        case invalid
+        case awaitingLayout
+        case measured(NSRect)
+    }
+
     fileprivate weak var view: ResponseSelectableTextView?
     fileprivate weak var store: TranscriptSelectionStore?
     fileprivate let spanID: String
@@ -67,19 +73,27 @@ final class TranscriptSelectionViewportAnchor {
     }
 
     func measuredGlyph(in scroll: NSScrollView) -> NSRect? {
+        guard case let .measured(rect) = measureGlyph(in: scroll) else { return nil }
+        return rect
+    }
+
+    func measureGlyph(in scroll: NSScrollView) -> Measurement {
         guard let view, let store, store.ownsViewportAnchor(self),
               view.window != nil, view.window === scroll.window,
               view.enclosingScrollView === scroll, !view.isHiddenOrHasHiddenAncestor,
-              !view.needsLayout, view.selectionContentRevision == contentRevision,
+              view.selectionContentRevision == contentRevision,
               let document = scroll.documentView,
-              let layout = view.layoutManager, let container = view.textContainer else { return nil }
+              let layout = view.layoutManager, let container = view.textContainer else { return .invalid }
+        // The bridge and selected native leaf can finish different layout
+        // passes. Incomplete geometry does not invalidate an unchanged lease.
+        guard !view.needsLayout else { return .awaitingLayout }
         let glyphs = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
         let local = layout.boundingRect(forGlyphRange: glyphs, in: container)
             .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
         let rect = view.convert(local, to: document)
         guard !rect.isEmpty, rect.minX.isFinite, rect.minY.isFinite,
-              rect.width.isFinite, rect.height.isFinite else { return nil }
-        return rect
+              rect.width.isFinite, rect.height.isFinite else { return .invalid }
+        return .measured(rect)
     }
 }
 
