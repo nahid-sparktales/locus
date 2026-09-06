@@ -2519,11 +2519,14 @@ private struct ConversationView: View {
     /// selection with it — and so a drag can run from one message into another.
     @StateObject private var selection = TranscriptSelectionStore()
 
-    private static let bottomID = "conversation-bottom"
-
     var body: some View {
         let transcript = transcriptPresentation.snapshot
         let items = transcript.items
+        let token = transcript.renderToken
+        let rows = items.enumerated().map {
+            TranscriptRenderRow(index: $0.offset, item: $0.element, generation: token.sessionGeneration)
+        }
+        let bottomID = TranscriptScrollTarget.end(token.sessionGeneration)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -2531,27 +2534,11 @@ private struct ConversationView: View {
                         EmptyConversationView()
                             .environmentObject(model)
                     } else {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            presentationRow(
-                                item,
-                                assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
-                                assistantActionItemIDs: transcript.assistantActionItemIDs,
-                                toolActivityVisibility: transcript.toolActivityVisibility,
-                                thinkingVisibility: transcript.thinkingVisibility
-                            )
-                            .padding(.top, topSpacing(
-                                before: item,
-                                previous: index > 0 ? items[index - 1] : nil,
-                                toolActivityVisibility: transcript.toolActivityVisibility,
-                                thinkingVisibility: transcript.thinkingVisibility
-                            ))
+                        ForEach(rows) { row in
+                            renderRow(row, in: transcript)
                         }
                     }
-                    Color.clear
-                        // Include the bottom breathing room in the logical
-                        // target so its anchor is also the viewport's end.
-                        .frame(height: 41)
-                        .id(Self.bottomID)
+                    if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
@@ -2566,12 +2553,25 @@ private struct ConversationView: View {
                     TranscriptScrollBridge(
                         coordinator: scrollCoordinator,
                         diagnosticItemCount: items.count,
-                        scrollToBottom: { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                        token: token,
+                        realizeTail: {
+                            if let id = token.tailID {
+                                // Address the actual terminal row, never an
+                                // estimated document offset. Its measured end
+                                // is aligned separately after realization.
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom)
+                            }
+                        }
                     )
                     #else
                     TranscriptScrollBridge(
                         coordinator: scrollCoordinator,
-                        scrollToBottom: { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                        token: token,
+                        realizeTail: {
+                            if let id = token.tailID {
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .bottom)
+                            }
+                        }
                     )
                     #endif
                 }
@@ -2608,7 +2608,6 @@ private struct ConversationView: View {
                 if newCount > oldCount, transcript.blocks.last?.kind == .user {
                     scrollCoordinator.jumpToLatest()
                 }
-                scrollCoordinator.contentMayHaveChanged()
             }
             .onChange(of: model.transcriptSearchSelection) {
                 scrollCoordinator.detach()
@@ -2622,9 +2621,8 @@ private struct ConversationView: View {
                 scrollCoordinator.detach()
                 scrollToOverviewTarget(proxy)
             }
-            .onChange(of: model.currentSessionID) {
+            .onChange(of: token.sessionGeneration) {
                 selection.reset()
-                scrollCoordinator.resetForSession()
             }
             .onAppear {
                 configureSelection(
@@ -2645,6 +2643,35 @@ private struct ConversationView: View {
                 model?.runCommandInTerminal(command)
             }
         }
+    }
+
+    private func renderRow(_ row: TranscriptRenderRow, in transcript: TranscriptPresentationSnapshot) -> some View {
+        let item = row.item
+        let token = transcript.renderToken
+        return VStack(alignment: .leading, spacing: 0) {
+            presentationRow(
+                item,
+                assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
+                assistantActionItemIDs: transcript.assistantActionItemIDs,
+                toolActivityVisibility: transcript.toolActivityVisibility,
+                thinkingVisibility: transcript.thinkingVisibility
+            )
+            .padding(.top, topSpacing(
+                before: item,
+                previous: row.index > 0 ? transcript.items[row.index - 1] : nil,
+                toolActivityVisibility: transcript.toolActivityVisibility,
+                thinkingVisibility: transcript.thinkingVisibility
+            ))
+            .background {
+                if item.id == token.tailID {
+                    TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .content)
+                }
+            }
+            if item.id == token.tailID {
+                transcriptEnd(token: token, id: .end(token.sessionGeneration))
+            }
+        }
+        .id(row.id)
     }
 
     /// Keeps the store's idea of the transcript in step with what is rendered,
@@ -2681,6 +2708,17 @@ private struct ConversationView: View {
         /// An assistant answer is split into reasoning and visible segments
         /// before rendering, and each visible one is its own subtree.
         case assistant(String)
+    }
+
+    private func transcriptEnd(token: TranscriptRenderToken, id: TranscriptScrollTarget) -> some View {
+        // Realize terminal content and its existing breathing room together.
+        // An independent lazy footer can remain unrealized after a row pin.
+        Color.clear
+            .frame(height: 41)
+            .id(id)
+            .background {
+                TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .end)
+            }
     }
 
     private static func selectionSource(of item: TranscriptPresentationItem) -> RowSelectionSource? {
@@ -2748,7 +2786,6 @@ private struct ConversationView: View {
                     tool,
                     showsAssistantMarker: assistantMarkerItemIDs.contains(item.id)
                 )
-                .id(item.id)
             } else {
                 blockRow(
                     displayBlock: block,
@@ -2761,7 +2798,6 @@ private struct ConversationView: View {
                     showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
                     showsAssistantActions: assistantActionItemIDs.contains(item.id)
                 )
-                .id(item.id)
             }
         case .assistantSegment(let segment):
             blockRow(
@@ -2775,7 +2811,6 @@ private struct ConversationView: View {
                 showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
                 showsAssistantActions: assistantActionItemIDs.contains(item.id)
             )
-            .id(item.id)
         case .toolGroup(let id, let tools):
             ToolActivityView(
                 groupID: id,
@@ -2785,7 +2820,6 @@ private struct ConversationView: View {
                 showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
             )
-            .id(item.id)
         case .thinkingGroup(let id, let entries):
             ThinkingActivityView(
                 groupID: id,
@@ -2795,7 +2829,6 @@ private struct ConversationView: View {
                 showsMarker: assistantMarkerItemIDs.contains(item.id),
                 onExpansionChange: scrollCoordinator.detach
             )
-            .id(item.id)
         }
     }
 
@@ -2841,7 +2874,6 @@ private struct ConversationView: View {
                     selectionRowID: presentationID.stableKey,
                     onOpenWorkspaceReference: model.openWorkspaceReference
                 )
-                .id(presentationID)
             } else {
                 MessageBlockView(
                     block: displayBlock,
@@ -2917,7 +2949,9 @@ private struct ConversationView: View {
             $0.sourceBlockIDs.contains(match)
         })?.id ?? .block(match)
         withAnimation(LocusMotion.scroll) {
-            proxy.scrollTo(destination, anchor: .center)
+            proxy.scrollTo(TranscriptScrollTarget.item(
+                transcriptPresentation.snapshot.renderToken.sessionGeneration, destination
+            ), anchor: .center)
         }
     }
 
@@ -2940,7 +2974,9 @@ private struct ConversationView: View {
         })?.id
         guard let destination else { return }
         withAnimation(LocusMotion.scroll) {
-            proxy.scrollTo(destination, anchor: .center)
+            proxy.scrollTo(TranscriptScrollTarget.item(
+                transcript.renderToken.sessionGeneration, destination
+            ), anchor: .center)
         }
     }
 
@@ -3044,6 +3080,20 @@ struct TranscriptScrollMetrics {
     }
 }
 
+private enum TranscriptScrollTarget: Hashable {
+    case item(UInt64, TranscriptPresentationItem.ID)
+    case end(UInt64)
+}
+
+private struct TranscriptRenderRow: Identifiable {
+    let index: Int
+    let item: TranscriptPresentationItem
+    let generation: UInt64
+    var id: TranscriptScrollTarget { .item(generation, item.id) }
+}
+
+enum TranscriptTailLayoutKind: Equatable { case content, end }
+
 /// Observes the native viewport and coalesces following to one logical-bottom
 /// request per display refresh. LazyVStack's native document extent is only an
 /// estimate; SwiftUI must resolve the target and realize its actual rows.
@@ -3063,6 +3113,23 @@ final class TranscriptScrollCoordinator: ObservableObject {
     private var isRoutingVerticalWheel = false
     private var lastOriginY: CGFloat = 0
     private var scrollToBottomTarget: (() -> Void)?
+    private var realizeTailTarget: (() -> Void)?
+    private var renderToken: TranscriptRenderToken?
+    private weak var bridgeAnchor: NSView?
+    private var attachmentRevision: UInt64 = 0
+    private var observerSessionGeneration: UInt64?
+    private var readerIntentRevision: UInt64 = 0
+    private var pendingSessionFollowReset: (generation: UInt64, readerRevision: UInt64)?
+    private weak var contentProbe: TranscriptTailLayoutView?
+    private weak var endProbe: TranscriptTailLayoutView?
+    private var contentRect: NSRect?
+    private var endRect: NSRect?
+    private var realizationRequested = false
+    private var realizationGeometry: [(document: NSRect, viewport: NSRect)] = []
+    private var pendingSessionViewportReset: UInt64?
+    private var containerLayoutAcknowledgement: (token: TranscriptRenderToken, attachment: UInt64)?
+    private var lastViewportSize: NSSize = .zero
+    private var lastAlignment: (token: TranscriptRenderToken, end: NSRect, viewport: NSRect, document: NSRect)?
     // Lifecycle cancellation must not discard content queued before an
     // ordinary pin. Pin completions have a separate latest-request serial.
     private var scrollIntentRevision: UInt64 = 0
@@ -3070,10 +3137,13 @@ final class TranscriptScrollCoordinator: ObservableObject {
     #if DEBUG
     private let geometryDiagnosticsEnabled = {
         let environment = ProcessInfo.processInfo.environment
-        return environment["LOCUS_UI_TESTING"] == "1"
-            && environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
+        return (environment["LOCUS_UI_TESTING"] == "1"
+            && environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1")
+            || (environment["XCTestConfigurationFilePath"] != nil
+                && environment["LOCUS_TESTING_TRANSCRIPT_GEOMETRY"] == "1")
     }()
     private var geometryDiagnosticRecords = 0
+    private var geometryDiagnosticDisplayTicks = 0
     private var geometryDiagnosticItemCount = 0
     private let geometryDiagnosticStartedAt = ProcessInfo.processInfo.systemUptime
     private weak var geometryDiagnosticAnchor: NSView?
@@ -3105,7 +3175,15 @@ final class TranscriptScrollCoordinator: ObservableObject {
             "programmaticScroll": isProgrammaticScroll,
             "pinPending": pinPending,
             "attached": scrollView != nil,
+            "attachmentRevision": attachmentRevision,
+            "sessionGeneration": renderToken?.sessionGeneration ?? 0,
+            "contentRevision": renderToken?.contentRevision ?? 0,
+            "realizationRequested": realizationRequested,
+            "containerLayoutAcknowledged": hasCurrentContainerLayout,
+            "displayTicks": geometryDiagnosticDisplayTicks,
         ]
+        if let contentRect { record["tailContentRect"] = rect(contentRect) }
+        if let endRect { record["tailEndRect"] = rect(endRect) }
         if let scrollView {
             record["scrollFrame"] = rect(scrollView.frame)
             record["scrollBounds"] = rect(scrollView.bounds)
@@ -3114,6 +3192,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
             record["windowContentSize"] = scrollView.window.map {
                 [Double($0.contentLayoutRect.width), Double($0.contentLayoutRect.height)]
             }
+            record["windowVisible"] = scrollView.window?.isVisible ?? false
+            record["windowUnoccluded"] = scrollView.window?.occlusionState.contains(.visible) ?? false
         }
         if let documentView {
             record["documentFrame"] = rect(documentView.frame)
@@ -3140,7 +3220,169 @@ final class TranscriptScrollCoordinator: ObservableObject {
         scrollToBottomTarget = target
     }
 
-    func attach(from anchor: NSView) {
+    /// Installing a projection is not a layout acknowledgment. The two probes
+    /// below must report matching, attached native geometry before it can settle.
+    func installRenderTarget(
+        _ token: TranscriptRenderToken,
+        realizeTail: @escaping () -> Void,
+        scrollToBottom: (() -> Void)? = nil
+    ) {
+        realizeTailTarget = realizeTail
+        scrollToBottomTarget = scrollToBottom
+        guard renderToken != token else { return }
+        let previousGeneration = renderToken?.sessionGeneration
+        let changedSession = previousGeneration != token.sessionGeneration
+        if changedSession {
+            // Content revisions may coalesce before SwiftUI drains this
+            // generation's callback. Retain its original reader lease until
+            // the latest matching projection consumes it, never re-arm it on
+            // a same-conversation update after the reader has taken control.
+            pendingSessionFollowReset = (token.sessionGeneration, readerIntentRevision)
+            if previousGeneration != nil {
+                pendingSessionViewportReset = token.sessionGeneration
+            }
+        }
+        renderToken = token
+        scrollIntentRevision &+= 1
+        isProgrammaticScroll = false
+        pinPending = false
+        displayLink?.isPaused = true
+        contentRect = nil
+        endRect = nil
+        realizationRequested = false
+        realizationGeometry.removeAll(keepingCapacity: true)
+        containerLayoutAcknowledgement = nil
+        lastAlignment = nil
+        if changedSession { attachmentRevision &+= 1 }
+        // NSViewRepresentable updates occur inside SwiftUI's graph update.
+        // Publish follow-state changes only after that update, with its token.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.renderToken == token else { return }
+            if let pending = self.pendingSessionFollowReset,
+               pending.generation == token.sessionGeneration {
+                self.pendingSessionFollowReset = nil
+                // Attaching native views does not change this reader epoch.
+                // A selection, gesture, detach or explicit jump does: none
+                // may be overwritten by a previously queued session default.
+                if pending.readerRevision == self.readerIntentRevision {
+                    self.isUserLiveScrolling = false
+                    self.isSelectionDragActive = false
+                    self.isRoutingVerticalWheel = false
+                    self.mutateState { $0 = TranscriptFollowState() }
+                }
+            }
+            self.updateNearBottom()
+            self.contentMayHaveChanged()
+        }
+    }
+
+    fileprivate func registerTailProbe(_ view: TranscriptTailLayoutView) {
+        if view.kind == .content { contentProbe = view } else { endProbe = view }
+    }
+
+    fileprivate func unregisterTailProbe(_ view: TranscriptTailLayoutView) {
+        if contentProbe === view { contentProbe = nil; contentRect = nil }
+        if endProbe === view { endProbe = nil; endRect = nil }
+        // Dismantling is inside a SwiftUI graph mutation. Do not publish or
+        // schedule a replacement scroll from this cleanup callback.
+    }
+
+    func tailDidLayout(
+        token: TranscriptRenderToken, kind: TranscriptTailLayoutKind,
+        rect: NSRect, in scroll: NSScrollView
+    ) {
+        guard token == renderToken, scroll === scrollView,
+              !rect.isEmpty, rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.width.isFinite, rect.height.isFinite else { return }
+        let previous = kind == .content ? contentRect : endRect
+        if kind == .content { contentRect = rect } else { endRect = rect }
+        updateNearBottom()
+        if measuredTailIsAtBottom() {
+            isProgrammaticScroll = false
+            lastOriginY = scroll.contentView.bounds.origin.y
+        } else if previous != rect {
+            schedulePin()
+        }
+        #if DEBUG
+        recordGeometry(kind == .content ? "tail.contentLaidOut" : "tail.endLaidOut")
+        #endif
+    }
+
+    var layoutAttachmentRevision: UInt64 { attachmentRevision }
+
+    private var hasCurrentContainerLayout: Bool {
+        guard let renderToken, let acknowledgement = containerLayoutAcknowledgement else { return false }
+        return acknowledgement.token == renderToken && acknowledgement.attachment == attachmentRevision
+    }
+
+    /// Installing a representable during a SwiftUI update does not prove its
+    /// new row targets have participated in native layout. The current bridge
+    /// must finish layout in this exact attachment before discovery can run.
+    func renderContainerDidLayout(
+        token: TranscriptRenderToken, attachment: UInt64, from anchor: NSView
+    ) {
+        guard token == renderToken, attachment == attachmentRevision,
+              anchor === bridgeAnchor, anchor.window != nil, !anchor.needsLayout,
+              !anchor.isHiddenOrHasHiddenAncestor,
+              let scrollView, anchor.enclosingScrollView === scrollView,
+              let documentView, scrollView.documentView === documentView else { return }
+        let rect = anchor.convert(anchor.bounds, to: documentView)
+        guard !rect.isEmpty, rect.minX.isFinite, rect.minY.isFinite,
+              rect.width.isFinite, rect.height.isFinite else { return }
+        let alreadyAcknowledged = hasCurrentContainerLayout
+        containerLayoutAcknowledgement = (token, attachment)
+        #if DEBUG
+        if !alreadyAcknowledged { recordGeometry("container.layoutAcknowledged") }
+        #endif
+        if !alreadyAcknowledged { schedulePin() }
+    }
+
+    fileprivate func tailProbesDidLayout(
+        token: TranscriptRenderToken, attachment: UInt64, in scroll: NSScrollView
+    ) {
+        guard token == renderToken, attachment == attachmentRevision, scroll === scrollView else { return }
+        // Sample both attached probes in one frame. Never combine one row's
+        // new coordinates with the footer's previous lazy-layout estimate.
+        let content = contentProbe?.measuredRect(token: token, in: scroll)
+        let end = endProbe?.measuredRect(token: token, in: scroll)
+        let changed = content != contentRect || end != endRect
+        contentRect = content
+        endRect = end
+        updateNearBottom()
+        if measuredTailIsAtBottom() {
+            isProgrammaticScroll = false
+            lastOriginY = scroll.contentView.bounds.origin.y
+        } else if changed {
+            schedulePin()
+        }
+        #if DEBUG
+        recordGeometry("tail.sameFrameLayout")
+        #endif
+    }
+
+    private func measuredTailIsAtBottom() -> Bool {
+        guard let scrollView, let documentView, let contentRect, let endRect else { return false }
+        let visible = scrollView.documentVisibleRect
+        let distance = documentView.isFlipped
+            ? endRect.maxY - visible.maxY : visible.minY - endRect.minY
+        return contentRect.intersects(visible) && endRect.intersects(visible)
+            && (abs(distance) <= 2 || measuredContentFitsViewport(visible, document: documentView, end: endRect))
+    }
+
+    /// A short conversation may end above the viewport bottom. Accept that
+    /// only at the logical start, using the actual terminal content extent;
+    /// a lazy document's estimated height is not evidence of a completed pin.
+    private func measuredContentFitsViewport(_ visible: NSRect, document: NSView, end: NSRect) -> Bool {
+        if document.isFlipped {
+            return abs(visible.minY - document.bounds.minY) <= 2
+                && end.maxY - document.bounds.minY <= visible.height + 2
+        }
+        return abs(visible.maxY - document.bounds.maxY) <= 2
+            && document.bounds.maxY - end.minY <= visible.height + 2
+    }
+
+    func attach(from anchor: NSView, expectedToken: TranscriptRenderToken? = nil) {
+        if let expectedToken, expectedToken != renderToken { return }
         #if DEBUG
         geometryDiagnosticAnchor = anchor
         #endif
@@ -3150,49 +3392,89 @@ final class TranscriptScrollCoordinator: ObservableObject {
             #endif
             return
         }
-        if scrollView === candidate, documentView === candidate.documentView { return }
+        if scrollView === candidate, documentView === candidate.documentView,
+           bridgeAnchor === anchor,
+           observerSessionGeneration == renderToken?.sessionGeneration { return }
         detachObservers()
+        attachmentRevision &+= 1
+        let attachment = attachmentRevision
+        bridgeAnchor = anchor
+        observerSessionGeneration = renderToken?.sessionGeneration
         scrollView = candidate
         documentView = candidate.documentView
+        lastViewportSize = candidate.contentView.bounds.size
+        contentRect = nil
+        endRect = nil
+        realizationRequested = false
+        realizationGeometry.removeAll(keepingCapacity: true)
+        containerLayoutAcknowledgement = nil
+        lastAlignment = nil
         candidate.contentView.postsBoundsChangedNotifications = true
         candidate.documentView?.postsFrameChangedNotifications = true
         lastOriginY = candidate.contentView.bounds.origin.y
 
         let center = NotificationCenter.default
+        #if DEBUG
+        if geometryDiagnosticsEnabled, let window = candidate.window {
+            observers.append(center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.attachmentRevision == attachment else { return }
+                    self.recordGeometry("window.occlusionChanged")
+                }
+            })
+        }
+        #endif
         observers.append(center.addObserver(
             forName: NSView.frameDidChangeNotification,
             object: candidate.documentView,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.documentFrameChanged() }
+            Task { @MainActor [weak self] in
+                guard let self, self.attachmentRevision == attachment else { return }
+                self.documentFrameChanged()
+            }
         })
         observers.append(center.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: candidate.contentView,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.boundsChanged() }
+            Task { @MainActor [weak self] in
+                guard let self, self.attachmentRevision == attachment else { return }
+                self.boundsChanged()
+            }
         })
         observers.append(center.addObserver(
             forName: NSScrollView.willStartLiveScrollNotification,
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.liveScrollStarted() }
+            Task { @MainActor [weak self] in
+                guard let self, self.attachmentRevision == attachment else { return }
+                self.liveScrollStarted()
+            }
         })
         observers.append(center.addObserver(
             forName: NSScrollView.didLiveScrollNotification,
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.userViewportChanged() }
+            Task { @MainActor [weak self] in
+                guard let self, self.attachmentRevision == attachment else { return }
+                self.userViewportChanged()
+            }
         })
         observers.append(center.addObserver(
             forName: NSScrollView.didEndLiveScrollNotification,
             object: candidate,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.liveScrollEnded() }
+            Task { @MainActor [weak self] in
+                guard let self, self.attachmentRevision == attachment else { return }
+                self.liveScrollEnded()
+            }
         })
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
@@ -3237,6 +3519,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
         recordGeometry("attach.ready")
         #endif
         updateNearBottom()
+        anchor.needsLayout = true
+        contentProbe?.requestObservation()
+        endProbe?.requestObservation()
         contentMayHaveChanged()
     }
 
@@ -3256,33 +3541,36 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detach() {
+        readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
         pinPending = false
         displayLink?.isPaused = true
+        lastAlignment = nil
         mutateState { $0.detach() }
     }
 
-    /// A streaming reply pins the transcript to the bottom as it grows. During
-    /// a drag-selection that yanks the content out from under the pointer, so
-    /// following is suspended until the drag ends.
+    /// Selection gives the reader control of the viewport. Releasing the
+    /// pointer does not give that control back to streaming output; only an
+    /// explicit send or Jump to Latest re-engages following.
     func setSelectionDragActive(_ active: Bool) {
         guard isSelectionDragActive != active else { return }
         isSelectionDragActive = active
         if active {
-            scrollIntentRevision &+= 1
-            isProgrammaticScroll = false
-            pinPending = false
-            displayLink?.isPaused = true
+            detach()
         } else {
             updateNearBottom()
         }
     }
 
     func jumpToLatest(animated: Bool = false) {
+        readerIntentRevision &+= 1
         mutateState { $0.jumpToLatest() }
         pinPending = false
         displayLink?.isPaused = true
+        lastAlignment = nil
+        realizationRequested = false
+        realizationGeometry.removeAll(keepingCapacity: true)
         if animated {
             scrollToBottom(animated: true)
         } else {
@@ -3291,6 +3579,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func resetForSession() {
+        pendingSessionFollowReset = nil
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
         pinPending = false
@@ -3298,6 +3587,11 @@ final class TranscriptScrollCoordinator: ObservableObject {
         isUserLiveScrolling = false
         isSelectionDragActive = false
         isRoutingVerticalWheel = false
+        contentRect = nil
+        endRect = nil
+        realizationRequested = false
+        realizationGeometry.removeAll(keepingCapacity: true)
+        lastAlignment = nil
         mutateState { $0 = TranscriptFollowState() }
         contentMayHaveChanged()
     }
@@ -3311,6 +3605,18 @@ final class TranscriptScrollCoordinator: ObservableObject {
         scrollView = nil
         documentView = nil
         scrollToBottomTarget = nil
+        realizeTailTarget = nil
+        pendingSessionFollowReset = nil
+        pendingSessionViewportReset = nil
+        bridgeAnchor = nil
+        contentRect = nil
+        endRect = nil
+        lastAlignment = nil
+    }
+
+    func detach(from anchor: NSView) {
+        guard bridgeAnchor === anchor else { return }
+        detachAll()
     }
 
     private func wheelMoved(deltaY: CGFloat) {
@@ -3323,6 +3629,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func liveScrollStarted() {
+        readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
         isUserLiveScrolling = true
@@ -3357,9 +3664,25 @@ final class TranscriptScrollCoordinator: ObservableObject {
         recordGeometry("bounds.changed")
         #endif
         let origin = scrollView.contentView.bounds.origin.y
+        let viewport = scrollView.contentView.bounds.size
+        if viewport != lastViewportSize {
+            if viewport.width != lastViewportSize.width {
+                contentRect = nil
+                endRect = nil
+                realizationRequested = false
+                realizationGeometry.removeAll(keepingCapacity: true)
+                contentProbe?.requestObservation()
+                endProbe?.requestObservation()
+            }
+            lastViewportSize = viewport
+            lastAlignment = nil
+            schedulePin()
+        }
         if isProgrammaticScroll {
             lastOriginY = origin
             updateNearBottom()
+            if measuredTailIsAtBottom() { isProgrammaticScroll = false }
+            else { schedulePin() }
         } else if isUserLiveScrolling {
             userViewportChanged()
         } else {
@@ -3381,6 +3704,23 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
     private func updateNearBottom() {
         guard let scrollView, let documentView else { return }
+        if let token = renderToken {
+            let visible = scrollView.documentVisibleRect
+            let isNear: Bool
+            if token.tailID == nil {
+                isNear = true
+            } else if let contentRect, let endRect {
+                let distance = documentView.isFlipped
+                    ? endRect.maxY - visible.maxY : visible.minY - endRect.minY
+                isNear = contentRect.intersects(visible) && endRect.intersects(visible)
+                    && (abs(distance) <= 24
+                        || measuredContentFitsViewport(visible, document: documentView, end: endRect))
+            } else {
+                isNear = false
+            }
+            mutateState { $0.updateBottom(isNear: isNear) }
+            return
+        }
         let distance = TranscriptScrollMetrics.bottomDistance(
             documentBounds: documentView.bounds,
             visibleRect: scrollView.documentVisibleRect,
@@ -3391,7 +3731,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
     private func schedulePin() {
         guard followState.permitsAutomaticScroll, !isSelectionDragActive,
-              !isUserLiveScrolling, scrollToBottomTarget != nil, let scrollView
+              !isUserLiveScrolling,
+              (renderToken != nil || scrollToBottomTarget != nil), let scrollView
         else { return }
         pinPending = true
         if displayLink == nil {
@@ -3404,6 +3745,10 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     @objc private func displayTick(_ link: CADisplayLink) {
+        #if DEBUG
+        geometryDiagnosticDisplayTicks += 1
+        if geometryDiagnosticDisplayTicks <= 12 { recordGeometry("display.tick") }
+        #endif
         guard pinPending, followState.permitsAutomaticScroll,
               !isSelectionDragActive, !isUserLiveScrolling else {
             link.isPaused = true
@@ -3416,8 +3761,13 @@ final class TranscriptScrollCoordinator: ObservableObject {
 
     private func scrollToBottom(animated: Bool) {
         guard followState.permitsAutomaticScroll, !isSelectionDragActive,
-              !isUserLiveScrolling, let scrollView, let scrollToBottomTarget
+              !isUserLiveScrolling, let scrollView
         else { return }
+        if let token = renderToken {
+            advanceMeasuredPin(token: token, animated: animated)
+            return
+        }
+        guard let scrollToBottomTarget else { return }
         let revision = scrollIntentRevision
         pinCompletionRevision &+= 1
         let pinRevision = pinCompletionRevision
@@ -3455,6 +3805,99 @@ final class TranscriptScrollCoordinator: ObservableObject {
         }
     }
 
+    private func advanceMeasuredPin(token: TranscriptRenderToken, animated: Bool) {
+        guard token.tailID != nil, let scrollView, hasCurrentContainerLayout else { return }
+        if measuredTailIsAtBottom() {
+            pendingSessionViewportReset = nil
+            isProgrammaticScroll = false
+            updateNearBottom()
+            return
+        }
+        if contentRect == nil || endRect == nil {
+            if pendingSessionViewportReset == token.sessionGeneration {
+                pendingSessionViewportReset = nil
+                if resetReplacedSessionViewport() { return }
+            }
+            guard let documentView, let realizeTailTarget else { return }
+            let document = documentView.bounds
+            let viewport = scrollView.contentView.bounds
+            // A logical request can first update the lazy estimate without
+            // realizing the row. Only new native geometry may advance that
+            // request. Remember every observed geometry, not just the last,
+            // so a repeated/oscillating estimate cannot create a scroll loop.
+            guard !realizationGeometry.contains(where: {
+                $0.document == document && $0.viewport == viewport
+            }), realizationGeometry.count < 32 else { return }
+            realizationGeometry.append((document, viewport))
+            realizationRequested = true
+            isProgrammaticScroll = true
+            #if DEBUG
+            recordGeometry("tail.requestRealization")
+            #endif
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { realizeTailTarget() }
+            return
+        }
+        guard let endRect, let documentView else { return }
+        let viewport = scrollView.contentView.bounds
+        let document = documentView.bounds
+        if let previous = lastAlignment, previous.token == token,
+           previous.end == endRect, previous.viewport == viewport,
+           previous.document == document { return }
+        lastAlignment = (token, endRect, viewport, document)
+        isProgrammaticScroll = true
+        #if DEBUG
+        recordGeometry("tail.alignMeasuredEnd")
+        #endif
+        if let scrollToBottomTarget {
+            // An injected logical driver can be used by native coordinator
+            // fixtures; production aligns the actual measured coordinates.
+            scrollToBottomTarget()
+        } else {
+            let clip = scrollView.contentView
+            var proposed = clip.bounds
+            proposed.origin.y = documentView.isFlipped
+                ? endRect.maxY - proposed.height : endRect.minY
+            let target = clip.constrainBoundsRect(proposed).origin
+            #if DEBUG
+            recordGeometry("tail.alignNativeEnd", target: target)
+            #endif
+            // Apply one exact native alignment in this display refresh.
+            // An animator would continue changing bounds after reader input
+            // or a conversation change, outside this operation's token.
+            clip.scroll(to: target)
+            scrollView.reflectScrolledClipView(clip)
+        }
+        // Only bounds/layout observations can acknowledge completion. A
+        // queued closure or animation completion is not evidence of visibility.
+    }
+
+    /// An old conversation's offset is not a position in the replacement.
+    /// When its new rows have not been realized, establish the document's
+    /// actual logical start before resolving its terminal row. This runs at
+    /// most once per genuine switch, never on append, streaming or rekey.
+    private func resetReplacedSessionViewport() -> Bool {
+        guard let scrollView, let documentView, let bridgeAnchor else { return false }
+        let clip = scrollView.contentView
+        var origin = clip.bounds.origin
+        origin.y = documentView.isFlipped ? documentView.bounds.minY
+            : max(documentView.bounds.minY, documentView.bounds.maxY - clip.bounds.height)
+        guard origin != clip.bounds.origin else { return false }
+        isProgrammaticScroll = true
+        containerLayoutAcknowledgement = nil
+        #if DEBUG
+        recordGeometry("session.resetLogicalStart", target: origin)
+        #endif
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+        lastOriginY = clip.bounds.origin.y
+        // Discovery waits for this exact attachment's native layout; a
+        // queued callback alone cannot acknowledge the new viewport.
+        bridgeAnchor.needsLayout = true
+        return true
+    }
+
     private func mutateState(_ mutation: (inout TranscriptFollowState) -> Void) {
         var next = followState
         mutation(&next)
@@ -3462,6 +3905,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func detachObservers() {
+        attachmentRevision &+= 1
+        containerLayoutAcknowledgement = nil
         scrollIntentRevision &+= 1
         isProgrammaticScroll = false
         isUserLiveScrolling = false
@@ -3488,44 +3933,82 @@ private struct TranscriptScrollBridge: NSViewRepresentable {
     #if DEBUG
     let diagnosticItemCount: Int
     #endif
-    let scrollToBottom: () -> Void
+    let token: TranscriptRenderToken
+    let realizeTail: () -> Void
 
     func makeNSView(context: Context) -> TranscriptScrollAnchorView {
-        coordinator.setBottomTarget(scrollToBottom)
+        coordinator.installRenderTarget(token, realizeTail: realizeTail)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
         let view = TranscriptScrollAnchorView(frame: .zero)
         view.transcriptCoordinator = coordinator
+        view.renderToken = token
         DispatchQueue.main.async { [weak view, weak coordinator] in
             guard let view, let coordinator, view.window != nil,
-                  view.transcriptCoordinator === coordinator else { return }
-            coordinator.attach(from: view)
+                  view.transcriptCoordinator === coordinator, view.renderToken == token else { return }
+            coordinator.attach(from: view, expectedToken: token)
         }
         return view
     }
 
     func updateNSView(_ view: TranscriptScrollAnchorView, context: Context) {
-        coordinator.setBottomTarget(scrollToBottom)
+        let needsCurrentLayout = view.renderToken != token
+        coordinator.installRenderTarget(token, realizeTail: realizeTail)
         #if DEBUG
         coordinator.setDiagnosticItemCount(diagnosticItemCount)
         #endif
         view.transcriptCoordinator = coordinator
+        view.renderToken = token
         DispatchQueue.main.async { [weak view, weak coordinator] in
             guard let view, let coordinator, view.window != nil,
-                  view.transcriptCoordinator === coordinator else { return }
-            coordinator.attach(from: view)
+                  view.transcriptCoordinator === coordinator, view.renderToken == token else { return }
+            coordinator.attach(from: view, expectedToken: token)
+            // Do not invalidate native layout from inside SwiftUI's graph
+            // update. The token must first finish installing its row targets.
+            if needsCurrentLayout { view.needsLayout = true }
         }
     }
 
     static func dismantleNSView(_ nsView: TranscriptScrollAnchorView, coordinator: ()) {
-        nsView.transcriptCoordinator?.detachAll()
+        nsView.transcriptCoordinator?.detach(from: nsView)
         nsView.transcriptCoordinator = nil
+        nsView.renderToken = nil
     }
 }
 
 private final class TranscriptScrollAnchorView: NSView {
     weak var transcriptCoordinator: TranscriptScrollCoordinator?
+    var renderToken: TranscriptRenderToken?
+    private var observationRevision: UInt64 = 0
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func isAccessibilityHidden() -> Bool { true }
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
+
+    override func layout() {
+        super.layout()
+        guard let token = renderToken, let coordinator = transcriptCoordinator,
+              window != nil, let scroll = enclosingScrollView,
+              let document = scroll.documentView else { return }
+        let attachment = coordinator.layoutAttachmentRevision
+        let rect = convert(bounds, to: document)
+        observationRevision &+= 1
+        let revision = observationRevision
+        DispatchQueue.main.async { [weak self, weak coordinator, weak scroll, weak document] in
+            guard let self, let coordinator, let scroll, let document,
+                  self.renderToken == token, self.observationRevision == revision,
+                  self.transcriptCoordinator === coordinator, self.window != nil,
+                  self.enclosingScrollView === scroll, scroll.documentView === document,
+                  !self.needsLayout else { return }
+            guard self.convert(self.bounds, to: document) == rect else {
+                self.needsLayout = true
+                return
+            }
+            coordinator.renderContainerDidLayout(token: token, attachment: attachment, from: self)
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -3533,11 +4016,139 @@ private final class TranscriptScrollAnchorView: NSView {
         // The async hop lets SwiftUI finish inserting this view into the
         // scroll view's document hierarchy before the coordinator resolves
         // `enclosingScrollView`.
+        let token = renderToken
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.window != nil else { return }
-            self.transcriptCoordinator?.attach(from: self)
+            guard let self, self.window != nil, self.renderToken == token else { return }
+            self.transcriptCoordinator?.attach(from: self, expectedToken: token)
         }
     }
+}
+
+/// A marker laid out with real terminal content, rather than with the lazy
+/// document's estimated total extent. It never measures or logs message text.
+private struct TranscriptTailLayoutProbe: NSViewRepresentable {
+    let coordinator: TranscriptScrollCoordinator
+    let token: TranscriptRenderToken
+    let kind: TranscriptTailLayoutKind
+
+    func makeNSView(context: Context) -> TranscriptTailLayoutView {
+        let view = TranscriptTailLayoutView(frame: .zero)
+        configure(view)
+        return view
+    }
+
+    func updateNSView(_ view: TranscriptTailLayoutView, context: Context) { configure(view) }
+
+    private func configure(_ view: TranscriptTailLayoutView) {
+        view.transcriptCoordinator = coordinator
+        view.token = token
+        view.kind = kind
+        coordinator.registerTailProbe(view)
+        view.requestObservation()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: TranscriptTailLayoutView, context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height,
+              width.isFinite, height.isFinite else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    static func dismantleNSView(_ view: TranscriptTailLayoutView, coordinator: ()) {
+        view.transcriptCoordinator?.unregisterTailProbe(view)
+        view.transcriptCoordinator = nil
+        view.token = nil
+    }
+}
+
+private final class TranscriptTailLayoutView: NSView {
+    weak var transcriptCoordinator: TranscriptScrollCoordinator?
+    var token: TranscriptRenderToken?
+    var kind: TranscriptTailLayoutKind = .content
+    private var observationRevision: UInt64 = 0
+    private var ancestorObservers: [NSObjectProtocol] = []
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func isAccessibilityHidden() -> Bool { true }
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
+
+    func requestObservation() { needsLayout = true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeAncestorLayout()
+        if window != nil { requestObservation() }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        observeAncestorLayout()
+        requestObservation()
+    }
+
+    private func observeAncestorLayout() {
+        ancestorObservers.forEach(NotificationCenter.default.removeObserver)
+        ancestorObservers.removeAll()
+        guard window != nil else { return }
+        var ancestor = superview
+        var depth = 0
+        while let view = ancestor, !(view is NSClipView), depth < 32 {
+            view.postsFrameChangedNotifications = true
+            ancestorObservers.append(NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: view, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.requestObservation() }
+            })
+            ancestor = view.superview
+            depth += 1
+        }
+    }
+
+    func measuredRect(token: TranscriptRenderToken, in scroll: NSScrollView) -> NSRect? {
+        guard self.token == token, window != nil, !needsLayout,
+              !isHiddenOrHasHiddenAncestor, enclosingScrollView === scroll,
+              let document = scroll.documentView else { return nil }
+        let rect = convert(bounds, to: document)
+        return rect.isEmpty ? nil : rect
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        requestObservation()
+    }
+
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        requestObservation()
+    }
+
+    override func layout() {
+        super.layout()
+        guard let token, let coordinator = transcriptCoordinator, window != nil,
+              !isHiddenOrHasHiddenAncestor, let scroll = enclosingScrollView,
+              let document = scroll.documentView else { return }
+        let rect = convert(bounds, to: document)
+        let attachment = coordinator.layoutAttachmentRevision
+        observationRevision &+= 1
+        let revision = observationRevision
+        DispatchQueue.main.async { [weak self, weak coordinator, weak scroll, weak document] in
+            guard let self, let coordinator, let scroll, let document,
+                  self.window != nil, self.token == token,
+                  self.observationRevision == revision,
+                  self.transcriptCoordinator === coordinator,
+                  self.enclosingScrollView === scroll, scroll.documentView === document else { return }
+            guard self.convert(self.bounds, to: document) == rect else {
+                // New ancestor geometry is new evidence, not a polling timer.
+                self.requestObservation()
+                return
+            }
+            coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+        }
+    }
+
+    deinit { ancestorObservers.forEach(NotificationCenter.default.removeObserver) }
 }
 
 /// ⌘F search over the current conversation. Matches whole blocks (tool cards

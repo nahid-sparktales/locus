@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import XCTest
 @testable import Locus
@@ -18,9 +19,101 @@ private struct FollowProbeRoot: View {
     }
 }
 
+/// One synchronous main-actor observation: no run-loop pumping, scrolling, or
+/// forced layout occurs between the glyph and control observations. These are
+/// geometry/ownership diagnostics, never text, accessibility labels, or IDs.
+private struct TranscriptVisibilityObservation: Encodable {
+    var windowVisible = false
+    var documentBounds = "unavailable"
+    var viewportBounds = "unavailable"
+    var viewportOnScreen = "unavailable"
+    var nativeNodeCount = 0
+    var accessibilityNodeCount = 0
+    var traversalTruncated = false
+    var textMatchCount = 0
+    var visibleTextMatchCount = 0
+    var glyphBoundsInDocument: [String] = []
+    var clippedGlyphBoundsInDocument: [String] = []
+    var controlMatchCount = 0
+    var rejectedControlOwnershipCount = 0
+    var visibleControlMatchCount = 0
+    var controlBoundsOnScreen: [String] = []
+    var controlRoles: [String] = []
+    var ownedControlBoundsOnScreen: [String] = []
+    var scopeDiscoveryNodeCount = 0
+    var verifiedVirtualScrollScopes = 0
+    var rejectedVirtualScrollScopes = 0
+    var candidateScrollRoles: [String] = []
+    var candidateScrollBoundsOnScreen: [String] = []
+
+    var textVisible: Bool { visibleTextMatchCount > 0 && !traversalTruncated }
+    var controlVisible: Bool { visibleControlMatchCount > 0 && !traversalTruncated }
+}
+
+/// SwiftUI's virtual accessibility nodes implement the public selectors without
+/// declaring conformance to the complete NSAccessibilityProtocol. Optional
+/// Objective-C dispatch preserves those real nodes without requiring a cast or
+/// manufacturing a role, frame, or identifier.
+@MainActor
+private struct TranscriptAccessibilityNode {
+    let object: NSObject
+
+    init?(_ value: Any) {
+        guard let object = value as? NSObject else { return nil }
+        self.object = object
+    }
+
+    private var dynamic: AnyObject { object }
+
+    var identifier: String? {
+        if let identifier = dynamic.accessibilityIdentifier?() { return identifier }
+        // AppKit exposes the button's role through its cell, while retaining
+        // the control's identifier on the containing NSButton (AXUnknown).
+        // Bind the two only through AppKit's exact cell/control ownership.
+        if let cell = object as? NSButtonCell, let button = cell.controlView as? NSButton,
+           button.cell === cell {
+            return button.accessibilityIdentifier()
+        }
+        return nil
+    }
+
+    var role: NSAccessibility.Role? { dynamic.accessibilityRole?() }
+    var frame: NSRect { dynamic.accessibilityFrame?() ?? .zero }
+    var children: [Any] {
+        (dynamic.accessibilityChildren?() ?? []) + (dynamic.accessibilityContents?() ?? [])
+    }
+    var parent: Any? { dynamic.accessibilityParent?() }
+    var isHidden: Bool { dynamic.isAccessibilityHidden?() ?? false }
+}
+
 @MainActor
 final class TranscriptFollowTests: XCTestCase {
     private var windows: [NSWindow] = []
+    private var visibilityDiagnosticCount = 0
+    private var lastTextQuery: String?
+    private weak var lastTextQueryScroll: NSScrollView?
+
+    override func setUp() {
+        super.setUp()
+        // A real public client query enables SwiftUI to vend its accessibility
+        // tree. Merely calling NSView's in-process getters leaves it dormant.
+        // Query only this synthetic test process; never request permissions,
+        // inspect another app, change accessibility settings, or retain values.
+        let ready = expectation(description: "Own-process accessibility client is ready")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(getpid())
+            let timeout = AXUIElementSetMessagingTimeout(application, 0.2)
+            XCTAssertEqual(timeout, .success)
+            if timeout == .success {
+                var windows: CFTypeRef?
+                XCTAssertEqual(AXUIElementCopyAttributeValue(
+                    application, kAXWindowsAttribute as CFString, &windows
+                ), .success, "The fixture must expose its own public accessibility tree")
+            }
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 1)
+    }
 
     override func tearDown() {
         windows.forEach { $0.orderOut(nil) }
@@ -128,6 +221,46 @@ final class TranscriptFollowTests: XCTestCase {
             "A new session must invalidate old scroll intent and realize its own final row")
     }
 
+    func testTranscriptAppendStillRealizesGlyphsAfterAnOwnedAccessibilityRead() throws {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = false
+        model.setInspectorWidth(360)
+        model.currentSessionID = "accessibility-append-regression"
+        model.orchestrationRunID = "accessibility-append-run"
+        model.turnDispatchedTeamRunID = "accessibility-append-run"
+        model.orchestrationState = .dispatching
+        model.isBusy = true
+        model.teamRunLive.apply("dispatcher_started", [
+            "run_id": "accessibility-append-run", "agent_name": "Dispatcher",
+            "provider": "Fixture", "model": "Fixture", "goal": "Creating the team plan",
+        ])
+        model.teamRunLive.apply("dispatcher_plan_rejected", [
+            "reason": "dispatcher plan has no jobs", "message": "Correcting dispatcher plan…",
+        ])
+        var request = ChatBlock(kind: .user, text: "Prepare this synthetic plan")
+        request.runID = "accessibility-append-run"
+        model.blocks = [request, ChatBlock(kind: .assistant, text: "Before accessibility append")]
+        let host = mount(model, size: NSSize(width: 720, height: 588))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertTrue(waitForVisibleText("Before accessibility append", in: scroll))
+        XCTAssertTrue(waitForVisibleAccessibilityIdentifier("teamDispatch.stop", in: scroll))
+        let observation = observeVisibility(text: "Before accessibility append", in: scroll)
+        attachVisibility(observation)
+        // SwiftUI may vend the real control directly from the owning native
+        // scroll, or through its verified virtual container. Require the
+        // actual uniquely owned button, not one particular discovery route.
+        XCTAssertEqual(observation.controlMatchCount, 1)
+        XCTAssertEqual(observation.rejectedControlOwnershipCount, 0)
+        XCTAssertEqual(observation.controlRoles, [NSAccessibility.Role.button.rawValue])
+        XCTAssertTrue(observation.textVisible && observation.controlVisible,
+            "The append must follow a real, owned control read, not just native glyph observation")
+
+        model.blocks.append(ChatBlock(kind: .assistant, text: Self.reply + "\n\nAfter accessibility append"))
+        XCTAssertTrue(waitForVisibleText("After accessibility append", in: scroll),
+            "Reading the real accessibility subtree must not prevent subsequent native rendering")
+    }
+
     func testLogicalPinCoalescesAndRespectsSelectionDetachAndBridgeLifecycle() {
         let scroll = mountNativeScroll()
         let anchor = NSView(frame: .zero)
@@ -232,6 +365,687 @@ final class TranscriptFollowTests: XCTestCase {
         ))
     }
 
+    func testVisibilityProbeRequiresExactVisibleGlyphsThroughAncestorClipping() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        let leaf = ResponseSelectableTextView.make()
+        leaf.textContainerInset = NSSize(width: 7, height: 5)
+        leaf.textContainer?.lineFragmentPadding = 0
+        leaf.textContainer?.heightTracksTextView = false
+        leaf.isVerticallyResizable = true
+        _ = leaf.configureWrapping(true)
+        _ = leaf.replaceAttributedTextIfNeeded(NSAttributedString(
+            string: "Synthetic prefix\nSynthetic exact suffix",
+            attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        ))
+        let size = leaf.measuredSize(for: 290, wraps: true)
+        leaf.frame = NSRect(x: 0, y: 0, width: 304, height: size.height + 10)
+        let clip = NSClipView(frame: NSRect(x: 20, y: 90, width: 304, height: leaf.frame.height))
+        clip.documentView = leaf
+        document.addSubview(clip)
+        let control = NSButton(title: "Stop", target: nil, action: nil)
+        control.setAccessibilityIdentifier("teamDispatch.stop")
+        control.frame = NSRect(x: 20, y: 20, width: 80, height: 28)
+        document.addSubview(control)
+        pump()
+
+        let simultaneous = observeVisibility(text: "Synthetic exact suffix", in: scroll)
+        attachVisibility(simultaneous)
+        XCTAssertTrue(simultaneous.textVisible)
+        XCTAssertTrue(simultaneous.controlVisible, "Glyphs and control must be observed in the same sample")
+        assertObservedText(false, text: "Absent suffix", in: scroll)
+        leaf.isHidden = true
+        assertObservedText(false, text: "Synthetic exact suffix", in: scroll)
+        leaf.isHidden = false
+        clip.alphaValue = 0
+        assertObservedText(false, text: "Synthetic exact suffix", in: scroll)
+        clip.alphaValue = 1
+
+        // The text view still contains the suffix and intersects the viewport,
+        // but its ancestor clips away the suffix's actual glyphs.
+        clip.setFrameSize(NSSize(width: 304, height: 16))
+        clip.scroll(to: .zero)
+        assertObservedText(false, text: "Synthetic exact suffix", in: scroll)
+        clip.scroll(to: NSPoint(x: 0, y: max(leaf.bounds.height - 16, 0)))
+        assertObservedText(true, text: "Synthetic exact suffix", in: scroll)
+        clip.frame.origin.y = document.bounds.maxY + 20
+        assertObservedText(false, text: "Synthetic exact suffix", in: scroll)
+    }
+
+    func testVisibilityProbeRejectsHiddenClippedAndOutsideTranscriptStopDuplicates() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        let root = try XCTUnwrap(scroll.window?.contentView)
+        let control = NSButton(title: "Stop", target: nil, action: nil)
+        control.setAccessibilityIdentifier("teamDispatch.stop")
+        control.frame = NSRect(x: 20, y: 20, width: 80, height: 28)
+        document.addSubview(control)
+        assertObservedControl(true, in: scroll)
+        control.isHidden = true
+        assertObservedControl(false, in: scroll)
+        control.isHidden = false
+        control.setAccessibilityHidden(true)
+        assertObservedControl(false, in: scroll)
+        control.setAccessibilityHidden(false)
+        control.frame.origin.y = document.bounds.maxY + 20
+        assertObservedControl(false, in: scroll)
+        control.removeFromSuperview()
+
+        // A sibling/inspector control deliberately overlaps the transcript in
+        // screen coordinates. Matching ID plus intersecting frame is not proof
+        // that the control belongs to the transcript.
+        let duplicate = NSButton(title: "Stop", target: nil, action: nil)
+        duplicate.setAccessibilityIdentifier("teamDispatch.stop")
+        duplicate.frame = NSRect(x: 20, y: 20, width: 80, height: 28)
+        root.addSubview(duplicate)
+        assertObservedControl(false, in: scroll)
+    }
+
+    func testVisibilityProbeFindsTheRealEagerDispatcherStopInsideItsTranscript() throws {
+        let model = AppModel(startImmediately: false)
+        model.orchestrationRunID = "eager-dispatcher-calibration"
+        model.turnDispatchedTeamRunID = model.orchestrationRunID
+        model.orchestrationState = .dispatching
+        model.isBusy = true
+        model.teamRunLive.apply("dispatcher_started", [
+            "run_id": "eager-dispatcher-calibration", "agent_name": "Dispatcher",
+            "provider": "Fixture", "model": "Fixture", "goal": "Creating the team plan",
+        ])
+        model.teamRunLive.apply("dispatcher_plan_rejected", [
+            "reason": "dispatcher plan has no jobs", "message": "Correcting dispatcher plan…",
+        ])
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        let host = NSHostingView(rootView: TeamRunBoardView(
+            runID: "eager-dispatcher-calibration", request: "Build a stock checker"
+        ).appFeatureEnvironment(from: model).frame(width: 312).fixedSize(horizontal: false, vertical: true))
+        host.frame = NSRect(x: 24, y: 20, width: 312, height: 350)
+        document.addSubview(host)
+        pump()
+        host.setFrameSize(NSSize(width: 312, height: host.fittingSize.height))
+        XCTAssertLessThanOrEqual(host.frame.maxY, document.bounds.maxY,
+            "The calibrated real board must actually fit before testing its control")
+        XCTAssertTrue(waitForVisibleAccessibilityIdentifier("teamDispatch.stop", in: scroll),
+            "The native/AX probe must find a known-visible real SwiftUI control before it judges lazy rendering")
+        host.isHidden = true
+        assertObservedControl(false, in: scroll)
+    }
+
+    func testVisibilityProbeOwnsTheVirtualSwiftUIScrollButNotAnOverlappingSibling() throws {
+        let host = NSHostingView(rootView: virtualScrollCalibration(includeTranscriptButton: true))
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 397)
+        let window = NSWindow(
+            contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.contentView = host
+        window.orderFront(nil)
+        windows.append(window)
+        pump()
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertTrue(waitForVisibleAccessibilityIdentifier("teamDispatch.stop", in: scroll))
+
+        // The remaining, equally identified SwiftUI button overlaps the native
+        // viewport but is a sibling of its virtual accessibility container.
+        host.rootView = virtualScrollCalibration(includeTranscriptButton: false)
+        pump()
+        assertObservedControl(false, in: scroll)
+    }
+
+    private func virtualScrollCalibration(includeTranscriptButton: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 150)
+                    if includeTranscriptButton {
+                        Button("Inside", action: {}).accessibilityIdentifier("teamDispatch.stop")
+                    }
+                    Color.clear.frame(height: 100)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .contain)
+                .background { TranscriptSelectionScope() }
+            }
+            .accessibilityIdentifier("conversation.scroll")
+            Button("Outside", action: {}).accessibilityIdentifier("teamDispatch.stop").padding(12)
+        }
+        .frame(width: 360, height: 397)
+    }
+
+    func testRenderPinRequiresCurrentGeometryAndCoalescesUnchangedRequests() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let anchor = NSView(frame: .zero)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        var alignments = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 }, scrollToBottom: { alignments += 1 })
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1)
+        XCTAssertEqual(alignments, 0)
+        XCTAssertFalse(coordinator.followState.isNearBottom, "A request is not layout acknowledgment")
+        for _ in 0..<100 { coordinator.contentMayHaveChanged() }
+        pump()
+        XCTAssertEqual(realizations, 1, "No new geometry means no duplicate realization request")
+
+        let content = NSRect(x: 0, y: 800, width: 300, height: 40)
+        let end = NSRect(x: 0, y: 759, width: 300, height: 41)
+        coordinator.tailDidLayout(token: token, kind: .content, rect: content, in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: end, in: scroll)
+        pump()
+        XCTAssertEqual(alignments, 1)
+        XCTAssertFalse(coordinator.followState.isNearBottom, "An alignment request did not move this fixture")
+        for _ in 0..<100 {
+            coordinator.tailDidLayout(token: token, kind: .content, rect: content, in: scroll)
+            coordinator.tailDidLayout(token: token, kind: .end, rect: end, in: scroll)
+            coordinator.contentMayHaveChanged()
+        }
+        pump()
+        XCTAssertEqual(alignments, 1, "Identical geometry cannot manufacture more alignment work")
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 41, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 0, width: 300, height: 41), in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+    }
+
+    func testRenderPinRejectsStaleRevisionAndWrongScrollGeometry() throws {
+        let scroll = mountNativeScroll()
+        let otherScroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let tail = TranscriptPresentationItem.ID.block(UUID())
+        let old = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+        let current = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: tail)
+        coordinator.installRenderTarget(old, realizeTail: {}, scrollToBottom: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: old, anchor: anchor)
+        pump()
+        coordinator.installRenderTarget(current, realizeTail: {}, scrollToBottom: {})
+        acknowledgeContainerLayout(coordinator, token: current, anchor: anchor)
+        pump()
+        let content = NSRect(x: 0, y: 41, width: 300, height: 40)
+        let end = NSRect(x: 0, y: 0, width: 300, height: 41)
+        for kind in [TranscriptTailLayoutKind.content, .end] {
+            let rect = kind == .content ? content : end
+            coordinator.tailDidLayout(token: old, kind: kind, rect: rect, in: scroll)
+            coordinator.tailDidLayout(token: current, kind: kind, rect: rect, in: otherScroll)
+        }
+        XCTAssertFalse(coordinator.followState.isNearBottom)
+        coordinator.tailDidLayout(token: current, kind: .content, rect: content, in: scroll)
+        coordinator.tailDidLayout(token: current, kind: .end, rect: end, in: scroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+        let next = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 3, tailID: tail)
+        coordinator.installRenderTarget(next, realizeTail: {}, scrollToBottom: {})
+        pump()
+        XCTAssertFalse(coordinator.followState.isNearBottom,
+            "A previously settled projection cannot certify a new revision without its layout")
+    }
+
+    func testRenderPinAdvancesOnlyForNewNativeGeometryAndPreservesReaderOwnership() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        var alignments = 0
+        coordinator.installRenderTarget(
+            token, realizeTail: { realizations += 1 }, scrollToBottom: { alignments += 1 }
+        )
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1)
+
+        let originalViewport = scroll.contentView.bounds
+        let originalDocument = document.bounds
+        func moveViewport(to y: CGFloat) {
+            scroll.contentView.scroll(to: NSPoint(x: originalViewport.minX, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        moveViewport(to: 120)
+        XCTAssertNotEqual(scroll.contentView.bounds, originalViewport)
+        XCTAssertEqual(document.bounds, originalDocument)
+        pump()
+        XCTAssertEqual(realizations, 2,
+            "A changed native viewport must advance a still-unrealized logical row once")
+
+        for _ in 0..<100 {
+            NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+            coordinator.contentMayHaveChanged()
+        }
+        pump()
+        XCTAssertEqual(realizations, 2, "Unchanged notifications cannot manufacture new layout evidence")
+        moveViewport(to: originalViewport.minY)
+        pump()
+        XCTAssertEqual(realizations, 2, "Returning to previously consumed geometry must not repeat discovery")
+        document.setFrameSize(NSSize(width: 360, height: 1_200))
+        pump()
+        XCTAssertEqual(realizations, 3, "A distinct native document measurement can advance pending realization")
+
+        coordinator.detach()
+        moveViewport(to: 180)
+        document.setFrameSize(NSSize(width: 360, height: 1_300))
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        XCTAssertEqual(realizations, 3, "New geometry cannot take ownership from a detached reader")
+
+        coordinator.jumpToLatest()
+        pump()
+        XCTAssertEqual(realizations, 4, "An explicit jump starts a fresh bounded realization attempt")
+        coordinator.setSelectionDragActive(true)
+        moveViewport(to: 220)
+        document.setFrameSize(NSSize(width: 360, height: 1_400))
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        XCTAssertEqual(realizations, 4, "Selection owns the viewport even when layout evidence changes")
+        coordinator.setSelectionDragActive(false)
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        XCTAssertEqual(realizations, 4, "Ending selection is not permission to resume automatic following")
+
+        coordinator.jumpToLatest()
+        pump()
+        XCTAssertEqual(realizations, 5)
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 5, "The fresh attempt must still deduplicate unchanged geometry")
+        XCTAssertEqual(alignments, 0, "Native container progress is not actual terminal-content geometry")
+        XCTAssertFalse(coordinator.followState.isNearBottom)
+    }
+
+    func testRenderPinOldBridgeDetachCannotClearNewAttachment() throws {
+        let oldScroll = mountNativeScroll()
+        let currentScroll = mountNativeScroll()
+        let oldAnchor = NSView(frame: .zero)
+        let currentAnchor = NSView(frame: .zero)
+        try XCTUnwrap(oldScroll.documentView).addSubview(oldAnchor)
+        try XCTUnwrap(currentScroll.documentView).addSubview(currentAnchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        coordinator.attach(from: oldAnchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: oldAnchor)
+        pump()
+        coordinator.attach(from: currentAnchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: currentAnchor)
+        coordinator.detach(from: oldAnchor)
+        pump()
+        XCTAssertEqual(realizations, 2)
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 41, width: 300, height: 40), in: currentScroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 0, width: 300, height: 41), in: currentScroll)
+        XCTAssertTrue(coordinator.followState.isNearBottom,
+            "The new bridge must still receive authoritative layout after old-bridge teardown")
+    }
+
+    func testNativeMeasuredAlignmentRequiresMatchingTailAndPreservesReaderOwnershipInBothOrientations() throws {
+        final class FlippedDocument: NSView {
+            override var isFlipped: Bool { true }
+        }
+
+        for flipped in [false, true] {
+            let scroll = mountNativeScroll()
+            let document: NSView = flipped ? FlippedDocument() : NSView()
+            document.frame = NSRect(x: 0, y: 0, width: 360, height: 1_600)
+            scroll.documentView = document
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+            let anchor = NSView(frame: document.bounds)
+            document.addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let tailID = TranscriptPresentationItem.ID.block(UUID())
+            let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: tailID)
+            var realizations = 0
+            // No injected alignment closure: exercise the production native
+            // path, measuring its actual resulting document-visible rectangle.
+            coordinator.installRenderTarget(token, realizeTail: { realizations += 1 })
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+            pump()
+            let initialViewport = scroll.contentView.bounds
+            XCTAssertEqual(realizations, 1)
+            XCTAssertFalse(coordinator.followState.isNearBottom)
+
+            let end = NSRect(x: 0, y: flipped ? 1_320 : 260, width: 300, height: 41)
+            let content = NSRect(x: 0, y: flipped ? 1_260 : 301, width: 300, height: 60)
+            let stale = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tailID)
+            coordinator.tailDidLayout(token: stale, kind: .content, rect: content, in: scroll)
+            coordinator.tailDidLayout(token: stale, kind: .end, rect: end, in: scroll)
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds, initialViewport)
+            XCTAssertFalse(coordinator.followState.isNearBottom)
+            coordinator.tailDidLayout(token: token, kind: .content, rect: content, in: scroll)
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds, initialViewport,
+                "One current content measurement without its matching end cannot move the viewport")
+            XCTAssertFalse(coordinator.followState.isNearBottom)
+
+            func assertAligned(content: NSRect, end: NSRect) {
+                let visible = scroll.documentVisibleRect
+                let distance = flipped ? end.maxY - visible.maxY : visible.minY - end.minY
+                XCTAssertEqual(distance, 0, accuracy: 2, "Measured end alignment must respect document orientation")
+                XCTAssertTrue(content.intersects(visible))
+                XCTAssertTrue(end.intersects(visible))
+                XCTAssertTrue(coordinator.followState.isNearBottom)
+            }
+            coordinator.tailDidLayout(token: token, kind: .end, rect: end, in: scroll)
+            pump()
+            assertAligned(content: content, end: end)
+            XCTAssertNotEqual(scroll.contentView.bounds.origin, initialViewport.origin)
+
+            coordinator.detach()
+            scroll.contentView.scroll(to: initialViewport.origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+            let detachedContent = content.offsetBy(dx: 0, dy: 50)
+            let detachedEnd = end.offsetBy(dx: 0, dy: 50)
+            coordinator.tailDidLayout(token: token, kind: .content, rect: detachedContent, in: scroll)
+            coordinator.tailDidLayout(token: token, kind: .end, rect: detachedEnd, in: scroll)
+            coordinator.contentMayHaveChanged()
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds.origin, initialViewport.origin)
+            XCTAssertFalse(coordinator.followState.isFollowingOutput)
+            coordinator.jumpToLatest()
+            pump()
+            assertAligned(content: detachedContent, end: detachedEnd)
+
+            coordinator.setSelectionDragActive(true)
+            scroll.contentView.scroll(to: initialViewport.origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+            let selectionContent = content.offsetBy(dx: 0, dy: 100)
+            let selectionEnd = end.offsetBy(dx: 0, dy: 100)
+            coordinator.tailDidLayout(token: token, kind: .content, rect: selectionContent, in: scroll)
+            coordinator.tailDidLayout(token: token, kind: .end, rect: selectionEnd, in: scroll)
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds.origin, initialViewport.origin)
+            coordinator.setSelectionDragActive(false)
+            coordinator.contentMayHaveChanged()
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds.origin, initialViewport.origin)
+            XCTAssertFalse(coordinator.followState.isFollowingOutput)
+            coordinator.jumpToLatest()
+            pump()
+            assertAligned(content: selectionContent, end: selectionEnd)
+        }
+    }
+
+    func testRenderPinContentRevisionPreservesReadingButSessionGenerationReengages() throws {
+        let scroll = mountNativeScroll()
+        let anchor = NSView(frame: .zero)
+        try XCTUnwrap(scroll.documentView).addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let tail = TranscriptPresentationItem.ID.block(UUID())
+        var realizations = 0
+        let initial = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+        coordinator.installRenderTarget(initial, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: initial, anchor: anchor)
+        pump()
+        coordinator.detach()
+        let parked = scroll.contentView.bounds.origin
+        let updated = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: tail)
+        coordinator.installRenderTarget(updated, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        acknowledgeContainerLayout(coordinator, token: updated, anchor: anchor)
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        XCTAssertEqual(realizations, 1)
+        XCTAssertEqual(scroll.contentView.bounds.origin, parked)
+
+        let replacement = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: tail)
+        coordinator.installRenderTarget(replacement, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: replacement, anchor: anchor)
+        pump()
+        XCTAssertTrue(coordinator.followState.isFollowingOutput)
+        XCTAssertEqual(realizations, 2)
+        XCTAssertFalse(coordinator.followState.isNearBottom, "A session reset still requires fresh layout")
+    }
+
+    func testPendingNewSessionResetCannotOverrideReaderDetachOrSelection() throws {
+        for selection in [false, true] {
+            let scroll = mountNativeScroll()
+            let anchor = NSView(frame: .zero)
+            try XCTUnwrap(scroll.documentView).addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let tail = TranscriptPresentationItem.ID.block(UUID())
+            var realizations = 0
+            let initial = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+            coordinator.installRenderTarget(initial, realizeTail: { realizations += 1 })
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: initial, anchor: anchor)
+            pump()
+            XCTAssertEqual(realizations, 1)
+
+            let replacement = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: tail)
+            coordinator.installRenderTarget(replacement, realizeTail: { realizations += 1 })
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: replacement, anchor: anchor)
+            // The generation's default has been enqueued, but has not run.
+            // Later reader input must win even though its render token matches.
+            if selection { coordinator.setSelectionDragActive(true) }
+            else { coordinator.detach() }
+            let parked = scroll.contentView.bounds
+            pump()
+            XCTAssertFalse(coordinator.followState.isFollowingOutput)
+            XCTAssertEqual(realizations, 1)
+            XCTAssertEqual(scroll.contentView.bounds, parked)
+            if selection { coordinator.setSelectionDragActive(false) }
+            coordinator.contentMayHaveChanged()
+            pump()
+            XCTAssertFalse(coordinator.followState.isFollowingOutput)
+            XCTAssertEqual(realizations, 1)
+            coordinator.jumpToLatest()
+            pump()
+            XCTAssertTrue(coordinator.followState.isFollowingOutput)
+            XCTAssertEqual(realizations, 2)
+        }
+    }
+
+    func testPendingNewSessionResetSurvivesContentCoalescingWithoutRearmingCancelledReaderLease() throws {
+        for cancelReset in [false, true] {
+            let scroll = mountNativeScroll()
+            let anchor = NSView(frame: .zero)
+            try XCTUnwrap(scroll.documentView).addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let tail = TranscriptPresentationItem.ID.block(UUID())
+            var realizations = 0
+            let initial = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+            coordinator.installRenderTarget(initial, realizeTail: { realizations += 1 })
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: initial, anchor: anchor)
+            pump()
+            coordinator.detach()
+
+            let first = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 2, tailID: tail)
+            let latest = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 3, tailID: tail)
+            coordinator.installRenderTarget(first, realizeTail: { realizations += 1 })
+            if cancelReset { coordinator.detach() }
+            coordinator.installRenderTarget(latest, realizeTail: { realizations += 1 })
+            // Native attachment also advances callback generations, but is
+            // not reader input and cannot consume the pending follow reset.
+            coordinator.attach(from: anchor)
+            acknowledgeContainerLayout(coordinator, token: latest, anchor: anchor)
+            pump()
+            XCTAssertEqual(coordinator.followState.isFollowingOutput, !cancelReset)
+            XCTAssertEqual(realizations, cancelReset ? 1 : 2)
+
+            if cancelReset {
+                let subsequent = TranscriptRenderToken(sessionGeneration: 2, contentRevision: 4, tailID: tail)
+                coordinator.installRenderTarget(subsequent, realizeTail: { realizations += 1 })
+                acknowledgeContainerLayout(coordinator, token: subsequent, anchor: anchor)
+                pump()
+                XCTAssertFalse(coordinator.followState.isFollowingOutput,
+                    "A consumed cancelled session default cannot be re-armed by later content")
+                XCTAssertEqual(realizations, 1)
+            }
+        }
+    }
+
+    func testDismantlingBridgeDiscardsItsPendingSessionFollowReset() {
+        let coordinator = TranscriptScrollCoordinator()
+        coordinator.detach()
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 })
+        coordinator.detachAll()
+        pump()
+        XCTAssertFalse(coordinator.followState.isFollowingOutput,
+            "A queued default cannot restore state after the owning bridge was dismantled")
+        XCTAssertEqual(realizations, 0)
+    }
+
+    func testNativeMeasuredAlignmentRetriesAfterDocumentGrowthReleasesAnActualConstraint() throws {
+        final class FlippedDocument: NSView {
+            override var isFlipped: Bool { true }
+        }
+        let scroll = mountNativeScroll()
+        let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 800))
+        scroll.documentView = document
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        coordinator.installRenderTarget(token, realizeTail: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        let content = NSRect(x: 0, y: 1_160, width: 300, height: 40)
+        let end = NSRect(x: 0, y: 1_200, width: 300, height: 41)
+        coordinator.tailDidLayout(token: token, kind: .content, rect: content, in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: end, in: scroll)
+        pump()
+        XCTAssertEqual(scroll.documentVisibleRect.maxY, document.bounds.maxY, accuracy: 2)
+        XCTAssertFalse(coordinator.followState.isNearBottom,
+            "The native document currently constrains the viewport before the measured end")
+        let constrainedViewport = scroll.contentView.bounds
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(scroll.contentView.bounds, constrainedViewport)
+
+        // Only document bounds change. The matching token, measured content,
+        // measured end and pre-alignment viewport remain exactly the same.
+        document.setFrameSize(NSSize(width: 360, height: 1_600))
+        XCTAssertEqual(scroll.contentView.bounds, constrainedViewport)
+        pump()
+        XCTAssertEqual(scroll.documentVisibleRect.maxY, end.maxY, accuracy: 2,
+            "A newly relaxed native constraint must not be suppressed by the old alignment key")
+        XCTAssertTrue(content.intersects(scroll.documentVisibleRect))
+        XCTAssertTrue(end.intersects(scroll.documentVisibleRect))
+        XCTAssertTrue(coordinator.followState.isNearBottom)
+    }
+
+    func testRenderPinDoesNotConfuseInteriorTailWithAlignedScrollableEnd() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let anchor = NSView(frame: .zero)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        coordinator.installRenderTarget(token, realizeTail: {}, scrollToBottom: {})
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 181, width: 300, height: 40), in: scroll)
+        coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 140, width: 300, height: 41), in: scroll)
+        XCTAssertFalse(coordinator.followState.isNearBottom,
+            "An interior marker in a scrollable document is not aligned with the viewport's end")
+    }
+
+    func testRenderPinWaitsForCurrentContainerLayoutAndRejectsStaleAcknowledgements() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        let anchor = NSView(frame: document.bounds)
+        let otherAnchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        document.addSubview(otherAnchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let tail = TranscriptPresentationItem.ID.block(UUID())
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: tail)
+        var realizations = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        coordinator.attach(from: anchor)
+        pump()
+        XCTAssertEqual(realizations, 0, "A bridge update or display tick is not native container layout")
+        let attachment = coordinator.layoutAttachmentRevision
+        let stale = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 0, tailID: tail)
+        anchor.layoutSubtreeIfNeeded()
+        otherAnchor.layoutSubtreeIfNeeded()
+        coordinator.renderContainerDidLayout(token: stale, attachment: attachment, from: anchor)
+        coordinator.renderContainerDidLayout(token: token, attachment: attachment - 1, from: anchor)
+        coordinator.renderContainerDidLayout(token: token, attachment: attachment, from: otherAnchor)
+        pump()
+        XCTAssertEqual(realizations, 0)
+        coordinator.renderContainerDidLayout(token: token, attachment: attachment, from: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1)
+        XCTAssertFalse(coordinator.followState.isNearBottom, "Container readiness does not certify final-row visibility")
+        for _ in 0..<100 {
+            coordinator.renderContainerDidLayout(token: token, attachment: attachment, from: anchor)
+            coordinator.contentMayHaveChanged()
+        }
+        pump()
+        XCTAssertEqual(realizations, 1)
+
+        let next = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: tail)
+        coordinator.installRenderTarget(next, realizeTail: { realizations += 1 }, scrollToBottom: {})
+        coordinator.renderContainerDidLayout(token: token, attachment: attachment, from: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1, "Old container layout cannot unlock a new content revision")
+        coordinator.setSelectionDragActive(true)
+        acknowledgeContainerLayout(coordinator, token: next, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1, "Native readiness does not override active selection")
+        coordinator.setSelectionDragActive(false)
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 1, "Ending selection does not reauthorize automatic following")
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+        coordinator.jumpToLatest()
+        pump()
+        XCTAssertEqual(realizations, 2)
+    }
+
+    private func acknowledgeContainerLayout(
+        _ coordinator: TranscriptScrollCoordinator, token: TranscriptRenderToken, anchor: NSView
+    ) {
+        anchor.frame = anchor.superview?.bounds ?? NSRect(x: 0, y: 0, width: 300, height: 100)
+        anchor.needsLayout = true
+        anchor.layoutSubtreeIfNeeded()
+        XCTAssertFalse(anchor.needsLayout, "The fixture must actually finish native layout before acknowledging it")
+        coordinator.renderContainerDidLayout(
+            token: token, attachment: coordinator.layoutAttachmentRevision, from: anchor
+        )
+    }
+
     // MARK: - Harness
 
     private func mountNativeScroll() -> NSScrollView {
@@ -249,50 +1063,259 @@ final class TranscriptFollowTests: XCTestCase {
     }
 
     private func waitForVisibleText(_ text: String, in scroll: NSScrollView) -> Bool {
+        lastTextQuery = text
+        lastTextQueryScroll = scroll
         let deadline = Date().addingTimeInterval(3)
+        var observation = TranscriptVisibilityObservation()
         repeat {
-            var views = scroll.documentView.map { [$0] } ?? []
-            while let view = views.popLast() {
-                if let leaf = view as? ResponseSelectableTextView,
-                   let layout = leaf.layoutManager, let container = leaf.textContainer,
-                   let document = scroll.documentView {
-                    let characters = (leaf.string as NSString).range(of: text)
-                    if characters.location != NSNotFound {
-                        let glyphs = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
-                        let bounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
-                            .offsetBy(dx: leaf.textContainerOrigin.x, dy: leaf.textContainerOrigin.y)
-                        if !bounds.isEmpty, bounds.intersects(leaf.visibleRect),
-                           leaf.convert(bounds, to: document).intersects(scroll.documentVisibleRect) {
-                            return true
-                        }
-                    }
-                }
-                views.append(contentsOf: view.subviews)
+            observation = observeVisibility(text: text, identifier: nil, in: scroll)
+            if observation.textVisible {
+                attachVisibility(observation)
+                return true
             }
             pump(2)
         } while Date() < deadline
+        attachVisibility(observation)
         return false
     }
 
     private func waitForVisibleAccessibilityIdentifier(_ identifier: String, in scroll: NSScrollView) -> Bool {
-        guard let window = scroll.window else { return false }
         let deadline = Date().addingTimeInterval(3)
+        var observation = TranscriptVisibilityObservation()
         repeat {
-            let viewport = window.convertToScreen(scroll.convert(scroll.contentView.frame, to: nil))
-            var elements: [Any] = [scroll]
-            var visited: Set<ObjectIdentifier> = []
-            while let next = elements.popLast() {
-                guard let element = next as? any NSAccessibilityProtocol,
-                      visited.insert(ObjectIdentifier(element)).inserted else { continue }
-                if element.accessibilityIdentifier() == identifier {
-                    let frame = element.accessibilityFrame()
-                    if !frame.isEmpty, frame.intersects(viewport) { return true }
-                }
-                elements.append(contentsOf: element.accessibilityChildren() ?? [])
+            observation = observeVisibility(
+                text: lastTextQueryScroll === scroll ? lastTextQuery : nil,
+                identifier: identifier, in: scroll
+            )
+            if observation.controlVisible {
+                attachVisibility(observation)
+                return true
             }
             pump(2)
         } while Date() < deadline
+        attachVisibility(observation)
         return false
+    }
+
+    private func observeVisibility(
+        text: String? = nil,
+        identifier: String? = "teamDispatch.stop",
+        in scroll: NSScrollView
+    ) -> TranscriptVisibilityObservation {
+        var result = TranscriptVisibilityObservation()
+        guard let document = scroll.documentView, let window = scroll.window else { return result }
+        result.windowVisible = window.isVisible
+        result.documentBounds = NSStringFromRect(document.bounds)
+        let viewport = scroll.documentVisibleRect
+        let screenViewport = window.convertToScreen(scroll.contentView.convert(scroll.contentView.bounds, to: nil))
+        result.viewportBounds = NSStringFromRect(viewport)
+        result.viewportOnScreen = NSStringFromRect(screenViewport)
+        let nodeLimit = 8_192
+        var nativeViews: [NSView] = []
+        var pending = [document]
+        while let view = pending.popLast() {
+            guard nativeViews.count < nodeLimit else { result.traversalTruncated = true; break }
+            nativeViews.append(view)
+            pending.append(contentsOf: view.subviews)
+            if let text, let leaf = view as? ResponseSelectableTextView,
+               let layout = leaf.layoutManager, let container = leaf.textContainer {
+                let characters = (leaf.string as NSString).range(of: text)
+                guard characters.location != NSNotFound else { continue }
+                result.textMatchCount += 1
+                let glyphs = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
+                let bounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                    .offsetBy(dx: leaf.textContainerOrigin.x, dy: leaf.textContainerOrigin.y)
+                let inDocument = leaf.convert(bounds, to: document)
+                let visibleGlyphs = bounds.intersection(leaf.visibleRect)
+                let clipped = visibleGlyphs.isEmpty ? NSRect.zero
+                    : leaf.convert(visibleGlyphs, to: document).intersection(viewport)
+                if result.glyphBoundsInDocument.count < 8 {
+                    result.glyphBoundsInDocument.append(NSStringFromRect(inDocument))
+                    result.clippedGlyphBoundsInDocument.append(NSStringFromRect(clipped))
+                }
+                if nativeViewIsVisible(leaf, in: scroll), !bounds.isEmpty, !clipped.isEmpty {
+                    result.visibleTextMatchCount += 1
+                }
+            }
+        }
+        result.nativeNodeCount = nativeViews.count
+        // Text-only polling must not activate or traverse SwiftUI's separate
+        // virtual accessibility graph. Control observations still collect the
+        // latest exact glyph query synchronously in the same metadata sample.
+        guard let identifier else { return result }
+
+        // A real SwiftUI scroll view vends virtual content from the known
+        // NSScrollView, not necessarily from native document descendants. Also
+        // visit embedded hosting views, but never search the whole window: the
+        // inspector can vend another copy of the same team's controls.
+        let owners = [scroll] + nativeViews
+        var elements: [(Any, NSView, NSObject?)] = owners.reversed().map { ($0, $0, nil) }
+        if let scope = virtualTranscriptScope(in: scroll, observation: &result, nodeLimit: nodeLimit) {
+            elements.append((scope, scroll, scope))
+        }
+        var visited: Set<ObjectIdentifier> = []
+        while let (next, owner, virtualScope) = elements.popLast() {
+            guard visited.count < nodeLimit else { result.traversalTruncated = true; break }
+            guard let element = TranscriptAccessibilityNode(next),
+                  visited.insert(ObjectIdentifier(element.object)).inserted else { continue }
+            if element.identifier == identifier {
+                result.controlMatchCount += 1
+                let frame = element.frame
+                if result.controlBoundsOnScreen.count < 8 {
+                    result.controlBoundsOnScreen.append(NSStringFromRect(frame))
+                    result.controlRoles.append(element.role?.rawValue ?? "unavailable")
+                }
+                if let ownedVisibleRect = accessibilityVisibleRect(
+                    element, nativeOwner: owner, virtualScope: virtualScope, in: scroll
+                ) {
+                    if result.ownedControlBoundsOnScreen.count < 8 {
+                        result.ownedControlBoundsOnScreen.append(NSStringFromRect(ownedVisibleRect))
+                    }
+                    if element.role == .button,
+                       !frame.isEmpty, !frame.intersection(ownedVisibleRect).intersection(screenViewport).isEmpty {
+                        result.visibleControlMatchCount += 1
+                    }
+                } else {
+                    result.rejectedControlOwnershipCount += 1
+                }
+            }
+            elements.append(contentsOf: element.children.prefix(nodeLimit).map { ($0, owner, virtualScope) })
+        }
+        result.accessibilityNodeCount = visited.count
+        return result
+    }
+
+    /// SwiftUI can vend the virtual scroll container from an enclosing hosting
+    /// view instead of the native scroll's document. Discover only that exact
+    /// container here, never a requested control in the surrounding interface.
+    private func virtualTranscriptScope(
+        in scroll: NSScrollView, observation: inout TranscriptVisibilityObservation, nodeLimit: Int
+    ) -> NSObject? {
+        guard let window = scroll.window, nativeViewIsVisible(scroll, in: scroll) else { return nil }
+        let expected = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+        var ancestor = scroll.superview
+        var depth = 0
+        while let owner = ancestor, owner.window === window, depth < 32 {
+            var pending: [Any] = [owner]
+            var visited: Set<ObjectIdentifier> = []
+            var candidates: [TranscriptAccessibilityNode] = []
+            while let value = pending.popLast() {
+                guard observation.scopeDiscoveryNodeCount < nodeLimit else {
+                    observation.traversalTruncated = true
+                    return nil
+                }
+                guard let node = TranscriptAccessibilityNode(value),
+                      visited.insert(ObjectIdentifier(node.object)).inserted else { continue }
+                observation.scopeDiscoveryNodeCount += 1
+                if !(node.object is NSView), node.identifier == "conversation.scroll" {
+                    candidates.append(node)
+                }
+                pending.append(contentsOf: node.children.prefix(nodeLimit))
+            }
+            if !candidates.isEmpty {
+                for candidate in candidates.prefix(8) {
+                    observation.candidateScrollRoles.append(candidate.role?.rawValue ?? "unavailable")
+                    observation.candidateScrollBoundsOnScreen.append(NSStringFromRect(candidate.frame))
+                }
+                guard candidates.count == 1, let candidate = candidates.first,
+                      candidate.role == .scrollArea, !candidate.isHidden,
+                      !candidate.frame.isEmpty,
+                      abs(candidate.frame.minX - expected.minX) <= 1,
+                      abs(candidate.frame.minY - expected.minY) <= 1,
+                      abs(candidate.frame.width - expected.width) <= 1,
+                      abs(candidate.frame.height - expected.height) <= 1 else {
+                    observation.rejectedVirtualScrollScopes += candidates.count
+                    return nil
+                }
+                observation.verifiedVirtualScrollScopes += 1
+                return candidate.object
+            }
+            ancestor = owner.superview
+            depth += 1
+        }
+        return nil
+    }
+
+    private func nativeViewIsVisible(_ view: NSView, in scroll: NSScrollView) -> Bool {
+        guard view.window === scroll.window, scroll.window?.isVisible == true,
+              view === scroll || view.isDescendant(of: scroll),
+              !view.isHiddenOrHasHiddenAncestor else { return false }
+        var ancestor: NSView? = view
+        while let current = ancestor {
+            if current.alphaValue <= 0 { return false }
+            ancestor = current.superview
+        }
+        return !view.visibleRect.isEmpty
+    }
+
+    private func accessibilityVisibleRect(
+        _ element: TranscriptAccessibilityNode,
+        nativeOwner: NSView,
+        virtualScope: NSObject? = nil,
+        in scroll: NSScrollView
+    ) -> NSRect? {
+        guard nativeViewIsVisible(nativeOwner, in: scroll), let window = scroll.window else { return nil }
+        var visible = window.convertToScreen(nativeOwner.convert(nativeOwner.visibleRect, to: nil))
+        if let cell = element.object as? NSButtonCell {
+            guard let button = cell.controlView as? NSButton, button.cell === cell,
+                  nativeViewIsVisible(button, in: scroll), !button.isAccessibilityHidden() else { return nil }
+            visible = visible.intersection(window.convertToScreen(button.convert(button.visibleRect, to: nil)))
+        }
+        var current: Any? = element.object
+        var visited: Set<ObjectIdentifier> = []
+        while let value = current, let next = TranscriptAccessibilityNode(value) {
+            guard visited.count < 128, visited.insert(ObjectIdentifier(next.object)).inserted,
+                  !next.isHidden else { return nil }
+            if let virtualScope, next.object === virtualScope {
+                visible = visible.intersection(next.frame)
+                return visible.isEmpty ? nil : visible
+            }
+            if let view = next.object as? NSView {
+                guard nativeViewIsVisible(view, in: scroll) else { return nil }
+                var ancestor: NSView? = view
+                while let current = ancestor {
+                    guard !current.isAccessibilityHidden() else { return nil }
+                    ancestor = current.superview
+                }
+                visible = visible.intersection(window.convertToScreen(view.convert(view.visibleRect, to: nil)))
+                if virtualScope == nil { return visible.isEmpty ? nil : visible }
+            }
+            if let ownerWindow = next.object as? NSWindow {
+                return virtualScope == nil && ownerWindow === window && !visible.isEmpty ? visible : nil
+            }
+            current = next.parent
+        }
+        // Virtual ancestry can end at the window without a backing NSView;
+        // ownership still comes from the native transcript descendant that
+        // actually vended this subtree, never from frame overlap alone.
+        return virtualScope == nil && !visible.isEmpty ? visible : nil
+    }
+
+    private func attachVisibility(_ observation: TranscriptVisibilityObservation) {
+        guard visibilityDiagnosticCount < 12, let data = try? JSONEncoder().encode(observation) else { return }
+        visibilityDiagnosticCount += 1
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Transcript visibility geometry \(visibilityDiagnosticCount)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func assertObservedText(
+        _ expected: Bool, text: String, in scroll: NSScrollView,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let observation = observeVisibility(text: text, in: scroll)
+        attachVisibility(observation)
+        XCTAssertEqual(observation.textVisible, expected, file: file, line: line)
+    }
+
+    private func assertObservedControl(
+        _ expected: Bool, in scroll: NSScrollView,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let observation = observeVisibility(in: scroll)
+        attachVisibility(observation)
+        XCTAssertEqual(observation.controlVisible, expected, file: file, line: line)
     }
 
     private func makeModel() -> AppModel {
