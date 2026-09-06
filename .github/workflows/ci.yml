@@ -126,7 +126,10 @@ jobs:
       - run: python -m pytest -q
       - run: python -m pip_audit -r agent/requirements-runtime.lock --disable-pip --no-deps
       - name: Release script syntax
-        run: zsh -n Tools/*.sh agent/run.sh
+        run: |
+          for release_script in Tools/*.sh agent/run.sh; do
+            zsh -n "$release_script" || exit "$?"
+          done
 
   swift:
     runs-on: macos-15
@@ -271,6 +274,28 @@ jobs:
 
           direct="$RUNNER_TEMP/locus-release-direct/Build/Products/Release/Locus.app"
           app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
+          umask 077
+          release_inspection_dir="$(mktemp -d "$RUNNER_TEMP/locus-release-inspection.XXXXXX")"
+          trap 'find "$release_inspection_dir" -depth -delete' EXIT
+          # BEGIN release_audit_output
+          release_audit_output() {
+            local expectation="$1" pattern="$2"
+            shift 2
+            local inspection="$release_inspection_dir/inspection.stdout"
+            if ! "$@" > "$inspection" 2>/dev/null; then
+              echo 'error: release inspection producer failed' >&2
+              return 1
+            fi
+            local match_status=0
+            grep -E -- "$pattern" "$inspection" >/dev/null || match_status=$?
+            if [[ "$expectation" == present && "$match_status" == 0 ]] ||
+               [[ "$expectation" == absent && "$match_status" == 1 ]]; then
+              return 0
+            fi
+            echo 'error: release inspection did not satisfy the required boundary' >&2
+            return 1
+          }
+          # END release_audit_output
           Tools/AuditWalletBuildBoundary.sh "$direct" "$app_store"
           test -x "$direct/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
           test ! -e "$direct/Contents/XPCServices/WalletConnections.xpc"
@@ -298,7 +323,8 @@ jobs:
           test ! -e "$app_store/Contents/Resources/WalletConnectionsNotices.md"
           test ! -e "$app_store/Contents/Resources/LICENSE"
           test -z "$(find "$app_store/Contents/Resources" -name 'LocusReownSwift_*' -print -quit)"
-          ! strings "$app_store/Contents/MacOS/Locus" | grep -q 'LocusWalletConnectPrivateBindingsV1'
+          release_audit_output absent 'LocusWalletConnectPrivateBindingsV1' \
+            /usr/bin/strings "$app_store/Contents/MacOS/Locus"
           test ! -e "$app_store/Contents/Helpers/WalletRecovery.app"
           test -d "$direct/Contents/Frameworks/Sparkle.framework"
           test ! -e "$app_store/Contents/Frameworks/Sparkle.framework"
@@ -306,9 +332,9 @@ jobs:
             'https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             "$direct/Contents/Frameworks/Sparkle.framework/Resources/Info.plist")" = '2.9.6'
-          /usr/bin/otool -L "$direct/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
-          ! /usr/bin/otool -L "$app_store/Contents/MacOS/Locus" | grep -q 'Sparkle.framework'
-          ! /usr/bin/plutil -p "$app_store/Contents/Info.plist" | grep -Eq '^  "SU[^" ]*"'
+          release_audit_output present 'Sparkle.framework' /usr/bin/otool -L "$direct/Contents/MacOS/Locus"
+          release_audit_output absent 'Sparkle.framework' /usr/bin/otool -L "$app_store/Contents/MacOS/Locus"
+          release_audit_output absent '^  "SU[^" ]*"' /usr/bin/plutil -p "$app_store/Contents/Info.plist"
           test -z "$(find "$app_store/Contents" \
             \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
             -print -quit)"

@@ -4,6 +4,32 @@
 set -euo pipefail
 setopt null_glob
 
+# BEGIN wallet_audit_reject_matching_output
+wallet_audit_reject_matching_output() {
+    local pattern="$1"
+    local failure_message="$2"
+    shift 2
+    local output_path="${audit_temp_dir}/inspection.stdout"
+    # Finish and validate inspection before matching. An early grep match must
+    # not turn producer SIGPIPE into a false-negative under pipefail.
+    if ! "$@" >"${output_path}" 2>/dev/null; then
+        echo "error: wallet binary inspection tool failed" >&2
+        return 1
+    fi
+    if /usr/bin/grep -E -- "${pattern}" "${output_path}" >/dev/null; then
+        echo "error: ${failure_message}" >&2
+        return 1
+    else
+        local match_status=$?
+        if (( match_status != 1 )); then
+            echo "error: wallet binary output inspection failed" >&2
+            return 1
+        fi
+    fi
+    return 0
+}
+# END wallet_audit_reject_matching_output
+
 app="${1:?usage: AuditDistribution.sh <Locus.app>}"
 repo_root="${0:A:h:h}"
 resources="${app}/Contents/Resources"
@@ -290,8 +316,10 @@ if /usr/bin/grep -R -a -l -m 1 "GNU gdbm" "${runtime}" >/dev/null 2>&1; then
     exit 1
 fi
 
-entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-entitlements.XXXXXX")"
-trap '/bin/rm -f "${entitlements}"' EXIT
+umask 077
+audit_temp_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/locus-distribution-inspection.XXXXXX")"
+trap 'find "$audit_temp_dir" -depth -delete' EXIT
+entitlements="$(/usr/bin/mktemp "${audit_temp_dir}/entitlements.XXXXXX")"
 # --xml: without it codesign writes a human-readable dump plutil cannot parse,
 # and every extraction below fails open. Dots in entitlement names must be
 # escaped or plutil walks them as a key path and never finds the key.
@@ -346,11 +374,10 @@ if [[ "${sandboxed}" == "1" ]]; then
         echo "error: the Mac App Store build contains Direct-only connector resource ${unexpected_connector_resource}" >&2
         exit 1
     }
-    ! /usr/bin/plutil -p "${info_plist}" | /usr/bin/grep -Eq \
-        'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' || {
-        echo "error: the Mac App Store build contains connector configuration keys" >&2
-        exit 1
-    }
+    wallet_audit_reject_matching_output \
+        'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL)' \
+        'the Mac App Store build contains connector configuration keys' \
+        /usr/bin/plutil -p "${info_plist}"
     mas_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
         "${entitlements}" 2>/dev/null || true)"
     [[ "${mas_access_group}" != "4X4RJA7GMD.io.sparktales.locus" ]] || {
@@ -378,10 +405,9 @@ if [[ "${sandboxed}" == "1" ]]; then
         echo "error: the Mac App Store build contains Sparkle.framework" >&2
         exit 1
     }
-    ! /usr/bin/plutil -p "${app}/Contents/Info.plist" | /usr/bin/grep -Eq '^  "SU[^" ]*"' || {
-        echo "error: the Mac App Store build contains Sparkle updater configuration" >&2
-        exit 1
-    }
+    wallet_audit_reject_matching_output '^  "SU[^" ]*"' \
+        'the Mac App Store build contains Sparkle updater configuration' \
+        /usr/bin/plutil -p "${app}/Contents/Info.plist"
     unexpected_updater="$(/usr/bin/find "${app}/Contents" \
         \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
         -print -quit)"
@@ -823,14 +849,13 @@ do
             exit 1
         }
     fi
-    if [[ "${sandboxed}" == "1" ]] \
-        && { /usr/bin/nm "${candidate}" 2>/dev/null \
-                | /usr/bin/grep -Eq "${mas_connector_forbidden}" \
-            || /usr/bin/strings "${candidate}" \
-                | /usr/bin/grep -Eq "${mas_connector_forbidden}"; }
-    then
-        echo "error: Mac App Store executable contains Direct connector code or credentials: ${candidate}" >&2
-        exit 1
+    if [[ "${sandboxed}" == "1" ]]; then
+        wallet_audit_reject_matching_output "${mas_connector_forbidden}" \
+            "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+            /usr/bin/nm "${candidate}"
+        wallet_audit_reject_matching_output "${mas_connector_forbidden}" \
+            "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+            /usr/bin/strings "${candidate}"
     fi
 done < <(/usr/bin/find "${app}/Contents" -type f -print)
 (( wallet_macho_count > 0 )) || {
