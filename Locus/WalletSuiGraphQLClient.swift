@@ -223,20 +223,25 @@ actor WalletSuiGraphQLClient {
     private static let maximumResponseBytes = 1_048_576
     private static let maximumCheckpointAge: TimeInterval = 15 * 60
     private static let maximumFutureDrift: TimeInterval = 2 * 60
-    private static let balancePageSize = 100
-    private static let maximumBalancePages = 100
-    private static let maximumBalances = balancePageSize * maximumBalancePages
-    private static let objectPageSize = 100
-    private static let maximumObjectPages = 50
-    private static let maximumObjects = objectPageSize * maximumObjectPages
-    private static let gasCoinPageSize = 100
-    private static let maximumGasCoinPages = 50
-    private static let maximumGasCoins = gasCoinPageSize * maximumGasCoinPages
+    // Sui testnet-v1.79.0 (46f18562f1f5af2438d35828e8b62d5e0b972db7),
+    // crates/sui-indexer-alt-graphql/src/config.rs: Limits::default uses 50.
+    // Smaller pages retain the existing total discovery ceilings; they never
+    // relax checkpoint, cursor, identity, or full-effects reconciliation.
+    private static let connectionPageSize = 50
+    private static let balancePageSize = connectionPageSize
+    private static let maximumBalances = 10_000
+    private static let maximumBalancePages = maximumBalances / balancePageSize
+    private static let objectPageSize = connectionPageSize
+    private static let maximumObjects = 5_000
+    private static let maximumObjectPages = maximumObjects / objectPageSize
+    private static let gasCoinPageSize = connectionPageSize
+    private static let maximumGasCoins = 5_000
+    private static let maximumGasCoinPages = maximumGasCoins / gasCoinPageSize
     private static let nativeCoinObjectType = "0x2::coin::Coin<0x2::sui::SUI>"
-    private static let activityPageSize = 50
+    private static let activityPageSize = connectionPageSize
     private static let maximumActivityPages = 10
-    private static let balanceChangesPerTransaction = 100
-    private static let objectChangesPerTransaction = 100
+    private static let balanceChangesPerTransaction = connectionPageSize
+    private static let objectChangesPerTransaction = connectionPageSize
 
     private static let nativeTransferSimulationQuery = """
     query LocusSuiSimulateNativeTransfer($transaction: JSON!) {
@@ -388,6 +393,7 @@ actor WalletSuiGraphQLClient {
           pageInfo { hasNextPage endCursor }
         }
       }
+    }
     """
 
     private static let ownedObjectsQuery = """
@@ -487,7 +493,7 @@ actor WalletSuiGraphQLClient {
               status
               timestamp
               checkpoint { sequenceNumber }
-              balanceChanges(first: 100) {
+              balanceChanges(first: \(balanceChangesPerTransaction)) {
                 nodes {
                   owner { address }
                   coinType { repr }
@@ -495,7 +501,7 @@ actor WalletSuiGraphQLClient {
                 }
                 pageInfo { hasNextPage }
               }
-              objectChanges(first: 100) {
+              objectChanges(first: \(objectChangesPerTransaction)) {
                 nodes {
                   address
                   idCreated
