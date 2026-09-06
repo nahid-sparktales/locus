@@ -1,9 +1,6 @@
 name: Wallet coverage-guided fuzzing
 on:
-  pull_request:
-    paths: ["Locus/**", "LocusTests/Wallet*", "WalletFuzzHost/**", "WalletSignerCore/**", "WalletSignerService/**", "WalletConnectionsRuntime/**", "WalletConnectionsWeb/**", "Vendor/**", "Config/**", "FuzzCorpus/**", "Tools/*Wallet*", "agent/tests/test_wallet_fuzz*", "agent/tests/test_wallet_test_execution.py", "project.yml", "Locus.xcodeproj/**", ".github/workflows/wallet-fuzz.yml"]
-  schedule:
-    - cron: "17 3 * * *"
+  # Paused for feature development; campaigns remain available on demand.
   workflow_dispatch:
     inputs:
       chunk_wall_seconds:

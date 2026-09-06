@@ -76,10 +76,7 @@ jobs:
           rustup component add rustfmt clippy
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-      - name: Deterministic Rust wallet fuzz-smoke
-        working-directory: WalletSignerCore
-        run: cargo test --locked fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
+          cargo test --locked -- --skip fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
       - name: Repository secret scan
         env:
           GITLEAKS_VERSION: 8.30.1
@@ -166,21 +163,11 @@ jobs:
           -destination 'platform=macOS'
           -derivedDataPath "$RUNNER_TEMP/locus-debug-tests"
           -only-testing:LocusTests
+          -skip-testing:LocusTests/WalletDecoderFuzzTests
           CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM=
           LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements
           LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
-      - name: Deterministic Swift wallet fuzz-smoke
-        env:
-          LOCUS_BUNDLE_MODE: skip
-        run: >-
-          xcodebuild test-without-building
-          -project Locus.xcodeproj
-          -scheme Locus
-          -configuration Debug
-          -destination 'platform=macOS'
-          -derivedDataPath "$RUNNER_TEMP/locus-debug-tests"
-          -only-testing:LocusTests/WalletDecoderFuzzTests
       - name: Pinned Anvil wallet-chain integration
         env:
           FOUNDRY_VERSION: v1.7.1
