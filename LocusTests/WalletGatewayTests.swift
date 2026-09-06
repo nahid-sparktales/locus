@@ -2221,7 +2221,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let variables = try XCTUnwrap(object["variables"] as? [String: Any])
             XCTAssertEqual(variables["address"] as? String, address)
-            XCTAssertEqual(variables["first"] as? Int, 100)
+            XCTAssertEqual(variables["first"] as? Int, 50)
             if requests == 1 {
                 XCTAssertTrue(variables["after"] is NSNull)
                 XCTAssertTrue(variables["checkpoint"] is NSNull)
@@ -2250,6 +2250,144 @@ final class WalletGatewayTests: XCTestCase {
             balances.first(where: { $0.identity.coinType == coinType })?.totalBalance,
             "1007"
         )
+    }
+
+    func testSuiGraphQLBalanceQueryClosesItsOperationSelection() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "5", count: 64)
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let query = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(query.contains("query LocusSuiBalances("))
+            // This literal contains no string values or brace-bearing argument
+            // objects: its final brace must close the operation, not the address.
+            var depth = 0
+            var operationClosures = 0
+            for character in query {
+                if character == "{" { depth += 1 }
+                if character == "}" {
+                    depth -= 1
+                    XCTAssertGreaterThanOrEqual(depth, 0)
+                    if depth == 0 { operationClosures += 1 }
+                }
+            }
+            XCTAssertEqual(depth, 0)
+            XCTAssertEqual(operationClosures, 1)
+            return try self.suiBalancesResponse(address: owner, balances: [],
+                hasNextPage: false, endCursor: nil)
+        }
+        let balances = try await client.balances(owner: owner)
+        XCTAssertTrue(balances.isEmpty)
+    }
+
+    func testSuiGraphQLDiscoveryPreservesTotalBoundsAndCheckpointAcrossSmallerPages() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "5", count: 64)
+        let marker = "0x1234::example::COIN"
+        // Existing total capacities: 10,000 balances and 5,000 objects/coins.
+        // An endless, otherwise-valid cursor stream must fail at the exact cap.
+        for (kind, totalLimit) in [(0, 10_000), (1, 5_000), (2, 5_000), (3, 5_000)] {
+            var requests = 0
+            let client = makeSuiGraphQLClient(now: now) { request in
+                requests += 1
+                let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)) as? [String: Any])
+                let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+                XCTAssertEqual(variables["first"] as? Int, 50)
+                XCTAssertEqual(variables["address"] as? String, owner)
+                if requests == 1 {
+                    XCTAssertTrue(variables["checkpoint"] is NSNull)
+                    XCTAssertTrue(variables["after"] is NSNull)
+                } else {
+                    XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+                    XCTAssertEqual(variables["after"] as? String, "page-\(requests - 1)")
+                }
+                switch kind {
+                case 0:
+                    return try self.suiBalancesResponse(address: owner, balances: [],
+                        hasNextPage: true, endCursor: "page-\(requests)")
+                case 1:
+                    return try self.suiOwnedObjectsResponse(owner: owner, objects: [],
+                        hasNextPage: true, endCursor: "page-\(requests)")
+                default:
+                    return try self.suiGasCoinsResponse(owner: owner, total: "0",
+                        coinsBalance: "0", accumulator: "0", coins: [],
+                        hasNextPage: true, endCursor: "page-\(requests)",
+                        coinType: kind == 2 ? WalletSuiAssetIdentity.nativeCoinType : marker)
+                }
+            }
+            do {
+                switch kind {
+                case 0: _ = try await client.balances(owner: owner)
+                case 1: _ = try await client.ownedObjects(owner: owner)
+                case 2: _ = try await client.nativeGasCoins(owner: owner)
+                default: _ = try await client.coinObjects(owner: owner, coinType: marker)
+                }
+                XCTFail("Unresolved discovery pagination must fail at its existing total bound.")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("pagination was truncated"))
+            }
+            XCTAssertEqual(requests * 50, totalLimit)
+        }
+    }
+
+    func testSuiGasCoinDiscoveryReconcilesAcrossAFullPinnedPageBoundary() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "6", count: 64)
+        let coins = (1...51).map { index in
+            self.suiGasCoinJSON(objectID: "0x" + String(format: "%064x", index),
+                owner: owner, version: 1, digestByte: UInt8(index), balance: 1)
+        }
+        var requests = 0
+        let client = makeSuiGraphQLClient(now: now) { request in
+            requests += 1
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
+            if requests == 1 {
+                XCTAssertTrue(variables["checkpoint"] is NSNull)
+                return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                    coinsBalance: "51", accumulator: "0", coins: Array(coins.prefix(50)),
+                    hasNextPage: true, endCursor: "coin-51")
+            }
+            XCTAssertEqual(variables["checkpoint"] as? UInt64, 123_456)
+            XCTAssertEqual(variables["after"] as? String, "coin-51")
+            return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                coinsBalance: "51", accumulator: "0", coins: [coins[50]],
+                hasNextPage: false, endCursor: nil)
+        }
+        let snapshot = try await client.nativeGasCoins(owner: owner)
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(snapshot.coins.count, 51)
+        XCTAssertEqual(Set(snapshot.coins.map(\.reference.objectID)).count, 51)
+        XCTAssertEqual(snapshot.coinBalance, "51")
+        XCTAssertEqual(snapshot.network.checkpointSequence, 123_456)
+    }
+
+    func testSuiGasCoinDiscoveryRejectsMoreThanTheRequestedPageSize() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "7", count: 64)
+        let coins = (1...51).map { index in
+            self.suiGasCoinJSON(objectID: "0x" + String(format: "%064x", index),
+                owner: owner, version: 1, digestByte: UInt8(index), balance: 1)
+        }
+        let client = makeSuiGraphQLClient(now: now) { request in
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(
+                with: walletRPCRequestBody(request)) as? [String: Any])
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
+            return try self.suiGasCoinsResponse(owner: owner, total: "51",
+                coinsBalance: "51", accumulator: "0", coins: coins,
+                hasNextPage: false, endCursor: nil)
+        }
+        do {
+            _ = try await client.nativeGasCoins(owner: owner)
+            XCTFail("A response cannot exceed the exact requested connection bound.")
+        } catch WalletRPCError.invalidResponse(let message) {
+            XCTAssertEqual(message, "Sui returned malformed gas-coin evidence")
+        }
     }
 
     func testSuiGraphQLRejectsDuplicateAndNoncanonicalCoinTypes() async throws {
@@ -2307,6 +2445,8 @@ final class WalletGatewayTests: XCTestCase {
             XCTAssertTrue(query.contains("hasPublicTransfer"))
             XCTAssertFalse(query.contains("objectBcs"))
             XCTAssertFalse(query.contains("display"))
+            let variables = try XCTUnwrap(body["variables"] as? [String: Any])
+            XCTAssertEqual(variables["first"] as? Int, 50)
             return try self.suiOwnedObjectsResponse(
                 owner: owner,
                 objects: [
@@ -2401,6 +2541,7 @@ final class WalletGatewayTests: XCTestCase {
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
             XCTAssertEqual(variables["address"] as? String, owner)
             XCTAssertEqual(variables["coinType"] as? String, "0x2::sui::SUI")
+            XCTAssertEqual(variables["first"] as? Int, 50)
             XCTAssertEqual(
                 variables["objectType"] as? String,
                 "0x2::coin::Coin<0x2::sui::SUI>"
@@ -2538,6 +2679,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
             XCTAssertEqual(variables["coinType"] as? String, coinType)
+            XCTAssertEqual(variables["first"] as? Int, 50)
             XCTAssertEqual(
                 variables["objectType"] as? String,
                 "0x2::coin::Coin<\(coinType)>"
@@ -3493,7 +3635,7 @@ final class WalletGatewayTests: XCTestCase {
             )
             let query = try XCTUnwrap(body["query"] as? String)
             XCTAssertTrue(query.contains("relation: AFFECTED"))
-            XCTAssertTrue(query.contains("balanceChanges(first: 100)"))
+            XCTAssertTrue(query.contains("balanceChanges(first: 50)"))
             XCTAssertFalse(query.lowercased().contains("bcs"))
             XCTAssertFalse(query.contains("display"))
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
@@ -3569,7 +3711,7 @@ final class WalletGatewayTests: XCTestCase {
                 ) as? [String: Any]
             )
             let query = try XCTUnwrap(body["query"] as? String)
-            XCTAssertTrue(query.contains("objectChanges(first: 100)"))
+            XCTAssertTrue(query.contains("objectChanges(first: 50)"))
             XCTAssertTrue(query.contains("hasPublicTransfer"))
             XCTAssertFalse(query.lowercased().contains("bcs"))
             XCTAssertFalse(query.contains("display"))
