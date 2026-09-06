@@ -22,6 +22,12 @@ private struct AgentSidebarGroupModel: Identifiable {
 /// It never forces layout, exposes content, synthesizes input, or consumes an
 /// event. The opt-in fixture run is the only place it installs a monitor.
 private struct SidebarHitTestDiagnostics: NSViewRepresentable {
+    static let isEnabled = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["LOCUS_UI_TESTING"] == "1"
+            && environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1"
+    }()
+
     func makeNSView(context: Context) -> SidebarHitTestDiagnosticView {
         SidebarHitTestDiagnosticView(frame: .zero)
     }
@@ -30,21 +36,23 @@ private struct SidebarHitTestDiagnostics: NSViewRepresentable {
 }
 
 private final class SidebarHitTestDiagnosticView: NSView {
-    private let enabled = {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["LOCUS_UI_TESTING"] == "1"
-            && environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1"
-    }()
+    private let enabled = SidebarHitTestDiagnostics.isEnabled
     private var eventMonitor: Any?
+    private var geometryObservers: [NSObjectProtocol] = []
     private var recordCount = 0
     private var layoutRecordPending = false
+    private var lastReportedGeometry: [NSRect]?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func isAccessibilityHidden() -> Bool { true }
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
         eventMonitor = nil
+        observeAncestorGeometry()
         guard enabled, window != nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]
@@ -58,24 +66,65 @@ private final class SidebarHitTestDiagnosticView: NSView {
             self.record(kind, eventPoint: event.locationInWindow)
             return event
         }
-        DispatchQueue.main.async { [weak self] in self?.record("attached") }
+        scheduleRecord("attached")
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        observeAncestorGeometry()
+    }
+
+    private func observeAncestorGeometry() {
+        let center = NotificationCenter.default
+        geometryObservers.forEach(center.removeObserver)
+        geometryObservers.removeAll()
+        guard enabled, let window else { return }
+        var ancestor = superview
+        for _ in 0..<32 {
+            guard let view = ancestor else { break }
+            view.postsFrameChangedNotifications = true
+            geometryObservers.append(center.addObserver(
+                forName: NSView.frameDidChangeNotification, object: view, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.scheduleRecord("ancestor.frameChanged") }
+            })
+            ancestor = view.superview
+        }
+        // SwiftUI may animate a hosting boundary without laying out this
+        // stationary document again. Sample changed geometry at a real window
+        // update, including the final frame; never wait on a synthetic timer.
+        geometryObservers.append(center.addObserver(
+            forName: NSWindow.didUpdateNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.scheduleRecord("window.updated") }
+        })
     }
 
     override func layout() {
         super.layout()
-        guard enabled, !layoutRecordPending, recordCount < 32 else { return }
+        scheduleRecord("layout")
+    }
+
+    private func scheduleRecord(_ event: String) {
+        guard enabled, !layoutRecordPending, recordCount < 64 else { return }
         layoutRecordPending = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.layoutRecordPending = false
-            self.record("layout")
+            self.record(event)
         }
     }
 
     private func record(_ event: String, eventPoint: NSPoint? = nil) {
-        guard enabled, recordCount < 32, let window,
+        guard enabled, recordCount < 64, let window,
               let root = window.contentView, let scroll = enclosingScrollView
         else { return }
+        let geometry = [
+            scroll.convert(scroll.bounds, to: nil), scroll.contentView.bounds,
+            scroll.documentView?.frame ?? .zero, scroll.documentView?.bounds ?? .zero,
+        ]
+        guard eventPoint != nil || geometry != lastReportedGeometry else { return }
+        lastReportedGeometry = geometry
         recordCount += 1
         func rect(_ value: NSRect) -> [Double] {
             [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
@@ -108,14 +157,45 @@ private final class SidebarHitTestDiagnosticView: NSView {
                 "nativeRole": role,
                 "insideSidebarScroll": belongs(hit, to: scroll),
                 "insideSidebarDocument": belongs(hit, to: scroll.documentView),
+                "nativeIsCompactHost": hit is CompactSidebarHostingView,
+                "nativeIsSidebarScroll": hit === scroll,
+                "nativeIsSidebarDocument": hit === scroll.documentView,
             ]
             if let hit { metadata["nativeFrameInWindow"] = rect(hit.convert(hit.bounds, to: nil)) }
+            // Compare point-based public AX routing at each native boundary.
+            // Do not enumerate virtual descendants or log labels/identifiers.
+            func accessibilityRole(_ element: Any?) -> String {
+                guard let accessible = element as? any NSAccessibilityProtocol,
+                      let role = accessible.accessibilityRole() else { return "none" }
+                switch role {
+                case .button: return "button"
+                case .scrollArea: return "scrollArea"
+                case .group: return "group"
+                case .textField: return "textField"
+                case .textArea: return "textArea"
+                case .staticText: return "staticText"
+                default: return "other"
+                }
+            }
+            let screenPoint = window.convertPoint(toScreen: point)
+            metadata["rootAXRole"] = accessibilityRole(root.accessibilityHitTest(screenPoint))
+            metadata["scrollAXRole"] = accessibilityRole(scroll.accessibilityHitTest(screenPoint))
+            metadata["documentAXRole"] = accessibilityRole(scroll.documentView?.accessibilityHitTest(screenPoint))
+            var ancestor: NSView? = scroll
+            for _ in 0..<64 {
+                guard let view = ancestor else { break }
+                if let host = view as? CompactSidebarHostingView {
+                    metadata["compactHostAXRole"] = accessibilityRole(host.accessibilityHitTest(screenPoint))
+                    break
+                }
+                ancestor = view.superview
+            }
             return metadata
         }
         let clip = scroll.contentView
         var samples: [[String: Any]] = []
-        for y in [0.02, 0.5, 0.98] {
-            for x in [0.15, 0.5, 0.85] {
+        for y in [0.04, 0.5, 0.98] {
+            for x in [0.15, 0.5, 0.8] {
                 let point = NSPoint(x: clip.bounds.minX + clip.bounds.width * x,
                                     y: clip.bounds.minY + clip.bounds.height * y)
                 samples.append(hitMetadata(at: clip.convert(point, to: nil)))
@@ -143,6 +223,7 @@ private final class SidebarHitTestDiagnosticView: NSView {
 
     deinit {
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        geometryObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 #endif
@@ -401,19 +482,23 @@ struct SessionSidebarView: View {
                         )
                     }
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(
-                    model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
-                )
                 .background {
                     #if DEBUG
-                    SidebarHitTestDiagnostics()
+                    if SidebarHitTestDiagnostics.isEnabled {
+                        SidebarHitTestDiagnostics()
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                     #endif
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
             .frame(maxHeight: .infinity)
+            .accessibilityIdentifier("sidebar.scroll")
+            .accessibilityLabel(
+                model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
+            )
 
             footer(snapshot: snapshot)
         }
@@ -850,6 +935,7 @@ struct SessionSidebarView: View {
                 .textFieldStyle(.plain)
                 .font(.locus(size: 11))
                 .focused($searchFocused)
+                .accessibilityIdentifier("sidebar.search")
             if !snapshot.searchQuery.isEmpty {
                 Button {
                     sessionCatalog.setSearchQuery("")
@@ -878,7 +964,6 @@ struct SessionSidebarView: View {
             sessionCatalog.setSearchQuery("")
             withAnimation(LocusMotion.spatial) { searchExpanded = false }
         }
-        .accessibilityIdentifier("sidebar.search")
     }
 
     @ViewBuilder

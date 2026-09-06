@@ -9,9 +9,12 @@ final class LocusUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["LOCUS_UI_TESTING"] = "1"
         let sidebarHitTestMethods = [
+            "testAgentDestinationKeepsNewChatAndShowsTheAgentOverview",
+            "testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet",
             "testSessionOrganizerMenus",
             "testAStoppedAgentReadsDifferentlyFromAPausedOneInSidebarAndFleet",
             "testSidebarSearchIsRevealedFromTheWorkspacesHeader",
+            "testSidebarScrollViewportOwnsItsVisibleSearchControl",
         ]
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SIDEBAR_HIT_TEST"] == "1",
            sidebarHitTestMethods.contains(where: { name.hasSuffix(" \($0)]") }) {
@@ -2745,6 +2748,33 @@ final class LocusUITests: XCTestCase {
         // Search All Conversations (⇧⌘F) reveals and focuses it from anywhere.
         app.typeKey("f", modifierFlags: [.command, .shift])
         XCTAssertTrue(anyElement("sidebar.search").waitForExistence(timeout: 3))
+    }
+
+    func testSidebarScrollViewportOwnsItsVisibleSearchControl() {
+        revealSidebarForNavigation()
+        let scroll = app.scrollViews["sidebar.scroll"]
+        let toggle = scroll.buttons["sidebar.search.toggle"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 3))
+        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+        XCTAssertTrue(scroll.frame.contains(toggle.frame), "The target must already be inside its own viewport")
+        XCTAssertTrue(waitUntilHittable(toggle), "The sidebar must expose the button, not only its scroll container")
+        toggle.click()
+        let field = scroll.textFields["sidebar.search"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(field))
+        field.click()
+        field.typeText("Workspace")
+        XCTAssertEqual(field.value as? String, "Workspace")
+        // An active query deliberately keeps search open. Exercise its own
+        // visible Clear control before asking the header to put the field away.
+        let clear = scroll.buttons["sidebar.search.clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(clear))
+        clear.click()
+        XCTAssertTrue(waitUntil { (field.value as? String) == "" })
+        XCTAssertTrue(waitUntilHittable(toggle))
+        toggle.click()
+        XCTAssertTrue(waitForDisappearance(field))
     }
 
     func testNotesHeaderSwitchesScopeAndKeepsToolbarActions() {

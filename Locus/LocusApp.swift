@@ -659,6 +659,8 @@ private struct RootViewUpdateProbe: NSViewRepresentable {
 /// Keep this non-modal panel in a native hosting subtree: its visible bounds
 /// then own both pointer and accessibility hits, without hiding the workspace.
 private struct CompactSidebarHost: NSViewRepresentable {
+    @EnvironmentObject private var model: AppModel
+
     func makeNSView(context: Context) -> CompactSidebarHostingView {
         let view = CompactSidebarHostingView(rootView: content(environment: context.environment))
         view.sizingOptions = []
@@ -685,7 +687,26 @@ private struct CompactSidebarHost: NSViewRepresentable {
     }
 
     private func content(environment: EnvironmentValues) -> AnyView {
-        AnyView(SessionSidebarView().environment(\.self, environment))
+        // A new native hosting root owns its accessibility, focus and scroll
+        // bridges. Copy only the public presentation inputs and app models;
+        // replacing its whole environment also carries the outer host's
+        // private bridge state into this independent view hierarchy.
+        AnyView(
+            SessionSidebarView()
+                .appFeatureEnvironment(from: model)
+                .environment(\.colorScheme, environment.colorScheme)
+                .environment(\.dynamicTypeSize, environment.dynamicTypeSize)
+                .environment(\.layoutDirection, environment.layoutDirection)
+                .environment(\.locale, environment.locale)
+                .environment(\.calendar, environment.calendar)
+                .environment(\.timeZone, environment.timeZone)
+                .environment(\.isEnabled, environment.isEnabled)
+                .environment(\.locusAccent, environment.locusAccent)
+                .environment(\.locusWorkspaceGeometry, environment.locusWorkspaceGeometry)
+                .environment(\.locusIsLiveResizing, environment.locusIsLiveResizing)
+                .tint(model.accentActionColor)
+                .accentColor(model.accentActionColor)
+        )
     }
 }
 
