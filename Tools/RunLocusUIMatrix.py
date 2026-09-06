@@ -22,6 +22,10 @@ from WalletFuzzEvidence import (
 from WalletTestExecution import execution_lock, run_locked
 
 CONFIG = ROOT / "Config/LocusUITestMatrix.json"
+EDITIONS = {
+    "locus": {"scheme": "Locus", "testTarget": "LocusUITests"},
+    "locusx": {"scheme": "LocusX", "testTarget": "LocusXUITests"},
+}
 
 
 def profiles(config: dict) -> dict:
@@ -53,10 +57,52 @@ def native_profile(config: dict, prefix: str, actual: dict) -> str:
     return matches[0]
 
 
-def source_tests(root: Path = ROOT) -> list[str]:
+def edition_source(source: str, wallet: bool) -> str:
+    """Inventory exactly the active edition; reject unsupported Swift conditions.
+
+    The UI target currently has one custom compilation flag. Failing on new
+    conditions forces inventory support to be reviewed with the source change,
+    instead of silently counting inactive tests or omitting new coverage.
+    """
+    active = True
+    stack = []
+    result = []
+    for line in source.splitlines():
+        directive = line.strip()
+        if directive.startswith("#if "):
+            if directive != "#if LOCUS_WALLET":
+                raise ValueError(f"Unsupported UI inventory condition: {directive}")
+            stack.append((active, False))
+            active = active and wallet
+        elif directive == "#else":
+            if not stack or stack[-1][1]:
+                raise ValueError("Unmatched or duplicate UI inventory #else")
+            parent, _ = stack[-1]
+            stack[-1] = (parent, True)
+            active = parent and not wallet
+        elif directive == "#endif":
+            if not stack:
+                raise ValueError("Unmatched UI inventory #endif")
+            active, _ = stack.pop()
+        elif directive.startswith("#elseif"):
+            raise ValueError(f"Unsupported UI inventory condition: {directive}")
+        elif active:
+            result.append(line)
+    if stack:
+        raise ValueError("Unterminated UI inventory condition")
+    return "\n".join(result)
+
+
+def source_tests(root: Path = ROOT, *, edition: str | None = None) -> list[str]:
+    if edition is None:
+        # Preserve the original cross-edition coverage floor. A test guarded out
+        # of one product still has to be inventoried and run in its own edition.
+        return sorted(set().union(*(source_tests(root, edition=name) for name in EDITIONS)))
+    if edition not in EDITIONS:
+        raise ValueError(f"Unknown UI edition: {edition}")
     identifiers = []
     for path in sorted((root / "LocusUITests").glob("*.swift")):
-        source = path.read_text()
+        source = edition_source(path.read_text(), wallet=edition == "locusx")
         classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", source)
         methods = re.findall(r"^\s*func\s+(test\w+)\s*\(\s*\)", source, re.MULTILINE)
         if methods and len(classes) != 1:
@@ -93,7 +139,8 @@ def validate_environment(actual: dict, profile: dict, os_major: int, config: dic
 
 
 def retain_preflight_failure(output: Path, *, actual: dict, profile_name: str,
-                             os_major: int, tests: list[str], error: str) -> Path:
+                             os_major: int, tests: list[str], error: str,
+                             edition: str = "locus", source_status: str | None = None) -> Path:
     """Retain blocked attempts too; an unexecuted profile earns no coverage."""
     run = output.resolve() / str(uuid.uuid4())
     run.mkdir(parents=True, exist_ok=False)
@@ -101,6 +148,8 @@ def retain_preflight_failure(output: Path, *, actual: dict, profile_name: str,
         "schemaVersion": 1,
         "status": "blocked",
         "phase": "preflight",
+        "edition": edition,
+        "sourceStatus": source_status,
         "error": error,
         "source": source_identity(),
         "profile": profile_name,
@@ -119,24 +168,26 @@ def retain_preflight_failure(output: Path, *, actual: dict, profile_name: str,
     return run
 
 
-def configure(value: object, environment: dict, tests: list[str]) -> int:
+def configure(value: object, environment: dict, tests: list[str],
+              test_target: str = "LocusUITests") -> int:
     count = 0
     if isinstance(value, dict):
-        if value.get("BlueprintName") == "LocusUITests":
+        if value.get("BlueprintName") == test_target:
             if value.get("SkipTestIdentifiers"):
                 raise ValueError("Supplied xctestrun excludes required UI tests")
             value.setdefault("EnvironmentVariables", {}).update(environment)
             value["OnlyTestIdentifiers"] = tests
             count += 1
         for child in value.values():
-            count += configure(child, environment, tests)
+            count += configure(child, environment, tests, test_target)
     elif isinstance(value, list):
         for child in value:
-            count += configure(child, environment, tests)
+            count += configure(child, environment, tests, test_target)
     return count
 
 
-def test_command(configuration: Path, results: Path) -> list[str]:
+def test_command(configuration: Path, results: Path,
+                 test_target: str = "LocusUITests") -> list[str]:
     # A single execution is Xcode's default. Explicit `-test-iterations 1`
     # is rejected by current Xcode, which only accepts repetition counts > 1.
     # Do not enable retries; validate_results also rejects repeated results.
@@ -149,13 +200,14 @@ def test_command(configuration: Path, results: Path) -> list[str]:
         "platform=macOS",
         "-parallel-testing-enabled",
         "NO",
-        "-only-testing:LocusUITests",
+        f"-only-testing:{test_target}",
         "-resultBundlePath",
         str(results),
     ]
 
 
-def retain_invoked_configuration(configuration: Path, run: Path) -> str:
+def retain_invoked_configuration(configuration: Path, run: Path,
+                                 test_target: str = "LocusUITests") -> str:
     """Keep exact bytes without rebasing the configuration actually invoked."""
     retained = run / "invoked.xctestrun"
     with retained.open("xb") as stream:
@@ -169,7 +221,7 @@ def retain_invoked_configuration(configuration: Path, run: Path) -> str:
         "relativePathBase": str(configuration.parent),
         "retainedConfiguration": retained.name,
         "xctestrunSHA256": identity,
-        "testCommand": test_command(configuration, run / "results.xcresult"),
+        "testCommand": test_command(configuration, run / "results.xcresult", test_target),
     })
     return identity
 
@@ -260,6 +312,7 @@ def validate_results(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--os-major", required=True, type=int)
+    parser.add_argument("--edition", choices=EDITIONS, default="locus")
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--profile", help="Require this exact named profile")
     selection.add_argument(
@@ -279,8 +332,11 @@ def main():
     config = json.loads(CONFIG.read_text())
     if args.profile is not None and args.profile not in profiles(config):
         parser.error("Unknown profile: " + ", ".join(profiles(config)))
-    tests = source_tests()
-    if len(tests) < config["minimumFullSuiteTests"]:
+    edition = EDITIONS[args.edition]
+    test_target = edition["testTarget"]
+    tests = source_tests(edition=args.edition)
+    if (len(source_tests()) < config["minimumFullSuiteTests"]
+            or len(tests) < config["minimumFullSuiteTestsByEdition"][args.edition]):
         raise SystemExit(
             "UI source inventory unexpectedly shrank below the full-suite floor"
         )
@@ -305,12 +361,13 @@ def main():
         except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as failure:
             run = retain_preflight_failure(args.output, actual=actual,
                 profile_name=profile_name, os_major=args.os_major, tests=tests,
-                error=str(failure))
+                error=str(failure), edition=args.edition)
             raise SystemExit(f"UI profile not run: {failure}; evidence retained at {run}") from failure
         if args.preflight_only:
             print(
                 json.dumps(
                     {
+                        "edition": args.edition,
                         "profile": profile_name,
                         "preflight": actual,
                         "requestedTests": tests,
@@ -322,7 +379,14 @@ def main():
             return
         source = source_identity()
         if source["dirty"] and not args.allow_dirty:
-            raise SystemExit("UI release evidence requires a clean source revision")
+            source_status = subprocess.check_output(
+                ["git", "status", "--short", "--untracked-files=all"], cwd=ROOT, text=True
+            ).strip()
+            error = "UI release evidence requires a clean source revision"
+            run = retain_preflight_failure(args.output, actual=actual,
+                profile_name=profile_name, os_major=args.os_major, tests=tests,
+                error=error, edition=args.edition, source_status=source_status)
+            raise SystemExit(f"{error}:\n{source_status}\nEvidence retained at {run}")
         run = args.output.resolve() / str(uuid.uuid4())
         run.mkdir(parents=True, exist_ok=False)
         started_at = utc_now()
@@ -334,7 +398,7 @@ def main():
             "-project",
             "Locus.xcodeproj",
             "-scheme",
-            "Locus",
+            edition["scheme"],
             "-configuration",
             "Debug",
             "-destination",
@@ -343,9 +407,10 @@ def main():
             str(derived),
             "-parallel-testing-enabled",
             "NO",
-            "-only-testing:LocusUITests",
+            f"-only-testing:{test_target}",
             "CODE_SIGN_IDENTITY=-",
             "DEVELOPMENT_TEAM=",
+            "CODE_SIGN_STYLE=Manual",
             "LOCUS_WALLET_SIGNER_ENTITLEMENTS=Config/WalletSignerAdHoc.entitlements",
             "LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements",
         ]
@@ -353,6 +418,7 @@ def main():
             run / "request.json",
             {
                 "schemaVersion": 1,
+                "edition": args.edition,
                 "source": source,
                 "profile": profile_name,
                 "requestedProfile": args.profile,
@@ -404,15 +470,15 @@ def main():
                 if profile["accessibility"]["reduceMotion"]
                 else "0",
             }
-            if configure(configuration, test_environment, tests) != 1:
-                raise ValueError("Expected one exact LocusUITests configuration")
+            if configure(configuration, test_environment, tests, test_target) != 1:
+                raise ValueError(f"Expected one exact {test_target} configuration")
             configured = generated[0].parent / f"locus-ui-{run.name}.xctestrun"
             with configured.open("xb") as stream:
                 plistlib.dump(configuration, stream)
-            configuration_identity = retain_invoked_configuration(configured, run)
-            app = derived / "Build/Products/Debug/Locus.app"
+            configuration_identity = retain_invoked_configuration(configured, run, test_target)
+            app = derived / "Build/Products/Debug" / f"{edition['scheme']}.app"
             products = derived / "Build/Products/Debug"
-            runner = products / "LocusUITests-Runner.app"
+            runner = products / f"{test_target}-Runner.app"
             if not runner.is_dir():
                 raise ValueError("Missing exact UI runner application")
             binary = {
@@ -450,7 +516,7 @@ def main():
             with (run / "test.log").open("x") as log:
                 test_invocation_attempted = True
                 result = run_locked(
-                    test_command(configured, run / "results.xcresult"),
+                    test_command(configured, run / "results.xcresult", test_target),
                     cwd=ROOT,
                     env=environment,
                     stdout=log,
@@ -496,6 +562,7 @@ def main():
             receipt = {
                 "schemaVersion": 1,
                 "status": status,
+                "edition": args.edition,
                 "error": error,
                 "result": result,
                 "profile": profile_name,
@@ -527,7 +594,7 @@ def main():
                 f"UI profile incomplete: {error}; evidence retained at {run}"
             )
         print(
-            f"Passed {len(tests)} requested UI tests for macOS {args.os_major}/{profile_name}; not a full matrix claim. Evidence: {run}"
+            f"Passed {len(tests)} requested {edition['scheme']} UI tests for macOS {args.os_major}/{profile_name}; not a full matrix claim. Evidence: {run}"
         )
 
 

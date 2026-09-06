@@ -11,9 +11,9 @@ let environment: [String: Any] = [
     "screenHeight": screen?.visibleFrame.height ?? 0,
     "increaseContrast": NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
     "reduceMotion": NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-    "runningLocus": NSRunningApplication.runningApplications(
-        withBundleIdentifier: "io.sparktales.locus"
-    ).filter { !$0.isTerminated }.map { [
+    "runningLocus": ["io.sparktales.locus", "io.sparktales.locusx"].flatMap {
+        NSRunningApplication.runningApplications(withBundleIdentifier: $0)
+    }.filter { !$0.isTerminated }.map { [
         "pid": String($0.processIdentifier), "path": $0.bundleURL?.path ?? "unknown"
     ] }
 ]

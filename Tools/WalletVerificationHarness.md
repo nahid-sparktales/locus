@@ -89,11 +89,17 @@ sets the initial launch for every test. Tests explicitly exercising resizing or
 appearance changes retain those scenario-specific overrides.
 
 ```sh
-python3 Tools/RunLocusUIMatrix.py --os-major 15 \
+python3 Tools/RunLocusUIMatrix.py --os-major 15 --edition locus \
   --profile regular-light-standard \
   --derived-data /outside/repository/locus-ui-derived \
   --output /outside/repository/locus-ui-evidence
 ```
+
+The `locus` and `locusx` editions run separate full suites: shared tests run in
+both, while wallet and wallet-absence tests run only where they compile. Use
+`--edition locusx` with a separate DerivedData directory for the wallet edition.
+CI runs both editions and preserves their evidence separately. The runner keeps
+the original combined inventory floor as well as each edition’s own floor.
 
 The runner checks the actual native OS, available display, and accessibility
 preferences before building or launching. It refuses a mismatched profile and
@@ -113,10 +119,11 @@ receipt, including the measured display and native settings. It cannot count as
 executed coverage, even when the source is clean.
 
 One serialized, ad-hoc signed Debug build produces one exact xctestrun. Every
-source-discovered UI test ID (minimum 140) is explicitly requested, and the raw
+active-edition UI test ID is explicitly requested (137 Locus / 153 LocusX, with
+the original combined minimum of 140 retained), and the raw
 result bundle, summary, test tree, counts, logs, source and binary identities are
 retained. A missing, skipped, duplicate, failed or retried case fails the profile.
-The CI job runs one full-suite macOS 15 native profile; it does **not** claim the other 47
+Each edition’s CI job runs one full-suite macOS 15 native profile; it does **not** claim the other 47
 OS/profile combinations. Native VoiceOver review, live connector paths, complete
 swap/allowance flows, and QR privacy/recovery checks remain separately attributable
 work until corresponding fixtures and real-device evidence exist.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import stat
 import time
+from contextlib import closing
 
 import pytest
 
@@ -11,6 +12,28 @@ from ollama_code.memory import MemoryError, MemoryVault
 
 def vault(tmp_path, name="memory.sqlite3", key=b"k" * 32) -> MemoryVault:
     return MemoryVault(tmp_path / name, key=key)
+
+
+def database_file_contents(store: MemoryVault) -> dict:
+    # Keep a read transaction alive while inspecting every file: SQLite removes
+    # WAL/SHM sidecars when the last connection closes, including during GC.
+    with closing(sqlite3.connect(store.path)) as connection:
+        connection.execute("BEGIN")
+        connection.execute("SELECT name FROM sqlite_master").fetchall()
+        files = list(store.path.parent.glob(f"{store.path.name}*"))
+        assert store.path in files
+        return {path: path.read_bytes() for path in files}
+
+
+def test_database_inspection_includes_uncheckpointed_wal(tmp_path) -> None:
+    store = vault(tmp_path)
+    with closing(sqlite3.connect(store.path)) as connection:
+        connection.execute("CREATE TABLE inspection_probe (value TEXT)")
+        connection.execute("INSERT INTO inspection_probe VALUES (?)", ("plaintext-wal-probe",))
+        connection.commit()
+        files = database_file_contents(store)
+        wal = store.path.with_name(f"{store.path.name}-wal")
+        assert b"plaintext-wal-probe" in files[wal]
 
 
 def test_memory_content_is_authenticated_ciphertext_at_rest(tmp_path) -> None:
@@ -23,8 +46,8 @@ def test_memory_content_is_authenticated_ciphertext_at_rest(tmp_path) -> None:
         }
     )
 
-    for database_file in tmp_path.glob("memory.sqlite3*"):
-        assert b"secret launch phrase" not in database_file.read_bytes()
+    for contents in database_file_contents(store).values():
+        assert b"secret launch phrase" not in contents
     assert store.search("launch phrase", scopes=["personal"])[0]["scope"] == "personal"
 
     wrong_key = vault(tmp_path, key=b"x" * 32)
@@ -172,5 +195,5 @@ def test_memory_v2_hybrid_recall_keeps_vectors_encrypted(tmp_path, monkeypatch) 
     assert "semantic similarity" in results[0]["retrieval_reason"]
     assert results[0]["use_count"] == 0  # response is the pre-increment snapshot
     assert store.list(workspace=str(workspace))[0]["use_count"] == 1
-    for database_file in tmp_path.glob("memory.sqlite3*"):
-        assert b"local-embed" not in database_file.read_bytes()
+    for contents in database_file_contents(store).values():
+        assert b"local-embed" not in contents

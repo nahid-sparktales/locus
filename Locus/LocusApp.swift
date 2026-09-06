@@ -265,15 +265,19 @@ struct LocusApp: App {
             LibraryWorkspaceView()
                 .onAppear { model.library.activate(workspace: model.workspacePath) }
         case "settings":
-            SettingsView(presentationContext: .sheet)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(LocusTheme.surfaceCanvas)
+            GeometryReader { proxy in
+                SettingsView(presentationContext: .sheet, availableSize: proxy.size)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(LocusTheme.surfaceCanvas)
+            }
         #if LOCUS_WALLET
         case "wallet":
-            SettingsView(presentationContext: .sheet)
-                .onAppear { model.settingsPage = .wallet }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(LocusTheme.surfaceCanvas)
+            GeometryReader { proxy in
+                SettingsView(presentationContext: .sheet, availableSize: proxy.size)
+                    .onAppear { model.settingsPage = .wallet }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(LocusTheme.surfaceCanvas)
+            }
         #endif
         case "browser":
             BrowserPanel(
@@ -1059,7 +1063,7 @@ struct RootView: View {
         .sheet(isPresented: $model.settingsPresented, onDismiss: {
             model.completeSettingsDismissal()
         }) {
-            SettingsView(presentationContext: .sheet)
+            SettingsView(presentationContext: .sheet, availableSize: workspaceLayout.geometry.windowSize)
                 .environmentObject(model)
                 .environmentObject(updates)
         }

@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "supportedOSMajors": [14, 15, 26],
   "minimumFullSuiteTests": 140,
+  "minimumFullSuiteTestsByEdition": {"locus": 137, "locusx": 153},
   "sizes": {
     "compact": {"width": 720, "height": 620},
     "regular": {"width": 1120, "height": 700}

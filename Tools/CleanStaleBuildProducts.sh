@@ -43,7 +43,13 @@ fi
 case "${TARGET_NAME:-}:${FULL_PRODUCT_NAME:-}" in
     Locus:Locus.app|LocusMAS:Locus.app)
         test_bundle_name="LocusTests.xctest" ;;
-    LocusX:LocusX.app|LocusX:LocusX\ Experimental.app)
+    LocusX:LocusX.app)
+        test_bundle_name="LocusXTests.xctest" ;;
+    LocusX:LocusX\ Experimental.app)
+        [[ "${CONFIGURATION:-}" == "ReleaseExperimental" ]] || {
+            echo "error: Refusing to clean an experimental app from another configuration." >&2
+            exit 1
+        }
         test_bundle_name="LocusXTests.xctest" ;;
     *) echo "error: Refusing to clean an unknown app build product." >&2; exit 1 ;;
 esac

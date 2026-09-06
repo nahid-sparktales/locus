@@ -1426,9 +1426,17 @@ struct SettingsView: View {
     @State private var lifecycleRegistrationID = UUID()
     @FocusState private var focusedTextPreference: String?
     let presentationContext: SettingsPresentationContext
+    let availableSize: CGSize?
 
-    init(presentationContext: SettingsPresentationContext = .sheet) {
+    init(presentationContext: SettingsPresentationContext = .sheet, availableSize: CGSize? = nil) {
         self.presentationContext = presentationContext
+        self.availableSize = availableSize
+    }
+
+    private var presentationSize: CGSize {
+        let available = availableSize.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
+        return CGSize(width: min(920, available?.width ?? 920),
+                      height: min(680, available?.height ?? 680))
     }
 
     var body: some View {
@@ -1452,10 +1460,10 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(
-            minWidth: 640, idealWidth: 920, maxWidth: 920,
-            minHeight: 480, idealHeight: 680, maxHeight: 680
-        )
+        // A flexible minimum makes native sheets choose 640 points even on a
+        // wide window. Start at the established size and shrink only when the
+        // presenting surface really has less room.
+        .frame(width: presentationSize.width, height: presentationSize.height)
         .background(LocusTheme.panel)
         .onAppear {
             draft = model.settings

@@ -67,18 +67,20 @@ final class WalletSuiIntegrationTests: XCTestCase {
         let selected = try XCTUnwrap(selection, "Faucet funding was not indexed")
         let status = selected.snapshot.network
         let object = selected.coin.reference
-        let packet = WalletSuiPreparationPacket(
-            request: .init(networkID: WalletNetworkCatalog.suiTestnet.id, accountID: "local-fixture", source: .human,
-                action: .nativeTransfer(recipient: Self.recipient, amountBaseUnits: "1234567"), maximumFeeBaseUnits: "10000000"),
-            chainIdentifier: chain, checkpointSequence: status.checkpointSequence, checkpointTimestamp: status.checkpointTimestamp,
-            sender: sender, assetID: WalletNetworkCatalog.suiTestnet.nativeAssetID, coinType: WalletSuiAssetIdentity.nativeCoinType,
-            coinObject: nil, coinBalanceBaseUnits: nil, coinCheckpointSequence: nil, coinCheckpointTimestamp: nil,
-            transferredObject: nil, objectHasPublicTransfer: nil, objectCheckpointSequence: nil, objectCheckpointTimestamp: nil,
-            gasObject: object, gasBalanceBaseUnits: selected.coin.balanceBaseUnits, gasBudgetBaseUnits: "10000000",
-            referenceGasPriceBaseUnits: status.referenceGasPrice, gasPriceBaseUnits: status.referenceGasPrice,
-            currentEpoch: status.epoch, expirationEpoch: status.epoch, observedAt: Date()
-        )
-        let canonical = try WalletSuiCanonicalTransaction(packet: packet)
+        func canonicalTransfer(amount: String) throws -> WalletSuiCanonicalTransaction {
+            try WalletSuiCanonicalTransaction(packet: WalletSuiPreparationPacket(
+                request: .init(networkID: WalletNetworkCatalog.suiTestnet.id, accountID: "local-fixture", source: .human,
+                    action: .nativeTransfer(recipient: Self.recipient, amountBaseUnits: amount), maximumFeeBaseUnits: "10000000"),
+                chainIdentifier: chain, checkpointSequence: status.checkpointSequence, checkpointTimestamp: status.checkpointTimestamp,
+                sender: sender, assetID: WalletNetworkCatalog.suiTestnet.nativeAssetID, coinType: WalletSuiAssetIdentity.nativeCoinType,
+                coinObject: nil, coinBalanceBaseUnits: nil, coinCheckpointSequence: nil, coinCheckpointTimestamp: nil,
+                transferredObject: nil, objectHasPublicTransfer: nil, objectCheckpointSequence: nil, objectCheckpointTimestamp: nil,
+                gasObject: object, gasBalanceBaseUnits: selected.coin.balanceBaseUnits, gasBudgetBaseUnits: "10000000",
+                referenceGasPriceBaseUnits: status.referenceGasPrice, gasPriceBaseUnits: status.referenceGasPrice,
+                currentEpoch: status.epoch, expirationEpoch: status.epoch, observedAt: Date()
+            ))
+        }
+        let canonical = try canonicalTransfer(amount: "1234567")
         let bcs = canonical.transactionBCS.base64EncodedString()
         let signed = try fixtureSigner(operation: "sign", transactionBCS: bcs)
         let signature = try XCTUnwrap(signed["signature"] as? String)
@@ -117,12 +119,35 @@ final class WalletSuiIntegrationTests: XCTestCase {
         XCTAssertEqual(activity.amountBaseUnits, "1234567")
         XCTAssertEqual(activity.sender, sender)
         XCTAssertEqual(activity.isInbound, true)
+        // Pinned Sui's simulation loads the requested historical object version.
+        // Live owned-version validation is an additional submission check:
+        // MystenLabs/sui@46f18562, crates/sui-core/src/authority.rs,
+        // check_transaction_validity versus simulate_transaction. Replaying the
+        // same digest also permits idempotent execution success. A distinct,
+        // independently signed transaction must reject the consumed reference.
+        let refreshed = try await restarted.nativeGasCoins(owner: sender)
+        XCTAssertGreaterThanOrEqual(refreshed.network.checkpointSequence, activity.checkpointSequence)
+        let currentGas = try XCTUnwrap(refreshed.coins.first { $0.reference.objectID == object.objectID })
+        XCTAssertGreaterThan(currentGas.reference.version, object.version)
+        XCTAssertNotEqual(currentGas.reference.digest, object.digest)
+
+        let stale = try canonicalTransfer(amount: "1234568")
+        let staleBCS = stale.transactionBCS.base64EncodedString()
+        let staleSignature = try XCTUnwrap(fixtureSigner(operation: "sign", transactionBCS: staleBCS)["signature"] as? String)
+        XCTAssertNotEqual(stale.transactionDigest, digest)
         do {
-            _ = try await restarted.simulateNativeTransfer(transactionBCS: bcs, expectedTransactionDigest: digest,
-                sender: sender, recipient: Self.recipient, amountBaseUnits: "1234567",
-                maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
-            XCTFail("Consumed gas object version remained valid")
-        } catch { /* The signed object's former version is stale after settlement. */ }
+            _ = try await restarted.executeTransaction(transactionBCS: staleBCS, signature: staleSignature,
+                expectedTransactionDigest: stale.transactionDigest)
+            XCTFail("A distinct transaction consumed the settled gas object's former version")
+        } catch WalletRPCError.rpc(let code, let message) {
+            XCTAssertEqual(code, -32_000)
+            // The client bounds provider messages to 256 characters; the
+            // object ID/digest can push the trailing reason past that bound.
+            // This prefix uniquely identifies the pinned stale-version error.
+            XCTAssertTrue(message.hasPrefix("Invalid argument: Error checking transaction input objects: "
+                + "Transaction needs to be rebuilt because object "),
+                          "Submission did not report the expected consumed-object rejection")
+        }
     }
 
     private static func readinessFailure(_ error: Error, stage: String) -> Error {

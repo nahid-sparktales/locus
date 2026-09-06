@@ -31,14 +31,29 @@ done
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/locus-wallet-sui.XXXXXX")"
 localnet_pid=""
 cleanup() {
+  local cleanup_result="${1:-$?}"
+  trap - EXIT INT TERM
   if [[ -n "$localnet_pid" ]]; then
     kill "$localnet_pid" 2>/dev/null || true
     wait "$localnet_pid" 2>/dev/null || true
   fi
+  # Sui's pg_ctl daemon survives termination of `sui start` and inherits the
+  # execution lock. Its temp data is confined below this runner's TMPDIR, so
+  # stop only those databases before removing their files/releasing the lock.
+  local pid_file
+  while IFS= read -r -d '' pid_file; do
+    if ! pg_ctl -D "${pid_file:h}" -m fast -w -t 10 stop; then
+      print -u2 'error: the isolated Sui PostgreSQL server did not stop'
+      exit 1
+    fi
+  done < <(find "$temp_dir" -type f -name postmaster.pid -print0)
   # Only the runner-created temporary directory is removed, including fixture keys.
   find "$temp_dir" -depth -delete
+  exit "$cleanup_result"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 # Isolated test-only executable: no Locus signer library, production allowlist
 # change, runtime key import, or release-artifact embedding. Fetch this separate
 # locked graph explicitly: a clean CI runner's production signer cache does not
@@ -70,7 +85,7 @@ ports=(${(f)"$(python3 -c 'import socket; sockets=[socket.socket() for _ in rang
 graphql_url="http://127.0.0.1:${ports[1]}/graphql"
 faucet_url="http://127.0.0.1:${ports[2]}"
 # SUI_CONFIG_DIR prevents the CLI from updating a developer's real client.yaml.
-SUI_CONFIG_DIR="$temp_dir/config" "$sui_bin" start --force-regenesis \
+TMPDIR="$temp_dir/" SUI_CONFIG_DIR="$temp_dir/config" "$sui_bin" start --force-regenesis \
   --with-graphql="127.0.0.1:${ports[1]}" \
   --with-faucet="127.0.0.1:${ports[2]}" \
   --with-consistent-store="127.0.0.1:${ports[3]}" \

@@ -183,7 +183,11 @@ def test_hosted_ci_requests_compact_profile_without_claiming_regular_coverage():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     assert "--native-profile compact-light" in workflow
     assert "--native-profile regular-light" not in workflow
-    assert "locus-ui-macos15-compact-light-native-" in workflow
+    assert "locus-ui-${{ matrix.edition }}-macos15-compact-light-native-" in workflow
+    assert "edition: [locus, locusx]" in workflow
+    assert "--edition ${{ matrix.edition }}" in workflow
+    ui = workflow.split("  ui:\n", 1)[1]
+    assert "git diff --exit-code -- Locus.xcodeproj\n" in ui
 
 
 def test_test_command_uses_one_default_execution_without_retries():
@@ -307,20 +311,23 @@ def test_preflight_command_failure_retains_blocked_unexecuted_receipt(tmp_path, 
     assert not receipt["fullMatrixComplete"]
 
 
-@pytest.fixture
-def synthetic_matrix_runner(tmp_path, monkeypatch, result_fixture):
+@pytest.fixture(params=["locus", "locusx"])
+def synthetic_matrix_runner(tmp_path, monkeypatch, result_fixture, request):
     """Replace every process/host interaction; exercise receipts with owned bytes only."""
     requested, summary, tree = result_fixture
+    edition = request.param
+    product = matrix.EDITIONS[edition]["scheme"]
+    target = matrix.EDITIONS[edition]["testTarget"]
     source = {"revision": "a" * 40, "dirty": False, "treeSHA256": "b" * 64}
     derived = tmp_path / "derived"
     output = tmp_path / "evidence"
     monkeypatch.setattr(matrix, "ROOT", tmp_path)
-    monkeypatch.setattr(matrix, "source_tests", lambda: requested)
+    monkeypatch.setattr(matrix, "source_tests", lambda **kwargs: requested)
     monkeypatch.setattr(matrix, "source_identity", lambda: source)
     monkeypatch.setattr(matrix, "execution_lock", lambda **kwargs: nullcontext())
     monkeypatch.setattr(sys, "argv", [
         "RunLocusUIMatrix.py", "--os-major", "15", "--profile", "compact-light-standard",
-        "--derived-data", str(derived), "--output", str(output),
+        "--edition", edition, "--derived-data", str(derived), "--output", str(output),
     ])
 
     def fake_version(command, **kwargs):
@@ -346,23 +353,26 @@ def synthetic_matrix_runner(tmp_path, monkeypatch, result_fixture):
                     "runningLocus": [], "increaseContrast": False, "reduceMotion": False,
                 }))
             if command[:2] == ["xcodebuild", "build-for-testing"]:
+                assert command[command.index("-scheme") + 1] == product
+                assert f"-only-testing:{target}" in command
                 if build_error:
                     raise subprocess.CalledProcessError(65, command)
                 products = derived / "Build/Products"
                 products.mkdir(parents=True)
                 (products / "generated.xctestrun").write_bytes(plistlib.dumps({
-                    "Target": {"BlueprintName": "LocusUITests", "TestBundlePath": "__TESTROOT__/Debug/Synthetic.xctest"},
+                    "Target": {"BlueprintName": target, "TestBundlePath": "__TESTROOT__/Debug/Synthetic.xctest"},
                 }))
-                for name in ("Locus.app", "LocusUITests-Runner.app"):
+                for name in (f"{product}.app", f"{target}-Runner.app"):
                     executable = products / "Debug" / name / "Contents/MacOS/Synthetic"
                     executable.parent.mkdir(parents=True)
                     executable.write_bytes(b"synthetic bytes: never execute")
                 return subprocess.CompletedProcess(command, 0)
             if command[0].endswith("/lsregister"):
                 assert command[1] in ("-f", "-u")
-                assert Path(command[2]) == derived / "Build/Products/Debug/Locus.app"
+                assert Path(command[2]) == derived / "Build/Products/Debug" / f"{product}.app"
                 return subprocess.CompletedProcess(command, 0)
             if command[:2] == ["xcodebuild", "test-without-building"]:
+                assert f"-only-testing:{target}" in command
                 configuration = Path(command[command.index("-xctestrun") + 1])
                 invoked.update(path=configuration, contents=configuration.read_bytes(), command=command)
                 if launch_error:
@@ -397,6 +407,8 @@ def synthetic_matrix_runner(tmp_path, monkeypatch, result_fixture):
         identity = receipt.pop("receiptSHA256")
         assert matrix.digest(receipt) == identity
         assert receipt["source"] == source
+        assert receipt["edition"] == edition
+        assert json.loads((run / "request.json").read_text())["edition"] == edition
         assert not receipt["fullMatrixComplete"]
         assert receipt["status"] == ("passed" if passed else "failed")
         for name, expected in receipt["files"].items():
@@ -470,3 +482,97 @@ def test_matrix_rejects_configuration_identity_drift_and_keeps_original_bytes(sy
     assert "configuration changed" in receipt["error"]
     assert receipt["configurationUnchanged"] is False
     assert receipt["counts"] is None
+
+
+def test_edition_inventory_preserves_union_and_selects_only_compiled_tests():
+    standard = set(matrix.source_tests(edition="locus"))
+    wallet = set(matrix.source_tests(edition="locusx"))
+    config = json.loads(matrix.CONFIG.read_text())
+    assert len(standard) >= config["minimumFullSuiteTestsByEdition"]["locus"] == 137
+    assert len(wallet) >= config["minimumFullSuiteTestsByEdition"]["locusx"] == 153
+    assert standard | wallet == set(matrix.source_tests())
+    assert len(standard | wallet) >= config["minimumFullSuiteTests"]
+    assert standard - wallet == {"LocusUITests/testStandardEditionHasNoWalletSettingsEvenWithLegacyActivationFlags"}
+    assert len(wallet - standard) == 17
+    assert all(identifier.startswith("LocusUITests/testWallet") for identifier in wallet - standard)
+    assert not any(identifier.startswith("LocusUITests/testWallet") for identifier in standard)
+
+
+@pytest.mark.parametrize("source", [
+    "#if DEBUG\nfunc testUnknown() {}\n#endif",
+    "#if LOCUS_WALLET\n#elseif DEBUG\n#endif",
+    "#if LOCUS_WALLET",
+    "#endif",
+    "#else",
+    "#if LOCUS_WALLET\n#else\n#else\n#endif",
+])
+def test_inventory_rejects_unsupported_or_unbalanced_conditions(source):
+    for wallet in (False, True):
+        with pytest.raises(ValueError):
+            matrix.edition_source(source, wallet)
+
+
+def test_inventory_nested_conditions_keep_inactive_parents_inactive():
+    source = """shared
+#if LOCUS_WALLET
+wallet
+#if LOCUS_WALLET
+nestedWallet
+#else
+impossible
+#endif
+#else
+standard
+#endif
+"""
+    assert matrix.edition_source(source, False).splitlines() == ["shared", "standard"]
+    assert matrix.edition_source(source, True).splitlines() == ["shared", "wallet", "nestedWallet"]
+
+
+def test_x_edition_configuration_does_not_select_standard_target():
+    value = {"TestTargets": [{"BlueprintName": "LocusUITests"}, {"BlueprintName": "LocusXUITests"}]}
+    tests = matrix.source_tests(edition="locusx")
+    assert matrix.configure(value, {}, tests, "LocusXUITests") == 1
+    assert "OnlyTestIdentifiers" not in value["TestTargets"][0]
+    assert value["TestTargets"][1]["OnlyTestIdentifiers"] == tests
+
+
+def test_dirty_source_retains_paths_and_never_builds(tmp_path, monkeypatch):
+    source = {"revision": "a" * 40, "dirty": True}
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        assert command == ["xcrun", "swift", "Tools/LocusUITestEnvironment.swift"]
+        return subprocess.CompletedProcess(command, 0, json.dumps({
+            "osMajor": 15, "screenWidth": 1400, "screenHeight": 900,
+            "runningLocus": [], "increaseContrast": False, "reduceMotion": False,
+        }))
+
+    def fake_status(command, **kwargs):
+        assert command == ["git", "status", "--short", "--untracked-files=all"]
+        return " M Locus.xcodeproj/xcshareddata/xcschemes/LocusMAS.xcscheme\n"
+
+    monkeypatch.setattr(matrix, "run_locked", fake_run)
+    monkeypatch.setattr(matrix.subprocess, "check_output", fake_status)
+    monkeypatch.setattr(matrix, "execution_lock", lambda **kwargs: nullcontext())
+    monkeypatch.setattr(matrix, "source_identity", lambda: source)
+    monkeypatch.setattr(sys, "argv", [
+        "RunLocusUIMatrix.py", "--os-major", "15", "--native-profile", "compact-light",
+        "--edition", "locusx", "--derived-data", str(tmp_path / "never-built"),
+        "--output", str(tmp_path / "evidence"),
+    ])
+    with pytest.raises(SystemExit, match="LocusMAS.xcscheme"):
+        matrix.main()
+    assert len(calls) == 1
+    assert not (tmp_path / "never-built").exists()
+    runs = list((tmp_path / "evidence").iterdir())
+    assert len(runs) == 1
+    receipt = json.loads((runs[0] / "receipt.json").read_text())
+    assert receipt["source"] == source
+    assert receipt["edition"] == "locusx"
+    assert "LocusMAS.xcscheme" in receipt["sourceStatus"]
+    assert receipt["requestedTests"] == matrix.source_tests(edition="locusx")
+    assert receipt["status"] == "blocked"
+    assert not receipt["executed"]
+    assert not receipt["releaseEligible"]

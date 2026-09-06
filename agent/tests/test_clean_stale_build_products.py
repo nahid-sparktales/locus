@@ -9,13 +9,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def invoke(build, *, experimental=False, **overrides):
-    app = "Locus Experimental.app" if experimental else "Locus.app"
+def invoke(build, *, target="Locus", experimental=False, **overrides):
+    app = f"{target}{' Experimental' if experimental else ''}.app"
+    if target == "LocusMAS":
+        app = "Locus.app"
     environment = os.environ | {
         "TARGET_BUILD_DIR": str(build),
         "PLUGINS_FOLDER_PATH": f"{app}/Contents/PlugIns",
         "FULL_PRODUCT_NAME": app,
-        "TARGET_NAME": "Locus",
+        "TARGET_NAME": target,
         "CONFIGURATION": "ReleaseExperimental" if experimental else "Release",
         "LOCUS_TEST_ACTION": "0",
     }
@@ -28,36 +30,47 @@ def invoke(build, *, experimental=False, **overrides):
     )
 
 
-@pytest.mark.parametrize("experimental", [False, True])
-def test_cleanup_removes_only_generated_test_bundle(tmp_path, experimental):
-    app = "Locus Experimental.app" if experimental else "Locus.app"
+@pytest.mark.parametrize(
+    ("target", "experimental", "app", "test_bundle"),
+    [
+        ("Locus", False, "Locus.app", "LocusTests.xctest"),
+        ("LocusMAS", False, "Locus.app", "LocusTests.xctest"),
+        ("LocusX", False, "LocusX.app", "LocusXTests.xctest"),
+        ("LocusX", True, "LocusX Experimental.app", "LocusXTests.xctest"),
+    ],
+)
+def test_cleanup_removes_only_generated_test_bundle(tmp_path, target, experimental, app, test_bundle):
     plugins = tmp_path / app / "Contents/PlugIns"
-    tests = plugins / "LocusTests.xctest"
+    tests = plugins / test_bundle
     tests.mkdir(parents=True)
     (tests / "synthetic-test").write_text("disposable fixture")
     kept = plugins / "Other.xctest"
     kept.mkdir()
-    result = invoke(tmp_path, experimental=experimental)
+    other_edition = plugins / ("LocusTests.xctest" if target == "LocusX" else "LocusXTests.xctest")
+    other_edition.mkdir()
+    result = invoke(tmp_path, target=target, experimental=experimental)
     assert result.returncode == 0, result.stderr
     assert not tests.exists()
     assert kept.is_dir()
+    assert other_edition.is_dir()
 
 
 @pytest.mark.parametrize(
     "overrides",
     [
         {"CONFIGURATION": "Release"},
+        {"TARGET_NAME": "Locus"},
         {"TARGET_NAME": "LocusMAS"},
         {"FULL_PRODUCT_NAME": "Other.app"},
-        {"PLUGINS_FOLDER_PATH": "../Locus Experimental.app/Contents/PlugIns"},
+        {"PLUGINS_FOLDER_PATH": "../LocusX Experimental.app/Contents/PlugIns"},
         {"TARGET_BUILD_DIR": "/"},
         {"TARGET_BUILD_DIR": ""},
     ],
 )
 def test_experimental_cleanup_rejects_mismatched_or_broad_targets(tmp_path, overrides):
-    tests = tmp_path / "Locus Experimental.app/Contents/PlugIns/LocusTests.xctest"
+    tests = tmp_path / "LocusX Experimental.app/Contents/PlugIns/LocusXTests.xctest"
     tests.mkdir(parents=True)
-    assert invoke(tmp_path, experimental=True, **overrides).returncode == 1
+    assert invoke(tmp_path, target="LocusX", experimental=True, **overrides).returncode == 1
     assert tests.is_dir()
 
 
@@ -65,15 +78,15 @@ def test_cleanup_rejects_symlinked_product_without_touching_destination(tmp_path
     build = tmp_path / "build"
     build.mkdir()
     actual = tmp_path / "retained.app"
-    tests = actual / "Contents/PlugIns/LocusTests.xctest"
+    tests = actual / "Contents/PlugIns/LocusXTests.xctest"
     tests.mkdir(parents=True)
-    (build / "Locus Experimental.app").symlink_to(actual, target_is_directory=True)
-    assert invoke(build, experimental=True).returncode == 1
+    (build / "LocusX Experimental.app").symlink_to(actual, target_is_directory=True)
+    assert invoke(build, target="LocusX", experimental=True).returncode == 1
     assert tests.is_dir()
 
 
 def test_active_test_action_preserves_its_bundle(tmp_path):
-    tests = tmp_path / "Locus Experimental.app/Contents/PlugIns/LocusTests.xctest"
+    tests = tmp_path / "LocusX Experimental.app/Contents/PlugIns/LocusXTests.xctest"
     tests.mkdir(parents=True)
-    assert invoke(tmp_path, experimental=True, LOCUS_TEST_ACTION="1").returncode == 0
+    assert invoke(tmp_path, target="LocusX", experimental=True, LOCUS_TEST_ACTION="1").returncode == 0
     assert tests.is_dir()

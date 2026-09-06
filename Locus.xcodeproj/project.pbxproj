@@ -1115,6 +1115,7 @@
 		03F1D91E4EBBD0BE7E4027FD /* AppModel+PermissionsAndCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+PermissionsAndCapabilities.swift"; sourceTree = "<group>"; };
 		059B4B4EC6DB6EA4BF29D8E1 /* InspectorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorModels.swift; sourceTree = "<group>"; };
 		06DD9A63C8FBDB42368F8A0C /* GitClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitClient.swift; sourceTree = "<group>"; };
+		0738A529C6FC0406EA9FE039 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		07B62C798D0E60793ED30FF0 /* CodexComponentInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexComponentInstaller.swift; sourceTree = "<group>"; };
 		07FDE02F2575E8D2A5670594 /* WalletUniswapQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletUniswapQuoteProvider.swift; sourceTree = "<group>"; };
 		083DF67FF8B1B70EAD31E1A5 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
@@ -1185,7 +1186,6 @@
 		38EED4FF1CBA575694CE08AA /* LocusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3909625E36445E040EE3AE90 /* LocusXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3CCE0A795E088D797A8DFDB0 /* WalletFuzzDecoderFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletFuzzDecoderFixtures.swift; sourceTree = "<group>"; };
-		3D09F5FF64508E5EFEF22945 /* LocusMAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocusMAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D508444E398AA3AB5441198 /* InspectorRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorRail.swift; sourceTree = "<group>"; };
 		3D6CB3BEB98FC222452EF5BD /* LocusWalletChainTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusWalletChainTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D992FBA0B5D1A66A4C0107B /* OutputsLibraryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputsLibraryModel.swift; sourceTree = "<group>"; };
@@ -1480,7 +1480,7 @@
 			isa = PBXGroup;
 			children = (
 				AEFB9A10F8784355D5344D95 /* Locus.app */,
-				3D09F5FF64508E5EFEF22945 /* LocusMAS.app */,
+				0738A529C6FC0406EA9FE039 /* Locus.app */,
 				F102DB59F958EF25F8E7F0B8 /* LocusMASUITests.xctest */,
 				38EED4FF1CBA575694CE08AA /* LocusTests.xctest */,
 				73FB5B7D276424050FE55E24 /* LocusUITests.xctest */,
@@ -2143,7 +2143,7 @@
 				9868F34AD92ED12B87B9379D /* Markdown */,
 			);
 			productName = LocusMAS;
-			productReference = 3D09F5FF64508E5EFEF22945 /* LocusMAS.app */;
+			productReference = 0738A529C6FC0406EA9FE039 /* Locus.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A0463F65BF102D8D5DE8EDD0 /* LocusTests */ = {

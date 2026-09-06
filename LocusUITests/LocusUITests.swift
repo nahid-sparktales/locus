@@ -693,7 +693,7 @@ final class LocusUITests: XCTestCase {
         // build that is already running.
         let running = try XCTUnwrap(
             NSWorkspace.shared.runningApplications
-                .filter { $0.bundleURL?.lastPathComponent == "Locus.app" }
+                .filter { $0.bundleURL?.lastPathComponent == "\(productName).app" }
                 .max {
                     ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast)
                 }
@@ -730,7 +730,7 @@ final class LocusUITests: XCTestCase {
 
         let running = try XCTUnwrap(
             NSWorkspace.shared.runningApplications
-                .filter { $0.bundleURL?.lastPathComponent == "Locus.app" }
+                .filter { $0.bundleURL?.lastPathComponent == "\(productName).app" }
                 .max {
                     ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast)
                 }
@@ -1225,6 +1225,10 @@ final class LocusUITests: XCTestCase {
         }
 
         openSettings()
+        let settingsWindow = app.windows.containing(.any, identifier: "settings.page.general").firstMatch
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 3))
+        XCTAssertEqual(settingsWindow.frame.width, 920, accuracy: 2,
+            "Native Settings must open at the established full width")
         XCTAssertFalse(anyElement("settings.level").exists)
         let footerClose = app.buttons["settings.cancel"]
         let headerClose = anyElement("settings.close")

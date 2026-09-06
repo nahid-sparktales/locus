@@ -372,6 +372,7 @@ targets:
         - LocusXTests
         - LocusXUITests
   LocusMAS:
+    productName: Locus
     templates:
       - LocusSwiftSources
       - LocusSharedPackages

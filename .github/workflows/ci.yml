@@ -454,18 +454,23 @@ jobs:
 
   ui:
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [locus, locusx]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - run: brew install xcodegen
       - run: xcodegen generate
       - name: Generated project is current
-        run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
+        run: git diff --exit-code -- Locus.xcodeproj
       - name: Serialized full UI suite with exact native profile accounting
         env:
           LOCUS_BUNDLE_MODE: skip
         run: >-
           python3 Tools/RunLocusUIMatrix.py
           --os-major 15
+          --edition ${{ matrix.edition }}
           --native-profile compact-light
           --derived-data "$RUNNER_TEMP/locus-ui-derived"
           --output "$RUNNER_TEMP/locus-ui-evidence"
@@ -473,7 +478,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: locus-ui-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: locus-ui-${{ matrix.edition }}-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/locus-ui-evidence
           if-no-files-found: error
           retention-days: 90
