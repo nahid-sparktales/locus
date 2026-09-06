@@ -1,0 +1,165 @@
+{
+  "history": {
+    "schemaVersion": 1,
+    "transitions": [
+      {
+        "envelope": {
+          "admissionGeneration": 0,
+          "archiveSHA256": "822c1ba2302bbebf607e9e196b56bd20bd509071c99ff979d91b5bae3d3f8c1c",
+          "authoritySHA256": "3764647f9a7b631b9cac107b00927a272dc671954586c4745dce551c9ef4430f",
+          "bundleVersion": "fixture-1",
+          "candidateID": "37e17697ba2684caa1980c90cd0e6dd701b3a3b9d50d8782fbf2f43c922a4f2a",
+          "capabilityManifest": {
+            "manifest": {
+              "approvedRegions": [],
+              "canaryLimits": [],
+              "completedApprovals": [],
+              "evidenceIndexSHA256": "",
+              "expiresAt": "2026-09-06T09:35:47Z",
+              "issuedAt": "2026-09-06T08:34:47Z",
+              "networkGrants": [
+                {
+                  "capabilities": [
+                    "native_transfer"
+                  ],
+                  "connectors": [],
+                  "networkID": "eip155:1"
+                }
+              ],
+              "releaseStage": "experimental_mainnet",
+              "revision": 7,
+              "schemaVersion": 3
+            },
+            "signatureBase64": "Kui7OhF4r+qTiVUIdi+syJBYCcIbcPQmj8wjkc8Cm6/y6xIMGlIjOLx/Dbrd1a9fulfQYtmUv2B0dEs7zvDRAw=="
+          },
+          "expiresAt": "2026-09-06T09:35:47Z",
+          "issuedAt": "2026-09-06T08:34:47Z",
+          "outerAppCodeDirectoryHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "permanentLimits": [],
+          "purpose": "experimental_mainnet",
+          "releaseStage": "experimental_mainnet",
+          "reviewCeilingSHA256": "8a92cf1d67f11e738d73f46011308827d307dc6de3125a66d905422a7d694290",
+          "reviewRestriction": {
+            "manifest": {
+              "adapterIDs": [],
+              "assets": [
+                {
+                  "canonicalID": "eip155:1/slip44:60",
+                  "chain": "evm",
+                  "decimals": 18,
+                  "kind": "native",
+                  "manifestRevision": 7,
+                  "name": "Synthetic Ether",
+                  "networkID": "eip155:1",
+                  "symbol": "TEST",
+                  "trust": "curated"
+                }
+              ],
+              "connectors": [],
+              "evmContracts": [],
+              "expiresAt": "2026-09-06T09:35:47Z",
+              "explorerTemplates": {},
+              "issuedAt": "2026-09-06T08:34:47Z",
+              "programIdentities": [],
+              "providerIdentities": [
+                {
+                  "configurationID": "alchemy:eip155:1",
+                  "endpointSHA256": "cd60940d33a686bd047a2f4babadd65d7dbcd6047059f1f6c045f78a7880af0e",
+                  "expectedIdentity": {
+                    "kind": "eip155_chain_id",
+                    "value": "1"
+                  },
+                  "networkID": "eip155:1",
+                  "provider": "alchemy"
+                },
+                {
+                  "configurationID": "quicknode:eip155:1",
+                  "endpointSHA256": "f28ac15851f918a3c9178e4fc7d7cc810c77e0d6aad6edddc85069abc599570b",
+                  "expectedIdentity": {
+                    "kind": "eip155_chain_id",
+                    "value": "1"
+                  },
+                  "networkID": "eip155:1",
+                  "provider": "quicknode"
+                }
+              ],
+              "revision": 7,
+              "schemaVersion": 2,
+              "signInAdapters": [],
+              "uniswapConfigurations": []
+            },
+            "signatureBase64": "s0y5nQBetB/VgKyOmJigbDyC5R66Z0BQvzrf1L239X7d8hxPrfU+MqN5s2nLjtZsi5iIiuQICoz4bk7yPj6IBg=="
+          },
+          "revision": 7,
+          "revokedAdmissionSerials": [],
+          "schemaVersion": 2,
+          "signerCodeDirectoryHash": "cccccccccccccccccccccccccccccccccccccccc",
+          "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "transition": "initial"
+        },
+        "signatureBase64": "RZq/W6XhxVFwHxNDdwath+PohghtndqpFKa/8pG50AVshBKJHJXiLi42ju0Jw+sNovz9EeePu/yj57kJS2JlDg=="
+      }
+    ]
+  },
+  "identity": {
+    "bundleVersion": "fixture-1",
+    "outerAppCodeDirectoryHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "signerCodeDirectoryHash": "cccccccccccccccccccccccccccccccccccccccc",
+    "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "publicKeyBase64": "OE7DVBzNmCrB+rQd5jLpDwl9cWsbd3OLTdwejlAl5Q8=",
+  "signedCeiling": {
+    "ceiling": {
+      "domain": "locus-wallet-review-ceiling-v1",
+      "reviewRevision": 1,
+      "reviewedAt": "2026-09-06T08:34:47Z",
+      "schemaVersion": 1,
+      "scope": {
+        "adapterIDs": [],
+        "assets": [
+          {
+            "canonicalID": "eip155:1/slip44:60",
+            "chain": "evm",
+            "decimals": 18,
+            "kind": "native",
+            "manifestRevision": 1,
+            "name": "Synthetic Ether",
+            "networkID": "eip155:1",
+            "symbol": "TEST",
+            "trust": "curated"
+          }
+        ],
+        "connectors": [],
+        "evmContracts": [],
+        "explorerTemplates": {},
+        "programIdentities": [],
+        "providerIdentities": [
+          {
+            "configurationID": "alchemy:eip155:1",
+            "endpointSHA256": "cd60940d33a686bd047a2f4babadd65d7dbcd6047059f1f6c045f78a7880af0e",
+            "expectedIdentity": {
+              "kind": "eip155_chain_id",
+              "value": "1"
+            },
+            "networkID": "eip155:1",
+            "provider": "alchemy"
+          },
+          {
+            "configurationID": "quicknode:eip155:1",
+            "endpointSHA256": "f28ac15851f918a3c9178e4fc7d7cc810c77e0d6aad6edddc85069abc599570b",
+            "expectedIdentity": {
+              "kind": "eip155_chain_id",
+              "value": "1"
+            },
+            "networkID": "eip155:1",
+            "provider": "quicknode"
+          }
+        ],
+        "signInAdapters": [],
+        "uniswapConfigurations": []
+      }
+    },
+    "signatureBase64": "GYNZmlYKeTqvtkgg46zg72x7KzavFw1dk6vjy2PSILFvRfQJ/WoKtj7UsSLqL84g8eb+6ZKbfvsMsFzgWl6gDA=="
+  },
+  "verificationTimeISO8601": "2026-09-06T08:34:48Z"
+}

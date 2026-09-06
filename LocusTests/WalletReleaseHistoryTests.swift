@@ -97,6 +97,42 @@ final class WalletReleaseHistoryTests: XCTestCase {
             allowExperimentalMainnet: allowExperimentalMainnet)
     }
 
+    func testExperimentalIssuerFixtureVerifiesUsingActualRuntimeEncodingAndAuthorityRules() throws {
+        // Public synthetic output from the dedicated CLI fixture, not an
+        // activation for a real executable. The fixture contains no private key.
+        struct IssuerFixture: Decodable {
+            let publicKeyBase64: String
+            let signedCeiling: WalletSignedReviewCeiling
+            let identity: WalletInstalledReleaseIdentity
+            let history: WalletReleaseHistoryRequest
+            let verificationTimeISO8601: String
+        }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let url = root.appendingPathComponent("Tools/Fixtures/ExperimentalMainnet/issuer-runtime.json")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let fixture = try decoder.decode(IssuerFixture.self, from: Data(contentsOf: url))
+        let bytes = try XCTUnwrap(Data(base64Encoded: fixture.publicKeyBase64))
+        let fixtureKey = try Curve25519.Signing.PublicKey(rawRepresentation: bytes)
+        let instant = try XCTUnwrap(ISO8601DateFormatter().date(from: fixture.verificationTimeISO8601))
+        let transition = try XCTUnwrap(fixture.history.transitions.first)
+        XCTAssertEqual(fixture.history.transitions.count, 1)
+        XCTAssertEqual(transition.envelope.reviewCeilingSHA256,
+            try WalletAuthorityEncoding.digest(fixture.signedCeiling.ceiling))
+        XCTAssertEqual(transition.envelope.candidateID, try transition.envelope.computedCandidateID())
+        XCTAssertEqual(transition.envelope.authoritySHA256, try transition.envelope.computedAuthoritySHA256())
+        let verified = try WalletReleaseHistoryVerifier.verify(fixture.history,
+            ceiling: fixture.signedCeiling, key: fixtureKey, identity: fixture.identity,
+            installationID: installation, now: instant, allowExperimentalMainnet: true)
+        XCTAssertEqual(Set(verified.launchGate.effectiveManifest?.networkGrants.map(\.networkID) ?? []),
+            WalletReleaseHistoryVerifier.mainnets)
+        XCTAssertNil(verified.checkpoint.admission)
+        XCTAssertEqual(verified.checkpoint.signedTransition.envelope.purpose, .experimentalMainnet)
+        XCTAssertThrowsError(try WalletReleaseHistoryVerifier.verify(fixture.history,
+            ceiling: fixture.signedCeiling, key: fixtureKey, identity: fixture.identity,
+            installationID: installation, now: instant))
+    }
+
     func testExperimentalMainnetRequiresExplicitBuildAdmissionAndClaimsNoReleaseEvidence() throws {
         let initial = try transition(purpose: .experimentalMainnet,
             networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
