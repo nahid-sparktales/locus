@@ -147,12 +147,12 @@ final class BrowserProfileTests: XCTestCase {
         _ = service.tab(for: "session-1")
         XCTAssertEqual(service.tabs.count, 1)
 
-        service.configureProfile(workspacePath: "/tmp/workspace-a", persistent: true)
+        service.configureProfile(workspacePath: directory.appendingPathComponent("workspace").path, persistent: true)
         XCTAssertTrue(service.tabs.isEmpty, "a cookie jar cannot be swapped under a live page")
 
         // Same profile again: no churn.
         _ = service.tab(for: "session-1")
-        service.configureProfile(workspacePath: "/tmp/workspace-a", persistent: true)
+        service.configureProfile(workspacePath: directory.appendingPathComponent("workspace").path, persistent: true)
         XCTAssertEqual(service.tabs.count, 1)
     }
 }
