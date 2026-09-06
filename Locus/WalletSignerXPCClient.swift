@@ -673,7 +673,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 )
             }
             do {
-                let finalized = try await rpc.executeTransaction(
+                let submission = try await rpc.executeTransaction(
                     transactionBCS: signed.transactionBytes,
                     signature: signed.signature,
                     expectedTransactionDigest: signed.transactionDigest
@@ -681,7 +681,7 @@ final class XPCWalletSignerClient: WalletSignerClient {
                 return Self.submissionResult(
                     intentID: intentID,
                     networkID: intent.packet.request.networkID,
-                    transactionHash: finalized.transactionDigest
+                    transactionHash: submission.transactionDigest
                 )
             } catch {
                 throw WalletGateway.Error.broadcastUnknown(

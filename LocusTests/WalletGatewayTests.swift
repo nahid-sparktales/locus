@@ -3519,7 +3519,7 @@ final class WalletGatewayTests: XCTestCase {
         }
     }
 
-    func testSuiExecutionUsesExactSignerMaterialAndRequiresFinality() async throws {
+    func testSuiExecutionUsesExactSignerMaterialWithoutIndexedCheckpoint() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
         ))
@@ -3546,6 +3546,8 @@ final class WalletGatewayTests: XCTestCase {
             }
             XCTAssertTrue(operation.contains("mutation LocusSuiExecuteTransaction"))
             XCTAssertFalse(operation.contains("simulateTransaction"))
+            XCTAssertFalse(operation.contains("checkpoint"))
+            XCTAssertFalse(operation.contains("timestamp"))
             let variables = try XCTUnwrap(body["variables"] as? [String: Any])
             XCTAssertEqual(variables["transactionDataBcs"] as? String, transactionBCS)
             XCTAssertEqual(variables["signatures"] as? [String], [signature])
@@ -3557,10 +3559,6 @@ final class WalletGatewayTests: XCTestCase {
                             "effectsDigest": effectsDigest,
                             "status": "SUCCESS",
                             "executionError": NSNull(),
-                            "checkpoint": [
-                                "sequenceNumber": 123_457,
-                                "timestamp": "2026-08-31T12:04:00Z",
-                            ],
                         ],
                     ],
                 ],
@@ -3573,17 +3571,16 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(requests, 2)
         XCTAssertEqual(result.transactionDigest, digest)
         XCTAssertEqual(result.effectsDigest, effectsDigest)
-        XCTAssertEqual(result.checkpointSequence, 123_457)
     }
 
-    func testSuiExecutionRejectsMismatchedOrNonfinalEffects() async throws {
+    func testSuiExecutionAcceptsNullCheckpointOnlyAsSubmission() async throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(
             from: "2026-08-31T12:05:00Z"
         ))
         let transactionBCS = Data([0, 1, 2, 3]).base64EncodedString()
         let signature = Data(repeating: 8, count: 97).base64EncodedString()
         let digest = WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
-        let otherDigest = WalletSolanaBase58.encode(Data(repeating: 50, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 50, count: 32))
         var requests = 0
         let client = makeSuiGraphQLClient(
             network: WalletNetworkCatalog.suiMainnet, now: now
@@ -3598,8 +3595,8 @@ final class WalletGatewayTests: XCTestCase {
                 "data": [
                     "executeTransaction": [
                         "effects": [
-                            "digest": otherDigest,
-                            "effectsDigest": otherDigest,
+                            "digest": digest,
+                            "effectsDigest": effectsDigest,
                             "status": "SUCCESS",
                             "executionError": NSNull(),
                             "checkpoint": NSNull(),
@@ -3608,14 +3605,192 @@ final class WalletGatewayTests: XCTestCase {
                 ],
             ])
         }
+        let submission = try await client.executeTransaction(
+            transactionBCS: transactionBCS, signature: signature,
+            expectedTransactionDigest: digest
+        )
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(submission, WalletSuiSubmissionResult(
+            transactionDigest: digest, effectsDigest: effectsDigest
+        ))
+    }
+
+    func testSuiExecutionRejectsMismatchedMalformedAndFailedEffects() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let transactionBCS = Data([0, 1, 2, 3]).base64EncodedString()
+        let signature = Data(repeating: 8, count: 97).base64EncodedString()
+        let digest = WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 50, count: 32))
+        let invalidFields: [[String: Any]] = [
+            ["digest": effectsDigest],
+            ["digest": NSNull()],
+            ["effectsDigest": "not-a-digest"],
+            ["effectsDigest": WalletSolanaBase58.encode(Data(repeating: 50, count: 31))],
+            ["effectsDigest": NSNull()],
+            ["status": "FAILURE"],
+            ["status": NSNull()],
+            ["executionError": ["message": "fixture execution failure"]],
+        ]
+        for (index, invalid) in invalidFields.enumerated() {
+            var requests = 0
+            let client = makeSuiGraphQLClient(network: WalletNetworkCatalog.suiMainnet, now: now) { _ in
+                requests += 1
+                if requests == 1 {
+                    return try self.suiNetworkStatusResponse(chainIdentifier: WalletSuiChainIdentity.mainnetBase58)
+                }
+                var effects: [String: Any] = [
+                    "digest": digest, "effectsDigest": effectsDigest,
+                    "status": "SUCCESS", "executionError": NSNull(),
+                ]
+                effects.merge(invalid) { _, replacement in replacement }
+                return try JSONSerialization.data(withJSONObject: ["data": ["executeTransaction": ["effects": effects]]])
+            }
+            do {
+                _ = try await client.executeTransaction(transactionBCS: transactionBCS,
+                    signature: signature, expectedTransactionDigest: digest)
+                XCTFail("Invalid submission effects variant \(index) must fail closed.")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("submission evidence"))
+            }
+            XCTAssertEqual(requests, 2, "Rejected effects never trigger another mutation.")
+        }
+    }
+
+    func testSuiExecutionRejectsWrongChainBeforeMutation() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        var requests = 0
+        let client = makeSuiGraphQLClient(network: WalletNetworkCatalog.suiMainnet, now: now) { request in
+            requests += 1
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: walletRPCRequestBody(request)) as? [String: Any])
+            XCTAssertTrue((body["query"] as? String)?.contains("query LocusSuiNetworkStatus") == true)
+            return try self.suiNetworkStatusResponse(chainIdentifier: WalletSuiChainIdentity.testnetBase58)
+        }
         do {
             _ = try await client.executeTransaction(
-                transactionBCS: transactionBCS, signature: signature,
-                expectedTransactionDigest: digest
+                transactionBCS: Data([0, 1, 2, 3]).base64EncodedString(),
+                signature: Data(repeating: 8, count: 97).base64EncodedString(),
+                expectedTransactionDigest: WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
             )
-            XCTFail("Mismatched or nonfinal Sui execution evidence must fail closed.")
-        } catch WalletRPCError.invalidResponse(let message) {
-            XCTAssertTrue(message.contains("finality"))
+            XCTFail("A different chain must not receive signed transaction bytes.")
+        } catch WalletRPCError.wrongChain {
+            // The pre-mutation identity query is the only permitted request.
+        }
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testSuiExecutionResponseLossNeverRetriesOrUsesFallback() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let network = WalletNetworkCatalog.suiMainnet
+        var primaryReads = 0
+        var primaryMutations = 0
+        var fallbackRequests = 0
+        WalletRPCURLProtocol.handler = { request in
+            guard request.url?.host == "sui-primary.test" else {
+                fallbackRequests += 1
+                throw URLError(.badServerResponse)
+            }
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: walletRPCRequestBody(request)) as? [String: Any])
+            let operation = try XCTUnwrap(body["query"] as? String)
+            if operation.contains("query LocusSuiNetworkStatus") {
+                primaryReads += 1
+                return (200, try self.suiNetworkStatusResponse(chainIdentifier: WalletSuiChainIdentity.mainnetBase58))
+            }
+            XCTAssertTrue(operation.contains("mutation LocusSuiExecuteTransaction"))
+            primaryMutations += 1
+            // The provider accepted the request; its response was lost.
+            throw URLError(.networkConnectionLost)
+        }
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [WalletRPCURLProtocol.self]
+        let provider = try WalletSuiProviderCoordinator(network: network, configuration: .init(
+            primary: .init(id: "primary", provider: .userDefined, networkID: network.id,
+                url: try XCTUnwrap(URL(string: "https://sui-primary.test/graphql")), priority: 0,
+                expectedIdentity: network.identity),
+            fallback: .init(id: "fallback", provider: .userDefined, networkID: network.id,
+                url: try XCTUnwrap(URL(string: "https://sui-fallback.test/graphql")), priority: 1,
+                expectedIdentity: network.identity)
+        ), session: URLSession(configuration: sessionConfiguration), now: { now })
+        do {
+            _ = try await provider.executeTransaction(
+                transactionBCS: Data([0, 1, 2, 3]).base64EncodedString(),
+                signature: Data(repeating: 8, count: 97).base64EncodedString(),
+                expectedTransactionDigest: WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
+            )
+            XCTFail("A lost submission response must remain ambiguous.")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .networkConnectionLost)
+        }
+        XCTAssertEqual(primaryReads, 1)
+        XCTAssertEqual(primaryMutations, 1)
+        XCTAssertEqual(fallbackRequests, 0)
+    }
+
+    func testSuiSubmissionWaitsForIndexedEffectsAfterClientRestart() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let sender = "0x" + String(repeating: "1", count: 64)
+        let recipient = "0x" + String(repeating: "2", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
+        let effectsDigest = WalletSolanaBase58.encode(Data(repeating: 50, count: 32))
+        var submissionRequests = 0
+        let client = makeSuiGraphQLClient(now: now) { _ in
+            submissionRequests += 1
+            if submissionRequests == 1 { return try self.suiNetworkStatusResponse() }
+            return try JSONSerialization.data(withJSONObject: ["data": ["executeTransaction": ["effects": [
+                "digest": digest, "effectsDigest": effectsDigest, "status": "SUCCESS", "executionError": NSNull(),
+            ]]]])
+        }
+        let submission = try await client.executeTransaction(
+            transactionBCS: Data([0, 1, 2, 3]).base64EncodedString(),
+            signature: Data(repeating: 8, count: 97).base64EncodedString(), expectedTransactionDigest: digest
+        )
+        var indexedReads = 0
+        let restarted = makeSuiGraphQLClient(now: now) { request in
+            indexedReads += 1
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: walletRPCRequestBody(request)) as? [String: Any])
+            let operation = try XCTUnwrap(body["query"] as? String)
+            XCTAssertTrue(operation.contains("query LocusSuiActivity"))
+            XCTAssertTrue(operation.contains("checkpoint { sequenceNumber }"))
+            XCTAssertTrue(operation.contains("timestamp"))
+            return try self.suiActivityResponse(owner: recipient, transactions: indexedReads == 1 ? [] : [
+                self.suiActivityTransactionJSON(digest: digest, sender: sender, balanceChanges: [
+                    self.suiBalanceChangeJSON(owner: recipient, coinType: WalletSuiAssetIdentity.nativeCoinType, amount: "25"),
+                ]),
+            ])
+        }
+        let beforeIndexing = try await restarted.activity(owner: recipient)
+        XCTAssertTrue(beforeIndexing.isEmpty, "Submission alone must not manufacture indexed confirmation.")
+        let afterIndexing = try await restarted.activity(owner: recipient)
+        let activity = try XCTUnwrap(afterIndexing.first)
+        XCTAssertEqual(afterIndexing.count, 1)
+        XCTAssertEqual(activity.transactionDigest, submission.transactionDigest)
+        XCTAssertEqual(activity.checkpointSequence, 123_455)
+        XCTAssertEqual(activity.sender, sender)
+        XCTAssertEqual(activity.amountBaseUnits, "25")
+        XCTAssertEqual(activity.isInbound, true)
+        XCTAssertTrue(activity.successful)
+        XCTAssertEqual(submissionRequests, 2)
+        XCTAssertEqual(indexedReads, 2)
+    }
+
+    func testSuiIndexedConfirmationStillRejectsMissingOrNullCheckpoint() async throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-31T12:05:00Z"))
+        let owner = "0x" + String(repeating: "1", count: 64)
+        let digest = WalletSolanaBase58.encode(Data(repeating: 49, count: 32))
+        for missing in [true, false] {
+            let client = makeSuiGraphQLClient(now: now) { _ in
+                var transaction = self.suiActivityTransactionJSON(digest: digest, sender: owner, balanceChanges: [])
+                var effects = try XCTUnwrap(transaction["effects"] as? [String: Any])
+                if missing { effects.removeValue(forKey: "checkpoint") }
+                else { effects["checkpoint"] = NSNull() }
+                transaction["effects"] = effects
+                return try self.suiActivityResponse(owner: owner, transactions: [transaction])
+            }
+            do {
+                _ = try await client.activity(owner: owner)
+                XCTFail("Unindexed effects must never become confirmation.")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains("activity effects"))
+            }
         }
     }
 

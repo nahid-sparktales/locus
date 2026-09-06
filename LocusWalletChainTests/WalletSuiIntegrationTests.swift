@@ -94,7 +94,11 @@ final class WalletSuiIntegrationTests: XCTestCase {
                 maximumFeeBaseUnits: "10000000", gasObjectID: object.objectID)
             XCTFail("Changed semantic amount passed simulation reconciliation")
         } catch { /* Simulation effects must match the exact amount. */ }
-        _ = try await client.executeTransaction(transactionBCS: bcs, signature: signature, expectedTransactionDigest: digest)
+        let submission = try await client.executeTransaction(
+            transactionBCS: bcs, signature: signature, expectedTransactionDigest: digest
+        )
+        XCTAssertEqual(submission.transactionDigest, digest)
+        XCTAssertNotNil(WalletSolanaBase58.decode(submission.effectsDigest, exactLength: 32))
 
         // A new client has no callback/session state: final success comes from chain effects.
         let restarted = try WalletSuiGraphQLClient(testLoopbackEndpoint: endpoint, expectedChainIdentifier: chain)
@@ -108,8 +112,11 @@ final class WalletSuiIntegrationTests: XCTestCase {
         }
         let activity = try XCTUnwrap(reconciled, "Broadcast did not reconcile after client restart")
         XCTAssertTrue(activity.successful)
+        XCTAssertEqual(activity.transactionDigest, submission.transactionDigest)
+        XCTAssertGreaterThan(activity.checkpointSequence, 0)
         XCTAssertEqual(activity.amountBaseUnits, "1234567")
         XCTAssertEqual(activity.sender, sender)
+        XCTAssertEqual(activity.isInbound, true)
         do {
             _ = try await restarted.simulateNativeTransfer(transactionBCS: bcs, expectedTransactionDigest: digest,
                 sender: sender, recipient: Self.recipient, amountBaseUnits: "1234567",
