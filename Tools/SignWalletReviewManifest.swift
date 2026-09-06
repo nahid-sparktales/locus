@@ -686,7 +686,9 @@ func canonicalObject(_ value: Any) throws -> Data {
 
 /// The ceiling is a separate, non-activating signature domain. Reuse the full
 /// reviewed-entry validator without inheriting an operational expiry date.
-func validatedCeiling(_ input: [String: Any], requireNormalized: Bool) throws -> [String: Any] {
+func validatedCeiling(
+    _ input: [String: Any], requireNormalized: Bool, now: Date = Date()
+) throws -> [String: Any] {
     guard Set(input.keys) == ["schemaVersion", "domain", "reviewRevision", "reviewedAt", "scope"],
           let schema = input["schemaVersion"] as? Int, schema == 1,
           input["domain"] as? String == "locus-wallet-review-ceiling-v1",
@@ -694,17 +696,21 @@ func validatedCeiling(_ input: [String: Any], requireNormalized: Bool) throws ->
           let reviewedText = input["reviewedAt"] as? String,
           let reviewedAt = ISO8601DateFormatter().date(from: reviewedText),
           ISO8601DateFormatter().string(from: reviewedAt) == reviewedText,
-          reviewedAt <= Date(), var scope = input["scope"] as? [String: Any],
+          reviewedAt <= now, var scope = input["scope"] as? [String: Any],
           Set(scope.keys) == ["assets", "evmContracts", "explorerTemplates", "adapterIDs", "connectors",
                              "providerIdentities", "signInAdapters", "programIdentities", "uniswapConfigurations"] else {
         fail("review ceiling schema, date, or signature domain is invalid")
     }
-    let now = Date()
+    // The projection is not an operational lease. Anchor its canonical-second
+    // dates explicitly: ISO8601DateFormatter can round a fractional `now` into
+    // the next second, which would falsely make the synthetic issue date future.
+    // Actual review dates and manifest validity still use the unrounded clock.
+    let projectionTime = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
     var projection = scope
     projection["schemaVersion"] = 2
     projection["revision"] = revision
-    projection["issuedAt"] = ISO8601DateFormatter().string(from: now)
-    projection["expiresAt"] = ISO8601DateFormatter().string(from: now.addingTimeInterval(1))
+    projection["issuedAt"] = ISO8601DateFormatter().string(from: projectionTime)
+    projection["expiresAt"] = ISO8601DateFormatter().string(from: projectionTime.addingTimeInterval(1))
     projection["assets"] = (scope["assets"] as? [[String: Any]] ?? []).map { item in
         var item = item; item["manifestRevision"] = revision; return item
     }

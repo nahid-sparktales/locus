@@ -85,6 +85,34 @@ def activation_tools(tmp_path_factory):
     return cli, helper, key_path
 
 
+@pytest.fixture(scope="module")
+def review_time_validator(tmp_path_factory):
+    """Compile the actual ceiling validator with a deterministic, non-CLI clock."""
+    if sys.platform != "darwin" or shutil.which("xcrun") is None:
+        pytest.skip("the release review validator requires macOS CryptoKit and Swift")
+    source = (ROOT / "Tools/SignWalletReviewManifest.swift").read_text()
+    # Keep every validator definition byte-identical; replace only the top-level
+    # CLI entry point. No release command or environment variable overrides time.
+    marker = "\ndo {\n"
+    assert source.count(marker) == 1
+    definitions = source.split(marker)[0]
+    harness = r"""
+let input = try JSONSerialization.jsonObject(
+    with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+) as! [String: Any]
+let now = Date(timeIntervalSince1970: Double(CommandLine.arguments[2])!)
+let result = try validatedCeiling(input, requireNormalized: true, now: now)
+FileHandle.standardOutput.write(try canonicalObject(result))
+"""
+    directory = tmp_path_factory.mktemp("wallet-review-clock")
+    source_path = directory / "review-clock.swift"
+    source_path.write_text(definitions + harness)
+    binary = directory / "review-clock"
+    result = _run(["xcrun", "swiftc", source_path, "-o", binary])
+    assert result.returncode == 0, result.stderr
+    return binary
+
+
 @pytest.fixture
 def activation_case(tmp_path, activation_tools):
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -488,6 +516,44 @@ def test_narrowing_floor_cannot_restore_a_removed_grant(activation_case):
     ]
     result, output = invoke(previous=narrowed)
     _rejected(result, output, "restore previously restricted authority")
+
+
+@pytest.mark.parametrize("fraction", [0.0, 0.5, 0.9994, 0.9995, 0.9999, 0.999999])
+def test_nonactivating_review_ceiling_accepts_valid_identities_at_second_boundary(
+    activation_case, review_time_validator, tmp_path, fraction
+):
+    _, _, _, invoke = activation_case
+    ceiling = copy.deepcopy(invoke.ceiling)
+    ceiling["reviewedAt"] = "2023-11-14T22:12:00Z"
+    path = tmp_path / "reviewed-ceiling.json"
+    _write(path, ceiling)
+    result = _run([review_time_validator, path, str(1_700_000_000 + fraction)])
+    assert result.returncode == 0, result.stderr
+    # The synthetic projection is only a validation aid. It must not change any
+    # signed ceiling bytes or add an operational lease to the nonactivating scope.
+    assert json.loads(result.stdout) == ceiling
+
+
+@pytest.mark.parametrize("mutation", ["future-review", "ownership", "method"])
+def test_second_boundary_never_relaxes_review_time_or_identity_validation(
+    activation_case, review_time_validator, tmp_path, mutation
+):
+    _, _, _, invoke = activation_case
+    ceiling = copy.deepcopy(invoke.ceiling)
+    ceiling["reviewedAt"] = "2023-11-14T22:12:00Z"
+    if mutation == "future-review":
+        ceiling["reviewedAt"] = "2023-11-14T22:13:21Z"
+    elif mutation == "ownership":
+        ceiling["scope"]["connectors"][0]["ownership"] = "locus_vault"
+    else:
+        ceiling["scope"]["connectors"][0]["methods"] = ["arbitrary_signing"]
+    path = tmp_path / "invalid-ceiling.json"
+    _write(path, ceiling)
+    result = _run([review_time_validator, path, "1700000000.9999"])
+    assert result.returncode != 0
+    assert not result.stdout
+    expected = "schema, date, or signature domain" if mutation == "future-review" else "invalid reviewed identities"
+    assert expected in result.stderr
 
 
 def test_missing_previous_history_cannot_issue_renewal(activation_case):
