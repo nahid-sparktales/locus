@@ -86,25 +86,6 @@ struct TranscriptAccessibilityNode {
     var isHidden: Bool { dynamic.isAccessibilityHidden?() ?? false }
 }
 
-private struct PublicTranscriptHitTarget: Sendable {
-    let role: String
-    let identifier: String?
-    let value: String?
-    let frame: CGRect
-}
-
-private struct PublicTranscriptHitResult: Sendable {
-    var completed = false
-    var matches: [Bool] = []
-    var stage = "not-started"
-}
-
-private final class PublicTranscriptHitReceipt: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: PublicTranscriptHitResult?
-    func set(_ value: PublicTranscriptHitResult) { lock.withLock { result = value } }
-    func value() -> PublicTranscriptHitResult? { lock.withLock { result } }
-}
 
 @MainActor
 final class TranscriptFollowTests: XCTestCase {
@@ -371,96 +352,26 @@ final class TranscriptFollowTests: XCTestCase {
         let viewport = window.convertToScreen(scroll.contentView.convert(scroll.contentView.bounds, to: nil))
         XCTAssertTrue(viewport.contains(toolFrame))
         XCTAssertTrue(viewport.contains(leafFrame))
-        let screenTop = try XCTUnwrap(NSScreen.screens.first).frame.maxY
-        let targets = [
-            PublicTranscriptHitTarget(role: kAXButtonRole as String, identifier: toolIdentifier,
-                value: nil, frame: toolFrame),
-            PublicTranscriptHitTarget(role: kAXTextAreaRole as String, identifier: nil,
-                value: userText, frame: leafFrame),
-        ]
-        let receipt = PublicTranscriptHitReceipt()
-        let finished = expectation(description: "Public own-process hit ownership is resolved")
-        let title = window.title
-        DispatchQueue.global(qos: .userInitiated).async {
-            receipt.set(Self.observePublicTranscriptHits(title: title, screenTop: screenTop, targets: targets))
-            finished.fulfill()
-        }
-        wait(for: [finished], timeout: 3)
-        let result = try XCTUnwrap(receipt.value())
-        XCTAssertTrue(result.completed, "Public AX traversal must finish within its bound (\(result.stage))")
-        XCTAssertEqual(result.matches, [true, true],
-            "Root AX must return the exact owned button and inner native text leaf, not their List/ScrollArea wrappers")
+        // Query the real root's public hit routing without first narrowing to
+        // an AppKit leaf. External UI tests independently exercise system AX;
+        // querying our own AX IPC server while XCTest waits can deadlock.
+        let toolHit = try XCTUnwrap(TranscriptAccessibilityNode(host.accessibilityHitTest(
+            NSPoint(x: toolFrame.midX, y: toolFrame.midY)
+        )))
+        XCTAssertEqual(toolHit.role, .button)
+        XCTAssertEqual(toolHit.identifier, toolIdentifier,
+            "The root must return the owned disclosure, not a List/ScrollArea wrapper")
+        let textHit = try XCTUnwrap(TranscriptAccessibilityNode(host.accessibilityHitTest(
+            NSPoint(x: leafFrame.midX, y: leafFrame.midY)
+        )))
+        XCTAssertEqual(textHit.role, .textArea)
+        XCTAssertTrue(textHit.object === leaf,
+            "The root must return the actual native text leaf, not its bubble or list wrapper")
         model.blocks.append(ChatBlock(kind: .assistant, text: String(repeating: Self.reply, count: 6) + "\n\nAfter public hit follow"))
         XCTAssertTrue(waitForVisibleText("After public hit follow", in: scroll),
             "Excluding decorative hosts must preserve real layout registration and following")
     }
 
-    private nonisolated static func observePublicTranscriptHits(
-        title: String, screenTop: CGFloat, targets: [PublicTranscriptHitTarget]
-    ) -> PublicTranscriptHitResult {
-        let application = AXUIElementCreateApplication(getpid())
-        guard AXUIElementSetMessagingTimeout(application, 0.1) == .success else { return .init(stage: "messaging-timeout") }
-        let deadline = ProcessInfo.processInfo.systemUptime + 2
-        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-            return value
-        }
-        func frame(_ element: AXUIElement) -> CGRect? {
-            guard let position = attribute(element, kAXPositionAttribute),
-                  let size = attribute(element, kAXSizeAttribute),
-                  CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
-            var origin = CGPoint.zero
-            var dimensions = CGSize.zero
-            guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
-                  AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return nil }
-            return CGRect(origin: origin, size: dimensions)
-        }
-        guard let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] else { return .init(stage: "window-list") }
-        guard windows.count <= 32 else { return .init(stage: "window-count-\(windows.count)") }
-        let owned = windows.filter { attribute($0, kAXTitleAttribute) as? String == title }
-        guard owned.count == 1, let window = owned.first else { return .init(stage: "owned-window-count-\(owned.count)") }
-        var pending = [window]
-        var visited: [CFHashCode: [AXUIElement]] = [:]
-        var count = 0
-        var candidates = targets.map { _ in [AXUIElement]() }
-        let expectedFrames = targets.map {
-            CGRect(x: $0.frame.minX, y: screenTop - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
-        }
-        while let element = pending.popLast() {
-            guard count < 4_096, ProcessInfo.processInfo.systemUptime < deadline else { return .init(stage: "traversal-bound") }
-            let hash = CFHash(element)
-            if visited[hash, default: []].contains(where: { CFEqual($0, element) }) { continue }
-            visited[hash, default: []].append(element)
-            count += 1
-            let role = attribute(element, kAXRoleAttribute) as? String
-            for (index, target) in targets.enumerated() where role == target.role {
-                guard let measured = frame(element) else { continue }
-                let expected = expectedFrames[index]
-                guard abs(measured.minX - expected.minX) <= 1, abs(measured.minY - expected.minY) <= 1,
-                      abs(measured.width - expected.width) <= 1, abs(measured.height - expected.height) <= 1,
-                      target.identifier.map({ attribute(element, kAXIdentifierAttribute) as? String == $0 }) ?? true,
-                      target.value.map({ attribute(element, kAXValueAttribute) as? String == $0 }) ?? true else { continue }
-                candidates[index].append(element)
-            }
-            for name in [kAXChildrenAttribute, kAXContentsAttribute] {
-                if let children = attribute(element, name) as? [AXUIElement] {
-                    guard children.count <= 4_096 else { return .init(stage: "child-bound") }
-                    pending.append(contentsOf: children)
-                }
-            }
-        }
-        var matches: [Bool] = []
-        for (index, expected) in candidates.enumerated() {
-            guard expected.count == 1, let element = expected.first,
-                  ProcessInfo.processInfo.systemUptime < deadline else { matches.append(false); continue }
-            let center = expectedFrames[index]
-            var hit: AXUIElement?
-            let status = AXUIElementCopyElementAtPosition(application, Float(center.midX), Float(center.midY), &hit)
-            matches.append(status == .success && hit.map { CFEqual($0, element) } == true)
-        }
-        return PublicTranscriptHitResult(completed: true, matches: matches, stage: "completed")
-    }
 
     func testLogicalPinCoalescesAndRespectsSelectionDetachAndBridgeLifecycle() {
         let scroll = mountNativeScroll()
