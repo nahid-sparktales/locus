@@ -86,6 +86,25 @@ struct TranscriptAccessibilityNode {
     var isHidden: Bool { dynamic.isAccessibilityHidden?() ?? false }
 }
 
+private struct PublicTranscriptHitTarget: Sendable {
+    let role: String
+    let identifier: String?
+    let value: String?
+    let frame: CGRect
+}
+
+private struct PublicTranscriptHitResult: Sendable {
+    var completed = false
+    var matches: [Bool] = []
+}
+
+private final class PublicTranscriptHitReceipt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: PublicTranscriptHitResult?
+    func set(_ value: PublicTranscriptHitResult) { lock.withLock { result = value } }
+    func value() -> PublicTranscriptHitResult? { lock.withLock { result } }
+}
+
 @MainActor
 final class TranscriptFollowTests: XCTestCase {
     private var windows: [NSWindow] = []
@@ -304,6 +323,141 @@ final class TranscriptFollowTests: XCTestCase {
         model.blocks.append(ChatBlock(kind: .assistant, text: Self.reply + "\n\nAfter accessibility append"))
         XCTAssertTrue(waitForVisibleText("After accessibility append", in: scroll),
             "Reading the real accessibility subtree must not prevent subsequent native rendering")
+    }
+
+    func testRealTranscriptDecorativeHostsPreservePublicAccessibilityHitOwnership() throws {
+        let model = AppModel(startImmediately: false)
+        model.sidebarCollapsed = true
+        model.inspectorCollapsed = true
+        model.toolActivityVisibility = .verbose
+        let userText = "Unique public hit fixture question"
+        let toolIdentifier = "tool.public-hit-fixture.toggle"
+        model.blocks = [
+            ChatBlock(kind: .user, text: userText),
+            ChatBlock(kind: .tool, tool: ToolPayload(
+                toolID: "public-hit-fixture", tool: "read_file", summary: "Fixture",
+                detail: "Fixture output", status: .done
+            )),
+            ChatBlock(kind: .assistant, text: "Public hit fixture tail"),
+        ]
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let window = try XCTUnwrap(host.window)
+        window.title = "Transcript public hit ownership fixture"
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertTrue(waitForVisibleText("Public hit fixture tail", in: scroll))
+        XCTAssertTrue(waitForVisibleText(userText, in: scroll))
+        XCTAssertTrue(waitForVisibleAccessibilityIdentifier(toolIdentifier, in: scroll))
+        let tool = observeVisibility(identifier: toolIdentifier, in: scroll)
+        XCTAssertFalse(tool.traversalTruncated)
+        XCTAssertEqual(tool.controlMatchCount, 1)
+        XCTAssertEqual(tool.rejectedControlOwnershipCount, 0)
+        let toolFrame = NSRectFromString(try XCTUnwrap(tool.controlBoundsOnScreen.first))
+        var pending = [try XCTUnwrap(scroll.documentView)]
+        var leaves: [ResponseSelectableTextView] = []
+        var visited = 0
+        while let view = pending.popLast(), visited < 8_192 {
+            visited += 1
+            pending.append(contentsOf: view.subviews)
+            if let leaf = view as? ResponseSelectableTextView, leaf.string == userText { leaves.append(leaf) }
+        }
+        XCTAssertTrue(pending.isEmpty, "Native discovery must not truncate")
+        XCTAssertEqual(leaves.count, 1)
+        let leaf = try XCTUnwrap(leaves.first)
+        XCTAssertTrue(nativeViewIsVisible(leaf, in: scroll))
+        XCTAssertNotNil(leaf.selectionSpanID)
+        XCTAssertNotNil(leaf.selectionStore, "Decorative exclusions must retain native selection registration")
+        let leafFrame = window.convertToScreen(leaf.convert(leaf.bounds, to: nil))
+        let viewport = window.convertToScreen(scroll.contentView.convert(scroll.contentView.bounds, to: nil))
+        XCTAssertTrue(viewport.contains(toolFrame))
+        XCTAssertTrue(viewport.contains(leafFrame))
+        let screenTop = try XCTUnwrap(NSScreen.screens.first).frame.maxY
+        let targets = [
+            PublicTranscriptHitTarget(role: kAXButtonRole as String, identifier: toolIdentifier,
+                value: nil, frame: toolFrame),
+            PublicTranscriptHitTarget(role: kAXTextAreaRole as String, identifier: nil,
+                value: userText, frame: leafFrame),
+        ]
+        let receipt = PublicTranscriptHitReceipt()
+        let finished = expectation(description: "Public own-process hit ownership is resolved")
+        let title = window.title
+        DispatchQueue.global(qos: .userInitiated).async {
+            receipt.set(Self.observePublicTranscriptHits(title: title, screenTop: screenTop, targets: targets))
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 3)
+        let result = try XCTUnwrap(receipt.value())
+        XCTAssertTrue(result.completed, "Public AX traversal must finish within its bound")
+        XCTAssertEqual(result.matches, [true, true],
+            "Root AX must return the exact owned button and inner native text leaf, not their List/ScrollArea wrappers")
+        model.blocks.append(ChatBlock(kind: .assistant, text: String(repeating: Self.reply, count: 6) + "\n\nAfter public hit follow"))
+        XCTAssertTrue(waitForVisibleText("After public hit follow", in: scroll),
+            "Excluding decorative hosts must preserve real layout registration and following")
+    }
+
+    private nonisolated static func observePublicTranscriptHits(
+        title: String, screenTop: CGFloat, targets: [PublicTranscriptHitTarget]
+    ) -> PublicTranscriptHitResult {
+        let application = AXUIElementCreateApplication(getpid())
+        guard AXUIElementSetMessagingTimeout(application, 0.1) == .success else { return .init() }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+            return value
+        }
+        func frame(_ element: AXUIElement) -> CGRect? {
+            guard let position = attribute(element, kAXPositionAttribute),
+                  let size = attribute(element, kAXSizeAttribute),
+                  CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+            var origin = CGPoint.zero
+            var dimensions = CGSize.zero
+            guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+                  AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return nil }
+            return CGRect(origin: origin, size: dimensions)
+        }
+        guard let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement], windows.count <= 32 else { return .init() }
+        let owned = windows.filter { attribute($0, kAXTitleAttribute) as? String == title }
+        guard owned.count == 1, let window = owned.first else { return .init() }
+        var pending = [window]
+        var visited: [CFHashCode: [AXUIElement]] = [:]
+        var count = 0
+        var candidates = targets.map { _ in [AXUIElement]() }
+        let expectedFrames = targets.map {
+            CGRect(x: $0.frame.minX, y: screenTop - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
+        }
+        while let element = pending.popLast() {
+            guard count < 4_096, ProcessInfo.processInfo.systemUptime < deadline else { return .init() }
+            let hash = CFHash(element)
+            if visited[hash, default: []].contains(where: { CFEqual($0, element) }) { continue }
+            visited[hash, default: []].append(element)
+            count += 1
+            let role = attribute(element, kAXRoleAttribute) as? String
+            for (index, target) in targets.enumerated() where role == target.role {
+                guard let measured = frame(element) else { continue }
+                let expected = expectedFrames[index]
+                guard abs(measured.minX - expected.minX) <= 1, abs(measured.minY - expected.minY) <= 1,
+                      abs(measured.width - expected.width) <= 1, abs(measured.height - expected.height) <= 1,
+                      target.identifier.map({ attribute(element, kAXIdentifierAttribute) as? String == $0 }) ?? true,
+                      target.value.map({ attribute(element, kAXValueAttribute) as? String == $0 }) ?? true else { continue }
+                candidates[index].append(element)
+            }
+            for name in [kAXChildrenAttribute, kAXContentsAttribute] {
+                if let children = attribute(element, name) as? [AXUIElement] {
+                    guard children.count <= 4_096 else { return .init() }
+                    pending.append(contentsOf: children)
+                }
+            }
+        }
+        var matches: [Bool] = []
+        for (index, expected) in candidates.enumerated() {
+            guard expected.count == 1, let element = expected.first,
+                  ProcessInfo.processInfo.systemUptime < deadline else { matches.append(false); continue }
+            let center = expectedFrames[index]
+            var hit: AXUIElement?
+            let status = AXUIElementCopyElementAtPosition(application, Float(center.midX), Float(center.midY), &hit)
+            matches.append(status == .success && hit.map { CFEqual($0, element) } == true)
+        }
+        return PublicTranscriptHitResult(completed: true, matches: matches)
     }
 
     func testLogicalPinCoalescesAndRespectsSelectionDetachAndBridgeLifecycle() {
