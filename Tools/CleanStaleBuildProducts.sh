@@ -39,9 +39,22 @@ if is_test_action; then
     exit 0
 fi
 
-stale_test_bundle="${TARGET_BUILD_DIR:-}/${PLUGINS_FOLDER_PATH:-}/LocusTests.xctest"
-if [[ "${stale_test_bundle}" != *"/Locus.app/Contents/PlugIns/LocusTests.xctest" ]]; then
-    echo "error: Refusing to clean a test bundle outside Locus.app." >&2
+expected_plugins="Locus.app/Contents/PlugIns"
+if [[ "${CONFIGURATION:-}" == "ReleaseExperimental" && "${TARGET_NAME:-}" == "Locus" \
+    && "${FULL_PRODUCT_NAME:-}" == "Locus Experimental.app" ]]; then
+    expected_plugins="Locus Experimental.app/Contents/PlugIns"
+fi
+if [[ "${TARGET_BUILD_DIR:-}" != /* || "${TARGET_BUILD_DIR:-}" == "/" \
+    || ! -d "${TARGET_BUILD_DIR:-}" || "${PLUGINS_FOLDER_PATH:-}" != "${expected_plugins}" ]]; then
+    echo "error: Refusing to clean a test bundle outside the exact Locus build product." >&2
+    exit 1
+fi
+build_root="${TARGET_BUILD_DIR:A}"
+stale_test_bundle="${build_root}/${expected_plugins}/LocusTests.xctest"
+# A symlinked app, plug-in directory, or test bundle must not redirect cleanup
+# outside the build output. Child symlinks are not followed by rm -r.
+if [[ "${stale_test_bundle:A}" != "${stale_test_bundle}" ]]; then
+    echo "error: Refusing to clean a redirected test bundle." >&2
     exit 1
 fi
 
