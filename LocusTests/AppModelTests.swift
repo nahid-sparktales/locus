@@ -1,7 +1,100 @@
 import AppKit
+import Combine
 import SwiftUI
 import XCTest
 @testable import Locus
+
+/// A response is released explicitly, and the test then awaits AppModel's
+/// captured load task. A URLSession callback alone does not prove that the
+/// suspended main-actor continuation has finished applying (or rejecting) it.
+private final class TranscriptLoadURLProtocol: URLProtocol {
+    final class Gate {
+        let requested: XCTestExpectation
+        private let lock = NSLock()
+        private var pending: TranscriptLoadURLProtocol?
+
+        init(path: String) {
+            requested = XCTestExpectation(description: "Requested \(path)")
+        }
+
+        fileprivate func attach(_ request: TranscriptLoadURLProtocol) {
+            lock.lock()
+            pending = request
+            lock.unlock()
+            requested.fulfill()
+        }
+
+        func respond(status: Int = 200, body: [String: Any]) throws {
+            let data = try JSONSerialization.data(withJSONObject: body)
+            lock.lock()
+            let request = pending
+            pending = nil
+            lock.unlock()
+            let active = try XCTUnwrap(request, "Release requires an actually requested response")
+            active.finish(status: status, data: data)
+        }
+
+        fileprivate func cancel() {
+            lock.lock()
+            let request = pending
+            pending = nil
+            lock.unlock()
+            if let request {
+                request.client?.urlProtocol(request, didFailWithError: URLError(.cancelled))
+            }
+        }
+    }
+
+    private static let lock = NSLock()
+    private static var pendingRoutes: [(path: String, gate: Gate)] = []
+    private static var gates: [Gate] = []
+
+    static func hold(_ path: String) -> Gate {
+        let gate = Gate(path: path)
+        lock.lock()
+        pendingRoutes.append((path, gate))
+        gates.append(gate)
+        lock.unlock()
+        return gate
+    }
+
+    static func reset() {
+        lock.lock()
+        let previous = gates
+        gates = []
+        pendingRoutes = []
+        lock.unlock()
+        previous.forEach { $0.cancel() }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        guard let path = request.url?.path else { return }
+        Self.lock.lock()
+        let index = Self.pendingRoutes.firstIndex { $0.path == path }
+        let gate = index.map { Self.pendingRoutes.remove(at: $0).gate }
+        Self.lock.unlock()
+        if let gate {
+            gate.attach(self)
+        } else {
+            finish(status: 404, data: Data(#"{"error":"unstubbed fixture request"}"#.utf8))
+        }
+    }
+
+    private func finish(status: Int, data: Data) {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+              ) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
 
 private final class OrchestrationURLProtocol: URLProtocol {
     private static let lock = NSLock()
@@ -311,6 +404,584 @@ final class AppModelTests: XCTestCase {
         super.setUp()
         OrchestrationURLProtocol.reset()
         ProviderHandoffURLProtocol.reset()
+    }
+
+    @MainActor
+    private func transcriptLoadModel() -> AppModel {
+        TranscriptLoadURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TranscriptLoadURLProtocol.self]
+        return AppModel(
+            startImmediately: false,
+            backendOverride: BackendService(
+                baseURL: URL(string: "http://127.0.0.1:9")!, authToken: "fixture-only",
+                session: URLSession(configuration: configuration)
+            )
+        )
+    }
+
+    @MainActor
+    private func stopTranscriptLoadModel(_ model: AppModel) {
+        model.knowledge.cancelAll()
+        model.agentInstructions.cancelAll()
+        model.eventAutomations.stop()
+        model.toastCenter.cancelPendingDismissal()
+        model.taskWorkers.values.forEach { $0.stop() }
+        TranscriptLoadURLProtocol.reset()
+    }
+
+    private func transcriptSession(_ id: String) -> SessionSummary {
+        SessionSummary(id: id, name: id, preview: id, mtime: 1, size: 1)
+    }
+
+    private func transcriptResumeBody(
+        id: String, text: String, worker: String
+    ) -> [String: Any] {
+        [
+            "ok": true,
+            "session_info": sessionInfo(id: id),
+            "messages": [["role": "assistant", "content": text]],
+            "orchestration_state": "completed",
+            "worker_id": worker,
+        ]
+    }
+
+    @MainActor
+    private func transcriptWorker(_ id: String, model: AppModel) -> ChatWorkerRuntime {
+        let runtime = ChatWorkerRuntime(
+            requestedSessionID: id, workspacePath: "/tmp", process: BackendProcess(),
+            endpoint: URL(string: "http://127.0.0.1:9")!
+        )
+        model.taskWorkers[id] = runtime
+        return runtime
+    }
+
+    @MainActor
+    func testResumeBlocksEveryDraftAdmissionUntilOwnedMetadataIsReady() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        var previousInfo = sessionInfo(id: "previous")
+        previousInfo["task"] = [
+            "id": "previous-task", "workspace_root": "/tmp", "execution_path": "/tmp/previous-execution",
+            "baseline_tree": "fixture-tree", "state": "completed", "session_id": "previous",
+        ]
+        model.sessionInfo = try JSONDecoder().decode(
+            SessionInfo.self, from: JSONSerialization.data(withJSONObject: previousInfo)
+        )
+        model.activeTaskRecord = model.sessionInfo?.task
+        model.installTranscriptSession("previous", blocks: [])
+        model.agentRuntimePhase = .online
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/selected/resume")
+        model.resume(transcriptSession("selected"))
+        let load = try XCTUnwrap(model.activeTranscriptLoad)
+        await fulfillment(of: [response.requested], timeout: 1)
+        model.draftText = "  Keep this draft exactly  "
+        model.chatAttachments = [ChatAttachment(
+            url: URL(fileURLWithPath: "/tmp/fixture-not-read.txt"), kind: .text,
+            textContent: "Retained attachment"
+        )]
+        model.queuedMessages = ["Already queued"]
+        let draft = model.draftText
+        let attachments = model.chatAttachments
+        let snapshot = model.transcriptPresentation.snapshot
+        let history = model.promptHistory
+        XCTAssertEqual(model.transcriptInputState, .loading)
+        XCTAssertFalse(model.canAcceptTranscriptInput)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "previous", "Old metadata is not send authority")
+
+        for busy in [false, true] {
+            model.isBusy = busy
+            model.send(model.draftText)
+            model.send("/compact")
+            model.sendRaw("/compact")
+            model.submitDraft()
+            model.queueDraft()
+            model.steerDraft()
+            model.stopAndSendDraft()
+            model.retryLastResponse()
+            model.stop()
+            model.drainQueuedMessages()
+            XCTAssertEqual(model.draftText, draft)
+            XCTAssertEqual(model.chatAttachments, attachments)
+            XCTAssertEqual(model.queuedMessages, ["Already queued"])
+            XCTAssertEqual(model.transcriptPresentation.snapshot, snapshot)
+            XCTAssertEqual(model.promptHistory, history)
+            XCTAssertTrue(model.pendingChatTurns.isEmpty)
+            XCTAssertTrue(model.taskConversationStates.isEmpty)
+            XCTAssertNil(model.pendingStopAndSend)
+            XCTAssertEqual(model.isBusy, busy)
+        }
+
+        var body = transcriptResumeBody(id: "selected", text: "Selected rows", worker: "selected-worker")
+        var selectedInfo = sessionInfo(id: "selected")
+        selectedInfo["task"] = [
+            "id": "selected-task", "workspace_root": "/tmp", "execution_path": "/tmp/selected-execution",
+            "baseline_tree": "fixture-tree", "state": "completed", "session_id": "selected",
+        ]
+        body["session_info"] = selectedInfo
+        try response.respond(body: body)
+        await load.task.value
+        XCTAssertEqual(model.transcriptInputState, .ready)
+        XCTAssertTrue(model.canAcceptTranscriptInput)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "selected")
+        XCTAssertEqual(model.activeTaskRecord?.id, "selected-task")
+        XCTAssertEqual(model.activeTaskRecord?.executionPath, "/tmp/selected-execution")
+        XCTAssertEqual(model.draftText, draft)
+        XCTAssertEqual(model.chatAttachments, attachments)
+        model.queueDraft()
+        XCTAssertEqual(model.queuedMessages, [draft.trimmingCharacters(in: .whitespacesAndNewlines)])
+        XCTAssertTrue(model.draftText.isEmpty, "A successful owned load restores ordinary queue admission")
+        XCTAssertEqual(model.chatAttachments, attachments)
+    }
+
+    @MainActor
+    func testFailedResumeKeepsDraftBlockedUntilSuccessfulReopen() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        model.sessionInfo = try JSONDecoder().decode(
+            SessionInfo.self, from: JSONSerialization.data(withJSONObject: sessionInfo(id: "old"))
+        )
+        let failed = TranscriptLoadURLProtocol.hold("/api/sessions/selected/resume")
+        model.resume(transcriptSession("selected"))
+        let failedTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [failed.requested], timeout: 1)
+        model.draftText = "Keep after failure"
+        model.chatAttachments = [ChatAttachment(
+            url: URL(fileURLWithPath: "/tmp/fixture-not-read.txt"), kind: .text, textContent: "Keep"
+        )]
+        let attachments = model.chatAttachments
+        try failed.respond(status: 500, body: ["error": "Fixture load failed"])
+        await failedTask.value
+        XCTAssertEqual(model.transcriptInputState, .unavailable)
+        XCTAssertFalse(model.canAcceptTranscriptInput)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertEqual(model.currentSessionID, "selected")
+        XCTAssertEqual(model.sessionInfo?.sessionID, "old")
+        model.send(model.draftText)
+        model.queueDraft()
+        XCTAssertEqual(model.draftText, "Keep after failure")
+        XCTAssertEqual(model.chatAttachments, attachments)
+        XCTAssertTrue(model.queuedMessages.isEmpty)
+        XCTAssertTrue(model.pendingChatTurns.isEmpty)
+
+        let reopened = TranscriptLoadURLProtocol.hold("/api/sessions/selected/resume")
+        model.resume(transcriptSession("selected"))
+        let reopenedTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [reopened.requested], timeout: 1)
+        XCTAssertEqual(model.transcriptInputState, .loading)
+        try reopened.respond(body: transcriptResumeBody(id: "selected", text: "Loaded", worker: "selected-worker"))
+        await reopenedTask.value
+        XCTAssertTrue(model.canAcceptTranscriptInput)
+        XCTAssertEqual(model.draftText, "Keep after failure")
+        XCTAssertEqual(model.chatAttachments, attachments)
+    }
+
+    @MainActor
+    func testSameSessionInputLoadingPublishesWithoutChangingTranscriptSnapshot() throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        model.sessionInfo = try JSONDecoder().decode(
+            SessionInfo.self, from: JSONSerialization.data(withJSONObject: sessionInfo(id: "same"))
+        )
+        let rows = [ChatBlock(kind: .assistant, text: "Unchanged rows")]
+        model.installTranscriptSession("same", blocks: rows)
+        let before = model.transcriptPresentation.snapshot
+        let builds = model.transcriptPresentation.snapshotBuildCountForTesting
+        var states: [AppModel.TranscriptInputState] = []
+        let observation = model.$transcriptInputState.sink { states.append($0) }
+        defer { observation.cancel() }
+        let ownership = model.beginTranscriptSessionLoad("same")
+        XCTAssertEqual(model.transcriptPresentation.snapshot, before)
+        XCTAssertEqual(states, [.ready, .loading])
+        XCTAssertTrue(model.completeTranscriptSessionLoad(ownership, sessionID: "same", blocks: rows))
+        XCTAssertFalse(model.canAcceptTranscriptInput, "Rows alone do not authorize stale metadata")
+        XCTAssertEqual(model.transcriptPresentation.snapshot, before)
+        model.finishTranscriptInputLoad(ownership)
+        XCTAssertEqual(states, [.ready, .loading, .ready])
+        XCTAssertEqual(model.transcriptPresentation.snapshotBuildCountForTesting, builds)
+    }
+
+    @MainActor
+    func testWorkerDraftAdmissionWaitsForItsOwnedTaskMetadata() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let runtime = transcriptWorker("worker-chat", model: model)
+        let taskBody: [String: Any] = [
+            "id": "worker-task", "workspace_root": "/tmp", "execution_path": "/tmp/worker-execution",
+            "baseline_tree": "fixture-tree", "state": "completed", "session_id": "worker-chat",
+        ]
+        var info = sessionInfo(id: "worker-chat")
+        info["task"] = taskBody
+        runtime.sessionInfo = try JSONDecoder().decode(
+            SessionInfo.self, from: JSONSerialization.data(withJSONObject: info)
+        )
+        let rows = TranscriptLoadURLProtocol.hold("/api/sessions/worker-chat")
+        let metadata = TranscriptLoadURLProtocol.hold("/api/tasks/worker-task")
+        model.resume(transcriptSession("worker-chat"))
+        let load = try XCTUnwrap(model.activeTranscriptLoad)
+        await fulfillment(of: [rows.requested], timeout: 1)
+        try rows.respond(body: [
+            "id": "worker-chat", "preview": "Worker",
+            "messages": [["role": "assistant", "content": "Loaded worker rows"]],
+            "task": taskBody, "orchestration_state": "completed", "worker_id": "worker",
+        ])
+        await fulfillment(of: [metadata.requested], timeout: 1)
+        XCTAssertEqual(model.blocks.map(\.text), ["Loaded worker rows"])
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertEqual(model.transcriptInputState, .loading)
+        model.draftText = "Wait for task metadata"
+        model.queueDraft()
+        XCTAssertEqual(model.draftText, "Wait for task metadata")
+        XCTAssertTrue(model.queuedMessages.isEmpty)
+        try metadata.respond(body: ["task": taskBody, "tree": "fixture-tree", "patch": "", "patch_bytes": 0])
+        await load.task.value
+        XCTAssertTrue(model.canAcceptTranscriptInput)
+        model.queueDraft()
+        XCTAssertEqual(model.queuedMessages, ["Wait for task metadata"])
+    }
+
+    @MainActor
+    func testCancelledOwnedResumeCannotReleaseDraftAdmission() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/cancelled/resume")
+        model.resume(transcriptSession("cancelled"))
+        let load = try XCTUnwrap(model.activeTranscriptLoad)
+        await fulfillment(of: [response.requested], timeout: 1)
+        model.draftText = "Keep after cancellation"
+        load.task.cancel()
+        await load.task.value
+        XCTAssertEqual(model.transcriptInputState, .unavailable)
+        XCTAssertFalse(model.canAcceptTranscriptInput)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertFalse(model.transcriptPresentation.ownsSessionLoad(load.token))
+        model.queueDraft()
+        XCTAssertEqual(model.draftText, "Keep after cancellation")
+        XCTAssertTrue(model.queuedMessages.isEmpty)
+    }
+
+    @MainActor
+    func testLateResumeResponseCannotReplaceNewConversationOrMetadata() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let oldResponse = TranscriptLoadURLProtocol.hold("/api/sessions/old/resume")
+        model.resume(transcriptSession("old"))
+        let oldTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [oldResponse.requested], timeout: 1)
+
+        let newResponse = TranscriptLoadURLProtocol.hold("/api/sessions/new/resume")
+        model.resume(transcriptSession("new"))
+        let newTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [newResponse.requested], timeout: 1)
+        try newResponse.respond(body: transcriptResumeBody(id: "new", text: "New conversation", worker: "new-worker"))
+        await newTask.value
+        let selected = model.transcriptPresentation.snapshot
+        XCTAssertEqual(selected.sessionID, "new")
+        XCTAssertEqual(selected.blocks.map(\.text), ["New conversation"])
+        XCTAssertEqual(model.sessionInfo?.sessionID, "new")
+        XCTAssertEqual(model.activeWorkerID, "new-worker")
+        XCTAssertNil(model.activeTranscriptLoad)
+        // Selecting away may already cache an empty pane. The stale response
+        // must preserve that exact projection, not merely leave the active row.
+        let panesBeforeLateResponse = model.splitPaneBlocks
+
+        try oldResponse.respond(body: transcriptResumeBody(id: "old", text: "Late old content", worker: "old-worker"))
+        await oldTask.value
+
+        XCTAssertEqual(model.transcriptPresentation.snapshot, selected)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "new")
+        XCTAssertEqual(model.activeWorkerID, "new-worker")
+        XCTAssertEqual(model.splitPaneBlocks, panesBeforeLateResponse)
+        XCTAssertNil(model.taskConversationStates["old"])
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertTrue(model.canAcceptTranscriptInput, "A stale response cannot revoke the current session's readiness")
+    }
+
+    @MainActor
+    func testRepeatedResumeOfSameSessionRejectsOlderResponseAfterNewerCompletion() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let older = TranscriptLoadURLProtocol.hold("/api/sessions/same/resume")
+        model.resume(transcriptSession("same"))
+        let olderTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [older.requested], timeout: 1)
+        let generation = model.transcriptPresentation.snapshot.renderToken.sessionGeneration
+
+        let newer = TranscriptLoadURLProtocol.hold("/api/sessions/same/resume")
+        model.resume(transcriptSession("same"))
+        let newerTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [newer.requested], timeout: 1)
+        try newer.respond(body: transcriptResumeBody(id: "same", text: "Current response", worker: "current-worker"))
+        await newerTask.value
+        let current = model.transcriptPresentation.snapshot
+        XCTAssertEqual(current.blocks.map(\.text), ["Current response"])
+        XCTAssertEqual(current.renderToken.sessionGeneration, generation)
+
+        try older.respond(body: transcriptResumeBody(id: "same", text: "Superseded response", worker: "superseded-worker"))
+        await olderTask.value
+        XCTAssertEqual(model.transcriptPresentation.snapshot, current)
+        XCTAssertEqual(model.activeWorkerID, "current-worker")
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
+    func testLateResumeFailureCannotAppendAnErrorOrClearNewerLoad() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let oldResponse = TranscriptLoadURLProtocol.hold("/api/sessions/old/resume")
+        model.resume(transcriptSession("old"))
+        let oldTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [oldResponse.requested], timeout: 1)
+        let newResponse = TranscriptLoadURLProtocol.hold("/api/sessions/new/resume")
+        model.resume(transcriptSession("new"))
+        let newTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        let newToken = try XCTUnwrap(model.activeTranscriptLoad?.token)
+        await fulfillment(of: [newResponse.requested], timeout: 1)
+
+        try oldResponse.respond(status: 500, body: ["error": "Old request failed"])
+        await oldTask.value
+        XCTAssertEqual(model.activeTranscriptLoad?.token, newToken)
+        XCTAssertEqual(model.transcriptPresentation.loadingSessionID, "new")
+        XCTAssertEqual(model.currentSessionID, "new")
+        XCTAssertTrue(model.blocks.isEmpty)
+        XCTAssertEqual(model.transcriptInputState, .loading, "A stale failure cannot release the newer load's admission gate")
+
+        try newResponse.respond(body: transcriptResumeBody(id: "new", text: "Still current", worker: "new-worker"))
+        await newTask.value
+        XCTAssertEqual(model.blocks.map(\.text), ["Still current"])
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
+    func testResumeServerRekeyInstallsContentWithoutAnotherSessionGeneration() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/requested/resume")
+        model.resume(transcriptSession("requested"))
+        let task = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        let generation = model.transcriptPresentation.snapshot.renderToken.sessionGeneration
+        await fulfillment(of: [response.requested], timeout: 1)
+        try response.respond(body: transcriptResumeBody(id: "server-assigned", text: "Restored content", worker: "worker"))
+        await task.value
+        XCTAssertEqual(model.currentSessionID, "server-assigned")
+        XCTAssertEqual(model.blocks.map(\.text), ["Restored content"])
+        XCTAssertEqual(model.transcriptPresentation.snapshot.renderToken.sessionGeneration, generation)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "server-assigned")
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
+    func testLateWorkerTranscriptCannotReplaceResumedConversation() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let runtime = transcriptWorker("worker-chat", model: model)
+        runtime.lastError = "Old worker error"
+        let workerResponse = TranscriptLoadURLProtocol.hold("/api/sessions/worker-chat")
+        model.resume(transcriptSession("worker-chat"))
+        let workerTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [workerResponse.requested], timeout: 1)
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/new/resume")
+        model.resume(transcriptSession("new"))
+        let newTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [response.requested], timeout: 1)
+        try response.respond(body: transcriptResumeBody(id: "new", text: "Selected content", worker: "selected-worker"))
+        await newTask.value
+        let selected = model.transcriptPresentation.snapshot
+        XCTAssertEqual(selected.blocks.map(\.text), ["Selected content"])
+        let panesBeforeLateResponse = model.splitPaneBlocks
+
+        try workerResponse.respond(body: [
+            "id": "worker-chat", "preview": "Old worker",
+            "messages": [["role": "assistant", "content": "Late worker content"]],
+            "orchestration_state": "running", "worker_id": "old-worker",
+        ])
+        await workerTask.value
+        XCTAssertEqual(model.transcriptPresentation.snapshot, selected)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "new")
+        XCTAssertEqual(model.activeWorkerID, "selected-worker")
+        XCTAssertEqual(model.orchestrationState, .completed)
+        XCTAssertFalse(model.isBusy)
+        XCTAssertEqual(model.splitPaneBlocks, panesBeforeLateResponse)
+    }
+
+    @MainActor
+    func testLateWorkerTaskMetadataCannotMutateNewConversationAfterTranscriptLoaded() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        _ = transcriptWorker("worker-chat", model: model)
+        let transcript = TranscriptLoadURLProtocol.hold("/api/sessions/worker-chat")
+        let metadata = TranscriptLoadURLProtocol.hold("/api/tasks/old-task")
+        let taskBody: [String: Any] = [
+            "id": "old-task", "workspace_root": "/tmp", "execution_path": "/tmp",
+            "baseline_tree": "fixture-tree", "state": "running", "session_id": "worker-chat",
+        ]
+        model.resume(transcriptSession("worker-chat"))
+        let workerTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [transcript.requested], timeout: 1)
+        try transcript.respond(body: [
+            "id": "worker-chat", "preview": "Worker",
+            "messages": [["role": "assistant", "content": "Loaded worker content"]],
+            "task": taskBody, "orchestration_state": "running", "worker_id": "old-worker",
+        ])
+        await fulfillment(of: [metadata.requested], timeout: 1)
+        XCTAssertEqual(model.blocks.map(\.text), ["Loaded worker content"])
+        XCTAssertEqual(model.activeTaskRecord?.id, "old-task")
+        XCTAssertEqual(model.activeWorkerID, "old-worker")
+        XCTAssertTrue(model.isBusy)
+
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/new/resume")
+        model.resume(transcriptSession("new"))
+        let newTask = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [response.requested], timeout: 1)
+        try response.respond(body: transcriptResumeBody(id: "new", text: "Current content", worker: "new-worker"))
+        await newTask.value
+        model.landingFlow.taskHasChanges = false
+        model.landingFlow.taskPatchBytes = 17
+        model.toastCenter.cancelPendingDismissal()
+        let selected = model.transcriptPresentation.snapshot
+        let toast = model.toast
+
+        try metadata.respond(body: [
+            "task": taskBody, "tree": "fixture-tree", "patch": "old patch", "patch_bytes": 900,
+        ])
+        await workerTask.value
+        XCTAssertEqual(model.transcriptPresentation.snapshot, selected)
+        XCTAssertEqual(model.sessionInfo?.sessionID, "new")
+        XCTAssertEqual(model.activeWorkerID, "new-worker")
+        XCTAssertNil(model.activeTaskRecord)
+        XCTAssertFalse(model.landingFlow.taskHasChanges)
+        XCTAssertEqual(model.landingFlow.taskPatchBytes, 17)
+        XCTAssertEqual(model.toast, toast, "Old task completion must not replace the new chat's status")
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
+    func testRemovedWorkerLoadReleasesOnlyItsOwnUnfinishedLease() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let runtime = transcriptWorker("worker-chat", model: model)
+        defer { runtime.stop() }
+        let response = TranscriptLoadURLProtocol.hold("/api/sessions/worker-chat")
+        model.resume(transcriptSession("worker-chat"))
+        let load = try XCTUnwrap(model.activeTranscriptLoad)
+        await fulfillment(of: [response.requested], timeout: 1)
+        model.taskWorkers.removeValue(forKey: "worker-chat")
+        let selected = model.transcriptPresentation.snapshot
+        try response.respond(body: [
+            "id": "worker-chat", "preview": "Removed worker",
+            "messages": [["role": "assistant", "content": "Must not install"]],
+            "worker_id": "removed-worker",
+        ])
+        await load.task.value
+        XCTAssertEqual(model.transcriptPresentation.snapshot, selected)
+        XCTAssertNil(model.activeWorkerID)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+        XCTAssertFalse(model.transcriptPresentation.ownsSessionLoad(load.token))
+        XCTAssertEqual(model.transcriptInputState, .unavailable)
+    }
+
+    @MainActor
+    func testDelayedSessionStartedCannotClearOrRekeyAfterNewSelection() {
+        for reason in ["clear_chat", "workspace_chat", "new_session", "retry", "deleted_active"] {
+            let model = AppModel(startImmediately: false)
+            model.installTranscriptSession("old", blocks: [ChatBlock(kind: .user, text: "Old content")])
+            _ = model.beginTranscriptTransition(
+                source: model.backend, reasons: [reason], acceptsSocketAcknowledgement: true
+            )
+            model.pendingSessionReset = reason != "retry"
+            model.pendingRetry = reason == "retry"
+
+            model.currentSessionID = "selected"
+            model.blocks = [ChatBlock(kind: .assistant, text: "Selected content")]
+            let selected = model.transcriptPresentation.snapshot
+            XCTAssertNil(model.pendingTranscriptTransition)
+            XCTAssertFalse(model.pendingSessionReset)
+            XCTAssertFalse(model.pendingRetry)
+            model.handleEventForTesting([
+                "type": "session_started", "reason": reason,
+                "session_info": sessionInfo(id: "late-created-session"),
+            ])
+            XCTAssertEqual(model.transcriptPresentation.snapshot, selected, reason)
+            XCTAssertNil(model.sessionInfo, reason)
+            XCTAssertNil(model.transcriptPresentation.loadingSessionID, reason)
+        }
+    }
+
+    @MainActor
+    func testSessionStartedRequiresPendingSourceAndExpectedReason() {
+        let model = AppModel(startImmediately: false)
+        defer { model.toastCenter.cancelPendingDismissal() }
+        model.installTranscriptSession("old", blocks: [ChatBlock(kind: .user, text: "Old content")])
+        let ownership = model.beginTranscriptTransition(
+            source: model.backend, reasons: ["clear_chat"], acceptsSocketAcknowledgement: true
+        )
+        model.pendingSessionReset = true
+        let original = model.transcriptPresentation.snapshot
+        let otherSource = BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, authToken: "fixture-only")
+        let event: [String: Any] = [
+            "type": "session_started", "reason": "clear_chat", "session_info": sessionInfo(id: "fresh"),
+        ]
+        model.handle(event, source: otherSource)
+        XCTAssertEqual(model.transcriptPresentation.snapshot, original)
+        model.handleEventForTesting([
+            "type": "session_started", "reason": "retry", "session_info": sessionInfo(id: "wrong-reason"),
+        ])
+        XCTAssertEqual(model.transcriptPresentation.snapshot, original)
+        XCTAssertTrue(model.transcriptPresentation.ownsSessionLoad(ownership))
+
+        model.handle(event, source: model.backend)
+        XCTAssertEqual(model.currentSessionID, "fresh")
+        XCTAssertTrue(model.blocks.isEmpty)
+        XCTAssertNil(model.pendingTranscriptTransition)
+        XCTAssertNil(model.transcriptPresentation.loadingSessionID)
+    }
+
+    @MainActor
+    func testHTTPTransitionIgnoresSocketRaceAndAppliesExactResponseOnce() throws {
+        let model = AppModel(startImmediately: false)
+        defer { model.toastCenter.cancelPendingDismissal() }
+        model.installTranscriptSession("old", blocks: [ChatBlock(kind: .user, text: "Old content")])
+        let ownership = model.beginTranscriptTransition(
+            source: model.backend, reasons: ["workspace_chat"], acceptsSocketAcknowledgement: false
+        )
+        model.pendingSessionReset = true
+        let original = model.transcriptPresentation.snapshot
+        var finalInfo = sessionInfo(id: "exact-http-session")
+        finalInfo["model"] = "final-http-metadata"
+        let info = try JSONDecoder().decode(
+            SessionInfo.self, from: JSONSerialization.data(withJSONObject: finalInfo)
+        )
+        let event: [String: Any] = [
+            "type": "session_started", "reason": "workspace_chat",
+            "session_info": sessionInfo(id: "exact-http-session"),
+        ]
+        model.handleEventForTesting(event)
+        XCTAssertEqual(model.transcriptPresentation.snapshot, original)
+        XCTAssertTrue(model.transcriptPresentation.ownsSessionLoad(ownership))
+        model.applySessionStarted(info, reason: "workspace_chat")
+        let applied = model.transcriptPresentation.snapshot
+        XCTAssertEqual(applied.sessionID, "exact-http-session")
+        XCTAssertTrue(applied.blocks.isEmpty)
+        model.handleEventForTesting(event)
+        XCTAssertEqual(model.transcriptPresentation.snapshot, applied)
+        XCTAssertEqual(model.sessionInfo?.model, "final-http-metadata")
+    }
+
+    @MainActor
+    func testInitialSessionStartedNamesDraftWithoutChangingItsRenderToken() {
+        let model = AppModel(startImmediately: false)
+        model.blocks = [ChatBlock(kind: .user, text: "Existing draft")]
+        let token = model.transcriptPresentation.snapshot.renderToken
+        model.handleEventForTesting([
+            "type": "session_started", "reason": "new_session", "session_info": sessionInfo(id: "assigned"),
+        ])
+        XCTAssertEqual(model.currentSessionID, "assigned")
+        XCTAssertEqual(model.blocks.map(\.text), ["Existing draft"])
+        XCTAssertEqual(model.transcriptPresentation.snapshot.renderToken, token)
     }
 
     @MainActor
@@ -2614,6 +3285,9 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         model.blocks = [ChatBlock(kind: .user, text: "old conversation")]
         model.todos = [TodoItem(content: "old task", status: .pending)]
+        _ = model.beginTranscriptTransition(
+            source: model.backend, reasons: ["clear_chat"], acceptsSocketAcknowledgement: true
+        )
 
         model.handleEventForTesting([
             "type": "session_started",
@@ -2636,6 +3310,9 @@ final class AppModelTests: XCTestCase {
             ChatBlock(kind: .user, text: "second"),
             ChatBlock(kind: .assistant, text: "two"),
         ]
+        _ = model.beginTranscriptTransition(
+            source: model.backend, reasons: ["retry"], acceptsSocketAcknowledgement: true
+        )
 
         model.handleEventForTesting([
             "type": "session_started",

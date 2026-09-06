@@ -682,6 +682,9 @@ final class PinnedSummaryTests: XCTestCase {
 
         var fresh = sessionInfo(id: "fresh")
         fresh.removeValue(forKey: "type")
+        _ = model.beginTranscriptTransition(
+            source: model.backend, reasons: ["clear_chat"], acceptsSocketAcknowledgement: true
+        )
         model.handleEventForTesting(["type": "session_started", "reason": "clear_chat", "session_info": fresh])
 
         XCTAssertTrue(model.sessionOverview.state.outputs.isEmpty)

@@ -34,7 +34,7 @@ extension AppModel {
     }
 
     func restore(_ checkpoint: SessionCheckpoint) {
-        guard !isBusy, !hasPendingPermission else {
+        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
             showToast("Finish the active run before restoring a checkpoint")
             return
         }
@@ -42,12 +42,17 @@ extension AppModel {
             showToast("Choose that workspace again before restoring this checkpoint")
             return
         }
+        _ = beginTranscriptTransition(
+            source: backend, reasons: ["new_session"], acceptsSocketAcknowledgement: true
+        )
+        pendingSessionReset = true
+        pendingCheckpointRestore = checkpoint
         guard backend.send(["type": "new_session"]) else {
+            invalidatePendingTranscriptTransition()
             showToast("Reconnect before restoring a checkpoint")
             return
         }
-        pendingSessionReset = true
-        pendingCheckpointRestore = checkpoint
+        armSessionResetWatchdog()
         checkpointPresented = false
         showToast("Restoring checkpoint…")
     }

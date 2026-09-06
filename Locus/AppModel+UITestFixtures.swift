@@ -526,7 +526,9 @@ extension AppModel {
            !variant.isEmpty {
             seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
             // "schedule" lands on the scheduled agent's chat so its panel shows.
-            if variant == "schedule" { currentSessionID = "seed-schedule-chat" }
+            if variant == "schedule" {
+                installTranscriptSession("seed-schedule-chat", blocks: blocks)
+            }
         }
         seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
@@ -706,7 +708,7 @@ extension AppModel {
         )
         sessions.append(contentsOf: [newestChat, olderChat])
         if selectsAgentChat {
-            currentSessionID = newestChat.id
+            installTranscriptSession(newestChat.id, blocks: blocks)
         }
         if selectsAgentChat { sessionInfo = SessionInfo(
             model: "qwen3:8b",

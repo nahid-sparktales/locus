@@ -479,6 +479,7 @@ extension AppModel {
         // UI tests run against seeded fixtures; a live agent on the same port
         // must never replace them mid-test.
         guard !isUITesting else { return }
+        let transcriptOwnership = transcriptPresentation.sessionOwnershipToken
         do {
             let health = try await backend.get("/api/health", as: HealthResponse.self)
             backendCapabilities = health.capabilities ?? [:]
@@ -524,11 +525,17 @@ extension AppModel {
                 sessions: response.sessions,
                 chatFolders: folders?.folders
             )
-            if taskWorkers[currentSessionID] == nil {
-                currentSessionID = response.current
+            let stillOwnsTranscript = transcriptPresentation.ownsSessionLoad(transcriptOwnership)
+                && transcriptPresentation.loadingSessionID == nil
+            if stillOwnsTranscript, taskWorkers[currentSessionID] == nil {
+                if currentSessionID.isEmpty {
+                    rekeyTranscriptSession(to: response.current)
+                } else {
+                    currentSessionID = response.current
+                }
             }
-            reconcileChatSplitRestoration()
-            if let path = workspaceToOpenAfterReconnect {
+            if stillOwnsTranscript { reconcileChatSplitRestoration() }
+            if stillOwnsTranscript, let path = workspaceToOpenAfterReconnect {
                 workspaceToOpenAfterReconnect = nil
                 let canonical = SessionSummary.canonicalWorkspacePath(path)
                 expandedWorkspaceIDs.insert(canonical)

@@ -105,6 +105,21 @@ final class AppModel: ObservableObject {
     let extensionsModel: ExtensionsModel
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
+    enum TranscriptInputState: Equatable {
+        case ready
+        case loading
+        case unavailable
+
+        var explanation: String? {
+            switch self {
+            case .ready: nil
+            case .loading: "Loading this conversation. Your draft is kept."
+            case .unavailable: "Reopen this conversation before sending. Your draft is kept."
+            }
+        }
+    }
+    @Published private(set) var transcriptInputState = TranscriptInputState.ready
+    var canAcceptTranscriptInput: Bool { transcriptInputState == .ready }
     var sessions: [SessionSummary] {
         get { sessionCatalog.snapshot.sessions }
         set { sessionCatalog.replaceSessions(newValue) }
@@ -113,7 +128,16 @@ final class AppModel: ObservableObject {
         get { sessionCatalog.snapshot.chatFolders }
         set { sessionCatalog.replaceChatFolders(newValue) }
     }
-    @Published var currentSessionID = ""
+    var currentSessionID: String {
+        get { transcriptPresentation.snapshot.sessionID }
+        set {
+            guard currentSessionID != newValue else { return }
+            invalidatePendingTranscriptTransition()
+            if transcriptInputState == .loading { transcriptInputState = .unavailable }
+            objectWillChange.send()
+            transcriptPresentation.beginSession(newValue)
+        }
+    }
     @Published var chatSplitRestoration = ChatSplitRestoration.empty  // internal(for: AppModel extension files)
     let primaryChatPaneState = ChatPaneState(id: .primary)
     let secondaryChatPaneState = ChatPaneState(id: .secondary)
@@ -155,6 +179,56 @@ final class AppModel: ObservableObject {
 
     func updateTranscriptBlocks(_ update: (inout [ChatBlock]) -> Void) {
         transcriptPresentation.updateBlocks(update)
+    }
+
+    func installTranscriptSession(
+        _ sessionID: String, blocks: [ChatBlock], forceNewGeneration: Bool = false
+    ) {
+        if currentSessionID != sessionID { objectWillChange.send() }
+        transcriptPresentation.installSession(
+            sessionID, blocks: blocks, forceNewGeneration: forceNewGeneration
+        )
+    }
+
+    func rekeyTranscriptSession(to sessionID: String) {
+        guard currentSessionID != sessionID else { return }
+        objectWillChange.send()
+        transcriptPresentation.rekeySession(from: currentSessionID, to: sessionID)
+    }
+
+    func beginTranscriptSessionLoad(_ sessionID: String) -> TranscriptSessionLoadToken {
+        invalidatePendingTranscriptTransition()
+        transcriptInputState = .loading
+        if currentSessionID != sessionID { objectWillChange.send() }
+        return transcriptPresentation.beginSessionLoad(sessionID)
+    }
+
+    @discardableResult
+    func completeTranscriptSessionLoad(
+        _ token: TranscriptSessionLoadToken, sessionID: String, blocks: [ChatBlock]
+    ) -> Bool {
+        guard transcriptPresentation.ownsSessionLoad(token),
+              transcriptPresentation.loadingSessionID != nil else { return false }
+        if currentSessionID != sessionID { objectWillChange.send() }
+        return transcriptPresentation.completeSessionLoad(token, sessionID: sessionID, blocks: blocks)
+    }
+
+    /// Loading the rows alone is insufficient: the send path also snapshots
+    /// the selected session's workspace and task. Publish readiness only once
+    /// that same owned operation has finished applying its metadata.
+    func finishTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
+        guard transcriptPresentation.ownsSessionLoad(token) else { return }
+        transcriptInputState = sessionInfo?.sessionID == currentSessionID ? .ready : .unavailable
+    }
+
+    func failTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
+        guard transcriptPresentation.ownsSessionLoad(token) else { return }
+        transcriptInputState = .unavailable
+        transcriptPresentation.cancelSessionLoad(token)
+    }
+
+    func transcriptSessionMetadataDidBecomeReady() {
+        transcriptInputState = .ready
     }
 
     @Published var todos: [TodoItem] = []
@@ -601,6 +675,17 @@ final class AppModel: ObservableObject {
     var workspaceToOpenAfterReconnect: String?  // internal(for: AppModel extension files)
     var appliedWorkspacePath: String?  // internal(for: AppModel extension files)
     var sessionResetWatchdog: Task<Void, Never>?  // internal(for: AppModel extension files)
+    /// Retains only the currently requested transcript load. Completion clears
+    /// its own handle without clearing a newer request; callers may await a
+    /// captured handle without changing response ordering or cancellation.
+    var activeTranscriptLoad: (token: TranscriptSessionLoadToken, task: Task<Void, Never>)?
+    struct PendingTranscriptTransition {
+        let ownership: TranscriptSessionLoadToken
+        let source: ObjectIdentifier
+        let reasons: Set<String>
+        var acceptsSocketAcknowledgement: Bool
+    }
+    var pendingTranscriptTransition: PendingTranscriptTransition?
     var terminalRefreshRunIDs: Set<String> = []  // internal(for: AppModel extension files)
     var restoredQueuedRunIDs: Set<String> = []  // internal(for: AppModel extension files)
     let lifecycleJournal: AppLifecycleJournal?  // internal(for: AppModel extension files)

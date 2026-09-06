@@ -235,7 +235,7 @@ extension AppModel {
             taskWorkers.removeValue(forKey: requestedSessionID)
             taskWorkers[runtime.sessionID] = runtime
             if currentSessionID == requestedSessionID {
-                currentSessionID = runtime.sessionID
+                rekeyTranscriptSession(to: runtime.sessionID)
             }
         }
         if currentSessionID == runtime.sessionID, let info = runtime.sessionInfo {
@@ -443,7 +443,7 @@ extension AppModel {
             recordBackgroundWorkerEvent(event, runtime: runtime)
             return
         }
-        handle(event)
+        handle(event, source: runtime.service)
     }
 
     private func recordBackgroundWorkerEvent(

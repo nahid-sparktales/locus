@@ -8,6 +8,15 @@ import UniformTypeIdentifiers
 /// snapshotting, steering, queuing, regeneration, stop, and the quit-time
 /// running-work drain.
 extension AppModel {
+    @discardableResult
+    private func admitTranscriptInput() -> Bool {
+        guard canAcceptTranscriptInput else {
+            if let explanation = transcriptInputState.explanation { showToast(explanation) }
+            return false
+        }
+        return true
+    }
+
     func send(_ rawText: String) {
         send(rawText, preservingDraftOnFailure: true)
     }
@@ -22,6 +31,7 @@ extension AppModel {
         consumeMatchingDraft: Bool = true,
         allowLocalCommands: Bool = true
     ) {
+        guard admitTranscriptInput() else { return }
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         let availableAttachments = includeAttachments ? availableChatAttachments : []
         let hasChatAttachments = !availableAttachments.isEmpty
@@ -93,6 +103,7 @@ extension AppModel {
             let requiresVision = availableAttachments.contains {
                 $0.kind == .image || $0.kind == .applicationSnapshot
             }
+            let transcriptOwnership = transcriptPresentation.sessionOwnershipToken
             Task { [weak self] in
                 guard let self else { return }
                 let route = await prepareAutomaticModelRoute(
@@ -100,6 +111,8 @@ extension AppModel {
                     mode: dispatchedMode,
                     requiresVision: requiresVision
                 )
+                guard transcriptPresentation.ownsSessionLoad(transcriptOwnership),
+                      canAcceptTranscriptInput else { return }
                 isBusy = false
                 send(
                     rawText,
@@ -623,6 +636,7 @@ extension AppModel {
     /// /compact) — routing them back through send() would re-match the same
     /// command and recurse without bound.
     func sendRaw(_ text: String) {
+        guard admitTranscriptInput() else { return }
         if isBusy || hasPendingPermission {
             queuedMessages.append(text)
             showToast("Queued — sends when this turn finishes")
@@ -645,6 +659,7 @@ extension AppModel {
     }
 
     func submitDraft() {
+        guard admitTranscriptInput() else { return }
         if isBusy {
             queueDraft()
         } else {
@@ -656,6 +671,7 @@ extension AppModel {
     /// stops only the current generation, preserves completed tool results,
     /// and continues the same turn without an intermediate `turn_done`.
     func steerDraft() {
+        guard admitTranscriptInput() else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy,
               steeringState?.hasPrefix("Stopping") != true,
@@ -676,6 +692,7 @@ extension AppModel {
 
     /// Explicitly retain a message for the next independent turn.
     func queueDraft() {
+        guard admitTranscriptInput() else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         queuedMessages.append(text)
@@ -689,6 +706,7 @@ extension AppModel {
     /// Interrupt now, but do not start the replacement turn until the backend
     /// confirms the old one has fully unwound and persisted its terminal state.
     func stopAndSendDraft() {
+        guard admitTranscriptInput() else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
         guard conversationBackend.send(["type": "interrupt"]) else {
@@ -716,7 +734,7 @@ extension AppModel {
     }
 
     func drainQueuedMessages() {
-        guard !isBusy, !hasPendingPermission, !planApprovalPending,
+        guard canAcceptTranscriptInput, !isBusy, !hasPendingPermission, !planApprovalPending,
               pendingUserQuestion == nil, !queuedMessages.isEmpty else {
             return
         }
@@ -798,7 +816,8 @@ extension AppModel {
     }
 
     func canRegenerate(_ block: ChatBlock) -> Bool {
-        !isBusy
+        canAcceptTranscriptInput
+            && !isBusy
             && !hasPendingPermission
             && block.kind == .assistant
             && !block.isStreaming
@@ -806,10 +825,16 @@ extension AppModel {
     }
 
     func retryLastResponse() {
+        guard admitTranscriptInput() else { return }
         guard !isBusy, !hasPendingPermission,
               blocks.contains(where: { $0.kind == .user })
         else { return }
-        guard conversationBackend.send(["type": "retry_last"]) else {
+        let source = conversationBackend
+        _ = beginTranscriptTransition(
+            source: source, reasons: ["retry"], acceptsSocketAcknowledgement: true
+        )
+        guard source.send(["type": "retry_last"]) else {
+            invalidatePendingTranscriptTransition()
             showToast("Reconnect the local agent before retrying")
             return
         }
@@ -832,6 +857,7 @@ extension AppModel {
     }
 
     func stop() {
+        guard admitTranscriptInput() else { return }
         if let pendingTurn = pendingChatTurns[currentSessionID] {
             let queuedRunID = taskConversationStates[currentSessionID]?.runID
             pendingTurn.cancel()

@@ -265,6 +265,7 @@ struct ComposerView: View {
         VStack(spacing: 8) {
             if !composerState.queuedMessages.isEmpty {
                 queueRow
+                    .disabled(!model.canAcceptTranscriptInput)
             }
 
             // While a permission request is pending the prompt replaces the
@@ -272,21 +273,21 @@ struct ComposerView: View {
             // be typed or sent until the request is answered, and the keyboard
             // drives the answer. The draft lives on the model, so it survives
             // the editor unmounting and is back the moment the panel clears.
-            if let request = model.activePermissionRequest {
+            if model.canAcceptTranscriptInput, let request = model.activePermissionRequest {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
-            } else if let question = model.pendingBlockingQuestion {
+            } else if model.canAcceptTranscriptInput, let question = model.pendingBlockingQuestion {
                 BlockingQuestionPromptView(request: question)
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
-            } else if model.planApprovalPending {
+            } else if model.canAcceptTranscriptInput, model.planApprovalPending {
                 // Same contract as the permission panel: the finished plan is
                 // a decision point, so the decision replaces the input.
                 PlanApprovalPromptView()
                     .frame(maxWidth: 740)
                     .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
-            } else if let question = model.pendingUserQuestion {
+            } else if model.canAcceptTranscriptInput, let question = model.pendingUserQuestion {
                 // A question the agent asked is the same kind of decision
                 // point; esc hands the answer back to the composer instead.
                 QuestionPromptView(question: question)
@@ -343,6 +344,16 @@ struct ComposerView: View {
 
                     if model.hasComposerContextChips {
                         attachmentChipsRow
+                    }
+
+                    if let explanation = model.transcriptInputState.explanation {
+                        Text(explanation)
+                            .font(.locus(size: 11))
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                            .accessibilityIdentifier("composer.conversationLoadingStatus")
                     }
 
                     if model.settings.voiceControlsEnabled,
@@ -605,6 +616,7 @@ struct ComposerView: View {
     }
 
     private func handleReturn(_ press: KeyPress) -> KeyPress.Result {
+        guard activePopup != nil || model.canAcceptTranscriptInput else { return .ignored }
         switch ComposerReturnAction.current(
             hasPopup: activePopup != nil,
             isBusy: model.isBusy,
@@ -651,7 +663,7 @@ struct ComposerView: View {
             popupDismissedDraft = composerState.draftText
             return .handled
         }
-        if model.isBusy {
+        if model.isBusy, model.canAcceptTranscriptInput {
             commandRouter?.stop()
             return .handled
         }
@@ -1014,8 +1026,9 @@ struct ComposerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.locus())
-                    .disabled(isStopping)
-                    .help(isStopping ? "Stopping…" : "Stop the current run (⌘↵ or Esc)")
+                    .disabled(isStopping || !model.canAcceptTranscriptInput)
+                    .help(model.transcriptInputState.explanation
+                        ?? (isStopping ? "Stopping…" : "Stop the current run (⌘↵ or Esc)"))
                     .accessibilityLabel(isStopping ? "Stopping" : "Stop the current run")
                     .accessibilityIdentifier("composer.stop")
                 } else {
@@ -1031,7 +1044,7 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.locus())
                     .disabled(!canSubmit)
-                    .help("Queue for the next turn (↵)")
+                    .help(model.transcriptInputState.explanation ?? "Queue for the next turn (↵)")
                     .accessibilityLabel("Queue for next turn")
                     .accessibilityIdentifier("composer.queueButton")
                 }
@@ -1062,9 +1075,9 @@ struct ComposerView: View {
                 .buttonStyle(.locus())
                 .disabled(!canSubmit || model.hasPendingPermission)
                 .help(
-                    model.hasPendingPermission
+                    model.transcriptInputState.explanation ?? (model.hasPendingPermission
                         ? "Answer the pending permission request first"
-                        : "Send (↵) · New line (⇧↵)"
+                        : "Send (↵) · New line (⇧↵)")
                 )
                 .accessibilityLabel("Send message")
                 .accessibilityIdentifier("composer.send")
@@ -1171,7 +1184,8 @@ struct ComposerView: View {
     }
 
     private var canSubmit: Bool {
-        !promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty
+        model.canAcceptTranscriptInput
+            && (!promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty)
     }
 
     private var primaryAction: ComposerPrimaryAction {
@@ -1348,6 +1362,7 @@ struct ComposerView: View {
     }
 
     private func submit() {
+        guard model.canAcceptTranscriptInput else { return }
         if primaryAction == .stop {
             guard !isStopping else { return }
             commandRouter?.stop()

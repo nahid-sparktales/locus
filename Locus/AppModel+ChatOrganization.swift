@@ -250,9 +250,15 @@ extension AppModel {
             return
         }
         let wasActive = session.id == currentSessionID
+        let ownership: TranscriptSessionLoadToken
         if wasActive {
+            ownership = beginTranscriptTransition(
+                source: backend, reasons: ["deleted_active"], acceptsSocketAcknowledgement: false
+            )
             pendingSessionReset = true
             armSessionResetWatchdog()
+        } else {
+            ownership = transcriptPresentation.sessionOwnershipToken
         }
         Task {
             do {
@@ -260,7 +266,8 @@ extension AppModel {
                     "/api/sessions/\(session.id)",
                     as: DeleteSessionResponse.self
                 )
-                if let replacement = response.replacementSessionInfo {
+                if transcriptPresentation.ownsSessionLoad(ownership),
+                   let replacement = response.replacementSessionInfo {
                     applySessionStarted(replacement, reason: "deleted_active")
                 }
                 sessions.removeAll { $0.id == session.id }
@@ -278,9 +285,8 @@ extension AppModel {
                     duration: 7
                 )
             } catch {
-                if wasActive {
-                    pendingSessionReset = false
-                    sessionResetWatchdog?.cancel()
+                if wasActive, transcriptPresentation.ownsSessionLoad(ownership) {
+                    invalidatePendingTranscriptTransition()
                 }
                 showToast("Could not delete the chat: \(error.localizedDescription)")
             }
