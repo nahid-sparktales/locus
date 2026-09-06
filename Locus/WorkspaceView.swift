@@ -4122,29 +4122,55 @@ final class TranscriptScrollCoordinator: ObservableObject {
             }
             guard let realizeTailTarget else { return }
             let viewport = scrollView.contentView.bounds
+            // A predecessor request can change the lazy estimate before its
+            // actual row is laid out. Do not follow that estimate with another
+            // proxy jump. Sample the exact registered native row now, in this
+            // attachment's settled layout, rather than reuse its cached rect.
+            let predecessor = realizePredecessorTarget == nil ? nil
+                : predecessorProbe?.measuredRect(token: token, in: scrollView)
+            if realizePredecessorTarget != nil, predecessor == nil, realizationRequested { return }
+            let adjacentTarget: NSPoint?
+            if let predecessor, let documentView {
+                guard predecessor.minY.isFinite, predecessor.maxY.isFinite else { return }
+                var proposed = viewport
+                proposed.origin.y = documentView.isFlipped
+                    ? predecessor.maxY : predecessor.minY - viewport.height
+                let target = scrollView.contentView.constrainBoundsRect(proposed).origin
+                guard target.y.isFinite else { return }
+                realizationRequested = true
+                guard target != viewport.origin else { return }
+                adjacentTarget = target
+            } else {
+                adjacentTarget = nil
+            }
             // A logical request can first update the lazy estimate without
             // realizing the row. Only new native geometry may advance that
             // request. Remember every observed geometry, not just the last,
             // so a repeated/oscillating estimate cannot create a scroll loop.
             guard !realizationGeometry.contains(where: {
-                $0.layout == layout && $0.viewport == viewport && $0.predecessor == predecessorRect
+                $0.layout == layout && $0.viewport == viewport && $0.predecessor == predecessor
             }), realizationGeometry.count < 32 else { return }
-            realizationGeometry.append((layout, viewport, predecessorRect))
-            // Approach a heterogeneous lazy tail through its immediate
-            // predecessor. A measured predecessor already proves that stage;
-            // otherwise only the first discovery requests it. Later new
-            // native geometry advances to the actual terminal row.
-            let requestPredecessor = !realizationRequested && predecessorRect == nil
-                && realizePredecessorTarget != nil
+            realizationGeometry.append((layout, viewport, predecessor))
             realizationRequested = true
             isProgrammaticScroll = true
+            if let adjacentTarget {
+                // The next semantic row begins at the predecessor's measured
+                // boundary. Expose that boundary using real native geometry;
+                // only actual terminal probes can subsequently finish the pin.
+                #if DEBUG
+                recordGeometry("predecessor.alignNativeBoundary", target: adjacentTarget)
+                #endif
+                scrollView.contentView.scroll(to: adjacentTarget)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+                return
+            }
             #if DEBUG
-            recordGeometry(requestPredecessor ? "predecessor.requestRealization" : "tail.requestRealization")
+            recordGeometry(realizePredecessorTarget != nil ? "predecessor.requestRealization" : "tail.requestRealization")
             #endif
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                if requestPredecessor { realizePredecessorTarget?() } else { realizeTailTarget() }
+                if let realizePredecessorTarget { realizePredecessorTarget() } else { realizeTailTarget() }
             }
             return
         }

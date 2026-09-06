@@ -878,30 +878,31 @@ final class TranscriptFollowTests: XCTestCase {
         acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
         pump()
         XCTAssertEqual(requests, ["predecessor"], "A request alone cannot advance the discovery stage")
+        document.setFrameSize(NSSize(width: 360, height: 1_200))
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(requests, ["predecessor"], "A changed estimate cannot substitute for the actual predecessor marker")
 
-        let viewport = scroll.contentView.bounds
         let documentBounds = document.bounds
-        let predecessor = TranscriptTailLayoutView(frame: NSRect(x: 0, y: 600, width: 300, height: 40))
-        predecessor.token = token
-        predecessor.kind = .predecessor
-        document.addSubview(predecessor)
-        coordinator.registerTailProbe(predecessor)
-        predecessor.layoutSubtreeIfNeeded()
-        XCTAssertFalse(predecessor.needsLayout)
+        let predecessor = try makeRegisteredPredecessor(
+            coordinator, token: token, rect: NSRect(x: 0, y: 600, width: 300, height: 40), in: scroll
+        )
         coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
         pump()
-        XCTAssertEqual(scroll.contentView.bounds, viewport)
+        XCTAssertEqual(scroll.documentVisibleRect.maxY, predecessor.frame.minY, accuracy: 1)
         XCTAssertEqual(document.bounds, documentBounds)
-        XCTAssertEqual(requests, ["predecessor", "tail"],
-            "A real predecessor measurement advances discovery even when the overall estimate is unchanged")
+        XCTAssertEqual(requests, ["predecessor"],
+            "The actual adjacent boundary advances discovery without another estimated proxy jump")
         XCTAssertFalse(coordinator.followState.isNearBottom)
         XCTAssertEqual(alignments, 0, "Predecessor geometry is not terminal-content evidence")
+        let adjacentViewport = scroll.contentView.bounds
         for _ in 0..<100 {
             coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
             coordinator.contentMayHaveChanged()
         }
         pump()
-        XCTAssertEqual(requests, ["predecessor", "tail"], "Repeated measurements cannot create another request")
+        XCTAssertEqual(requests, ["predecessor"], "Repeated measurements cannot create another request")
+        XCTAssertEqual(scroll.contentView.bounds, adjacentViewport)
 
         coordinator.tailDidLayout(
             token: token, kind: .content, rect: NSRect(x: 0, y: 800, width: 300, height: 40), in: scroll
@@ -944,23 +945,110 @@ final class TranscriptFollowTests: XCTestCase {
             XCTAssertEqual(requests, ["predecessor"], "Neither a stale row nor a different scroll may advance discovery")
 
             if selecting { coordinator.setSelectionDragActive(true) } else { coordinator.detach() }
-            coordinator.tailDidLayout(token: token, kind: .predecessor, rect: rect, in: scroll)
+            let readerViewport = scroll.contentView.bounds
+            _ = try makeRegisteredPredecessor(coordinator, token: token, rect: rect, in: scroll)
+            coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
             acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
             pump()
             XCTAssertEqual(requests, ["predecessor"], "Reader intent cancels the pending terminal-row request")
+            XCTAssertEqual(scroll.contentView.bounds, readerViewport)
             XCTAssertFalse(coordinator.followState.isFollowingOutput)
             if selecting { coordinator.setSelectionDragActive(false) }
             coordinator.contentMayHaveChanged()
             pump()
             XCTAssertEqual(requests, ["predecessor"], "Ending selection does not restore following")
+            XCTAssertEqual(scroll.contentView.bounds, readerViewport)
             coordinator.jumpToLatest()
             pump()
-            XCTAssertEqual(requests, ["predecessor", "tail"],
-                "Explicit Jump may use the already measured predecessor without requesting it again")
+            XCTAssertEqual(requests, ["predecessor"], "Explicit Jump uses native measured adjacency, not a proxy retry")
+            XCTAssertEqual(scroll.documentVisibleRect.maxY, rect.minY, accuracy: 1)
+            let adjacentViewport = scroll.contentView.bounds
             coordinator.contentMayHaveChanged()
             pump()
-            XCTAssertEqual(requests, ["predecessor", "tail"])
+            XCTAssertEqual(requests, ["predecessor"])
+            XCTAssertEqual(scroll.contentView.bounds, adjacentViewport)
             XCTAssertFalse(coordinator.followState.isNearBottom, "Neither stage certifies actual terminal visibility")
+        }
+    }
+
+    func testPredecessorNativeApproachRequiresFreshOwnedLayoutInBothDocumentOrientations() throws {
+        final class FlippedDocument: NSView { override var isFlipped: Bool { true } }
+        for flipped in [false, true] {
+            let scroll = mountNativeScroll()
+            let frame = NSRect(x: 0, y: 0, width: 360, height: 1_200)
+            let document: NSView = flipped ? FlippedDocument(frame: frame) : NSView(frame: frame)
+            scroll.documentView = document
+            scroll.contentView.scroll(to: .zero)
+            let anchor = NSView(frame: frame)
+            document.addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: .block(UUID()))
+            let old = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: token.tailID)
+            var predecessorRequests = 0
+            var tailRequests = 0
+            coordinator.installRenderTarget(
+                token, realizeTail: { tailRequests += 1 },
+                realizePredecessor: { predecessorRequests += 1 }
+            )
+            coordinator.attach(from: anchor, expectedToken: token)
+            acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+            pump()
+            XCTAssertEqual(predecessorRequests, 1)
+            let initialViewport = scroll.contentView.bounds
+            let rect = NSRect(x: 0, y: 600, width: 300, height: 40)
+            _ = try makeRegisteredPredecessor(coordinator, token: old, rect: rect, in: scroll)
+            coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds, initialViewport, "A stale registered view cannot supply native adjacency")
+
+            let predecessor = try makeRegisteredPredecessor(coordinator, token: token, rect: rect, in: scroll)
+            predecessor.needsLayout = true
+            coordinator.jumpToLatest(animated: true)
+            XCTAssertEqual(scroll.contentView.bounds, initialViewport,
+                "A registered native marker cannot authorize movement before it finishes layout")
+            XCTAssertEqual(predecessorRequests, 2, "Explicit Jump can restart discovery but cannot invent native readiness")
+            XCTAssertEqual(tailRequests, 0)
+            predecessor.layoutSubtreeIfNeeded()
+            XCTAssertFalse(predecessor.needsLayout)
+            let attachment = coordinator.layoutAttachmentRevision
+            coordinator.tailProbesDidLayout(token: token, attachment: attachment &- 1, in: scroll)
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds, initialViewport, "A stale attachment callback cannot advance discovery")
+            coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+            pump()
+            if flipped {
+                XCTAssertEqual(scroll.documentVisibleRect.minY, rect.maxY, accuracy: 1)
+            } else {
+                XCTAssertEqual(scroll.documentVisibleRect.maxY, rect.minY, accuracy: 1)
+            }
+            XCTAssertEqual(predecessorRequests, 2)
+            XCTAssertEqual(tailRequests, 0, "Measured adjacency must not fall back to the same overshooting proxy")
+            XCTAssertFalse(coordinator.followState.isNearBottom, "Exposing adjacent content is not final-tail confirmation")
+            let firstApproach = scroll.contentView.bounds
+            predecessor.setFrameOrigin(NSPoint(x: 0, y: 700))
+            predecessor.needsLayout = true
+            coordinator.jumpToLatest(animated: true)
+            XCTAssertEqual(scroll.contentView.bounds, firstApproach,
+                "Previously measured coordinates cannot be reused while their native marker is awaiting its next layout")
+            XCTAssertEqual(predecessorRequests, 3)
+            predecessor.layoutSubtreeIfNeeded()
+            coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+            pump()
+            if flipped {
+                XCTAssertEqual(scroll.documentVisibleRect.minY, predecessor.frame.maxY, accuracy: 1)
+            } else {
+                XCTAssertEqual(scroll.documentVisibleRect.maxY, predecessor.frame.minY, accuracy: 1)
+            }
+            let approachedViewport = scroll.contentView.bounds
+            for _ in 0..<100 {
+                coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+                coordinator.contentMayHaveChanged()
+            }
+            pump()
+            XCTAssertEqual(scroll.contentView.bounds, approachedViewport)
+            XCTAssertEqual(predecessorRequests, 3)
+            XCTAssertEqual(tailRequests, 0)
         }
     }
 
@@ -1077,15 +1165,19 @@ final class TranscriptFollowTests: XCTestCase {
         ))
         pump()
         XCTAssertEqual(refreshed, ["predecessor"], "An equal-token refresh retains current native readiness")
-        coordinator.tailDidLayout(token: token, kind: .predecessor, rect: NSRect(x: 0, y: 600, width: 300, height: 40), in: scroll)
+        _ = try makeRegisteredPredecessor(
+            coordinator, token: token, rect: NSRect(x: 0, y: 600, width: 300, height: 40), in: scroll
+        )
+        coordinator.tailProbesDidLayout(token: token, attachment: coordinator.layoutAttachmentRevision, in: scroll)
         pump()
-        XCTAssertEqual(refreshed, ["predecessor", "tail"])
+        XCTAssertEqual(refreshed, ["predecessor"])
         coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 800, width: 300, height: 40), in: scroll)
         coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 759, width: 300, height: 41), in: scroll)
         pump()
-        XCTAssertEqual(refreshed, ["predecessor", "tail", "align"])
+        XCTAssertEqual(refreshed, ["predecessor", "align"])
         XCTAssertEqual(oldCalls, 0)
         coordinator.detach()
+        scroll.contentView.scroll(to: .zero)
         coordinator.tailDidLayout(token: token, kind: .content, rect: NSRect(x: 0, y: 41, width: 300, height: 40), in: scroll)
         coordinator.tailDidLayout(token: token, kind: .end, rect: NSRect(x: 0, y: 0, width: 300, height: 41), in: scroll)
         XCTAssertTrue(coordinator.followState.isNearBottom)
@@ -1094,6 +1186,19 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(coordinator.layoutAttachmentRevision, attachment)
         XCTAssertTrue(coordinator.followState.isNearBottom)
         XCTAssertFalse(coordinator.followState.isFollowingOutput, "Refreshing a proxy is not a new conversation")
+        XCTAssertEqual(oldCalls, 0)
+        coordinator.detachAll()
+
+        // The one-row path has no predecessor, but an equal-token update
+        // must still refresh its direct terminal realization callback.
+        let tailOnly = TranscriptScrollCoordinator()
+        defer { tailOnly.detachAll() }
+        XCTAssertTrue(tailOnly.installRenderTarget(token, realizeTail: { oldCalls += 1 }))
+        tailOnly.attach(from: anchor, expectedToken: token)
+        acknowledgeContainerLayout(tailOnly, token: token, anchor: anchor)
+        XCTAssertTrue(tailOnly.installRenderTarget(token, realizeTail: { refreshed.append("tail") }))
+        pump()
+        XCTAssertEqual(refreshed, ["predecessor", "align", "tail"])
         XCTAssertEqual(oldCalls, 0)
     }
 
@@ -1796,6 +1901,20 @@ final class TranscriptFollowTests: XCTestCase {
         coordinator.renderContainerDidLayout(
             token: token, attachment: coordinator.layoutAttachmentRevision, from: anchor
         )
+    }
+
+    private func makeRegisteredPredecessor(
+        _ coordinator: TranscriptScrollCoordinator, token: TranscriptRenderToken,
+        rect: NSRect, in scroll: NSScrollView
+    ) throws -> TranscriptTailLayoutView {
+        let view = TranscriptTailLayoutView(frame: rect)
+        view.token = token
+        view.kind = .predecessor
+        try XCTUnwrap(scroll.documentView).addSubview(view)
+        coordinator.registerTailProbe(view)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertFalse(view.needsLayout)
+        return view
     }
 
     private func makeRegisteredTailProbes(
