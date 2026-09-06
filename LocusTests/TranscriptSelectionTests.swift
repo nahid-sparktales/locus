@@ -5,6 +5,94 @@ import XCTest
 /// Coverage for the transcript-wide selection store and the geometry behind
 /// dragging through it.
 final class TranscriptSelectionTests: XCTestCase {
+    // MARK: - Noninteractive scope
+
+    @MainActor
+    func testTranscriptSelectionScopeNeverOwnsPointerOrAccessibilityHits() {
+        let scope = TranscriptSelectionScopeView(
+            frame: NSRect(x: 20, y: 30, width: 400, height: 200)
+        )
+        for point in [NSPoint(x: 30, y: 40), NSPoint(x: 200, y: 130), NSPoint(x: 410, y: 220)] {
+            XCTAssertNil(scope.hitTest(point))
+            XCTAssertNil(scope.accessibilityHitTest(point))
+        }
+        XCTAssertFalse(scope.isAccessibilityElement())
+        XCTAssertTrue(scope.isAccessibilityHidden())
+    }
+
+    @MainActor
+    func testOverlaidTranscriptScopePreservesButtonAndSelectedTextHitTargets() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 40, y: 50, width: 400, height: 200),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        let document = NSView(frame: scroll.bounds)
+        scroll.documentView = document
+        window.contentView = scroll
+
+        let button = NSButton(title: "Expand tool", target: nil, action: nil)
+        button.frame = NSRect(x: 20, y: 30, width: 180, height: 40)
+        document.addSubview(button)
+        let text = ResponseSelectableTextView.make()
+        text.frame = NSRect(x: 20, y: 110, width: 300, height: 40)
+        text.isEditable = false
+        text.textStorage?.setAttributedString(NSAttributedString(string: "selected text"))
+        document.addSubview(text)
+        let store = TranscriptSelectionStore()
+        defer { store.reset() }
+        store.syncRows(["scope-fixture"])
+        let selectedSpan = span(row: "scope-fixture", path: [0], text: "selected text")
+        store.register(selectedSpan, view: text)
+        store.selectForTesting(
+            from: .init(spanID: selectedSpan.id, utf16Offset: 0),
+            to: .init(spanID: selectedSpan.id, utf16Offset: 8)
+        )
+
+        window.makeKeyAndOrderFront(nil)
+        scroll.layoutSubtreeIfNeeded()
+        XCTAssertTrue(window.isVisible)
+
+        let buttonPoint = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        let textPoint = NSPoint(x: text.frame.minX + 10, y: text.frame.midY)
+        func accessibilityTarget(at point: NSPoint) -> NSObject? {
+            let screenPoint = window.convertPoint(toScreen: document.convert(point, to: nil))
+            return document.accessibilityHitTest(screenPoint) as? NSObject
+        }
+        let originalButtonTarget = try XCTUnwrap(accessibilityTarget(at: buttonPoint))
+        let originalTextTarget = try XCTUnwrap(accessibilityTarget(at: textPoint))
+        XCTAssertEqual(
+            (originalButtonTarget as? any NSAccessibilityProtocol)?.accessibilityRole(), .button
+        )
+        XCTAssertEqual(
+            (originalTextTarget as? any NSAccessibilityProtocol)?.accessibilityRole(), .textArea
+        )
+        XCTAssertTrue(document.hitTest(buttonPoint) === button)
+        XCTAssertTrue(document.hitTest(textPoint) === text)
+
+        // Deliberately put the registration-only view above real controls.
+        // Neither SwiftUI hosting order nor a future background refactor may
+        // turn this full-size invisible view into an input shield.
+        let scope = TranscriptSelectionScopeView(frame: document.bounds)
+        document.addSubview(scope, positioned: .above, relativeTo: nil)
+        scope.registerScope()
+        XCTAssertTrue(document.subviews.last === scope)
+        XCTAssertTrue(document.hitTest(buttonPoint) === button)
+        XCTAssertTrue(document.hitTest(textPoint) === text)
+        XCTAssertTrue(accessibilityTarget(at: buttonPoint) === originalButtonTarget)
+        XCTAssertTrue(accessibilityTarget(at: textPoint) === originalTextTarget)
+        XCTAssertTrue(
+            TranscriptSelectionMenu.shared.transcriptScrollView(containing: text) === scroll,
+            "Pass-through behavior must preserve the selection menu's scroll ownership"
+        )
+        XCTAssertEqual(store.selectedText, "selected")
+        XCTAssertEqual(text.selectedRange(), NSRange(location: 0, length: 8))
+    }
+
     // MARK: - Identity
 
     func testSpanIdentityIsScopedToItsRow() {
