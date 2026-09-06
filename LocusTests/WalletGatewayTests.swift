@@ -48,6 +48,30 @@ private func walletRPCRequestBody(_ request: URLRequest) throws -> Data {
 
 @MainActor
 private final class FakeWalletSigner: WalletSignerClient {
+    #if LOCUS_DIRECT_DOWNLOAD
+    var currentReleaseStatus = WalletReleaseAuthorityStatus(
+        installationID: String(repeating: "f", count: 64), checkpoint: nil)
+    private(set) var releaseHistoryApplyCount = 0
+    private(set) var releaseHistoryStateChangeCount = 0
+    var hasOperationalReleaseAuthority = false
+    #if DEBUG
+    var experimentalTestConfiguration: WalletExperimentalActivationTestConfiguration?
+    #endif
+    var releaseHistoryApplyHandler: ((WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus)?
+
+    func releaseAuthorityStatus() async throws -> WalletReleaseAuthorityStatus { currentReleaseStatus }
+
+    func applyReleaseHistory(_ history: WalletReleaseHistoryRequest) async throws -> WalletReleaseAuthorityStatus {
+        releaseHistoryApplyCount += 1
+        guard let releaseHistoryApplyHandler else { throw WalletReleaseActivationError.stateUnavailable }
+        let accepted = try await releaseHistoryApplyHandler(history)
+        if accepted.checkpoint != currentReleaseStatus.checkpoint { releaseHistoryStateChangeCount += 1 }
+        currentReleaseStatus = accepted
+        hasOperationalReleaseAuthority = true
+        return accepted
+    }
+    #endif
+
     func applyReleaseActivation(
         _ envelope: WalletSignedReleaseActivationEnvelope
     ) async throws -> WalletReleaseActivationStatus {
@@ -251,6 +275,429 @@ private final class FakeWalletRecoveryView: WalletRecoveryViewClient {
 
 @MainActor
 final class WalletGatewayTests: XCTestCase {
+    func testPolicyAccountSelectionRequiresExactVaultOwnershipChainAndNetwork() {
+        let mainnet = WalletNetworkCatalog.ethereumMainnet.id
+        let accounts: [WalletAccount] = [
+            .init(id: "vault-mainnet", chain: .evm, address: "0x1", label: "Vault",
+                networkIDs: [mainnet]),
+            .init(id: "vault-testnet", chain: .evm, address: "0x2", label: "Testnet",
+                networkIDs: [WalletNetworkCatalog.ethereumSepolia.id]),
+            .init(id: "metamask", chain: .evm, address: "0x3", label: "MetaMask",
+                networkIDs: [mainnet], ownership: .external(connectorID: .metamask)),
+            .init(id: "wrong-chain", chain: .solana, address: "not-used", label: "Wrong chain",
+                networkIDs: [mainnet]),
+        ]
+        XCTAssertEqual(WalletPolicyAccountEligibility.accounts(accounts, networkID: mainnet).map(\.id),
+            ["vault-mainnet"])
+    }
+
+    func testSolanaPolicySelectionNeverIncludesManagedOrExternalAccounts() {
+        let networkID = WalletNetworkCatalog.solanaMainnet.id
+        let accounts: [WalletAccount] = [
+            .init(id: "vault", chain: .solana, address: "public", label: "Vault", networkIDs: [networkID]),
+            .init(id: "managed", chain: .solana, address: "public", label: "Phantom", networkIDs: [networkID],
+                ownership: .connectorManaged(connectorID: .phantom)),
+            .init(id: "legacy", chain: .solana, address: "public", label: "Legacy", networkIDs: [networkID],
+                ownership: .external(connectorID: .phantom)),
+        ]
+        XCTAssertEqual(WalletPolicyAccountEligibility.accounts(accounts, networkID: networkID).map(\.id), ["vault"])
+    }
+
+    func testPolicySelectionDoesNotExpandToSuiOrUnknownNetworks() {
+        let account = WalletAccount(id: "sui", chain: .sui, address: "0x1", label: "Sui",
+            networkIDs: [WalletNetworkCatalog.suiMainnet.id, "unknown"])
+        XCTAssertTrue(WalletPolicyAccountEligibility.accounts([account], networkID: WalletNetworkCatalog.suiMainnet.id).isEmpty)
+        XCTAssertTrue(WalletPolicyAccountEligibility.accounts([account], networkID: "unknown").isEmpty)
+    }
+
+    func testContractPolicyAssetUsesRegistryNetworkRatherThanSepolia() {
+        let address = "0xAa11111111111111111111111111111111111111"
+        let entry = WalletContractRegistryEntry(id: "mainnet.token", networkID: "eip155:1",
+            checksumAddress: address, label: "Token", normalizedABI: "[]", abiDigest: "digest",
+            runtimeCodeHash: "hash", permittedFunctions: ["transfer(address,uint256)"],
+            permittedSelectors: ["0xa9059cbb"], reviewedAdapterID: WalletReviewedAdapters.erc20,
+            verifiedAt: Date())
+        XCTAssertEqual(WalletPolicyAccountEligibility.contractAssetID(entry: entry, address: address),
+            "eip155:1/erc20:0xaa11111111111111111111111111111111111111")
+        XCTAssertNil(WalletPolicyAccountEligibility.contractAssetID(entry: entry, address: "not-an-address"))
+        XCTAssertEqual(WalletPolicyAccountEligibility.contractCapability(entry), .fungibleTokenTransfer)
+    }
+
+    func testRuleReadinessCannotEnablePolicyOnDormantNetwork() async {
+        let signer = FakeWalletSigner()
+        signer.accountNetworkIDs = [WalletNetworkCatalog.ethereumMainnet.id]
+        let gateway = WalletGateway(signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            launchGate: try! WalletLaunchGate())
+        _ = await gateway.authorizeSession()
+        XCTAssertTrue(gateway.policyAccounts(networkID: WalletNetworkCatalog.ethereumMainnet.id,
+            capability: .nativeTransfer).isEmpty)
+        XCTAssertFalse(gateway.canAuthorizeNativePolicy)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
+
+    func testRuleReadinessPreservesSupportedTestnetWithoutMainnetActivation() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer,
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            launchGate: try! WalletLaunchGate())
+        _ = await gateway.authorizeSession()
+        XCTAssertEqual(gateway.policyAccounts(networkID: WalletGateway.sepoliaNetworkID,
+            capability: .nativeTransfer).map(\.id), ["account-1"])
+        XCTAssertTrue(gateway.canAuthorizeNativePolicy)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        gateway.applyFeatureAccess(walletEnabled: false, browserEnabled: false)
+        XCTAssertFalse(gateway.canAuthorizeNativePolicy)
+    }
+
+    private func contractRuleEntry(adapter: String) -> WalletContractRegistryEntry {
+        .init(id: "mainnet.contract", networkID: "eip155:1",
+            checksumAddress: "0x1111111111111111111111111111111111111111", label: "Contract",
+            normalizedABI: "[]", abiDigest: "digest", runtimeCodeHash: "hash",
+            permittedFunctions: [], permittedSelectors: [], reviewedAdapterID: adapter, verifiedAt: Date())
+    }
+
+    private func contractRuleDraft(
+        adapter: String = WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
+        ownership: WalletAccountOwnership = .locusVault,
+        networkIDs: [String] = ["eip155:1"], slippage: String = "50", floor: String = "975",
+        perTransaction: String = "1000", sessionCap: String = "2000"
+    ) -> WalletSessionPolicy? {
+        let account = WalletAccount(id: "selected-vault", chain: .evm,
+            address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", label: "Vault", networkIDs: networkIDs,
+            ownership: ownership)
+        return WalletPolicyAccountEligibility.contractPolicy(entry: contractRuleEntry(adapter: adapter),
+            account: account, inputToken: "0x2222222222222222222222222222222222222222",
+            recipient: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", perTransaction: perTransaction,
+            sessionCap: sessionCap, feeCap: "20", durationMinutes: "30",
+            maximumSlippageBPS: slippage, minimumOutput: floor,
+            now: Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    func testSwapRuleDraftBindsSemanticActionSelectedVaultNetworkRecipientAndFiniteLimits() throws {
+        let policy = try XCTUnwrap(contractRuleDraft())
+        XCTAssertEqual(policy.accountID, "selected-vault")
+        XCTAssertEqual(policy.networkID, "eip155:1")
+        XCTAssertEqual(policy.allowedAssetIDs, ["eip155:1/erc20:0x2222222222222222222222222222222222222222"])
+        XCTAssertEqual(policy.allowedRecipients, ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+        XCTAssertEqual(policy.allowedContractIDs, ["mainnet.contract"])
+        XCTAssertEqual(policy.allowedActionKinds, [.exactInputSwap])
+        XCTAssertEqual(policy.maximumSlippageBPS, 50)
+        XCTAssertEqual(policy.minimumOutputBaseUnits, "975")
+        XCTAssertEqual(policy.maximumTransactionBaseUnits, "1000")
+        XCTAssertEqual(policy.maximumSessionBaseUnits, "2000")
+        XCTAssertEqual(policy.maximumFeeBaseUnits, "20")
+        XCTAssertEqual(policy.expiresAt, Date(timeIntervalSince1970: 1_800_001_800))
+    }
+
+    func testSwapRuleDraftRejectsMissingOutOfRangeAndMalformedLimits() {
+        for slippage in ["", "-1", "501", "not-a-number"] { XCTAssertNil(contractRuleDraft(slippage: slippage)) }
+        for floor in ["", "0", "01", "1.5", "-1"] { XCTAssertNil(contractRuleDraft(floor: floor)) }
+        XCTAssertNil(contractRuleDraft(perTransaction: "0"))
+        XCTAssertNil(contractRuleDraft(perTransaction: "2001"))
+        XCTAssertNotNil(contractRuleDraft(slippage: "0"))
+        XCTAssertNotNil(contractRuleDraft(slippage: "500"))
+    }
+
+    func testContractRuleDraftRejectsWrongNetworkExternalManagedAndAllowanceAdapters() {
+        XCTAssertNil(contractRuleDraft(networkIDs: [WalletNetworkCatalog.ethereumSepolia.id]))
+        XCTAssertNil(contractRuleDraft(ownership: .external(connectorID: .metamask)))
+        XCTAssertNil(contractRuleDraft(ownership: .connectorManaged(connectorID: .phantom)))
+        XCTAssertNil(contractRuleDraft(adapter: WalletReviewedAdapters.uniswapPermit2AllowanceSetup))
+        XCTAssertNil(contractRuleDraft(adapter: WalletReviewedAdapters.erc721SafeTransfer))
+    }
+
+    func testTokenRuleDraftUsesFungibleTransferNotApprovalOrLegacyContractAction() throws {
+        let policy = try XCTUnwrap(contractRuleDraft(adapter: WalletReviewedAdapters.erc20, slippage: "", floor: ""))
+        XCTAssertEqual(policy.allowedActionKinds, [.fungibleTokenTransfer])
+        XCTAssertEqual(policy.allowedAssetIDs, ["eip155:1/erc20:0x1111111111111111111111111111111111111111"])
+        XCTAssertEqual(policy.allowedRecipients, ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"])
+        XCTAssertNil(policy.maximumSlippageBPS)
+        XCTAssertNil(policy.minimumOutputBaseUnits)
+    }
+
+    #if LOCUS_DIRECT_DOWNLOAD
+    #if DEBUG
+    private func experimentalGatewayFixture() throws
+        -> (gateway: WalletGateway, signer: FakeWalletSigner, data: Data) {
+        let key = Curve25519.Signing.PrivateKey()
+        let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let issued = now.addingTimeInterval(-30)
+        let expiry = now.addingTimeInterval(600)
+        let network = WalletNetworkCatalog.ethereumMainnet
+        let providers = [WalletProviderKind.alchemy, .quickNode].map { provider in
+            WalletReviewedProviderIdentity(networkID: network.id, provider: provider,
+                configurationID: "\(provider.rawValue):\(network.id)",
+                endpointSHA256: String(repeating: "2", count: 64), expectedIdentity: network.identity)
+        }
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1, issuedAt: issued,
+            expiresAt: expiry, assets: [], evmContracts: [], explorerTemplates: [:], adapterIDs: [],
+            providerIdentities: providers)
+        let ceilingValue = WalletReviewCeiling(schemaVersion: 1, domain: WalletReviewCeiling.domain,
+            reviewRevision: 1, reviewedAt: issued.addingTimeInterval(-60), scope: WalletReviewScope(review))
+        func signature<T: Encodable>(_ value: T) throws -> String {
+            try key.signature(for: WalletAuthorityEncoding.encode(value)).base64EncodedString()
+        }
+        let ceiling = WalletSignedReviewCeiling(ceiling: ceilingValue, signatureBase64: try signature(ceilingValue))
+        let identity = WalletInstalledReleaseIdentity(sourceRevision: String(repeating: "a", count: 40),
+            bundleVersion: "fixture", outerAppCodeDirectoryHash: String(repeating: "b", count: 40),
+            signerCodeDirectoryHash: String(repeating: "c", count: 40))
+        let cap = WalletCapabilityManifest(schemaVersion: 3, revision: 1, releaseStage: .experimentalMainnet,
+            evidenceIndexSHA256: "", issuedAt: issued, expiresAt: expiry,
+            networkGrants: [.init(networkID: network.id, capabilities: [.nativeTransfer], connectors: [])],
+            approvedRegions: [], completedApprovals: [])
+        let envelope = WalletReleaseTransitionEnvelope(schemaVersion: 2,
+            sourceRevision: identity.sourceRevision, bundleVersion: identity.bundleVersion,
+            outerAppCodeDirectoryHash: identity.outerAppCodeDirectoryHash,
+            signerCodeDirectoryHash: identity.signerCodeDirectoryHash,
+            archiveSHA256: String(repeating: "d", count: 64), releaseStage: .experimentalMainnet,
+            issuedAt: issued, expiresAt: expiry, revision: 1,
+            capabilityManifest: .init(manifest: cap, signatureBase64: try signature(cap)),
+            reviewRestriction: .init(manifest: review, signatureBase64: try signature(review)),
+            transition: .initial, purpose: .experimentalMainnet, candidateID: "",
+            reviewCeilingSHA256: try WalletAuthorityEncoding.digest(ceilingValue),
+            previousEnvelopeSHA256: nil, authoritySHA256: "", cohortID: nil,
+            admissionGeneration: 0, revokedAdmissionSerials: [], permanentLimits: [])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: WalletAuthorityEncoding.encode(envelope)) as? [String: Any])
+        object["candidateID"] = try envelope.computedCandidateID()
+        object["authoritySHA256"] = try envelope.computedAuthoritySHA256()
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let completed = try decoder.decode(WalletReleaseTransitionEnvelope.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        let history = WalletReleaseHistoryRequest(schemaVersion: 1,
+            transitions: [.init(envelope: completed, signatureBase64: try signature(completed))], admission: nil)
+        let signer = FakeWalletSigner()
+        signer.releaseHistoryApplyHandler = { [weak signer] request in
+            guard let signer else { throw WalletReleaseActivationError.stateUnavailable }
+            let current = signer.currentReleaseStatus
+            let verified = try WalletReleaseHistoryVerifier.verify(request, ceiling: ceiling, key: key.publicKey,
+                identity: identity, previous: current.checkpoint, installationID: current.installationID,
+                allowExperimentalMainnet: true)
+            return .init(installationID: current.installationID, checkpoint: verified.checkpoint)
+        }
+        let gateway = WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            recoveryView: FakeWalletRecoveryView(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1", "XCTestConfigurationFilePath": "fixture"],
+            launchGate: try WalletLaunchGate())
+        let configuration = WalletExperimentalActivationTestConfiguration(key: key.publicKey, ceiling: ceiling, identity: identity)
+        signer.experimentalTestConfiguration = configuration
+        gateway.configureExperimentalActivationForTesting(configuration)
+        return (gateway, signer, try WalletAuthorityEncoding.encode(history))
+    }
+
+    func testExperimentalGatewayPreviewGrantsNothingUntilOneExplicitEnable() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let preview = try XCTUnwrap(gateway.experimentalMainnetActivationPreview)
+        XCTAssertEqual(preview.networkGrants.map(\.networkID), ["eip155:1"])
+        XCTAssertEqual(preview.networkGrants.first?.capabilities, [.nativeTransfer])
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        try await gateway.enableExperimentalMainnetActivation(previewID: preview.id)
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2, "Explicit import, followed by idempotent signer hydration on refresh")
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertTrue(signer.hasOperationalReleaseAuthority)
+        XCTAssertTrue(gateway.experimentalMainnetActive)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+        XCTAssertEqual(signer.authorizationCount, 0)
+    }
+
+    func testExperimentalGatewayReplacementAndDuplicatePreviewsCannotApply() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let oldID = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let currentID = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        XCTAssertNotEqual(oldID, currentID)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: oldID); XCTFail("Stale review accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        try await gateway.enableExperimentalMainnetActivation(previewID: currentID)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: currentID); XCTFail("Review replay accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+    }
+
+    func testExperimentalGatewayLockCancelsUnconsumedReview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        gateway.lock()
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Canceled review accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayRestartRehydratesColdSignerFromPersistedCheckpoint() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        try await gateway.enableExperimentalMainnetActivation(
+            previewID: XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id))
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        let checkpoint = try XCTUnwrap(signer.currentReleaseStatus.checkpoint)
+        signer.hasOperationalReleaseAuthority = false
+        let restarted = WalletGateway(signer: signer, connectionsClient: UnavailableWalletConnectionsClient(),
+            recoveryView: FakeWalletRecoveryView(),
+            environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1", "XCTestConfigurationFilePath": "fixture"],
+            launchGate: try WalletLaunchGate())
+        restarted.configureExperimentalActivationForTesting(try XCTUnwrap(signer.experimentalTestConfiguration))
+        XCTAssertFalse(restarted.experimentalMainnetActive)
+        await restarted.refreshStatus()
+        XCTAssertTrue(signer.hasOperationalReleaseAuthority)
+        XCTAssertTrue(restarted.experimentalMainnetActive)
+        XCTAssertEqual(signer.currentReleaseStatus.checkpoint, checkpoint)
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 3)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertTrue(restarted.activePolicies.isEmpty)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+    }
+
+    func testExperimentalGatewayChangedInstallationInvalidatesPreview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        signer.currentReleaseStatus = .init(installationID: String(repeating: "e", count: 64), checkpoint: nil)
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Replaced installation accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayDisableDuringSignerCallbackDoesNotPublishActivation() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway] request in
+            let committed = try await verify(request)
+            gateway?.applyFeatureAccess(walletEnabled: false, browserEnabled: false)
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Canceled callback published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint, "Do not erase an already committed signer checkpoint")
+        XCTAssertFalse(gateway.walletEnabled)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+    }
+
+    func testExperimentalGatewayRejectsForgedSignatureBeforeCreatingPreview() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        let original = try WalletExperimentalActivationImport.decode(data)
+        let forged = WalletReleaseHistoryRequest(schemaVersion: 1, transitions: [
+            .init(envelope: original.transitions[0].envelope, signatureBase64: Data(repeating: 0, count: 64).base64EncodedString())
+        ], admission: nil)
+        do { try await gateway.previewExperimentalMainnetActivation(WalletAuthorityEncoding.encode(forged)); XCTFail("Forged signature accepted") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 0)
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+    }
+
+    func testExperimentalGatewayLockDuringSignerCallbackDoesNotPublishActivation() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway] request in
+            let committed = try await verify(request)
+            gateway?.lock()
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Lock callback published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertTrue(gateway.walletEnabled)
+        XCTAssertEqual(gateway.status, .locked)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
+    #endif
+
+    /// Intake fixtures deliberately contain invalid signatures. Intake may
+    /// decode them; the separate history verifier must still authenticate them.
+    private func experimentalIntakeHistory(
+        stage: WalletReleaseStage = .experimentalMainnet,
+        purpose: WalletReleasePurpose = .experimentalMainnet
+    ) -> WalletReleaseHistoryRequest {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let capability = WalletCapabilityManifest(schemaVersion: 3, revision: 1,
+            releaseStage: stage, evidenceIndexSHA256: "", issuedAt: now,
+            expiresAt: now.addingTimeInterval(600), networkGrants: [],
+            approvedRegions: [], completedApprovals: [])
+        let review = WalletReviewManifest(schemaVersion: 2, revision: 1,
+            issuedAt: now, expiresAt: now.addingTimeInterval(600), assets: [],
+            evmContracts: [], explorerTemplates: [:], adapterIDs: [])
+        let envelope = WalletReleaseTransitionEnvelope(schemaVersion: 2,
+            sourceRevision: String(repeating: "a", count: 40), bundleVersion: "1",
+            outerAppCodeDirectoryHash: String(repeating: "b", count: 40),
+            signerCodeDirectoryHash: String(repeating: "c", count: 40),
+            archiveSHA256: String(repeating: "d", count: 64), releaseStage: stage,
+            issuedAt: now, expiresAt: now.addingTimeInterval(600), revision: 1,
+            capabilityManifest: .init(manifest: capability, signatureBase64: "invalid"),
+            reviewRestriction: .init(manifest: review, signatureBase64: "invalid"),
+            transition: .initial, purpose: purpose, candidateID: String(repeating: "e", count: 64),
+            reviewCeilingSHA256: String(repeating: "f", count: 64), previousEnvelopeSHA256: nil,
+            authoritySHA256: String(repeating: "a", count: 64), cohortID: nil,
+            admissionGeneration: 0, revokedAdmissionSerials: [], permanentLimits: [])
+        return .init(schemaVersion: 1, transitions: [.init(envelope: envelope, signatureBase64: "invalid")], admission: nil)
+    }
+
+    func testExperimentalImportIntakeRejectsEmptyOversizedAndMalformedFiles() {
+        for data in [Data(), Data(repeating: 0x20, count: WalletExperimentalActivationImport.maximumBytes + 1),
+                     Data("{}".utf8)] {
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(data))
+        }
+    }
+
+    func testExperimentalImportIntakeRequiresBothExperimentalStageAndPurpose() throws {
+        for pair: (WalletReleaseStage, WalletReleasePurpose) in [
+            (.invitedCanary, .production), (.generalAvailability, .production),
+            (.experimentalMainnet, .production), (.invitedCanary, .experimentalMainnet),
+            (.experimentalMainnet, .testnetRehearsal),
+        ] {
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(
+                WalletAuthorityEncoding.encode(experimentalIntakeHistory(stage: pair.0, purpose: pair.1))))
+        }
+        let request = experimentalIntakeHistory()
+        XCTAssertEqual(try WalletExperimentalActivationImport.decode(WalletAuthorityEncoding.encode(request)), request)
+    }
+
+    func testExperimentalImportIntakeRejectsMixedAndEmptyHistories() throws {
+        let experimental = experimentalIntakeHistory().transitions
+        let production = experimentalIntakeHistory(stage: .generalAvailability, purpose: .production).transitions
+        for transitions in [[], experimental + production,
+            Array(repeating: experimental[0], count: WalletReleaseHistoryVerifier.maximumTransitions + 1)] {
+            let request = WalletReleaseHistoryRequest(schemaVersion: 1, transitions: transitions, admission: nil)
+            XCTAssertThrowsError(try WalletExperimentalActivationImport.decode(WalletAuthorityEncoding.encode(request)))
+        }
+    }
+
+    func testRemoteHistoryCannotIntroduceExperimentalAuthority() {
+        XCTAssertTrue(WalletExperimentalActivationImport.containsExperimentalAuthority(experimentalIntakeHistory()))
+        XCTAssertTrue(WalletExperimentalActivationImport.containsExperimentalAuthority(
+            experimentalIntakeHistory(stage: .invitedCanary, purpose: .experimentalMainnet)))
+        XCTAssertFalse(WalletExperimentalActivationImport.containsExperimentalAuthority(
+            experimentalIntakeHistory(stage: .invitedCanary, purpose: .production)))
+    }
+
+    func testExperimentalEnableWithoutAnExplicitPreviewGrantsNothing() async {
+        let signer = FakeWalletSigner()
+        let gateway = WalletGateway(signer: signer, environment: [:], launchGate: try! WalletLaunchGate())
+        do {
+            try await gateway.enableExperimentalMainnetActivation(previewID: UUID())
+            XCTFail("A missing review must never authorize mainnet")
+        } catch { }
+        XCTAssertNil(gateway.experimentalMainnetActivationPreview)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+        XCTAssertEqual(signer.authorizationCount, 0)
+        XCTAssertTrue(signer.executedIntentIDs.isEmpty)
+    }
+    #endif
+
     private func prepared(
         riskFlags: [WalletRiskFlag] = [],
         adapterID: String? = "native-eth-transfer-v1",

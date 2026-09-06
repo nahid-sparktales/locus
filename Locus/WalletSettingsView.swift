@@ -103,6 +103,9 @@ struct WalletSettingsView: View {
     @State private var deleteRecoveryPresented = false
     @State private var admissionImportInProgress = false
     @State private var admissionImportError: String?
+    @State private var experimentalImportInProgress = false
+    @State private var experimentalImportError: String?
+    @State private var experimentalRiskAcknowledged = false
     @State private var policyPresented = false
     @State private var registryPresented = false
     @State private var contractPolicyEntry: WalletContractRegistryEntry?
@@ -162,6 +165,15 @@ struct WalletSettingsView: View {
             }
         }
         .onChange(of: rpcURL) { _, value in gateway.configureRPCURL(value) }
+        #if LOCUS_DIRECT_DOWNLOAD
+        .onChange(of: gateway.experimentalMainnetActivationPreview?.id) { _, _ in
+            experimentalRiskAcknowledged = false
+        }
+        .onChange(of: selectedSection) { _, section in
+            if section != .security { gateway.cancelExperimentalMainnetActivationReview() }
+        }
+        .onDisappear { gateway.cancelExperimentalMainnetActivationReview() }
+        #endif
         .task(id: selectedSection) {
             guard selectedSection == .swap else { return }
             while !Task.isCancelled {
@@ -256,7 +268,7 @@ struct WalletSettingsView: View {
                 Text("Create or restore a self-custodial wallet, review human and connected-app transactions, and give the Locus agent narrowly capped rules.")
                     .font(.body)
                     .foregroundStyle(LocusTheme.textSecondary)
-                Label("Mainnet capabilities remain locked unless their signed audit, legal, and release gates pass", systemImage: "checkmark.shield")
+                Label(mainnetAccessNotice, systemImage: "lock.shield")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(LocusTheme.success)
                 Button("Review Security Model and Enable") { alphaRiskPresented = true }
@@ -287,6 +299,14 @@ struct WalletSettingsView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(gateway.hubState == .ready ? LocusTheme.success : LocusTheme.warning)
                 .accessibilityIdentifier("settings.wallet.status")
+            #if LOCUS_DIRECT_DOWNLOAD
+            if gateway.experimentalMainnetBuildEnabled {
+                Text(gateway.experimentalMainnetActive ? "Experimental Mainnet" : "Experimental build")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LocusTheme.warning)
+                    .accessibilityIdentifier("wallet.experimental.status")
+            }
+            #endif
             Spacer()
             Button("Turn Off Wallet", role: .destructive) {
                 browserEnabled = false
@@ -294,6 +314,15 @@ struct WalletSettingsView: View {
             }
             .accessibilityIdentifier("settings.wallet.disable-alpha")
         }
+    }
+
+    private var mainnetAccessNotice: String {
+        #if LOCUS_DIRECT_DOWNLOAD
+        if gateway.experimentalMainnetBuildEnabled {
+            return "Experimental Mainnet requires a separate signed-file review and explicit opt-in. It is not an audited public release."
+        }
+        #endif
+        return "Mainnet capabilities remain locked unless their signed audit, legal, and release gates pass."
     }
 
     private var hubNavigation: some View {
@@ -339,7 +368,11 @@ struct WalletSettingsView: View {
         case .security:
             accountCard
             #if LOCUS_DIRECT_DOWNLOAD
-            canaryAccessCard
+            if gateway.experimentalMainnetBuildEnabled {
+                experimentalMainnetAccessCard
+            } else {
+                canaryAccessCard
+            }
             #endif
             advancedCard
         }
@@ -967,10 +1000,19 @@ struct WalletSettingsView: View {
                     .foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
                 Button("New Native Rule") { policyPresented = true }
-                    .disabled(gateway.status != .unlocked)
+                    .disabled(!gateway.canAuthorizeNativePolicy)
+            }
+            Text("Rules apply only to Locus Vault. MetaMask and Slush always require wallet approval; Phantom-managed accounts always require exact approval in Locus. Enabling mainnet creates no rule.")
+                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+            if !gateway.canAuthorizeNativePolicy {
+                Text(gateway.status != .unlocked
+                    ? "Unlock Locus Vault to authorize a spending rule."
+                    : "No vault network is currently configured and enabled for automated spending.")
+                    .font(.caption).foregroundStyle(LocusTheme.warning)
+                    .accessibilityIdentifier("wallet.policy.unavailable")
             }
             ForEach(gateway.accountSnapshots.filter { snapshot in
-                snapshot.chain == .solana
+                snapshot.ownership == .locusVault && snapshot.chain == .solana
                     && WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .spl
             }) { snapshot in
                 HStack {
@@ -978,7 +1020,7 @@ struct WalletSettingsView: View {
                         .font(.callout.weight(.semibold))
                     Spacer()
                     Button("New Token Rule") { tokenPolicySnapshot = snapshot }
-                        .disabled(gateway.status != .unlocked)
+                        .disabled(!gateway.canAuthorizeTokenPolicy(for: snapshot))
                 }
             }
             ForEach(gateway.activePolicyStatuses) { status in
@@ -1017,7 +1059,8 @@ struct WalletSettingsView: View {
                     Spacer()
                     Button("Authorize") {
                         Task { _ = await gateway.activatePolicyTemplate(id: template.id) }
-                    }.disabled(gateway.status != .unlocked)
+                    }.disabled(!gateway.policyAccounts(networkID: template.networkID, capability: .nativeTransfer)
+                        .contains { $0.id == template.accountID })
                     Button("Remove", role: .destructive) { gateway.removePolicyTemplate(id: template.id) }
                 }
             }
@@ -1310,6 +1353,128 @@ struct WalletSettingsView: View {
     }
 
     #if LOCUS_DIRECT_DOWNLOAD
+    private var experimentalMainnetAccessCard: some View {
+        WalletSectionCard(title: "Experimental Mainnet", symbol: "exclamationmark.shield") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Not audited or approved for public release. Mainnet transactions use real funds and may cause permanent loss.")
+                    .font(.callout.weight(.semibold)).foregroundStyle(LocusTheme.warning)
+                if let expiry = gateway.experimentalMainnetExpiresAt {
+                    Text("Enabled on this installation until \(expiry.formatted(date: .abbreviated, time: .standard)).")
+                        .accessibilityIdentifier("wallet.experimental.enabled")
+                } else {
+                    Text("Off. Choose a signed activation file, review its exact scope, then explicitly enable mainnet on this installation.")
+                        .accessibilityIdentifier("wallet.experimental.off")
+                }
+                Text("Keys remain in the isolated signer. Vault actions need exact approval unless covered by a spending rule you separately authorize. No rule, dapp connection, or transaction is created by this opt-in.")
+                    .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                Button(experimentalImportInProgress ? "Verifying Activation…" : "Choose Signed Activation…") {
+                    chooseExperimentalMainnetActivation()
+                }
+                .disabled(experimentalImportInProgress)
+                .accessibilityIdentifier("wallet.experimental.choose")
+
+                if let preview = gateway.experimentalMainnetActivationPreview {
+                    Divider()
+                    Text("Review activation \(preview.revision)").font(.headline)
+                    Text("Expires \(preview.expiresAt.formatted(date: .abbreviated, time: .standard))")
+                        .accessibilityIdentifier("wallet.experimental.preview.expiry")
+                    ForEach(preview.networkGrants, id: \.networkID) { grant in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(WalletNetworkCatalog.descriptor(id: grant.networkID)?.displayName ?? grant.networkID)
+                                .font(.headline)
+                            Text(grant.networkID).font(.caption.monospaced())
+                            Text(grant.capabilities.sorted { $0.rawValue < $1.rawValue }
+                                .map(experimentalCapabilityName).joined(separator: ", "))
+                                .font(.callout)
+                            ForEach(Array(grant.connectors.enumerated()), id: \.offset) { _, connector in
+                                Text("\(connector.connector.rawValue) · \(connector.ownership.rawValue)\n\(connector.directions.map(\.rawValue).sorted().joined(separator: ", "))\n\(connector.methods.map(\.rawValue).sorted().joined(separator: ", "))")
+                                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("wallet.experimental.preview.\(grant.networkID)")
+                    }
+                    Text("These are capability limits, not permission to spend. Asset identities, configured providers, simulation, and exact approval or signer-owned policy limits still apply. Collectibles and allowance setup never run automatically.")
+                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Toggle("I understand this is experimental software using real funds, without completed release audits.", isOn: $experimentalRiskAcknowledged)
+                        .accessibilityIdentifier("wallet.experimental.acknowledge")
+                    HStack {
+                        Button("Cancel", role: .cancel) { gateway.cancelExperimentalMainnetActivationReview() }
+                        Spacer()
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Button("Enable Mainnet") { enableExperimentalMainnet(previewID: preview.id) }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!experimentalRiskAcknowledged || experimentalImportInProgress
+                                    || preview.expiresAt <= context.date)
+                                .accessibilityIdentifier("wallet.experimental.enable")
+                        }
+                    }
+                }
+                if let experimentalImportError {
+                    Text(experimentalImportError).font(.callout).foregroundStyle(LocusTheme.coral)
+                        .accessibilityIdentifier("wallet.experimental.error")
+                }
+                Text("Turn Off Wallet disables wallet actions and clears active session rules. Enabling the wallet again does not recreate those rules.")
+                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+            }
+        }
+    }
+
+    private func experimentalCapabilityName(_ capability: WalletNetworkCapability) -> String {
+        switch capability {
+        case .nativeTransfer: "Native transfers"
+        case .fungibleTokenTransfer: "Fungible token transfers"
+        case .nftTransfer: "Supported collectible transfers"
+        case .exactInputSwap: "Reviewed exact-input swaps"
+        case .reviewedCall: "Reviewed contract actions"
+        case .embeddedBrowser: "Embedded-browser connections"
+        case .externalWallet: "Connected wallet accounts"
+        case .walletConnect: "WalletConnect dapps"
+        case .standardizedSignIn: "Canonical sign-in"
+        case .autonomousPolicy: "Separately authorized vault spending rules"
+        }
+    }
+
+    private func chooseExperimentalMainnetActivation() {
+        guard !experimentalImportInProgress else { return }
+        gateway.cancelExperimentalMainnetActivationReview()
+        experimentalImportError = nil
+        let panel = NSOpenPanel()
+        panel.title = "Choose Signed Experimental Mainnet Activation"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        experimentalImportInProgress = true
+        Task {
+            defer { experimentalImportInProgress = false }
+            do {
+                let attributes = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard attributes.isRegularFile == true, let size = attributes.fileSize,
+                      (1...WalletExperimentalActivationImport.maximumBytes).contains(size) else {
+                    throw WalletReleaseActivationError.malformed
+                }
+                try await gateway.previewExperimentalMainnetActivation(Data(contentsOf: url, options: .mappedIfSafe))
+            } catch {
+                experimentalImportError = "This experimental activation could not be verified for this build and installation. No mainnet access was enabled."
+            }
+        }
+    }
+
+    private func enableExperimentalMainnet(previewID: UUID) {
+        guard experimentalRiskAcknowledged, !experimentalImportInProgress else { return }
+        experimentalImportInProgress = true
+        experimentalImportError = nil
+        Task {
+            defer { experimentalImportInProgress = false }
+            do {
+                try await gateway.enableExperimentalMainnetActivation(previewID: previewID)
+            } catch {
+                experimentalImportError = "Activation did not finish in this view. Check current wallet status before continuing; the signer may already have accepted the activation."
+            }
+        }
+    }
+
     private var canaryAccessCard: some View {
         WalletSectionCard(title: "Invited Canary", symbol: "person.badge.shield.checkmark") {
             VStack(alignment: .leading, spacing: 10) {
@@ -1523,7 +1688,9 @@ struct WalletSettingsView: View {
                         Spacer()
                         if entry.reviewedAdapterID != nil {
                             Button("New Raw-Unit Rule") { contractPolicyEntry = entry }
-                                .disabled(gateway.status != .unlocked)
+                                .disabled(WalletPolicyAccountEligibility.contractCapability(entry).map {
+                                    gateway.policyAccounts(networkID: entry.networkID, capability: $0).isEmpty
+                                } ?? true)
                         }
                         Button("Remove", role: .destructive) {
                             Task { await gateway.removeContractRegistryEntry(id: entry.id) }
@@ -1858,10 +2025,10 @@ private struct WalletAlphaRiskSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Label("Enable Locus Vault?", systemImage: "exclamationmark.shield.fill")
                 .font(.title2.weight(.bold))
-            Text("You—not Locus—are responsible for safeguarding the recovery phrase and reviewing every transaction.")
+            Text("You—not Locus—are responsible for safeguarding the recovery phrase and authorizing transactions or narrowly limited spending rules.")
                 .font(.body)
                 .foregroundStyle(LocusTheme.textSecondary)
-            risk("Mainnet is release-gated", "A signed manifest must prove that audit, legal, soak, incident, provider, notarization, and update-feed gates passed.")
+            risk("Mainnet access is separate", "Enabling the vault does not enable mainnet. Ordinary releases require signed release gates. A separately labeled experimental build requires its own signed-file review and explicit mainnet opt-in; it is not an audited public release.")
             risk("Create a separate recovery phrase", "Do not reuse or import a MetaMask, Phantom, Slush, or other wallet phrase.")
             risk("Start with limited funds", "Verify recovery and each chain address before increasing balances.")
             risk("Authorization stays narrow", "Enabling the feature does not bypass unlock, simulation, policy checks, or exact confirmation.")
@@ -2390,15 +2557,9 @@ private struct WalletNativePolicySheet: View {
     }
 
     private var options: [PolicyOption] {
-        gateway.accounts.flatMap { account in
-            account.networkIDs.compactMap { networkID in
-                guard let network = WalletNetworkCatalog.descriptor(id: networkID),
-                      account.ownership == .locusVault,
-                      network.chain == account.chain,
-                      network.chain == .evm || network.chain == .solana,
-                      network.staticallyReviewedCapabilities.contains(.autonomousPolicy)
-                else { return nil }
-                return PolicyOption(account: account, network: network)
+        WalletNetworkCatalog.all.flatMap { network in
+            gateway.policyAccounts(networkID: network.id, capability: .nativeTransfer).map { account in
+                PolicyOption(account: account, network: network)
             }
         }.sorted {
             if $0.network.environment != $1.network.environment {
@@ -2568,7 +2729,8 @@ private struct WalletSPLTokenPolicySheet: View {
     }
 
     private var valid: Bool {
-        guard WalletSolanaBase58.decode(recipient, exactLength: 32) != nil,
+        guard gateway.canAuthorizeTokenPolicy(for: snapshot),
+              WalletSolanaBase58.decode(recipient, exactLength: 32) != nil,
               let perTransactionUnits = parsedToken(perTransaction),
               let sessionCapUnits = parsedToken(sessionCap),
               parsedFee(feeCap) != nil,
@@ -2607,7 +2769,7 @@ private struct WalletSPLTokenPolicySheet: View {
     }
 
     private func activate() {
-        guard let minutes = Int(durationMinutes),
+        guard valid, let minutes = Int(durationMinutes),
               let perTransactionUnits = parsedToken(perTransaction),
               let sessionCapUnits = parsedToken(sessionCap),
               let feeCapUnits = parsedFee(feeCap) else { return }
@@ -2637,27 +2799,49 @@ private struct WalletContractPolicySheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let entry: WalletContractRegistryEntry
+    @State private var selectedAccountID = ""
+    @State private var authorizing = false
     @State private var counterparty = ""
     @State private var inputToken = ""
     @State private var perTransaction = ""
     @State private var sessionCap = ""
     @State private var feeCap = ""
     @State private var durationMinutes = "30"
+    @State private var maximumSlippageBPS = ""
+    @State private var minimumOutput = ""
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 13) {
             Text("Authorize an Advanced Contract Rule")
                 .font(.title2.weight(.bold))
             Text("\(entry.label) · \(adapterName)")
                 .font(.headline)
+            Text(WalletNetworkCatalog.descriptor(id: entry.networkID)?.displayName ?? entry.networkID)
+                .font(.callout.weight(.semibold))
+            Picker("Locus Vault account", selection: $selectedAccountID) {
+                Text("Select a vault account").tag("")
+                ForEach(eligibleAccounts) { account in
+                    Text("\(account.label) · \(account.address.prefix(8))…")
+                        .tag(account.id)
+                }
+            }
+            .accessibilityIdentifier("wallet.policy.contract.account")
             Text(entry.checksumAddress).font(.system(.caption, design: .monospaced))
                 .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
             Text("This authorization is bound to this registry ID, runtime code hash, adapter, token asset, counterparty, fee ceiling, and signer session.")
                 .font(.callout).foregroundStyle(LocusTheme.muted)
             if isSwapAdapter {
                 field("Input token address", placeholder: "0x…", text: $inputToken)
+                Text("Swap recipient: \(selectedAccount?.address ?? "Select a vault account")")
+                    .font(.caption.monospaced()).textSelection(.enabled)
+                field("Maximum slippage (basis points, 0–500)", placeholder: "50", text: $maximumSlippageBPS)
+                field("Minimum output per swap (raw output units)", placeholder: "1000000", text: $minimumOutput)
+                Text("This rule does not select an output token. It is limited to configured reviewed routes and your raw-unit output floor. Use exact transaction approval when you need to choose each output asset.")
+                    .font(.caption).foregroundStyle(LocusTheme.warning)
+            } else {
+                field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
             }
-            field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
             field("Maximum per action (token base units)", placeholder: "1000000", text: $perTransaction)
             field("Total session allowance (raw token units)", placeholder: "5000000", text: $sessionCap)
             field("Maximum fee per action (wei)", placeholder: "2000000000000000", text: $feeCap)
@@ -2669,18 +2853,21 @@ private struct WalletContractPolicySheet: View {
                 Spacer()
                 Button("Authorize Rule") { activate() }.buttonStyle(.borderedProminent)
                     .tint(LocusTheme.ink)
-                    .disabled(!valid)
+                    .disabled(!valid || authorizing)
             }
             if let error = gateway.lastError {
                 Text(error).font(.callout).foregroundStyle(LocusTheme.coral)
             }
         }
-        .padding(22).frame(width: 520)
+        .padding(22)
+        }
+        .frame(width: 560)
+        .frame(maxHeight: 640)
     }
 
     private var adapterName: String {
         switch entry.reviewedAdapterID {
-        case WalletReviewedAdapters.erc20: "ERC-20 transfer / finite approval"
+        case WalletReviewedAdapters.erc20: "ERC-20 transfer"
         case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn:
             "Universal Router legacy V2 exact-input"
         case WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
@@ -2691,12 +2878,12 @@ private struct WalletContractPolicySheet: View {
 
     private var counterpartyTitle: String {
         entry.reviewedAdapterID == WalletReviewedAdapters.erc20
-            ? "Approved recipient or spender" : "Approved swap recipient"
+            ? "Approved transfer recipient" : "Approved swap recipient"
     }
 
     private var adapterWarning: String {
         if entry.reviewedAdapterID == WalletReviewedAdapters.erc20 {
-            return "Unlimited approvals and any unrecognized side effect still require exact confirmation."
+            return "This rule does not authorize allowance setup, collectibles, or unrecognized side effects. Those cannot run automatically."
         }
         if entry.reviewedAdapterID
             == WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn {
@@ -2713,20 +2900,25 @@ private struct WalletContractPolicySheet: View {
         ].contains(adapterID)
     }
 
-    private var assetAddress: String {
-        entry.reviewedAdapterID == WalletReviewedAdapters.erc20
-            ? entry.checksumAddress : inputToken
+    private var valid: Bool {
+        draftPolicy != nil
     }
 
-    private var valid: Bool {
-        guard entry.reviewedAdapterID != nil,
-              isAddress(counterparty), isAddress(assetAddress),
-              WalletBaseUnits.normalize(perTransaction) != nil,
-              WalletBaseUnits.normalize(sessionCap) != nil,
-              WalletBaseUnits.normalize(feeCap) != nil,
-              let minutes = Int(durationMinutes), (1...480).contains(minutes),
-              gateway.accounts.contains(where: { $0.chain == .evm }) else { return false }
-        return WalletBaseUnits.lessThanOrEqual(perTransaction, sessionCap)
+    private var selectedAccount: WalletAccount? {
+        eligibleAccounts.first { $0.id == selectedAccountID }
+    }
+
+    private var draftPolicy: WalletSessionPolicy? {
+        guard let selectedAccount else { return nil }
+        return WalletPolicyAccountEligibility.contractPolicy(entry: entry, account: selectedAccount,
+            inputToken: inputToken, recipient: counterparty, perTransaction: perTransaction,
+            sessionCap: sessionCap, feeCap: feeCap, durationMinutes: durationMinutes,
+            maximumSlippageBPS: maximumSlippageBPS, minimumOutput: minimumOutput)
+    }
+
+    private var eligibleAccounts: [WalletAccount] {
+        guard let capability = WalletPolicyAccountEligibility.contractCapability(entry) else { return [] }
+        return gateway.policyAccounts(networkID: entry.networkID, capability: capability)
     }
 
     private func field(_ title: String, placeholder: String, text: Binding<String>) -> some View {
@@ -2736,29 +2928,13 @@ private struct WalletContractPolicySheet: View {
         }
     }
 
-    private func isAddress(_ value: String) -> Bool {
-        value.count == 42 && value.hasPrefix("0x")
-            && value.dropFirst(2).allSatisfy(\.isHexDigit)
-    }
-
     private func activate() {
-        guard let account = gateway.accounts.first(where: { $0.chain == .evm }),
-              let adapterID = entry.reviewedAdapterID,
-              let minutes = Int(durationMinutes) else { return }
-        let policy = WalletSessionPolicy(
-            id: UUID().uuidString.lowercased(), accountID: account.id,
-            networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: [
-                "eip155:11155111/erc20:\(assetAddress.lowercased())"
-            ],
-            allowedRecipients: [counterparty], allowedContractIDs: [entry.id],
-            allowedAdapterIDs: [adapterID],
-            maximumTransactionBaseUnits: perTransaction,
-            maximumSessionBaseUnits: sessionCap, maximumFeeBaseUnits: feeCap,
-            expiresAt: Date().addingTimeInterval(TimeInterval(minutes * 60)),
-            allowedActionKinds: [.contractCall]
-        )
-        Task { if await gateway.activatePolicy(policy) { dismiss() } }
+        guard !authorizing, let policy = draftPolicy else { return }
+        authorizing = true
+        Task {
+            defer { authorizing = false }
+            if await gateway.activatePolicy(policy) { dismiss() }
+        }
     }
 }
 
@@ -2881,6 +3057,14 @@ private struct WalletTransactionConfirmationSheet: View {
                             .background(LocusTheme.accentAction.opacity(0.14))
                             .clipShape(Capsule())
                     }
+                    #if LOCUS_DIRECT_DOWNLOAD
+                    if gateway.experimentalMainnetActive,
+                       WalletNetworkCatalog.descriptor(id: transaction.networkID)?.environment == .mainnet {
+                        Label("Experimental Mainnet · real funds · not an audited public release", systemImage: "exclamationmark.shield")
+                            .font(.callout.weight(.semibold)).foregroundStyle(LocusTheme.warning)
+                            .accessibilityIdentifier("wallet.transaction.experimental")
+                    }
+                    #endif
 
                     VStack(alignment: .leading, spacing: 5) {
                         Text(requester)

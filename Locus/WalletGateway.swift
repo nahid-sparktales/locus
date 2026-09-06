@@ -2,6 +2,122 @@ import AppKit
 import CryptoKit
 import Foundation
 
+/// UI eligibility is not signing authority. The signer independently validates
+/// every policy; these filters keep unrelated and externally owned accounts out
+/// of the rule editors before the user authorizes anything.
+enum WalletPolicyAccountEligibility {
+    static func contractCapability(_ entry: WalletContractRegistryEntry) -> WalletNetworkCapability? {
+        switch entry.reviewedAdapterID {
+        case WalletReviewedAdapters.erc20: .fungibleTokenTransfer
+        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
+             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn: .exactInputSwap
+        default: nil
+        }
+    }
+
+    static func accounts(_ accounts: [WalletAccount], networkID: String) -> [WalletAccount] {
+        guard let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.chain == .evm || network.chain == .solana,
+              network.staticallyReviewedCapabilities.contains(.autonomousPolicy) else { return [] }
+        return accounts.filter {
+            $0.ownership == .locusVault && $0.chain == network.chain
+                && $0.networkIDs.contains(networkID)
+        }
+    }
+
+    static func contractAssetID(entry: WalletContractRegistryEntry, address: String) -> String? {
+        guard WalletNetworkCatalog.descriptor(id: entry.networkID)?.chain == .evm,
+              address.count == 42, address.hasPrefix("0x"),
+              address.dropFirst(2).allSatisfy(\.isHexDigit) else { return nil }
+        return "\(entry.networkID)/erc20:\(address.lowercased())"
+    }
+
+    static func contractPolicy(
+        entry: WalletContractRegistryEntry, account: WalletAccount, inputToken: String,
+        recipient: String, perTransaction: String, sessionCap: String, feeCap: String,
+        durationMinutes: String, maximumSlippageBPS: String, minimumOutput: String,
+        now: Date = Date()
+    ) -> WalletSessionPolicy? {
+        guard let capability = contractCapability(entry), let adapter = entry.reviewedAdapterID,
+              accounts([account], networkID: entry.networkID).count == 1,
+              let minutes = Int(durationMinutes), (1...480).contains(minutes),
+              WalletBaseUnits.normalize(perTransaction) == perTransaction, perTransaction != "0",
+              WalletBaseUnits.normalize(sessionCap) == sessionCap,
+              WalletBaseUnits.normalize(feeCap) == feeCap,
+              WalletBaseUnits.lessThanOrEqual(perTransaction, sessionCap) else { return nil }
+        let isSwap = capability == .exactInputSwap
+        guard let asset = contractAssetID(entry: entry,
+            address: isSwap ? inputToken : entry.checksumAddress) else { return nil }
+        let counterparty = isSwap ? account.address : recipient
+        guard contractAssetID(entry: entry, address: counterparty) != nil else { return nil }
+        let slippage: Int?
+        let floor: String?
+        if isSwap {
+            guard let value = Int(maximumSlippageBPS), (0...500).contains(value),
+                  WalletBaseUnits.normalize(minimumOutput) == minimumOutput, minimumOutput != "0" else { return nil }
+            slippage = value
+            floor = minimumOutput
+        } else {
+            slippage = nil
+            floor = nil
+        }
+        return WalletSessionPolicy(id: UUID().uuidString.lowercased(), accountID: account.id,
+            networkID: entry.networkID, allowedAssetIDs: [asset], allowedRecipients: [counterparty],
+            allowedContractIDs: [entry.id], allowedAdapterIDs: [adapter],
+            maximumTransactionBaseUnits: perTransaction, maximumSessionBaseUnits: sessionCap,
+            maximumFeeBaseUnits: feeCap, expiresAt: now.addingTimeInterval(TimeInterval(minutes * 60)),
+            allowedActionKinds: isSwap ? [.exactInputSwap] : [.fungibleTokenTransfer],
+            maximumSlippageBPS: slippage, minimumOutputBaseUnits: floor)
+    }
+}
+
+#if LOCUS_DIRECT_DOWNLOAD
+#if DEBUG
+/// Explicit in-process XCTest injection only; no preference, environment,
+/// public bridge, Release, or App Store activation override exists.
+struct WalletExperimentalActivationTestConfiguration {
+    let key: Curve25519.Signing.PublicKey
+    let ceiling: WalletSignedReviewCeiling
+    let identity: WalletInstalledReleaseIdentity
+}
+#endif
+
+struct WalletExperimentalMainnetActivationPreview: Identifiable, Equatable {
+    let id: UUID
+    let revision: Int
+    let expiresAt: Date
+    let networkGrants: [WalletNetworkCapabilityGrant]
+}
+
+enum WalletExperimentalActivationImport {
+    static let maximumBytes = 1_048_576
+
+    static func decode(_ data: Data) throws -> WalletReleaseHistoryRequest {
+        guard !data.isEmpty, data.count <= maximumBytes else {
+            throw WalletReleaseActivationError.malformed
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let request = try decoder.decode(WalletReleaseHistoryRequest.self, from: data)
+        guard request.schemaVersion == 1, request.admission == nil,
+              !request.transitions.isEmpty,
+              request.transitions.count <= WalletReleaseHistoryVerifier.maximumTransitions,
+              request.transitions.allSatisfy({
+                  $0.envelope.releaseStage == .experimentalMainnet
+                      && $0.envelope.purpose == .experimentalMainnet
+              }) else { throw WalletReleaseActivationError.malformed }
+        return request
+    }
+
+    static func containsExperimentalAuthority(_ request: WalletReleaseHistoryRequest) -> Bool {
+        request.transitions.contains {
+            $0.envelope.releaseStage == .experimentalMainnet
+                || $0.envelope.purpose == .experimentalMainnet
+        }
+    }
+}
+#endif
+
 enum WalletHubState: Equatable, Sendable {
     case unavailableBuild
     case alphaDisabled
@@ -750,6 +866,19 @@ final class WalletGateway: ObservableObject {
         didSet { NotificationCenter.default.post(name: WalletCandidateUpdateAuthority.changed, object: nil) }
     }
     @Published private(set) var canaryInstallationID: String?
+    @Published private(set) var experimentalMainnetActivationPreview: WalletExperimentalMainnetActivationPreview?
+    private var stagedExperimentalActivation: (request: WalletReleaseHistoryRequest,
+        signerStatus: WalletReleaseAuthorityStatus, checkpoint: WalletReleaseAuthorityCheckpoint)?
+    private var experimentalActivationReviewGeneration = UUID()
+    private var experimentalActivationConsentGeneration = UUID()
+    #if DEBUG
+    private var experimentalActivationTestConfiguration: WalletExperimentalActivationTestConfiguration?
+    func configureExperimentalActivationForTesting(_ configuration: WalletExperimentalActivationTestConfiguration) {
+        precondition(NSClassFromString("XCTestCase") != nil || NSClassFromString("XCTest.XCTestCase") != nil,
+            "Activation fixtures require XCTest")
+        experimentalActivationTestConfiguration = configuration
+    }
+    #endif
     private let activationPublicKey: Curve25519.Signing.PublicKey?
     private let installedReleaseIdentity: WalletInstalledReleaseIdentity?
     private let releaseActivationURL: URL?
@@ -1187,10 +1316,9 @@ final class WalletGateway: ObservableObject {
     }
 
     private func performReleaseActivationRefresh() async {
-        guard usesBundledReleaseActivation,
-              let publicKey = activationPublicKey,
-              let ceiling = immutableReviewCeiling,
-              let identity = installedReleaseIdentity else { return }
+        guard usesBundledReleaseActivation || isExperimentalActivationTestFixture,
+              let inputs = activationVerificationInputs else { return }
+        let (publicKey, ceiling, identity) = inputs
         guard let authorityStatus = try? await signer.releaseAuthorityStatus() else {
             launchGate = try! WalletLaunchGate()
             verifiedReleaseAuthority = nil
@@ -1199,8 +1327,9 @@ final class WalletGateway: ObservableObject {
         }
         canaryInstallationID = authorityStatus.installationID
         var candidates: [WalletReleaseHistoryRequest] = []
-        if let url = releaseActivationURL,
-           let remote = try? await WalletReleaseHistorySource.fetch(from: url, checkpoint: authorityStatus.checkpoint) {
+        if !isExperimentalActivationTestFixture, let url = releaseActivationURL,
+           let remote = try? await WalletReleaseHistorySource.fetch(from: url, checkpoint: authorityStatus.checkpoint),
+           !WalletExperimentalActivationImport.containsExperimentalAuthority(remote) {
             candidates.append(remote)
         }
         if let checkpoint = authorityStatus.checkpoint {
@@ -1210,7 +1339,10 @@ final class WalletGateway: ObservableObject {
             do {
                 let verified = try WalletReleaseHistoryVerifier.verify(history, ceiling: ceiling,
                     key: publicKey, identity: identity, previous: authorityStatus.checkpoint,
-                    installationID: authorityStatus.installationID)
+                    installationID: authorityStatus.installationID,
+                    allowExperimentalMainnet: experimentalMainnetBuildEnabled)
+                // Reapply even the stored checkpoint: after process restart
+                // the signer must rehydrate independently verified authority.
                 let signerStatus = try await signer.applyReleaseHistory(history)
                 guard signerStatus.installationID == authorityStatus.installationID,
                       signerStatus.checkpoint == verified.checkpoint else {
@@ -1249,7 +1381,9 @@ final class WalletGateway: ObservableObject {
                 // for enforcing authority already accepted by both processes.
                 let cached = WalletReleaseHistoryRequest(schemaVersion: 1,
                     transitions: [checkpoint.signedTransition], admission: checkpoint.admission)
-                try? WalletReleaseActivationCache.store(WalletAuthorityEncoding.encode(cached))
+                if !isExperimentalActivationTestFixture {
+                    try? WalletReleaseActivationCache.store(WalletAuthorityEncoding.encode(cached))
+                }
                 return
             } catch {
                 continue
@@ -1285,6 +1419,9 @@ final class WalletGateway: ObservableObject {
         if authority.checkpoint.signedTransition.envelope.releaseStage == .generalAvailability {
             return "This exact release is approved for general availability."
         }
+        if authority.checkpoint.signedTransition.envelope.releaseStage == .experimentalMainnet {
+            return "Experimental Mainnet is enabled for this installation. This is not an audited canary or public release. No spending rule is enabled automatically."
+        }
         guard let installation = canaryInstallationID,
               (try? authority.requireAdmission(installationID: installation)) != nil else {
             return "An invitation for this installation is required. Import the signed file supplied by the release team."
@@ -1304,7 +1441,8 @@ final class WalletGateway: ObservableObject {
         let request = WalletReleaseHistoryRequest(schemaVersion: 1,
             transitions: [checkpoint.signedTransition], admission: signed)
         let verified = try WalletReleaseHistoryVerifier.verify(request, ceiling: ceiling,
-            key: key, identity: identity, previous: checkpoint, installationID: current.installationID)
+            key: key, identity: identity, previous: checkpoint, installationID: current.installationID,
+            allowExperimentalMainnet: experimentalMainnetBuildEnabled)
         try verified.requireAdmission(installationID: current.installationID)
         let applied = try await signer.applyReleaseHistory(request)
         guard applied.checkpoint == verified.checkpoint, applied.installationID == current.installationID else {
@@ -1313,7 +1451,125 @@ final class WalletGateway: ObservableObject {
         await refreshReleaseActivation()
     }
 
+    var experimentalMainnetBuildEnabled: Bool {
+        isExperimentalActivationTestFixture || WalletExperimentalMainnetBuild.isEnabled()
+    }
+
+    private var isExperimentalActivationTestFixture: Bool {
+        #if DEBUG
+        return experimentalActivationTestConfiguration != nil
+        #else
+        return false
+        #endif
+    }
+
+    private var activationVerificationInputs: (Curve25519.Signing.PublicKey,
+        WalletSignedReviewCeiling, WalletInstalledReleaseIdentity)? {
+        #if DEBUG
+        if let fixture = experimentalActivationTestConfiguration {
+            return (fixture.key, fixture.ceiling, fixture.identity)
+        }
+        #endif
+        guard let key = activationPublicKey, let ceiling = immutableReviewCeiling,
+              let identity = installedReleaseIdentity else { return nil }
+        return (key, ceiling, identity)
+    }
+
+    var experimentalMainnetActive: Bool {
+        walletEnabled && experimentalMainnetBuildEnabled
+            && verifiedReleaseAuthority?.checkpoint.signedTransition.envelope.releaseStage == .experimentalMainnet
+            && (verifiedReleaseAuthority?.authorityExpiresAt ?? .distantPast) > Date()
+    }
+
+    var experimentalMainnetExpiresAt: Date? {
+        experimentalMainnetActive ? verifiedReleaseAuthority?.authorityExpiresAt : nil
+    }
+
+    func cancelExperimentalMainnetActivationReview() {
+        experimentalActivationConsentGeneration = UUID()
+        discardExperimentalMainnetActivationPreview()
+    }
+
+    private func discardExperimentalMainnetActivationPreview() {
+        experimentalActivationReviewGeneration = UUID()
+        stagedExperimentalActivation = nil
+        experimentalMainnetActivationPreview = nil
+    }
+
+    /// Preview is independently verified but grants no authority and never
+    /// calls applyReleaseHistory. The file is retained only in native memory.
+    func previewExperimentalMainnetActivation(_ data: Data) async throws {
+        cancelExperimentalMainnetActivationReview()
+        let generation = experimentalActivationReviewGeneration
+        guard walletEnabled, experimentalMainnetBuildEnabled,
+              let inputs = activationVerificationInputs else {
+            throw WalletReleaseActivationError.stateUnavailable
+        }
+        let (key, ceiling, identity) = inputs
+        let request = try WalletExperimentalActivationImport.decode(data)
+        let current = try await signer.releaseAuthorityStatus()
+        guard walletEnabled, generation == experimentalActivationReviewGeneration else {
+            throw WalletReleaseActivationError.stateUnavailable
+        }
+        let verified = try WalletReleaseHistoryVerifier.verify(request, ceiling: ceiling,
+            key: key, identity: identity, previous: current.checkpoint,
+            installationID: current.installationID,
+            allowExperimentalMainnet: experimentalMainnetBuildEnabled)
+        stagedExperimentalActivation = (request, current, verified.checkpoint)
+        experimentalMainnetActivationPreview = .init(id: UUID(), revision: verified.checkpoint.revision,
+            expiresAt: verified.authorityExpiresAt,
+            networkGrants: verified.launchGate.effectiveManifest?.networkGrants.sorted {
+                $0.networkID < $1.networkID
+            } ?? [])
+    }
+
+    /// Only the explicit Enable Mainnet button consumes this one-use review.
+    /// Re-read the authenticated signer checkpoint so a stale preview cannot
+    /// approve changed history or a different installation.
+    func enableExperimentalMainnetActivation(previewID: UUID) async throws {
+        guard walletEnabled, experimentalMainnetBuildEnabled,
+              experimentalMainnetActivationPreview?.id == previewID,
+              let staged = stagedExperimentalActivation,
+              let inputs = activationVerificationInputs else {
+            throw WalletReleaseActivationError.stateUnavailable
+        }
+        let (key, ceiling, identity) = inputs
+        cancelExperimentalMainnetActivationReview()
+        let generation = experimentalActivationReviewGeneration
+        let consentGeneration = experimentalActivationConsentGeneration
+        let current = try await signer.releaseAuthorityStatus()
+        guard walletEnabled, generation == experimentalActivationReviewGeneration,
+              current == staged.signerStatus else { throw WalletReleaseActivationError.stateUnavailable }
+        let verified = try WalletReleaseHistoryVerifier.verify(staged.request, ceiling: ceiling,
+            key: key, identity: identity, previous: current.checkpoint,
+            installationID: current.installationID,
+            allowExperimentalMainnet: experimentalMainnetBuildEnabled)
+        guard verified.checkpoint == staged.checkpoint else {
+            throw WalletReleaseActivationError.identityMismatch
+        }
+        let applied = try await signer.applyReleaseHistory(staged.request)
+        guard applied.installationID == current.installationID,
+              applied.checkpoint == verified.checkpoint else {
+            throw WalletReleaseActivationError.identityMismatch
+        }
+        guard walletEnabled, generation == experimentalActivationReviewGeneration else {
+            // The signer may already have durably accepted the checkpoint.
+            // Do not undo its history, revive a canceled review, or publish
+            // success after lock, disablement, or a replacement review.
+            throw WalletReleaseActivationError.stateUnavailable
+        }
+        await refreshReleaseActivation()
+        guard walletEnabled, consentGeneration == experimentalActivationConsentGeneration,
+              verifiedReleaseAuthority?.checkpoint == verified.checkpoint else {
+            throw WalletReleaseActivationError.stateUnavailable
+        }
+    }
+
     private func cancelAuthorityAffectedByActivation() async {
+        // Publishing accepted authority invalidates stale previews, but is not
+        // itself user cancellation of the explicit enable operation. Lock,
+        // navigation, disablement and replacement review have a separate epoch.
+        discardExperimentalMainnetActivationPreview()
         requestRouter.cancel(reason: .walletDisabled)
         for intentID in Array(confirmationContinuations.keys) {
             cancelConfirmation(intentID: intentID)
@@ -1385,15 +1641,15 @@ final class WalletGateway: ObservableObject {
         let endpoints: [WalletProviderEndpoint]
         switch network.chain {
         case .evm:
-            guard let config = WalletBundledProviderConfiguration.ethereum(network: network)
+            guard let config = WalletBundledProviderConfiguration.ethereum(network: network, reviewRegistry: reviewRegistry)
             else { throw Error.policyDenied("Reviewed Ethereum providers are unavailable.") }
             endpoints = [config.primary, config.fallback].compactMap { $0 }
         case .solana:
-            guard let config = WalletSolanaProviderConfiguration.bundled(network: network)
+            guard let config = WalletSolanaProviderConfiguration.bundled(network: network, reviewRegistry: reviewRegistry)
             else { throw Error.policyDenied("Reviewed Solana providers are unavailable.") }
             endpoints = [config.primary, config.fallback].compactMap { $0 }
         case .sui:
-            guard let config = WalletSuiProviderConfiguration.bundled(network: network)
+            guard let config = WalletSuiProviderConfiguration.bundled(network: network, reviewRegistry: reviewRegistry)
             else { throw Error.policyDenied("Reviewed Sui providers are unavailable.") }
             endpoints = [config.primary, config.fallback].compactMap { $0 }
         }
@@ -1403,6 +1659,39 @@ final class WalletGateway: ObservableObject {
         #else
         throw Error.signerUnavailable
         #endif
+    }
+
+    func policyAccounts(networkID: String, capability: WalletNetworkCapability) -> [WalletAccount] {
+        guard walletEnabled, status == .unlocked, signer.isAvailable,
+              let network = WalletNetworkCatalog.descriptor(id: networkID),
+              network.staticallyReviewedCapabilities.contains(capability) else { return [] }
+        // Keep ordinary testnet policies available, matching the signing
+        // pipeline. Mainnet additionally requires active release authority.
+        if network.environment == .mainnet {
+            guard (try? launchGate.authorize(networkID: networkID, capability: .autonomousPolicy,
+                      regionCode: regionCode)) != nil,
+                  (try? launchGate.authorize(networkID: networkID, capability: capability,
+                      regionCode: regionCode)) != nil,
+                  (try? authorizeProviderBindings(networkID: networkID)) != nil else { return [] }
+        }
+        return WalletPolicyAccountEligibility.accounts(accounts, networkID: networkID)
+    }
+
+    func canAuthorizeTokenPolicy(for snapshot: WalletAccountSnapshot) -> Bool {
+        guard snapshot.ownership == .locusVault,
+              WalletSolanaAssetIdentity.parse(snapshot.assetID)?.program == .spl,
+              assets.contains(where: {
+                  $0.id == snapshot.assetID && $0.networkID == snapshot.networkID
+                      && $0.kind == .fungibleToken && $0.isVisibleByDefault
+              }) else { return false }
+        return policyAccounts(networkID: snapshot.networkID, capability: .fungibleTokenTransfer)
+            .contains { $0.id == snapshot.accountID }
+    }
+
+    var canAuthorizeNativePolicy: Bool {
+        WalletNetworkCatalog.all.contains {
+            !policyAccounts(networkID: $0.id, capability: .nativeTransfer).isEmpty
+        }
     }
 
     private func refreshStatus(clearErrorOnSuccess: Bool) async {
@@ -3481,6 +3770,9 @@ final class WalletGateway: ObservableObject {
     #endif
 
     func lock() {
+        #if LOCUS_DIRECT_DOWNLOAD
+        cancelExperimentalMainnetActivationReview()
+        #endif
         cancelActiveRecoveryCeremony()
         idleLockTimer?.invalidate()
         idleLockTimer = nil
@@ -3503,6 +3795,9 @@ final class WalletGateway: ObservableObject {
     }
 
     private func handleSignerInvalidation() {
+        #if LOCUS_DIRECT_DOWNLOAD
+        cancelExperimentalMainnetActivationReview()
+        #endif
         connectionIntentBindings.removeAll()
         recoveryView.cancel()
         recoveryCeremonyActive = false
