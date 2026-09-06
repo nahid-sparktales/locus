@@ -443,7 +443,8 @@ enum WalletReleaseActivationCache {
             appropriateFor: nil,
             create: true
         )
-        return base.appendingPathComponent("Locus/WalletReleaseActivation-v1.json")
+        let suffix = WalletExperimentalMainnetBuild.authorityStorageSuffix
+        return base.appendingPathComponent("Locus/WalletReleaseActivation-v1\(suffix).json")
     }
 }
 

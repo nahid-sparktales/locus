@@ -2,6 +2,20 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Only the separate, sealed experimental app/signer build can opt into this
+/// channel. Environment variables and public wallet preferences grant nothing.
+enum WalletExperimentalMainnetBuild {
+    static func isEnabled(bundle: Bundle = .main) -> Bool {
+        #if LOCUS_EXPERIMENTAL_MAINNET && !LOCUS_APP_STORE
+        return bundle.object(forInfoDictionaryKey: "LocusWalletExperimentalMainnetEnabled") as? Bool == true
+        #else
+        return false
+        #endif
+    }
+
+    static var authorityStorageSuffix: String { isEnabled() ? ".experimental-mainnet" : "" }
+}
+
 enum WalletAuthorityEncoding {
     static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
@@ -134,6 +148,7 @@ enum WalletReleaseTransitionKind: String, Codable, Sendable {
 enum WalletReleasePurpose: String, Codable, Sendable {
     case production
     case testnetRehearsal = "testnet_rehearsal"
+    case experimentalMainnet = "experimental_mainnet"
 }
 
 struct WalletReleaseTransitionEnvelope: Codable, Equatable, Sendable {
@@ -308,7 +323,8 @@ enum WalletReleaseHistoryVerifier {
     static func verify(_ request: WalletReleaseHistoryRequest, ceiling: WalletSignedReviewCeiling,
                        key: Curve25519.Signing.PublicKey, identity: WalletInstalledReleaseIdentity,
                        previous: WalletReleaseAuthorityCheckpoint? = nil,
-                       installationID: String, now: Date = Date()) throws -> WalletVerifiedReleaseAuthority {
+                       installationID: String, now: Date = Date(),
+                       allowExperimentalMainnet: Bool = false) throws -> WalletVerifiedReleaseAuthority {
         try ceiling.verify(key: key, now: now)
         guard request.schemaVersion == 1, !request.transitions.isEmpty,
               request.transitions.count <= maximumTransitions,
@@ -328,6 +344,7 @@ enum WalletReleaseHistoryVerifier {
             // and never return to a retired candidate. Repacking the same
             // source cannot reset reservations or emergency restrictions.
             guard first.envelope.transition == .initial, first.envelope.previousEnvelopeSHA256 == nil,
+                  first.envelope.purpose == old.envelope.purpose,
                   first.envelope.revision > old.envelope.revision,
                   first.envelope.sourceRevision != old.envelope.sourceRevision,
                   first.envelope.installedIdentity != old.envelope.installedIdentity,
@@ -341,6 +358,11 @@ enum WalletReleaseHistoryVerifier {
         for signed in request.transitions {
             let value = signed.envelope
             let proofTime = value.issuedAt
+            let experimental = value.purpose == .experimentalMainnet
+            guard experimental == (value.releaseStage == .experimentalMainnet),
+                  !experimental || allowExperimentalMainnet else {
+                throw WalletReleaseActivationError.malformed
+            }
             guard value.schemaVersion == 2, value.revision > 0, proofTime <= now,
                   proofTime >= ceiling.ceiling.reviewedAt,
                   value.expiresAt > proofTime, value.expiresAt.timeIntervalSince(proofTime) <= 31 * 86_400,
@@ -369,13 +391,22 @@ enum WalletReleaseHistoryVerifier {
                   cap.expiresAt == value.expiresAt, review.expiresAt == value.expiresAt else {
                 throw WalletReleaseActivationError.malformed
             }
-            let gate = try WalletLaunchGate(signedManifest: value.capabilityManifest, publicKey: key, now: proofTime)
+            let gate = try WalletLaunchGate(signedManifest: value.capabilityManifest, publicKey: key,
+                now: proofTime, allowExperimentalMainnet: allowExperimentalMainnet)
             let scopeRegistry = try ceiling.ceiling.scope.registry(revision: review.revision,
                 issuedAt: proofTime, expiresAt: value.expiresAt, now: proofTime)
             latestRegistry = try scopeRegistry.restricted(by: value.reviewRestriction, publicKey: key, now: proofTime)
             let limits = cap.canaryLimits ?? []
             guard limits.count <= 10_000, Set(limits.map(\.identity)).count == limits.count,
                   limits.allSatisfy(WalletCanaryBudget.valid) else { throw WalletReleaseActivationError.malformed }
+            if experimental {
+                guard value.cohortID == nil, value.admissionGeneration == 0,
+                      value.revokedAdmissionSerials.isEmpty, request.admission == nil,
+                      limits.isEmpty,
+                      !mainnets.isDisjoint(with: cap.enabledNetworkIDs) else {
+                    throw WalletReleaseActivationError.malformed
+                }
+            }
             if value.purpose == .testnetRehearsal {
                 guard cap.networkGrants.allSatisfy({ WalletNetworkCatalog.descriptor(id: $0.networkID)?.environment == .testnet }),
                       value.releaseStage == .invitedCanary, value.cohortID == nil,
@@ -406,7 +437,9 @@ enum WalletReleaseHistoryVerifier {
                 }
             } else {
                 guard value.transition == .initial, value.previousEnvelopeSHA256 == nil,
-                      value.releaseStage == .invitedCanary else { throw WalletReleaseActivationError.historyRequired }
+                      value.releaseStage == (experimental ? .experimentalMainnet : .invitedCanary) else {
+                    throw WalletReleaseActivationError.historyRequired
+                }
                 if value.purpose == .production {
                     guard mainnets.isSubset(of: gate.effectiveManifest?.enabledNetworkIDs ?? []) else {
                         throw WalletReleaseActivationError.broaderThanCeiling
@@ -420,12 +453,16 @@ enum WalletReleaseHistoryVerifier {
         }
         let sameCandidate = previous?.signedTransition.envelope.candidateID == latest.envelope.candidateID
         let admission = request.admission ?? (sameCandidate ? previous?.admission : nil)
+        if latest.envelope.purpose == .experimentalMainnet, admission != nil {
+            throw WalletReleaseActivationError.malformed
+        }
         if let signed = admission {
             try validateAdmission(signed, envelope: latest.envelope, key: key, installationID: installationID, now: now)
         }
         let result = WalletVerifiedReleaseAuthority(checkpoint: .init(signedTransition: latest,
             admission: admission, retiredCandidateIDs: retired),
-            launchGate: try WalletLaunchGate(signedManifest: latest.envelope.capabilityManifest, publicKey: key, now: now),
+            launchGate: try WalletLaunchGate(signedManifest: latest.envelope.capabilityManifest, publicKey: key,
+                now: now, allowExperimentalMainnet: allowExperimentalMainnet),
             reviewRegistry: registry)
         // A revoked/missing admission must not prevent persisting an emergency
         // restriction. Callers apply it and expose no canary signing authority.

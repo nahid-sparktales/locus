@@ -4,9 +4,15 @@ import Security
 /// All persisted data here is signer-owned authority, never public-wallet DB
 /// metadata. Append-only records make an interrupted/late writer fail closed.
 enum WalletSignerReleaseAuthorityStore {
-    private static let service = "io.sparktales.locus.WalletSigner.authority.v2"
-    private static let identityService = "io.sparktales.locus.WalletSigner.installation.v1"
-    private static let admissionService = "io.sparktales.locus.WalletSigner.admissions.v1"
+    private static var service: String {
+        "io.sparktales.locus.WalletSigner.authority.v2" + WalletExperimentalMainnetBuild.authorityStorageSuffix
+    }
+    private static var identityService: String {
+        "io.sparktales.locus.WalletSigner.installation.v1" + WalletExperimentalMainnetBuild.authorityStorageSuffix
+    }
+    private static var admissionService: String {
+        "io.sparktales.locus.WalletSigner.admissions.v1" + WalletExperimentalMainnetBuild.authorityStorageSuffix
+    }
     private static let lock = NSLock()
 
     static func installationID() throws -> String {

@@ -556,11 +556,13 @@ enum WalletConnectorAccountOwnership: String, Codable, CaseIterable, Sendable {
 }
 
 enum WalletReleaseStage: String, Codable, CaseIterable, Sendable {
+    case experimentalMainnet = "experimental_mainnet"
     case invitedCanary = "invited_canary"
     case generalAvailability = "general_availability"
 
     fileprivate var authorityRank: Int {
         switch self {
+        case .experimentalMainnet: -1
         case .invitedCanary: 0
         case .generalAvailability: 1
         }
@@ -1661,14 +1663,21 @@ struct WalletLaunchGate: Sendable {
 
     let bundledNetworks: [String: WalletNetworkDescriptor]
     let effectiveManifest: WalletCapabilityManifest?
+    private let allowsExperimentalMainnet: Bool
 
     init(
         bundledNetworks: [WalletNetworkDescriptor] = WalletNetworkCatalog.all,
         signedManifest: WalletSignedCapabilityManifest? = nil,
         publicKey: Curve25519.Signing.PublicKey? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        allowExperimentalMainnet: Bool = false
     ) throws {
         self.bundledNetworks = Dictionary(uniqueKeysWithValues: bundledNetworks.map { ($0.id, $0) })
+        #if LOCUS_APP_STORE
+        self.allowsExperimentalMainnet = false
+        #else
+        self.allowsExperimentalMainnet = allowExperimentalMainnet
+        #endif
         guard let signedManifest else {
             effectiveManifest = nil
             return
@@ -1683,10 +1692,8 @@ struct WalletLaunchGate: Sendable {
                   signedManifest.manifest,
                   bundledNetworks: self.bundledNetworks
               ),
-              signedManifest.manifest.evidenceIndexSHA256.count == 64,
-              signedManifest.manifest.evidenceIndexSHA256.utf8.allSatisfy({ byte in
-                  (48...57).contains(byte) || (97...102).contains(byte)
-              }) else {
+              Self.validEvidenceShape(signedManifest.manifest,
+                  allowExperimentalMainnet: allowsExperimentalMainnet) else {
             throw WalletLaunchGateError.invalidManifest
         }
         let encoder = JSONEncoder()
@@ -1705,10 +1712,28 @@ struct WalletLaunchGate: Sendable {
 
     private init(
         bundledNetworks: [String: WalletNetworkDescriptor],
-        effectiveManifest: WalletCapabilityManifest?
+        effectiveManifest: WalletCapabilityManifest?,
+        allowsExperimentalMainnet: Bool
     ) {
         self.bundledNetworks = bundledNetworks
         self.effectiveManifest = effectiveManifest
+        self.allowsExperimentalMainnet = allowsExperimentalMainnet
+    }
+
+    private static func validEvidenceShape(_ manifest: WalletCapabilityManifest,
+                                           allowExperimentalMainnet: Bool) -> Bool {
+        if manifest.releaseStage == .experimentalMainnet {
+            // Experimental authority claims no audit, legal-region or release
+            // evidence. Its exact operational scope is still signed.
+            return allowExperimentalMainnet && manifest.evidenceIndexSHA256.isEmpty
+                && manifest.completedApprovals.isEmpty && manifest.approvedRegions.isEmpty
+                && (manifest.canaryLimits ?? []).isEmpty
+                && manifest.expiresAt.timeIntervalSince(manifest.issuedAt) <= 31 * 86_400
+        }
+        return manifest.evidenceIndexSHA256.count == 64
+            && manifest.evidenceIndexSHA256.utf8.allSatisfy {
+                (48...57).contains($0) || (97...102).contains($0)
+            }
     }
 
     /// Applies a separately signed emergency manifest with intersection-only
@@ -1722,9 +1747,16 @@ struct WalletLaunchGate: Sendable {
         guard let bundled = effectiveManifest else {
             return self
         }
+        // An experimental document cannot remove production release gates;
+        // a production document cannot relabel experimental testing as GA.
+        guard (bundled.releaseStage == .experimentalMainnet)
+                == (remote.manifest.releaseStage == .experimentalMainnet) else {
+            throw WalletLaunchGateError.invalidManifest
+        }
         let remoteGate = try WalletLaunchGate(
             bundledNetworks: Array(bundledNetworks.values),
-            signedManifest: remote, publicKey: publicKey, now: now
+            signedManifest: remote, publicKey: publicKey, now: now,
+            allowExperimentalMainnet: allowsExperimentalMainnet
         )
         guard let restriction = remoteGate.effectiveManifest,
               restriction.revision >= bundled.revision else {
@@ -1783,7 +1815,8 @@ struct WalletLaunchGate: Sendable {
         )
         return WalletLaunchGate(
             bundledNetworks: bundledNetworks,
-            effectiveManifest: combined
+            effectiveManifest: combined,
+            allowsExperimentalMainnet: allowsExperimentalMainnet
         )
     }
 
@@ -1803,6 +1836,11 @@ struct WalletLaunchGate: Sendable {
               manifest.expiresAt > Date(),
               manifest.grant(for: networkID)?.capabilities.contains(capability) == true else {
             throw WalletLaunchGateError.capabilityNotReviewed
+        }
+        if manifest.releaseStage == .experimentalMainnet {
+            guard allowsExperimentalMainnet else { throw WalletLaunchGateError.invalidManifest }
+            if requireGA { throw WalletLaunchGateError.generalAvailabilityNotApproved }
+            return
         }
         guard manifest.approvedRegions.contains(regionCode.uppercased()) else {
             throw WalletLaunchGateError.regionNotApproved

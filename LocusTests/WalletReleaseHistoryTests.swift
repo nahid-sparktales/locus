@@ -48,11 +48,13 @@ final class WalletReleaseHistoryTests: XCTestCase {
                             revoked: [String] = []) throws -> WalletSignedReleaseTransition {
         let date = date ?? now.addingTimeInterval(-10)
         let restriction = review(revision, at: date, adapters: adapters)
+        let experimental = stage == .experimentalMainnet
         var cap = WalletCapabilityManifest(schemaVersion: 3, revision: revision,
-            releaseStage: stage, evidenceIndexSHA256: String(repeating: "d", count: 64),
+            releaseStage: stage, evidenceIndexSHA256: experimental ? "" : String(repeating: "d", count: 64),
             issuedAt: date, expiresAt: restriction.expiresAt,
             networkGrants: networks.sorted().map { .init(networkID: $0, capabilities: [.nativeTransfer], connectors: []) },
-            approvedRegions: ["CA"], completedApprovals: Set(WalletLaunchApproval.allCases))
+            approvedRegions: experimental ? [] : ["CA"],
+            completedApprovals: experimental ? [] : Set(WalletLaunchApproval.allCases))
         cap.canaryLimits = limits
         let value = WalletReleaseTransitionEnvelope(schemaVersion: 2,
             sourceRevision: identity.sourceRevision, bundleVersion: identity.bundleVersion,
@@ -87,10 +89,126 @@ final class WalletReleaseHistoryTests: XCTestCase {
     private func verify(_ values: [WalletSignedReleaseTransition],
                         previous: WalletReleaseAuthorityCheckpoint? = nil,
                         admission: WalletSignedCanaryAdmission? = nil,
-                        installedIdentity: WalletInstalledReleaseIdentity? = nil) throws -> WalletVerifiedReleaseAuthority {
+                        installedIdentity: WalletInstalledReleaseIdentity? = nil,
+                        allowExperimentalMainnet: Bool = false) throws -> WalletVerifiedReleaseAuthority {
         try WalletReleaseHistoryVerifier.verify(.init(schemaVersion: 1, transitions: values, admission: admission),
             ceiling: signedCeiling(), key: key.publicKey, identity: installedIdentity ?? identity,
-            previous: previous, installationID: installation, now: now)
+            previous: previous, installationID: installation, now: now,
+            allowExperimentalMainnet: allowExperimentalMainnet)
+    }
+
+    func testExperimentalMainnetRequiresExplicitBuildAdmissionAndClaimsNoReleaseEvidence() throws {
+        let initial = try transition(purpose: .experimentalMainnet,
+            networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
+        XCTAssertThrowsError(try verify([initial]))
+        let enabled = try verify([initial], allowExperimentalMainnet: true)
+        XCTAssertNil(enabled.checkpoint.admission)
+        XCTAssertTrue(initial.envelope.capabilityManifest.manifest.completedApprovals.isEmpty)
+        XCTAssertTrue(initial.envelope.capabilityManifest.manifest.evidenceIndexSHA256.isEmpty)
+        XCTAssertTrue(initial.envelope.capabilityManifest.manifest.approvedRegions.isEmpty)
+        XCTAssertNoThrow(try enabled.requireAdmission(installationID: installation, now: now))
+        for network in WalletReleaseHistoryVerifier.mainnets {
+            XCTAssertNoThrow(try enabled.launchGate.authorize(networkID: network,
+                capability: .nativeTransfer, regionCode: "ZZ"))
+            XCTAssertThrowsError(try enabled.launchGate.authorize(networkID: network,
+                capability: .nativeTransfer, regionCode: "ZZ", requireGA: true))
+            XCTAssertThrowsError(try enabled.launchGate.authorize(networkID: network,
+                capability: .autonomousPolicy, regionCode: "ZZ"))
+        }
+    }
+
+    func testExperimentalPurposeCannotBeRelabeledAsProductionOrTestnetRehearsal() throws {
+        let initial = try transition(purpose: .experimentalMainnet,
+            networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
+        for purpose in [WalletReleasePurpose.production, .testnetRehearsal] {
+            let relabeled = try resign(initial.envelope) { $0["purpose"] = purpose.rawValue }
+            XCTAssertThrowsError(try verify([relabeled], allowExperimentalMainnet: true))
+        }
+        XCTAssertThrowsError(try verify([transition(purpose: .experimentalMainnet)],
+            allowExperimentalMainnet: true))
+        XCTAssertThrowsError(try verify([transition(purpose: .experimentalMainnet,
+            stage: .experimentalMainnet)], allowExperimentalMainnet: true))
+    }
+
+    func testExperimentalRenewalCannotRestoreRestrictedScopeOrPromoteToGA() throws {
+        let networks = WalletReleaseHistoryVerifier.mainnets
+        let initial = try transition(purpose: .experimentalMainnet, networks: networks, stage: .experimentalMainnet)
+        let restricted = try transition(2, kind: .restriction, previous: initial, adapters: [],
+            purpose: .experimentalMainnet, networks: ["eip155:1"], stage: .experimentalMainnet)
+        let result = try verify([initial, restricted], allowExperimentalMainnet: true)
+        XCTAssertEqual(result.launchGate.effectiveManifest?.enabledNetworkIDs, ["eip155:1"])
+        let renewal = try transition(3, kind: .renewal, previous: restricted, adapters: [],
+            purpose: .experimentalMainnet, networks: ["eip155:1"], stage: .experimentalMainnet)
+        XCTAssertNoThrow(try verify([renewal], previous: result.checkpoint, allowExperimentalMainnet: true))
+        let restored = try transition(3, kind: .renewal, previous: restricted,
+            purpose: .experimentalMainnet, networks: networks, stage: .experimentalMainnet)
+        XCTAssertThrowsError(try verify([restored], previous: result.checkpoint, allowExperimentalMainnet: true))
+        let promotion = try transition(2, kind: .promotion, previous: initial,
+            purpose: .production, networks: networks, stage: .generalAvailability)
+        XCTAssertThrowsError(try verify([initial, promotion], allowExperimentalMainnet: true))
+    }
+
+    func testExperimentalLaunchGateRejectsFabricatedApprovalAndEvidenceClaims() throws {
+        let initial = try transition(purpose: .experimentalMainnet,
+            networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
+        let base = initial.envelope.capabilityManifest.manifest
+        for field in ["evidenceIndexSHA256", "completedApprovals", "approvedRegions"] {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: WalletAuthorityEncoding.encode(base)) as? [String: Any])
+            switch field {
+            case "evidenceIndexSHA256": object[field] = String(repeating: "d", count: 64)
+            case "completedApprovals": object[field] = [WalletLaunchApproval.signerAudit.rawValue]
+            default: object[field] = ["CA"]
+            }
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let manifest = try decoder.decode(WalletCapabilityManifest.self,
+                from: JSONSerialization.data(withJSONObject: object))
+            let signed = WalletSignedCapabilityManifest(manifest: manifest, signatureBase64: try signature(manifest))
+            XCTAssertThrowsError(try WalletLaunchGate(signedManifest: signed, publicKey: key.publicKey,
+                now: now, allowExperimentalMainnet: true))
+        }
+    }
+
+    func testExperimentalScopeStillRequiresExactProvidersAndValidSignatures() throws {
+        let initial = try transition(purpose: .experimentalMainnet,
+            networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
+        XCTAssertThrowsError(try verify([.init(envelope: initial.envelope,
+            signatureBase64: Data(repeating: 0, count: 64).base64EncodedString())], allowExperimentalMainnet: true))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            WalletAuthorityEncoding.encode(initial.envelope.reviewRestriction.manifest)) as? [String: Any])
+        object["providerIdentities"] = []
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let review = try decoder.decode(WalletReviewManifest.self, from: JSONSerialization.data(withJSONObject: object))
+        let signedReview = WalletSignedReviewManifest(manifest: review, signatureBase64: try signature(review))
+        let missingProviders = try resign(initial.envelope) { value in
+            value["reviewRestriction"] = try JSONSerialization.jsonObject(with: WalletAuthorityEncoding.encode(signedReview))
+        }
+        // Recompute authority so rejection is attributable to absent provider bindings.
+        let rebound = try resign(missingProviders.envelope) {
+            $0["authoritySHA256"] = try missingProviders.envelope.computedAuthoritySHA256()
+        }
+        XCTAssertThrowsError(try verify([rebound], allowExperimentalMainnet: true)) {
+            XCTAssertEqual($0 as? WalletReleaseActivationError, .broaderThanCeiling)
+        }
+    }
+
+    func testExperimentalAndProductionCapabilityRestrictionsStaySeparate() throws {
+        let experimental = try transition(purpose: .experimentalMainnet,
+            networks: WalletReleaseHistoryVerifier.mainnets, stage: .experimentalMainnet)
+        let production = try transition(purpose: .production, limits: mainnetLimits(),
+            networks: WalletReleaseHistoryVerifier.mainnets)
+        let experimentalGate = try verify([experimental], allowExperimentalMainnet: true).launchGate
+        let productionGate = try verify([production]).launchGate
+        XCTAssertThrowsError(try experimentalGate.restricted(by: production.envelope.capabilityManifest,
+            publicKey: key.publicKey, now: now))
+        XCTAssertThrowsError(try productionGate.restricted(by: experimental.envelope.capabilityManifest,
+            publicKey: key.publicKey, now: now))
+    }
+
+    func testOrdinaryBuildCannotEnableExperimentalModeFromPreferences() {
+        #if !LOCUS_EXPERIMENTAL_MAINNET
+        XCTAssertFalse(WalletExperimentalMainnetBuild.isEnabled())
+        XCTAssertEqual(WalletExperimentalMainnetBuild.authorityStorageSuffix, "")
+        #endif
     }
 
     func testImmutableCeilingCannotBeDecodedAsOperationalManifest() throws {
