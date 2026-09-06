@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import XCTest
 @testable import Locus
@@ -37,39 +38,45 @@ final class TranscriptSelectionTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         XCTAssertTrue(window.isVisible)
 
-        // SwiftUI's virtual AccessibilityNode uses the public informal API
-        // without declaring NSAccessibilityProtocol conformance. Keep that
-        // compatibility path in this fixture only; never inspect private AX.
-        func attribute(_ object: NSObject, _ name: NSAccessibility.Attribute) -> Any? {
-            if let accessible = object as? any NSAccessibilityProtocol {
-                switch name {
-                case .role: return accessible.accessibilityRole()?.rawValue
-                case .identifier: return accessible.accessibilityIdentifier()
-                case .children: return accessible.accessibilityChildren()
-                case .position: return NSValue(point: accessible.accessibilityFrame().origin)
-                case .size: return NSValue(size: accessible.accessibilityFrame().size)
-                default: return nil
-                }
+        // Activate SwiftUI's public accessibility tree without depending on
+        // another test class having queried it first. This reads only our own
+        // synthetic process and never requests permissions or changes settings.
+        let ready = expectation(description: "Card fixture accessibility client is ready")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(getpid())
+            let timeout = AXUIElementSetMessagingTimeout(application, 0.2)
+            XCTAssertEqual(timeout, .success)
+            if timeout == .success {
+                var windows: CFTypeRef?
+                XCTAssertEqual(AXUIElementCopyAttributeValue(
+                    application, kAXWindowsAttribute as CFString, &windows
+                ), .success)
             }
-            return object.accessibilityAttributeValue(name)
+            ready.fulfill()
         }
+        wait(for: [ready], timeout: 1)
         var traversalTruncated = false
-        func findButton() -> NSObject? {
-            var queue: [(NSObject, Int)] = [(host, 0)]
+        func findButton() -> TranscriptAccessibilityNode? {
+            var queue: [(Any, Int)] = [(host, 0)]
             var visited: Set<ObjectIdentifier> = []
-            var match: NSObject?
+            var match: TranscriptAccessibilityNode?
             while !queue.isEmpty {
-                let (node, depth) = queue.removeFirst()
-                guard visited.insert(ObjectIdentifier(node)).inserted else { continue }
+                let (value, depth) = queue.removeFirst()
+                guard let node = TranscriptAccessibilityNode(value),
+                      visited.insert(ObjectIdentifier(node.object)).inserted else { continue }
                 guard visited.count <= 256, depth <= 16 else {
                     traversalTruncated = true
                     return nil
                 }
-                if attribute(node, .identifier) as? String == identifier {
+                if node.identifier == identifier, node.role == .button {
                     XCTAssertNil(match, "The fixture must expose exactly one button identity")
                     match = node
                 }
-                let children = attribute(node, .children) as? [NSObject] ?? []
+                let children = node.children
+                guard children.count <= 256 else {
+                    traversalTruncated = true
+                    return nil
+                }
                 queue += children.map { ($0, depth + 1) }
             }
             return match
@@ -83,10 +90,8 @@ final class TranscriptSelectionTests: XCTestCase {
         }
         XCTAssertFalse(traversalTruncated)
         let target = try XCTUnwrap(button)
-        XCTAssertEqual(attribute(target, .role) as? String, NSAccessibility.Role.button.rawValue)
-        let origin = try XCTUnwrap(attribute(target, .position) as? NSValue).pointValue
-        let size = try XCTUnwrap(attribute(target, .size) as? NSValue).sizeValue
-        let frame = NSRect(origin: origin, size: size)
+        XCTAssertEqual(target.role, .button)
+        let frame = target.frame
         XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
         XCTAssertGreaterThan(frame.width, 0)
         XCTAssertGreaterThan(frame.height, 0)
@@ -95,9 +100,10 @@ final class TranscriptSelectionTests: XCTestCase {
         XCTAssertTrue(host.bounds.contains(host.convert(windowPoint, from: nil)))
         let rootPoint = host.superview?.convert(windowPoint, from: nil) ?? windowPoint
         let nativeHit = try XCTUnwrap(host.hitTest(rootPoint))
-        let accessibleHit = try XCTUnwrap(nativeHit.accessibilityHitTest(center) as? NSObject)
-        XCTAssertEqual(attribute(accessibleHit, .role) as? String, NSAccessibility.Role.button.rawValue)
-        XCTAssertEqual(attribute(accessibleHit, .identifier) as? String, identifier,
+        let hit = try XCTUnwrap(nativeHit.accessibilityHitTest(center))
+        let accessibleHit = try XCTUnwrap(TranscriptAccessibilityNode(hit))
+        XCTAssertEqual(accessibleHit.role, .button)
+        XCTAssertEqual(accessibleHit.identifier, identifier,
             "The visible button, not an outer decorative card shape, must own its measured center")
     }
 

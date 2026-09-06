@@ -55,7 +55,7 @@ private struct TranscriptVisibilityObservation: Encodable {
 /// Objective-C dispatch preserves those real nodes without requiring a cast or
 /// manufacturing a role, frame, or identifier.
 @MainActor
-private struct TranscriptAccessibilityNode {
+struct TranscriptAccessibilityNode {
     let object: NSObject
 
     init?(_ value: Any) {
