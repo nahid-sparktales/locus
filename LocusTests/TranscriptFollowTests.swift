@@ -96,6 +96,7 @@ private struct PublicTranscriptHitTarget: Sendable {
 private struct PublicTranscriptHitResult: Sendable {
     var completed = false
     var matches: [Bool] = []
+    var stage = "not-started"
 }
 
 private final class PublicTranscriptHitReceipt: @unchecked Sendable {
@@ -386,7 +387,7 @@ final class TranscriptFollowTests: XCTestCase {
         }
         wait(for: [finished], timeout: 3)
         let result = try XCTUnwrap(receipt.value())
-        XCTAssertTrue(result.completed, "Public AX traversal must finish within its bound")
+        XCTAssertTrue(result.completed, "Public AX traversal must finish within its bound (\(result.stage))")
         XCTAssertEqual(result.matches, [true, true],
             "Root AX must return the exact owned button and inner native text leaf, not their List/ScrollArea wrappers")
         model.blocks.append(ChatBlock(kind: .assistant, text: String(repeating: Self.reply, count: 6) + "\n\nAfter public hit follow"))
@@ -398,7 +399,7 @@ final class TranscriptFollowTests: XCTestCase {
         title: String, screenTop: CGFloat, targets: [PublicTranscriptHitTarget]
     ) -> PublicTranscriptHitResult {
         let application = AXUIElementCreateApplication(getpid())
-        guard AXUIElementSetMessagingTimeout(application, 0.1) == .success else { return .init() }
+        guard AXUIElementSetMessagingTimeout(application, 0.1) == .success else { return .init(stage: "messaging-timeout") }
         let deadline = ProcessInfo.processInfo.systemUptime + 2
         func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
             var value: CFTypeRef?
@@ -415,9 +416,10 @@ final class TranscriptFollowTests: XCTestCase {
                   AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return nil }
             return CGRect(origin: origin, size: dimensions)
         }
-        guard let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement], windows.count <= 32 else { return .init() }
+        guard let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] else { return .init(stage: "window-list") }
+        guard windows.count <= 32 else { return .init(stage: "window-count-\(windows.count)") }
         let owned = windows.filter { attribute($0, kAXTitleAttribute) as? String == title }
-        guard owned.count == 1, let window = owned.first else { return .init() }
+        guard owned.count == 1, let window = owned.first else { return .init(stage: "owned-window-count-\(owned.count)") }
         var pending = [window]
         var visited: [CFHashCode: [AXUIElement]] = [:]
         var count = 0
@@ -426,7 +428,7 @@ final class TranscriptFollowTests: XCTestCase {
             CGRect(x: $0.frame.minX, y: screenTop - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
         }
         while let element = pending.popLast() {
-            guard count < 4_096, ProcessInfo.processInfo.systemUptime < deadline else { return .init() }
+            guard count < 4_096, ProcessInfo.processInfo.systemUptime < deadline else { return .init(stage: "traversal-bound") }
             let hash = CFHash(element)
             if visited[hash, default: []].contains(where: { CFEqual($0, element) }) { continue }
             visited[hash, default: []].append(element)
@@ -443,7 +445,7 @@ final class TranscriptFollowTests: XCTestCase {
             }
             for name in [kAXChildrenAttribute, kAXContentsAttribute] {
                 if let children = attribute(element, name) as? [AXUIElement] {
-                    guard children.count <= 4_096 else { return .init() }
+                    guard children.count <= 4_096 else { return .init(stage: "child-bound") }
                     pending.append(contentsOf: children)
                 }
             }
@@ -457,7 +459,7 @@ final class TranscriptFollowTests: XCTestCase {
             let status = AXUIElementCopyElementAtPosition(application, Float(center.midX), Float(center.midY), &hit)
             matches.append(status == .success && hit.map { CFEqual($0, element) } == true)
         }
-        return PublicTranscriptHitResult(completed: true, matches: matches)
+        return PublicTranscriptHitResult(completed: true, matches: matches, stage: "completed")
     }
 
     func testLogicalPinCoalescesAndRespectsSelectionDetachAndBridgeLifecycle() {
