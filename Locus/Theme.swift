@@ -647,6 +647,7 @@ enum LocusSurfaceKind {
 private struct LocusSurfaceModifier: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
 
     let kind: LocusSurfaceKind
     let radius: CGFloat
@@ -672,7 +673,7 @@ private struct LocusSurfaceModifier: ViewModifier {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Color.clear)
                 .background {
-                    if reduceTransparency || contrast == .increased {
+                    if reduceTransparency || contrast == .increased || isLiveResizing {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(solidColor)
                     } else {

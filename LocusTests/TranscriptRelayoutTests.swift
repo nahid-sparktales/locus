@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import XCTest
 @testable import Locus
@@ -64,6 +65,97 @@ final class TranscriptRelayoutTests: XCTestCase {
             view.textLayoutMeasurementCount, 1,
             "A viewport resize remeasured horizontally scrolling program output"
         )
+    }
+
+    func testLiveResizeUsesConservativeFourPointBucketsAndBoundedLRU() {
+        let view = makeTextView(text: Self.longProse, wraps: true)
+        view.setLiveResizeMeasurementActive(true)
+
+        for width in stride(from: CGFloat(300), through: 319.75, by: 0.25) {
+            _ = view.measuredSize(for: width, wraps: true, isLiveResizing: true)
+        }
+
+        XCTAssertEqual(view.textLayoutMeasurementCount, 5)
+        XCTAssertEqual(view.measurementCacheEntryCount, 4)
+        XCTAssertEqual(
+            ResponseSelectableTextView.effectiveMeasurementWidth(
+                307.99,
+                wraps: true,
+                isLiveResizing: true
+            ),
+            304,
+            "Live resizing must round down so cached height never clips a line"
+        )
+
+        let bucketedCount = view.textLayoutMeasurementCount
+        _ = view.measuredSize(for: 319.9, wraps: true, isLiveResizing: true)
+        XCTAssertEqual(view.textLayoutMeasurementCount, bucketedCount)
+
+        view.setLiveResizeMeasurementActive(false)
+        let exact = view.measuredSize(for: 319.9, wraps: true, isLiveResizing: false)
+        XCTAssertEqual(view.textLayoutMeasurementCount, bucketedCount + 1)
+        XCTAssertEqual(exact.width, 319.9, accuracy: 0.001)
+    }
+
+    func testMeasurementCacheEvictsLeastRecentlyUsedEntry() {
+        var cache = TranscriptMeasurementCache<Int>(capacity: 4)
+        for value in 1...4 {
+            cache.insert(NSSize(width: value, height: value), for: value)
+        }
+        _ = cache.value(for: 1)
+        cache.insert(NSSize(width: 5, height: 5), for: 5)
+
+        XCTAssertNil(cache.value(for: 2))
+        XCTAssertNotNil(cache.value(for: 1))
+        XCTAssertEqual(cache.count, 4)
+    }
+
+    func testLiveResizeCoordinatorPublishesOnlyGestureBoundaries() {
+        let layout = WorkspaceLayoutModel()
+        var publications = 0
+        let subscription = layout.objectWillChange.sink { publications += 1 }
+
+        layout.updateGeometry(WorkspaceGeometrySnapshot(windowSize: CGSize(width: 900, height: 700)))
+        layout.liveResizeCoordinator.beginLiveResize()
+        for width in stride(from: CGFloat(900), through: 1_100, by: 0.5) {
+            layout.liveResizeCoordinator.update(width: width)
+        }
+        layout.liveResizeCoordinator.endLiveResize(finalWidth: 1_100)
+
+        XCTAssertEqual(publications, 2)
+        XCTAssertEqual(layout.geometry.windowSize.width, 900)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testSharedWorkspaceHeightExcludesTheToolbarWithoutGoingNegative() {
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(forWindowHeight: 760),
+            708
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(
+                forWindowHeight: WorkspaceLayoutMetrics.toolbarHeight
+            ),
+            0
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMetrics.contentHeight(forWindowHeight: 24),
+            0
+        )
+    }
+
+    func testLiveResizePerformanceSummaryUsesNearestRankP95() async {
+        let summary = await MainActor.run {
+            LiveResizePerformanceMonitor.summarize(
+                samples: Array(1...100).map(Double.init),
+                finalWidth: 1_184
+            )
+        }
+
+        XCTAssertEqual(summary.sampleCount, 100)
+        XCTAssertEqual(summary.p95MainThreadWorkMillis, 95)
+        XCTAssertEqual(summary.maximumMainThreadWorkMillis, 100)
+        XCTAssertEqual(summary.finalWidth, 1_184)
     }
 
     func testContentAndWrappingChangesInvalidateNativeMeasurements() {
@@ -269,5 +361,157 @@ final class TranscriptRelayoutTests: XCTestCase {
             }
         }
         return total == 0 ? 0 : Double(differing) / Double(total)
+    }
+}
+
+@MainActor
+final class StreamingPerformanceTests: XCTestCase {
+    func testAccumulatorPreservesOrderedTextReasoningAndSingleBatchRevision() {
+        let state = StreamingReplyState()
+        let id = UUID()
+        state.begin(id: id)
+        let afterBegin = state.revision
+
+        state.append(
+            text: "Hello, world",
+            reasoning: "direct",
+            reasoningSections: [1: "second", 0: "first"]
+        )
+
+        XCTAssertEqual(state.revision, afterBegin + 1)
+        XCTAssertEqual(state.snapshot.text, "Hello, world")
+        XCTAssertEqual(state.snapshot.reasoningSections, ["first", "second"])
+        XCTAssertEqual(state.snapshot.reasoning, "first\n\nsecond")
+        XCTAssertEqual(state.snapshot.turnCharacterCount, 29)
+
+        let finished = state.finish(
+            id: id,
+            authoritativeText: "Hello, final world",
+            authoritativeReasoningSections: ["final reasoning"]
+        )
+        XCTAssertEqual(finished?.text, "Hello, final world")
+        XCTAssertEqual(finished?.reasoning, "final reasoning")
+        XCTAssertFalse(state.snapshot.isActive)
+    }
+
+    func testStreamingBoundaryNeverFreezesInsideAnOpenFence() throws {
+        let source = "Done paragraph.\n\n```swift\nlet value = 1\n\nstill open"
+        let boundary = try XCTUnwrap(StreamingMarkdownBoundary.lastStableBoundary(in: source))
+        XCTAssertEqual(String(source[..<boundary]), "Done paragraph.\n\n")
+
+        let onlyFence = "```swift\n" + String(repeating: "x", count: 40_000) + "\n\n"
+        XCTAssertNil(StreamingMarkdownBoundary.lastStableBoundary(in: onlyFence))
+    }
+
+    func testStreamingCoordinatorFreezesStableBlocksAndReconcilesFinalMarkdown() async {
+        let coordinator = StreamingRenderCoordinator()
+        let source = "# Heading\n\nMutable **tail"
+        coordinator.update(text: source)
+        await drain(coordinator)
+
+        XCTAssertEqual(coordinator.stableBlocks.count, 1)
+        XCTAssertEqual(coordinator.provisionalText, "Mutable **tail")
+        XCTAssertEqual(coordinator.parseCountForTesting, 1)
+
+        coordinator.update(text: source + "**")
+        XCTAssertEqual(coordinator.provisionalText, "Mutable **tail**")
+        coordinator.update(text: source + "**", isFinal: true)
+        await drain(coordinator)
+
+        XCTAssertEqual(
+            coordinator.stableBlocks,
+            MarkdownDocumentParser.parse(source + "**")
+        )
+        XCTAssertTrue(coordinator.provisionalText.isEmpty)
+    }
+
+    func testStreamingCoordinatorRejectsAStaleReplacedSource() async {
+        let coordinator = StreamingRenderCoordinator()
+        coordinator.update(text: String(repeating: "Old paragraph. ", count: 1_000) + "\n\n")
+        coordinator.update(text: "Replacement tail")
+        await drain(coordinator)
+
+        XCTAssertEqual(coordinator.sourceText, "Replacement tail")
+        XCTAssertEqual(coordinator.provisionalText, "Replacement tail")
+        XCTAssertTrue(coordinator.stableBlocks.isEmpty)
+    }
+
+    func testThumbnailStoreDeduplicatesCachesAndInvalidatesChangedFiles() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("artifact.png")
+        try writePNG(size: 32, color: .systemPink, to: url)
+
+        let store = ArtifactThumbnailStore()
+        store.resetForTesting()
+        let firstTask = Task { await store.image(for: url, displayScale: 2) }
+        let secondTask = Task { await store.image(for: url, displayScale: 2) }
+        let first = await firstTask.value
+        let second = await secondTask.value
+
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertEqual(store.decodeCountForTesting, 1)
+        let cached = await store.image(for: url, displayScale: 2)
+        XCTAssertNotNil(cached)
+        XCTAssertEqual(store.decodeCountForTesting, 1)
+
+        try writePNG(size: 48, color: .systemBlue, to: url)
+        let changed = await store.image(for: url, displayScale: 2)
+        XCTAssertNotNil(changed)
+        XCTAssertEqual(store.decodeCountForTesting, 2)
+        XCTAssertEqual(ArtifactThumbnailStore.cacheItemLimit, 128)
+        XCTAssertEqual(ArtifactThumbnailStore.cacheCostLimit, 128 * 1_024 * 1_024)
+    }
+
+    func testThumbnailCancellationRejectsTheResult() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("cancel.png")
+        try writePNG(size: 512, color: .systemOrange, to: url)
+        let store = ArtifactThumbnailStore()
+
+        let task = Task { await store.image(for: url, displayScale: 2) }
+        task.cancel()
+        let result = await task.value
+        XCTAssertNil(result)
+    }
+
+    private func drain(_ coordinator: StreamingRenderCoordinator) async {
+        for _ in 0..<200 {
+            if !coordinator.isParsingForTesting { return }
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTFail("Streaming parser did not become idle")
+    }
+
+    private func writePNG(size: Int, color: NSColor, to url: URL) throws {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: size,
+            pixelsHigh: size,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        color.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: size, height: size)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try data.write(to: url, options: .atomic)
     }
 }

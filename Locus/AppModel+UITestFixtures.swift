@@ -347,6 +347,72 @@ extension AppModel {
                 ),
             ]
         }
+        if ProcessInfo.processInfo.environment[
+            "LOCUS_UI_TESTING_PERFORMANCE_TRANSCRIPT"
+        ] == "1" {
+            let imagePath = "/tmp/locus-performance-fixture.png"
+            writePerformanceFixtureImage(to: imagePath)
+            let prose = (0..<12).map { index in
+                """
+                ## Performance section \(index + 1)
+
+                This deterministic paragraph is deliberately long enough to wrap at several \
+                nearby widths while the window is resized. It exercises headings, emphasis, \
+                links, and the selectable native text leaf without depending on a network.
+
+                - A first list item with **strong text** and `inline code`
+                - A second list item whose wrapping changes with the conversation width
+
+                | Metric | Value | Status |
+                | --- | ---: | :---: |
+                | Frame budget | 8.3 ms | Target |
+                | Width bucket | 4 pt | Active |
+
+                ```swift
+                let section = \(index)
+                let bucket = floor(width / 4) * 4
+                ```
+                """
+            }.joined(separator: "\n\n")
+            let streamID = UUID(uuidString: "00000000-0000-0000-0000-000000000904")!
+            blocks = [
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000901")!,
+                    kind: .user,
+                    text: "Render the deterministic performance transcript"
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000902")!,
+                    kind: .assistant,
+                    reasoningText: "Measure layout buckets\n\nVerify incremental Markdown",
+                    reasoningSections: [
+                        "Measure layout buckets",
+                        "Verify incremental Markdown",
+                    ]
+                ),
+                ChatBlock(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000903")!,
+                    kind: .assistant,
+                    text: prose + "\n\n![Performance image](\(imagePath))",
+                    assistantPhase: .finalAnswer
+                ),
+                ChatBlock(
+                    id: streamID,
+                    kind: .assistant,
+                    assistantPhase: .commentary,
+                    isStreaming: true
+                ),
+            ]
+            streamingAssistantID = streamID
+            streamingReply.resetTurn()
+            streamingReply.begin(id: streamID)
+            streamingReply.append(
+                text: "### Streaming tail\n\nNew text is visible immediately while **formatting",
+                reasoning: "Keep ordered reasoning chunks. ",
+                reasoningSections: [0: "Inspect the mutable tail."]
+            )
+            isBusy = true
+        }
         extensionsModel.extensions = ExtensionsResponse(
             capabilities: ExtensionCapabilities(),
             marketplaces: [],
@@ -1489,5 +1555,27 @@ extension AppModel {
                 ? "Locus was force quit after the team run completed. Its results were restored."
                 : "Locus closed unexpectedly. This team run can be resumed from its saved checkpoint."
         }
+    }
+
+    private func writePerformanceFixtureImage(to path: String) {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 320,
+            pixelsHigh: 180,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSColor(calibratedRed: 0.98, green: 0.24, blue: 0.55, alpha: 1).setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 320, height: 180)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 }

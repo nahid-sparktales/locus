@@ -2786,6 +2786,33 @@ def test_new_session_can_target_a_workspace(client, tmp_path):
     assert client.app.state.service.core.cwd == str(workspace)
 
 
+def test_new_session_keeps_validated_workspace_when_getcwd_is_denied(
+    client, tmp_path, monkeypatch
+):
+    """A macOS-scoped workspace can be usable even when getcwd is denied."""
+    from ollama_code import core as core_module
+
+    workspace = tmp_path / "scoped-workspace"
+    workspace.mkdir()
+
+    def denied_getcwd():
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(core_module.os, "getcwd", denied_getcwd)
+    response = client.post(
+        "/api/sessions/new",
+        json={
+            "reason": "workspace_chat",
+            "cwd": str(workspace),
+            "environment": "local",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_info"]["cwd"] == str(workspace)
+    assert client.app.state.service.core.cwd == str(workspace)
+
+
 def test_worktree_chat_session_handoff_branch_and_restore(client, tmp_path, monkeypatch):
     from ollama_code import worktrees
 

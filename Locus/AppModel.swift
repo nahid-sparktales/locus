@@ -10,6 +10,12 @@ import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
+    let workspaceLayout = WorkspaceLayoutModel()
+    let composerState = ComposerStateModel()
+    let runtimeStatus = RuntimeStatusModel()
+    /// Compatibility publication for views not yet moved to RuntimeStatusModel.
+    /// RuntimeStatusModel remains the only owner of the underlying values.
+    @Published private var runtimeFacadeRevision: UInt = 0
     @Published var backendCapabilities: [String: Bool] = [:]
     var automationWorkflowsEnabled: Bool {
         backendCapabilities["automation_workflows_v1"] == true
@@ -21,8 +27,22 @@ final class AppModel: ObservableObject {
         case reconnectFailed
     }
 
-    @Published var agentRuntimePhase: RuntimePhase = .starting("Starting the local agent…")
-    @Published var modelRuntimePhase: RuntimePhase = .starting("Checking the model provider…")
+    var agentRuntimePhase: RuntimePhase {
+        get { runtimeStatus.agentPhase }
+        set {
+            guard newValue != runtimeStatus.agentPhase else { return }
+            runtimeStatus.setAgentPhase(newValue)
+            runtimeFacadeRevision &+= 1
+        }
+    }
+    var modelRuntimePhase: RuntimePhase {
+        get { runtimeStatus.modelPhase }
+        set {
+            guard newValue != runtimeStatus.modelPhase else { return }
+            runtimeStatus.setModelPhase(newValue)
+            runtimeFacadeRevision &+= 1
+        }
+    }
     var isAgentOnline: Bool { agentRuntimePhase.isOnline }
     var isModelOnline: Bool { modelRuntimePhase.isOnline }
     let providerAccountsModel = ProviderAccountsModel()
@@ -138,11 +158,32 @@ final class AppModel: ObservableObject {
     }
 
     @Published var todos: [TodoItem] = []
-    @Published var isBusy = false
-    @Published private(set) var hasPendingPermission = false
+    var isBusy: Bool {
+        get { runtimeStatus.isBusy }
+        set {
+            guard newValue != runtimeStatus.isBusy else { return }
+            runtimeStatus.setBusy(newValue)
+            runtimeFacadeRevision &+= 1
+        }
+    }
+    private(set) var hasPendingPermission: Bool {
+        get { runtimeStatus.hasPendingPermission }
+        set {
+            guard newValue != runtimeStatus.hasPendingPermission else { return }
+            runtimeStatus.setPendingPermission(newValue)
+            runtimeFacadeRevision &+= 1
+        }
+    }
     /// A short, truthful description of where an in-flight steering request
     /// is waiting. It is cleared when the direction joins the active turn.
-    @Published var steeringState: String?  // internal(for: AppModel extension files)
+    var steeringState: String? {  // internal(for: AppModel extension files)
+        get { runtimeStatus.steeringState }
+        set {
+            guard newValue != runtimeStatus.steeringState else { return }
+            runtimeStatus.setSteeringState(newValue)
+            runtimeFacadeRevision &+= 1
+        }
+    }
     @Published var selectedMode: WorkMode = .work {
         didSet {
             // Changing modes is taking a stance on what happens next, so a
@@ -241,9 +282,18 @@ final class AppModel: ObservableObject {
     let notebook = NotebookModel()
     let agentInstructions = AgentInstructionsModel()
     @Published var contextFiles: [ContextFile] = []
-    @Published var chatAttachments: [ChatAttachment] = []
-    @Published var chatAttachmentNotice: String?
-    @Published var isLoadingChatAttachments = false
+    var chatAttachments: [ChatAttachment] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+    var chatAttachmentNotice: String? {
+        get { composerState.attachmentNotice }
+        set { composerState.attachmentNotice = newValue }
+    }
+    var isLoadingChatAttachments: Bool {
+        get { composerState.isLoadingAttachments }
+        set { composerState.isLoadingAttachments = newValue }
+    }
     /// One explicitly selected Mac application per task. Stored only in
     /// memory; reconnects and app relaunches require a fresh scoped consent.
     @Published var liveApplicationTargets: [String: ApplicationTarget] = [:]  // internal(for: AppModel extension files)
@@ -252,14 +302,15 @@ final class AppModel: ObservableObject {
         get { sessionCatalog.snapshot.workspaceProfiles }
         set { sessionCatalog.replaceWorkspaceProfiles(newValue) }
     }
-    @Published var draftText = "" {
-        didSet {
-            resetHistoryCursorIfEdited()
-            scheduleWorkspacePersistence()
-        }
+    var draftText: String {
+        get { composerState.draftText }
+        set { composerState.draftText = newValue }
     }
     @Published var promptHistory: [String] = []
-    @Published var queuedMessages: [String] = []
+    var queuedMessages: [String] {
+        get { composerState.queuedMessages }
+        set { composerState.queuedMessages = newValue }
+    }
     @Published var shortcutsPresented = false
     @Published var sidebarCollapsed = false {
         didSet {
@@ -342,7 +393,10 @@ final class AppModel: ObservableObject {
     }
     @Published var globalNewFolderPresented = false
     @Published var globalNewFolderName = ""
-    @Published var composerFocusToken = UUID()
+    var composerFocusToken: UUID {
+        get { composerState.focusToken }
+        set { composerState.focusToken = newValue }
+    }
     private var pendingSearchHit: TranscriptSearchHit?
     var expandedWorkspaceIDs: Set<String> {
         get { sessionCatalog.snapshot.expandedWorkspaceIDs }
@@ -1082,6 +1136,11 @@ final class AppModel: ObservableObject {
             existingInstallation: existingInstallation
         )
 
+
+        composerState.draftDidChange = { [weak self] in
+            self?.resetHistoryCursorIfEdited()
+            self?.scheduleWorkspacePersistence()
+        }
         browser.onUserNotice = { [weak self] notice in
             self?.showToast(notice)
         }

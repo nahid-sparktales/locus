@@ -10,6 +10,8 @@ struct WorkspaceView: View {
     @EnvironmentObject private var landingFlow: LandingFlowModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusWorkspaceGeometry) private var workspaceGeometry
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
     @State private var modelPickerPresented = false
     @State private var teamProgressPresented = false
     let sidebarVisible: Bool
@@ -24,32 +26,39 @@ struct WorkspaceView: View {
     }
 
     private var contentArea: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .topTrailing) {
-                chatContent
-                    .frame(width: proxy.size.width, height: proxy.size.height)
+        ZStack(alignment: .topTrailing) {
+            chatContent
+                // The parent VStack already proposes exactly the space left
+                // below the toolbar. Pinning a pre-subtracted height here
+                // reserved that toolbar space twice and lifted the composer.
+                .frame(width: workspaceGeometry.workspaceWidth)
+                .frame(maxHeight: .infinity)
 
-                if activityCenter.activityCenterPresented {
-                    ActivityCenterView()
-                        .environmentObject(model)
-                        .frame(
-                            width: max(280, min(440, proxy.size.width - 24)),
-                            height: max(0, proxy.size.height - 24)
-                        )
-                        .locusSurface(.floating, radius: 12)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(LocusTheme.lineStrong, lineWidth: 1)
-                        }
-                        .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 8)
-                        .padding(12)
-                        .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-                        .zIndex(2)
-                }
+            if activityCenter.activityCenterPresented {
+                ActivityCenterView()
+                    .environmentObject(model)
+                    .frame(
+                        width: max(280, min(440, workspaceGeometry.workspaceWidth - 24))
+                    )
+                    .frame(maxHeight: .infinity)
+                    .locusSurface(.floating, radius: 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                    }
+                    .shadow(
+                        color: isLiveResizing ? .clear : .black.opacity(0.18),
+                        radius: isLiveResizing ? 0 : 18,
+                        x: 0,
+                        y: 8
+                    )
+                    .padding(12)
+                    .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
+                    .zIndex(2)
             }
-            .clipped()
         }
+        .clipped()
     }
 
     private var chatContent: some View {
@@ -231,7 +240,7 @@ struct WorkspaceView: View {
         // Keep its restore control beyond the native traffic-light cluster.
         .padding(.leading, sidebarVisible ? 20 : 76)
         .padding(.trailing, 18)
-        .frame(height: 52)
+        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LocusTheme.line).frame(height: 1)
@@ -469,16 +478,17 @@ struct SplitChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusWorkspaceGeometry) private var workspaceGeometry
     let sidebarVisible: Bool
     let showSidebar: () -> Void
 
     var body: some View {
-        GeometryReader { proxy in
+        Group {
             switch ChatWorkspacePresentation.resolve(isSplit: model.splitViewActive) {
             case .single:
                 liveWorkspace
             case .sideBySide:
-                sideBySide(width: proxy.size.width)
+                sideBySide(width: workspaceGeometry.workspaceWidth)
             }
         }
         .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.splitViewActive)

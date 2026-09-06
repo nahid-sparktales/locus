@@ -1,6 +1,45 @@
 import AppKit
 import SwiftUI
 
+struct TranscriptMeasurementCache<Key: Hashable> {
+    private let capacity: Int
+    private var values: [Key: NSSize] = [:]
+    private var recency: [Key] = []
+
+    init(capacity: Int = 4) {
+        self.capacity = max(capacity, 1)
+    }
+
+    var count: Int { values.count }
+
+    mutating func value(for key: Key) -> NSSize? {
+        guard let value = values[key] else { return nil }
+        touch(key)
+        return value
+    }
+
+    mutating func insert(_ value: NSSize, for key: Key) {
+        values[key] = value
+        touch(key)
+        while values.count > capacity, let oldest = recency.first {
+            recency.removeFirst()
+            values.removeValue(forKey: oldest)
+        }
+    }
+
+    mutating func removeAll() {
+        values.removeAll(keepingCapacity: true)
+        recency.removeAll(keepingCapacity: true)
+    }
+
+    private mutating func touch(_ key: Key) {
+        if let index = recency.firstIndex(of: key) {
+            recency.remove(at: index)
+        }
+        recency.append(key)
+    }
+}
+
 private final class WeakResponseSelectableTextView {
     weak var value: ResponseSelectableTextView?
 
@@ -571,12 +610,41 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
 
     private var contentRevision: UInt = 0
     private var configuredWraps: Bool?
-    private var measurementCache: [MeasurementKey: NSSize] = [:]
+    private var measurementCache = TranscriptMeasurementCache<MeasurementKey>(capacity: 4)
+    private var liveResizeMeasurementActive = false
+    private var lastIntrinsicInvalidationWidth: CGFloat?
 
     /// Deterministic diagnostic used by relayout tests. Cache hits deliberately
     /// do not advance it, so the tests count actual TextKit measurement passes
     /// rather than SwiftUI proposals.
     private(set) var textLayoutMeasurementCount = 0
+    var measurementCacheEntryCount: Int { measurementCache.count }
+
+    static func effectiveMeasurementWidth(
+        _ width: CGFloat,
+        wraps: Bool,
+        isLiveResizing: Bool
+    ) -> CGFloat {
+        guard wraps else { return .greatestFiniteMagnitude }
+        let exact = max(width, 1)
+        guard isLiveResizing else { return exact }
+        // Floor rather than round: a slightly narrower container can be a
+        // little taller, but can never underestimate height and clip a line.
+        return max(floor(exact / 4) * 4, 1)
+    }
+
+    func setLiveResizeMeasurementActive(_ active: Bool) {
+        guard active != liveResizeMeasurementActive else { return }
+        let wasActive = liveResizeMeasurementActive
+        liveResizeMeasurementActive = active
+        lastIntrinsicInvalidationWidth = nil
+        if wasActive, !active {
+            // Approximate answers are gesture-local. The next proposal must
+            // perform one authoritative exact-width measurement.
+            invalidateMeasurementCache()
+            invalidateIntrinsicContentSize()
+        }
+    }
 
     /// Built against a hand-made TextKit 1 stack so inline-code runs can be
     /// drawn as rounded pills by `LocusMarkdownLayoutManager`.
@@ -621,28 +689,43 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
     /// Native size this text needs for a proposal. Wrapped text is keyed by
     /// effective width; unwrapped program output always uses the same infinite
     /// container width, so viewport resizing reuses its invariant measurement.
-    func measuredSize(for width: CGFloat, wraps: Bool) -> NSSize {
-        let effectiveWidth = wraps ? max(width, 1) : CGFloat.greatestFiniteMagnitude
+    func measuredSize(
+        for width: CGFloat,
+        wraps: Bool,
+        isLiveResizing: Bool? = nil
+    ) -> NSSize {
+        let effectiveWidth = Self.effectiveMeasurementWidth(
+            width,
+            wraps: wraps,
+            isLiveResizing: isLiveResizing ?? liveResizeMeasurementActive
+        )
         let key = MeasurementKey(
             contentRevision: contentRevision,
             wraps: wraps,
             effectiveWidth: effectiveWidth
         )
-        if let cached = measurementCache[key] { return cached }
+        if let cached = measurementCache.value(for: key) { return cached }
 
         guard let container = textContainer, let layoutManager else {
             return NSSize(width: max(effectiveWidth, 1), height: 1)
         }
+        let signpostID = locusPerformanceSignposter.makeSignpostID()
+        let interval = locusPerformanceSignposter.beginInterval(
+            "Measure Text Leaf",
+            id: signpostID,
+            "width=\(effectiveWidth, format: .fixed(precision: 1))"
+        )
         setTextContainerWidthIfNeeded(effectiveWidth)
         layoutManager.ensureLayout(for: container)
         let usedRect = layoutManager.usedRect(for: container)
+        locusPerformanceSignposter.endInterval("Measure Text Leaf", interval)
         let measured = NSSize(
             width: wraps
                 ? effectiveWidth
                 : max(attributedString().size().width.rounded(.up) + 2, 1),
             height: max(usedRect.height.rounded(.up), 1)
         )
-        measurementCache[key] = measured
+        measurementCache.insert(measured, for: key)
         textLayoutMeasurementCount += 1
         return measured
     }
@@ -662,8 +745,18 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
         // one no longer describes this text. Without this the row keeps the
         // height it had at the previous column width and its lines are drawn
         // over the row below it.
-        if widthChanged,
-           (configuredWraps ?? textContainer?.widthTracksTextView ?? true) {
+        let wraps = configuredWraps ?? textContainer?.widthTracksTextView ?? true
+        let effectiveWidth = Self.effectiveMeasurementWidth(
+            newSize.width,
+            wraps: wraps,
+            isLiveResizing: liveResizeMeasurementActive
+        )
+        if widthChanged, wraps, effectiveWidth != lastIntrinsicInvalidationWidth {
+            lastIntrinsicInvalidationWidth = effectiveWidth
+            locusPerformanceSignposter.emitEvent(
+                "Invalidate Intrinsic Text Size",
+                "width=\(effectiveWidth, format: .fixed(precision: 1))"
+            )
             invalidateIntrinsicContentSize()
         }
     }
@@ -676,7 +769,8 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
     }
 
     private func invalidateMeasurementCache() {
-        measurementCache.removeAll(keepingCapacity: true)
+        measurementCache.removeAll()
+        lastIntrinsicInvalidationWidth = nil
     }
 
     override func selectAll(_ sender: Any?) {
@@ -768,6 +862,7 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
 }
 
 struct ResponseSelectableText: NSViewRepresentable {
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
     let attributedText: NSAttributedString
     let span: TranscriptSelectionSpan
     let store: TranscriptSelectionStore
@@ -789,6 +884,7 @@ struct ResponseSelectableText: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: ResponseSelectableTextView, context: Context) {
+        nsView.setLiveResizeMeasurementActive(isLiveResizing)
         update(nsView)
     }
 
@@ -816,7 +912,12 @@ struct ResponseSelectableText: NSViewRepresentable {
         } else {
             proposedWidth = .greatestFiniteMagnitude
         }
-        let measurement = nsView.measuredSize(for: proposedWidth, wraps: wraps)
+        nsView.setLiveResizeMeasurementActive(isLiveResizing)
+        let measurement = nsView.measuredSize(
+            for: proposedWidth,
+            wraps: wraps,
+            isLiveResizing: isLiveResizing
+        )
         return CGSize(
             width: wraps ? proposedWidth : measurement.width,
             height: measurement.height

@@ -44,8 +44,27 @@ final class AppModelObservationBoundaryTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(events.count, 24, "Keep this table complete as feature ownership grows")
+        XCTAssertEqual(events.count, 27, "Keep this table complete as feature ownership grows")
         withExtendedLifetime(subscription) {}
+    }
+
+    func testHighFrequencyComposerStateDoesNotPublishAppModel() async {
+        let app = AppModel(startImmediately: false)
+        var appPublications = 0
+        var composerPublications = 0
+        let appSubscription = app.objectWillChange.sink { appPublications += 1 }
+        let composerSubscription = app.composerState.objectWillChange.sink {
+            composerPublications += 1
+        }
+
+        app.draftText = "A long draft that changes while the user types"
+        app.queuedMessages.append("queued")
+        app.chatAttachments = []
+        await Task.yield()
+
+        XCTAssertEqual(appPublications, 0)
+        XCTAssertGreaterThanOrEqual(composerPublications, 2)
+        withExtendedLifetime((appSubscription, composerSubscription)) {}
     }
 
     func testAdvisoryRepeatedFeaturePublicationFixture() {
@@ -74,6 +93,9 @@ final class AppModelObservationBoundaryTests: XCTestCase {
 
     private func featureEvents(for app: AppModel) -> [FeatureEvent] {
         var events = [
+            FeatureEvent(name: "workspace layout") { app.workspaceLayout.objectWillChange.send() },
+            FeatureEvent(name: "composer state") { app.composerState.objectWillChange.send() },
+            FeatureEvent(name: "runtime status") { app.runtimeStatus.objectWillChange.send() },
             FeatureEvent(name: "provider accounts") { app.providerAccountsModel.objectWillChange.send() },
             FeatureEvent(name: "voice control") { app.voiceControl.objectWillChange.send() },
             FeatureEvent(name: "agent teams") { app.agentTeamsModel.objectWillChange.send() },

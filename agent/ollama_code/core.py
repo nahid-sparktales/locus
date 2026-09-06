@@ -91,6 +91,17 @@ EventHandler = Callable[[dict[str, Any]], None]
 PermissionDecider = Callable[[str, str, str, str], str]
 """(tool_name, summary, detail, request_id) -> "once" | "always" | "deny"."""
 
+
+def _cwd_after_chdir(fallback: str) -> str:
+    """Read the physical cwd when macOS permits it, else keep a validated path."""
+    try:
+        return os.getcwd()
+    except PermissionError:
+        # A security-scoped workspace can permit chdir(2) and normal file
+        # access while denying getcwd(3)'s traversal of a protected parent.
+        return fallback
+
+
 _SOLO_ROOT_ONLY_TOOLS = {
     "delegate_read_only",
     # Only the visible root chat has a user to ask.
@@ -1385,8 +1396,9 @@ class AgentCore:
         p = Path(path).expanduser()
         if not p.is_dir():
             raise ValueError(f"not a directory: {path}")
+        target_cwd = os.path.abspath(os.fspath(p))
         os.chdir(p)
-        self.cwd = os.getcwd()
+        self.cwd = _cwd_after_chdir(target_cwd)
         self.workspace_root = self.cwd
         self.execution_path = self.cwd
         self.task_metadata = None
@@ -1414,10 +1426,12 @@ class AgentCore:
         root = Path(workspace_root).expanduser()
         if not path.is_dir() or not root.is_dir():
             raise ValueError("task checkout or source workspace is unavailable")
+        target_cwd = os.path.abspath(os.fspath(path))
+        source_root = str(root.resolve())
         os.chdir(path)
-        self.cwd = os.getcwd()
+        self.cwd = _cwd_after_chdir(target_cwd)
         self.execution_path = self.cwd
-        self.workspace_root = str(root.resolve())
+        self.workspace_root = source_root
         self.task_metadata = dict(task_metadata)
         self.tool_ctx.cwd = self.cwd
         self.extensions.set_cwd(self.cwd)
@@ -1430,8 +1444,9 @@ class AgentCore:
         root = Path(workspace_root or self.workspace_root).expanduser()
         if not root.is_dir():
             raise ValueError("source workspace is unavailable")
+        source_root = os.path.abspath(os.fspath(root))
         os.chdir(root)
-        self.cwd = os.getcwd()
+        self.cwd = _cwd_after_chdir(source_root)
         self.workspace_root = self.cwd
         self.execution_path = self.cwd
         self.task_metadata = None
@@ -1537,8 +1552,9 @@ class AgentCore:
             path = Path(cwd).expanduser()
             if not path.is_dir():
                 raise ValueError(f"not a directory: {cwd}")
+            target_cwd = os.path.abspath(os.fspath(path))
             os.chdir(path)
-            self.cwd = os.getcwd()
+            self.cwd = _cwd_after_chdir(target_cwd)
             self.workspace_root = self.cwd
             self.execution_path = self.cwd
             self.task_metadata = None
@@ -3874,8 +3890,9 @@ class AgentCore:
         cwd = str(header.get("cwd") or "")
         if cwd and Path(cwd).is_dir() and cwd != self.cwd:
             try:
+                target_cwd = os.path.abspath(os.fspath(Path(cwd).expanduser()))
                 os.chdir(cwd)
-                self.cwd = os.getcwd()
+                self.cwd = _cwd_after_chdir(target_cwd)
                 self.workspace_root = self.cwd
                 self.execution_path = self.cwd
                 self.task_metadata = None

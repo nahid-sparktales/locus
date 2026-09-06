@@ -6,7 +6,32 @@ enum ComposerSymbols {
 }
 
 enum ComposerMetrics {
-    static func editorHeight(for text: String, width: CGFloat) -> CGFloat {
+    private static let cache: NSCache<NSString, NSNumber> = {
+        let cache = NSCache<NSString, NSNumber>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    static func editorHeight(
+        for text: String,
+        width: CGFloat,
+        isLiveResizing: Bool = false,
+        typographyToken: Int = 0,
+        draftRevision: UInt? = nil
+    ) -> CGFloat {
+        let effectiveWidth = effectiveMeasurementWidth(
+            width,
+            isLiveResizing: isLiveResizing
+        )
+        let cacheKey = cacheKey(
+            for: text,
+            effectiveWidth: effectiveWidth,
+            typographyToken: typographyToken,
+            draftRevision: draftRevision
+        ) as NSString
+        if let cached = cache.object(forKey: cacheKey) {
+            return CGFloat(cached.doubleValue)
+        }
         let measurementText: String
         if text.isEmpty {
             measurementText = " "
@@ -16,19 +41,79 @@ enum ComposerMetrics {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 5
         let bounds = (measurementText as NSString).boundingRect(
-            with: NSSize(width: max(width - 24, 120), height: .greatestFiniteMagnitude),
+            with: NSSize(width: max(effectiveWidth - 24, 120), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [
                 .font: NSFont.systemFont(ofSize: 13),
                 .paragraphStyle: paragraph,
             ]
         )
-        return min(max(ceil(bounds.height) + 22, 58), 180)
+        let height = min(max(ceil(bounds.height) + 22, 58), 180)
+        cache.setObject(NSNumber(value: Double(height)), forKey: cacheKey)
+        return height
+    }
+
+    static func effectiveMeasurementWidth(
+        _ width: CGFloat,
+        isLiveResizing: Bool
+    ) -> CGFloat {
+        let exact = max(width, 1)
+        return isLiveResizing ? max(floor(exact / 4) * 4, 1) : exact
+    }
+
+    static func cacheKey(
+        for text: String,
+        effectiveWidth: CGFloat,
+        typographyToken: Int,
+        draftRevision: UInt?
+    ) -> String {
+        let revision = draftRevision.map(String.init) ?? "text-\(text.hashValue)"
+        return "\(revision)|\(typographyToken)|\(effectiveWidth.bitPattern)"
+    }
+}
+
+private struct ComposerEditorLayout: Layout {
+    let text: String
+    let draftRevision: UInt
+    let isLiveResizing: Bool
+    let typographyToken: Int
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let width = proposal.width ?? 600
+        return CGSize(
+            width: width,
+            height: ComposerMetrics.editorHeight(
+                for: text,
+                width: width,
+                isLiveResizing: isLiveResizing,
+                typographyToken: typographyToken,
+                draftRevision: draftRevision
+            )
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let subview = subviews.first else { return }
+        subview.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+        )
     }
 }
 
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var composerState: ComposerStateModel
     @EnvironmentObject private var voiceControl: VoiceControlModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -37,13 +122,15 @@ struct ComposerView: View {
     @EnvironmentObject private var applicationContext: ApplicationContextService
     @EnvironmentObject private var simulatorControl: SimulatorControlService
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusCommandRouter) private var commandRouter
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var contextPresented = false
     @State private var permissionModesPresented = false
     @State private var teamPickerPresented = false
     @State private var quickTeamPresented = false
     @State private var popupSelection = 0
     @State private var popupDismissedDraft: String?
-    @State private var editorWidth: CGFloat = 600
     @FocusState private var focused: Bool
 
     private var accentFill: Color { model.effectiveAccent.fillColor }
@@ -61,7 +148,7 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !model.queuedMessages.isEmpty {
+            if !composerState.queuedMessages.isEmpty {
                 queueRow
             }
 
@@ -103,8 +190,14 @@ struct ComposerView: View {
                     // composer width. The field starts as one line, grows with
                     // the draft, then caps and scrolls internally so a long
                     // prompt never pushes the transcript away.
-                    ZStack(alignment: .topLeading) {
-                        if model.draftText.isEmpty {
+                    ComposerEditorLayout(
+                        text: composerState.draftText,
+                        draftRevision: composerState.draftRevision,
+                        isLiveResizing: isLiveResizing,
+                        typographyToken: dynamicTypeSize.hashValue
+                    ) {
+                        ZStack(alignment: .topLeading) {
+                        if composerState.draftText.isEmpty {
                             Text(placeholder)
                                 .font(.locus(size: 13))
                                 .foregroundStyle(LocusTheme.inkSoft.opacity(0.82))
@@ -114,7 +207,7 @@ struct ComposerView: View {
                                 .accessibilityIdentifier("composer.placeholder")
                         }
 
-                        TextEditor(text: $model.draftText)
+                        TextEditor(text: $composerState.draftText)
                             .font(.locus(size: 13))
                             .foregroundStyle(LocusTheme.ink)
                             .lineSpacing(5)
@@ -130,15 +223,6 @@ struct ComposerView: View {
                             .onKeyPress(.return, phases: .down) { press in handleReturn(press) }
                             .onKeyPress(.tab) { handleTab() }
                             .onKeyPress(.escape) { handleEscape() }
-                    }
-                    .frame(height: measuredEditorHeight)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear
-                                .onAppear { editorWidth = proxy.size.width }
-                                .onChange(of: proxy.size.width) {
-                                    editorWidth = proxy.size.width
-                                }
                         }
                     }
 
@@ -170,10 +254,10 @@ struct ComposerView: View {
                 .chatAttachmentDropTarget()
                 .chatPasteInterceptor(editorFocused: focused)
                 .shadow(
-                    color: focused
-                        ? accentAction.opacity(0.1)
-                        : Color.black.opacity(0.08),
-                    radius: focused ? 24 : 22,
+                    color: isLiveResizing
+                        ? .clear
+                        : (focused ? accentAction.opacity(0.1) : Color.black.opacity(0.08)),
+                    radius: isLiveResizing ? 0 : (focused ? 24 : 22),
                     y: 9
                 )
                 .animation(reduceMotion ? nil : LocusMotion.press, value: focused)
@@ -181,7 +265,10 @@ struct ComposerView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.bottom, 22)
+        // Keep the card clear of the window edge without leaving the large
+        // gap that became visible once the workspace stopped clipping its
+        // bottom chrome.
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
@@ -228,7 +315,7 @@ struct ComposerView: View {
             // refinement, so the editor takes focus back.
             if !model.planApprovalPending { restoreFocus() }
         }
-        .onChange(of: model.composerFocusToken) {
+        .onChange(of: composerState.focusToken) {
             restoreFocus()
         }
         .onChange(of: teamRunLive.shouldShowTeamDispatchApproval) {
@@ -236,13 +323,13 @@ struct ComposerView: View {
                 restoreFocus()
             }
         }
-        .onChange(of: model.draftText) {
+        .onChange(of: composerState.draftText) {
             popupSelection = 0
-            if let dismissed = popupDismissedDraft, dismissed != model.draftText {
+            if let dismissed = popupDismissedDraft, dismissed != composerState.draftText {
                 popupDismissedDraft = nil
             }
             if !model.justChatEnabled,
-               WorkspaceIndex.activeMention(in: model.draftText) != nil {
+               WorkspaceIndex.activeMention(in: composerState.draftText) != nil {
                 workspaceFiles.refresh()
             }
         }
@@ -258,8 +345,8 @@ struct ComposerView: View {
     // MARK: - Popup state
 
     private var activePopup: Popup? {
-        guard popupDismissedDraft != model.draftText else { return nil }
-        if let query = SlashCommand.query(from: model.draftText) {
+        guard popupDismissedDraft != composerState.draftText else { return nil }
+        if let query = SlashCommand.query(from: composerState.draftText) {
             // Capped here, at the source of truth: the arrow keys, ↵ and the
             // rendered rows must all agree on the same list, or the selection
             // can walk onto commands the user cannot see.
@@ -269,7 +356,7 @@ struct ComposerView: View {
         // Just Chat is conversation-only. Merely typing @ or $ must not index
         // the workspace or offer a skill that can instruct agentic work.
         guard !model.justChatEnabled else { return nil }
-        if let mention = WorkspaceIndex.activeMention(in: model.draftText) {
+        if let mention = WorkspaceIndex.activeMention(in: composerState.draftText) {
             let query = mention.query.lowercased()
             let targets: [TeamMentionTarget] = (
                 agentTeams.agentTeams.map(TeamMentionTarget.team)
@@ -299,7 +386,7 @@ struct ComposerView: View {
     }
 
     private var activeSkillQuery: String? {
-        let text = model.draftText
+        let text = composerState.draftText
         guard let dollar = text.lastIndex(of: "$"),
               dollar == text.startIndex || text[text.index(before: dollar)].isWhitespace
         else { return nil }
@@ -336,12 +423,12 @@ struct ComposerView: View {
     }
 
     private func applySlashCommand(_ command: SlashCommand) {
-        let argument = SlashCommand.argument(in: model.draftText)
+        let argument = SlashCommand.argument(in: composerState.draftText)
         if !argument.isEmpty || command.argumentHint == nil {
             model.send("/\(command.name)\(argument.isEmpty ? "" : " \(argument)")")
         } else {
             // The command expects an argument — complete it and keep typing.
-            model.draftText = "/\(command.name) "
+            composerState.draftText = "/\(command.name) "
         }
         focused = true
     }
@@ -350,7 +437,7 @@ struct ComposerView: View {
         switch popup {
         case .slash(let commands):
             let command = commands[min(popupSelection, commands.count - 1)]
-            model.draftText = "/\(command.name)\(command.argumentHint != nil ? " " : "")"
+            composerState.draftText = "/\(command.name)\(command.argumentHint != nil ? " " : "")"
         case .routing(let targets):
             applyRoutingTarget(targets[min(popupSelection, targets.count - 1)])
         case .mention(let files):
@@ -361,17 +448,17 @@ struct ComposerView: View {
     }
 
     private func applySkill(_ skill: ExtensionSkill) {
-        guard let dollar = model.draftText.lastIndex(of: "$") else { return }
-        model.draftText.replaceSubrange(dollar..., with: "$\(skill.id) ")
+        guard let dollar = composerState.draftText.lastIndex(of: "$") else { return }
+        composerState.draftText.replaceSubrange(dollar..., with: "$\(skill.id) ")
         focused = true
     }
 
     private func applyRoutingTarget(_ target: TeamMentionTarget) {
-        guard let mention = WorkspaceIndex.activeMention(in: model.draftText) else { return }
+        guard let mention = WorkspaceIndex.activeMention(in: composerState.draftText) else { return }
         let safeName = target.name.filter {
             $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-"
         }
-        model.draftText.replaceSubrange(mention.range, with: "@\(safeName) ")
+        composerState.draftText.replaceSubrange(mention.range, with: "@\(safeName) ")
         focused = true
     }
 
@@ -386,7 +473,7 @@ struct ComposerView: View {
         // Recall history only when the composer is empty or already browsing,
         // so the caret stays free inside a typed multi-line draft.
         guard !model.isBusy,
-              model.draftText.isEmpty || model.isBrowsingPromptHistory
+              composerState.draftText.isEmpty || model.isBrowsingPromptHistory
         else { return .ignored }
         model.previousPrompt()
         return .handled
@@ -416,22 +503,22 @@ struct ComposerView: View {
             return .handled
         case .send:
             guard canSubmit else { return .handled }
-            model.submitDraft()
+            commandRouter?.submitDraft()
             focused = true
             return .handled
         case .queue:
             guard canSubmit else { return .handled }
-            model.queueDraft()
+            commandRouter?.queueDraft()
             focused = true
             return .handled
         case .steer:
             guard canSubmit else { return .handled }
-            model.steerDraft()
+            commandRouter?.steerDraft()
             focused = true
             return .handled
         case .stop:
             guard !isStopping else { return .handled }
-            model.stop()
+            commandRouter?.stop()
             return .handled
         case .newline:
             return .ignored
@@ -446,11 +533,11 @@ struct ComposerView: View {
 
     private func handleEscape() -> KeyPress.Result {
         if activePopup != nil {
-            popupDismissedDraft = model.draftText
+            popupDismissedDraft = composerState.draftText
             return .handled
         }
         if model.isBusy {
-            model.stop()
+            commandRouter?.stop()
             return .handled
         }
         return .ignored
@@ -463,7 +550,7 @@ struct ComposerView: View {
             Image(systemName: "tray.full")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.inkSoft)
-            ForEach(Array(model.queuedMessages.enumerated()), id: \.offset) { index, message in
+            ForEach(Array(composerState.queuedMessages.enumerated()), id: \.offset) { index, message in
                 HStack(spacing: 5) {
                     Text(message.components(separatedBy: .newlines).first.map { String($0.prefix(38)) } ?? "")
                         .font(.locus(size: 8, weight: .medium))
@@ -765,11 +852,11 @@ struct ComposerView: View {
                 if primaryAction != .stop, !isWaitingForTeamApproval, !isStopping {
                     Menu {
                         Button("Steer Active Turn", systemImage: "arrow.turn.up.right") {
-                            model.steerDraft()
+                            commandRouter?.steerDraft()
                         }
                         .accessibilityIdentifier("composer.steer")
                         Button("Stop & Send as New Turn", systemImage: "stop.circle") {
-                            model.stopAndSendDraft()
+                            commandRouter?.stopAndSendDraft()
                         }
                     } label: {
                         Image(systemName: "chevron.down")
@@ -965,7 +1052,7 @@ struct ComposerView: View {
     }
 
     private var promptTrimmed: String {
-        model.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        composerState.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var canSubmit: Bool {
@@ -987,7 +1074,7 @@ struct ComposerView: View {
     private var attachmentChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(model.chatAttachments) { attachment in
+                ForEach(composerState.attachments) { attachment in
                     HStack(spacing: 6) {
                         if attachment.kind == .image || attachment.kind == .applicationSnapshot,
                            let data = attachment.imageData,
@@ -1141,10 +1228,6 @@ struct ComposerView: View {
         }
     }
 
-    private var measuredEditorHeight: CGFloat {
-        ComposerMetrics.editorHeight(for: model.draftText, width: editorWidth)
-    }
-
     private var isWaitingForTeamApproval: Bool {
         model.orchestrationState == .waitingDispatchApproval
     }
@@ -1152,11 +1235,11 @@ struct ComposerView: View {
     private func submit() {
         if primaryAction == .stop {
             guard !isStopping else { return }
-            model.stop()
+            commandRouter?.stop()
             return
         }
         guard canSubmit else { return }
-        model.submitDraft()
+        commandRouter?.submitDraft()
         focused = true
     }
 }
@@ -1512,6 +1595,7 @@ private enum ComposerAttachmentMenuStyle {
 
 private struct ComposerAttachmentSourceMenu: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var composerState: ComposerStateModel
     @EnvironmentObject private var applicationContext: ApplicationContextService
     @EnvironmentObject private var simulatorControl: SimulatorControlService
     @State private var reviewPresented = false
@@ -1523,12 +1607,12 @@ private struct ComposerAttachmentSourceMenu: View {
             Button("Review message attachments", systemImage: "tray.full") {
                 reviewPresented = true
             }
-            .disabled(model.chatAttachments.isEmpty)
+            .disabled(composerState.attachments.isEmpty)
             Divider()
             Button("Add files or photos…", systemImage: "doc.badge.plus") {
                 model.addChatAttachments()
             }
-            .disabled(model.isLoadingChatAttachments)
+            .disabled(composerState.isLoadingAttachments)
 
             if ApplicationContextService.isAvailable {
                 if let current = applicationContext.lastExternalApplication {
@@ -1537,7 +1621,7 @@ private struct ComposerAttachmentSourceMenu: View {
                     } label: {
                         Label("Attach \(current.name)", systemImage: "macwindow.badge.plus")
                     }
-                    .disabled(model.isLoadingChatAttachments)
+                    .disabled(composerState.isLoadingAttachments)
                 } else {
                     Button("Attach current application", systemImage: "macwindow.badge.plus") {}
                         .disabled(true)
@@ -1675,7 +1759,7 @@ private struct ComposerAttachmentSourceMenu: View {
 
     private var imageWarning: Bool {
         model.activeModelRejectsImages
-            && model.chatAttachments.contains {
+            && composerState.attachments.contains {
                 $0.kind == .image || $0.kind == .applicationSnapshot
             }
     }
@@ -1683,6 +1767,7 @@ private struct ComposerAttachmentSourceMenu: View {
 
 private struct ChatAttachmentsPopover: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var composerState: ComposerStateModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1704,7 +1789,7 @@ private struct ChatAttachmentsPopover: View {
                 .buttonStyle(.locus())
                 .font(.locus(size: 9, weight: .semibold))
                 .accessibilityIdentifier("chatAttachments.add")
-                .disabled(model.isLoadingChatAttachments)
+                .disabled(composerState.isLoadingAttachments)
             }
             .padding(13)
 
@@ -1725,7 +1810,7 @@ private struct ChatAttachmentsPopover: View {
             .background(LocusTheme.paperDeep.opacity(0.7))
 
             if model.activeModelRejectsImages,
-               model.chatAttachments.contains(where: {
+               composerState.attachments.contains(where: {
                    $0.kind == .image || $0.kind == .applicationSnapshot
                }) {
                 Label(
@@ -1744,7 +1829,7 @@ private struct ChatAttachmentsPopover: View {
                 .accessibilityIdentifier("chatAttachments.visionWarning")
             }
 
-            if model.isLoadingChatAttachments {
+            if composerState.isLoadingAttachments {
                 VStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
@@ -1754,7 +1839,7 @@ private struct ChatAttachmentsPopover: View {
                 }
                 .padding(.vertical, 28)
                 .accessibilityIdentifier("chatAttachments.loading")
-            } else if model.chatAttachments.isEmpty {
+            } else if composerState.attachments.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "paperclip")
                         .font(.locus(size: 19))
@@ -1769,7 +1854,7 @@ private struct ChatAttachmentsPopover: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 3) {
-                        ForEach(model.chatAttachments) { attachment in
+                        ForEach(composerState.attachments) { attachment in
                             HStack(spacing: 8) {
                                 Image(systemName: attachmentSymbol(attachment.kind))
                                     .font(.locus(size: 11))
@@ -1814,7 +1899,7 @@ private struct ChatAttachmentsPopover: View {
                 .frame(maxHeight: 260)
             }
 
-            if let notice = model.chatAttachmentNotice {
+            if let notice = composerState.attachmentNotice {
                 Label(notice, systemImage: "info.circle")
                     .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)

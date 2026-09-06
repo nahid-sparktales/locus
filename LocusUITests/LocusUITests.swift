@@ -578,11 +578,34 @@ final class LocusUITests: XCTestCase {
             anyElement("sidebar.newSession"),
             anyElement("workspace.sessionTitle"),
             anyElement("composer.input"),
+            anyElement("composer.mode.plan"),
             anyElement("inspector.tabBar"),
+            anyElement("sidebar.agentStatus"),
+            anyElement("sidebar.more"),
         ] {
             XCTAssertTrue(element.waitForExistence(timeout: 3), file: file, line: line)
             XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(element.frame), file: file, line: line)
         }
+        for element in [
+            anyElement("composer.mode.plan"),
+            anyElement("sidebar.agentStatus"),
+            anyElement("sidebar.more"),
+        ] {
+            XCTAssertLessThanOrEqual(
+                element.frame.maxY,
+                window.frame.maxY - 8,
+                "Bottom chrome should keep its designed inset instead of being clipped",
+                file: file,
+                line: line
+            )
+        }
+        XCTAssertGreaterThanOrEqual(
+            anyElement("composer.mode.plan").frame.maxY,
+            window.frame.maxY - 28,
+            "The composer should stay close to the bottom edge",
+            file: file,
+            line: line
+        )
     }
 
     func testReopeningLocusKeepsOneMainWindowAndItsPresentedSheet() throws {
@@ -2659,7 +2682,16 @@ final class LocusUITests: XCTestCase {
     }
 
     func testAcceptanceWindowSizesRemainUsableInLightAndDarkAppearances() {
-        let cases = [("1120", "700", "Light"), ("1250", "760", "Dark")]
+        let visibleSize = try! XCTUnwrap(NSScreen.main?.visibleFrame.size)
+        let cases = [
+            ("1120", "700", "Light"),
+            ("1250", "760", "Dark"),
+            (
+                String(Int(min(1_250, visibleSize.width))),
+                String(Int(visibleSize.height)),
+                "Dark"
+            ),
+        ]
         for (width, height, appearance) in cases {
             app.terminate()
             app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = width
@@ -2670,7 +2702,6 @@ final class LocusUITests: XCTestCase {
             ]
             app.launch()
             XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-            let visibleSize = try! XCTUnwrap(NSScreen.main?.visibleFrame.size)
             XCTAssertEqual(
                 app.windows.firstMatch.frame.width,
                 min(CGFloat(Double(width)!), visibleSize.width),
@@ -2682,6 +2713,63 @@ final class LocusUITests: XCTestCase {
                 accuracy: 2
             )
             assertCoreWorkspaceFitsInsideWindow()
+        }
+    }
+
+    func testPerformanceTranscriptLiveResizeProducesAnExactAcceptanceReport() throws {
+        let reportURL = URL(fileURLWithPath: "/tmp/locus-live-resize-performance.json")
+        try? FileManager.default.removeItem(at: reportURL)
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PERFORMANCE_TRANSCRIPT"] = "1"
+        app.launchEnvironment["LOCUS_PERFORMANCE_REPORT_PATH"] = reportURL.path
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
+
+        // Dragging the native resize border is important: setting a frame from
+        // code does not enter AppKit live-resize mode and would not exercise
+        // the bucketed provisional path customers actually use.
+        let resizeHandle = window.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.998, dy: 0.998)
+        )
+        let destination = window.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.80, dy: 0.88)
+        )
+        resizeHandle.press(
+            forDuration: 0.15,
+            thenDragTo: destination,
+            withVelocity: .slow,
+            thenHoldForDuration: 0.15
+        )
+
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            FileManager.default.fileExists(atPath: reportURL.path)
+        })
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: reportURL))
+                as? [String: Any]
+        )
+        let samples = try XCTUnwrap(object["sampleCount"] as? Int)
+        let p95 = try XCTUnwrap(object["p95MainThreadWorkMillis"] as? Double)
+        let maximum = try XCTUnwrap(object["maximumMainThreadWorkMillis"] as? Double)
+        let finalWidth = try XCTUnwrap(object["finalWidth"] as? Double)
+        // XCTest can coalesce a synthetic AppKit border drag into two event
+        // tracking iterations on newer macOS releases. Two samples still
+        // prove that live-resize monitoring began and produced a final frame;
+        // the local Release benchmark supplies the longer timing trace.
+        XCTAssertGreaterThanOrEqual(samples, 2)
+        XCTAssertGreaterThanOrEqual(maximum, p95)
+        XCTAssertEqual(finalWidth, window.frame.width, accuracy: 3)
+
+        if ProcessInfo.processInfo.environment["LOCUS_PERFORMANCE_ENFORCE_TIMING"] == "1" {
+            let model = ProcessInfo.processInfo.environment["LOCUS_PERFORMANCE_MACHINE"]
+            let p95Limit = model == "M2_MAX" ? 8.3 : 16.7
+            XCTAssertLessThanOrEqual(p95, p95Limit)
+            XCTAssertLessThan(maximum, 50)
         }
     }
 
@@ -2708,6 +2796,14 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
         XCTAssertTrue(composer.isHittable)
         XCTAssertTrue(window.frame.intersects(composer.frame))
+        let planMode = anyElement("composer.mode.plan")
+        XCTAssertTrue(planMode.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(planMode.frame.maxY, window.frame.maxY - 8)
+        XCTAssertGreaterThanOrEqual(
+            planMode.frame.maxY,
+            window.frame.maxY - 28,
+            "The composer should stay close to the bottom edge"
+        )
         XCTAssertGreaterThanOrEqual(
             restore.frame.minX - window.frame.minX,
             68,
@@ -2720,6 +2816,9 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(
             anyElement("sidebar.newSession").frame
         ))
+        let status = anyElement("sidebar.agentStatus")
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(status.frame.maxY, window.frame.maxY - 8)
         anyElement("sidebar.collapse").click()
         XCTAssertTrue(waitUntil { !self.anyElement("sidebar.newSession").exists })
 

@@ -1177,13 +1177,14 @@ extension AppModel {
             pendingReasoningSections = [:]
             return
         }
-        streamingReply.append(text: pendingTokens, reasoning: pendingReasoning)
-        var publishedCharacters = pendingTokens.count + pendingReasoning.count
-        for index in pendingReasoningSections.keys.sorted() {
-            let delta = pendingReasoningSections[index] ?? ""
-            streamingReply.appendReasoning(delta, sectionIndex: index)
-            publishedCharacters += delta.count
-        }
+        streamingReply.append(
+            text: pendingTokens,
+            reasoning: pendingReasoning,
+            reasoningSections: pendingReasoningSections
+        )
+        let publishedCharacters = pendingTokens.count
+            + pendingReasoning.count
+            + pendingReasoningSections.values.reduce(0) { $0 + $1.count }
         streamedCharsThisTurn += publishedCharacters
         pendingTokens = ""
         pendingReasoning = ""

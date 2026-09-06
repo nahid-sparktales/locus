@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0160AB5D0CEB9185E7B6F66A /* AppModel+ChatOrganization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */; };
 		01718E0DF6EA093517D0DC0E /* AgentInspectorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FF91974AE687AB29AEF3513 /* AgentInspectorModel.swift */; };
+		0197B384B46762F08D231CBD /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		01DCA647E6FC8E205FEBA724 /* TaskWorkerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1616CD8FA01FCC15741F95EF /* TaskWorkerRuntime.swift */; };
 		023342822A48F0D8D83BCB33 /* OnboardingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BCF449F84DAC40AAF04616D /* OnboardingModel.swift */; };
 		02458331522F5E1FA06ADC29 /* WorkspaceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */; };
@@ -243,6 +244,7 @@
 		812B49657632395CE0781BC3 /* ExtensionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EFBBAE84F5B838F776CBF6 /* ExtensionsModel.swift */; };
 		8171A50278F07A2A61EC89AA /* AppModel+ModelRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45A9C26F8D798CFAC0AC1169 /* AppModel+ModelRouter.swift */; };
 		81859D894E60EF5508ECE7D0 /* AppUpdateControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F812F42D54F996DD9AE8F7D /* AppUpdateControllerTests.swift */; };
+		820E2789C18722112866EA38 /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		829CBDBAFECC3D4B8558E27A /* VoiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C05527F03B7D68A59343C4E /* VoiceModels.swift */; };
 		832B3EAC906F6E1C3A210D60 /* AppModel+SplitChatPanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D16150F05480F3D9E417239 /* AppModel+SplitChatPanes.swift */; };
 		83AADDDF785F1C1B6E461820 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
@@ -757,6 +759,7 @@
 		A736ED1A022C230257FB3FDF /* LibraryUITestFixtureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryUITestFixtureView.swift; sourceTree = "<group>"; };
 		A7444F14DD8EEB57AFF1D8A9 /* AppModelObservationBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelObservationBoundaryTests.swift; sourceTree = "<group>"; };
 		A7EC9F73687880887B6C9153 /* BrowserSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSettingsView.swift; sourceTree = "<group>"; };
+		A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactThumbnailStore.swift; sourceTree = "<group>"; };
 		AB6C801D489BBF80BE16EBD6 /* ChatAttachmentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAttachmentLoader.swift; sourceTree = "<group>"; };
 		AB6FDC689EAD2746CF542B95 /* AppModel+TeamOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+TeamOps.swift"; sourceTree = "<group>"; };
 		ABF8ADCB24225911BBCB143F /* InspectorNotesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorNotesTab.swift; sourceTree = "<group>"; };
@@ -1053,6 +1056,7 @@
 				8CF7C32F369DF7295D8B8077 /* AppModel+WorkspaceProfiles.swift */,
 				EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */,
 				CEDE792B67295C1B0196FC71 /* AppUpdateController.swift */,
+				A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */,
 				DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */,
 				B38285B85EFF71F02AF0DDB3 /* BackendProcess.swift */,
 				3793FC69B1D813ED07567A2E /* BackendService.swift */,
@@ -1802,6 +1806,7 @@
 				ADB5339D466EB316F9370689 /* AppUpdateController.swift in Sources */,
 				BB3B4FBD72B6DCBDACCBD36D /* ApplicationContextService.swift in Sources */,
 				1C60596E5A4E13265770012D /* ApplicationLifecycleCoordinator.swift in Sources */,
+				820E2789C18722112866EA38 /* ArtifactThumbnailStore.swift in Sources */,
 				0F93C3A166B1038C8682007E /* AutomationWorkflowEditorView.swift in Sources */,
 				BEAFCBFDAE33591C970B5E98 /* BackendProcess.swift in Sources */,
 				2F30B3F6DF8AD2063BBAF9C9 /* BackendResponses.swift in Sources */,
@@ -2005,6 +2010,7 @@
 				382E5A2A04FD4523C5C185C1 /* AppUpdateController.swift in Sources */,
 				ADB25B720E359FF17C8EFCB6 /* ApplicationContextService.swift in Sources */,
 				7F9953DE0E3D298F11FC2E0E /* ApplicationLifecycleCoordinator.swift in Sources */,
+				0197B384B46762F08D231CBD /* ArtifactThumbnailStore.swift in Sources */,
 				39E06D90641080F2E20F7B5C /* AutomationWorkflowEditorView.swift in Sources */,
 				A5B2C39A822A7FEBDB129E2C /* BackendProcess.swift in Sources */,
 				8DF0CC82CB1CCC58D6EF0C05 /* BackendResponses.swift in Sources */,
@@ -2314,7 +2320,7 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_APP_SANDBOX = YES;
@@ -2331,7 +2337,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.3.0;
+				MARKETING_VERSION = 2.4.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -2416,7 +2422,7 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_APP_SANDBOX = NO;
@@ -2433,7 +2439,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.3.0;
+				MARKETING_VERSION = 2.4.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -2817,7 +2823,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4X4RJA7GMD;
 				ENABLE_APP_SANDBOX = NO;
@@ -2840,7 +2846,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.3.0;
+				MARKETING_VERSION = 2.4.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

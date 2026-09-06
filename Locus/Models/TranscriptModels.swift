@@ -28,42 +28,123 @@ struct StreamingReplySnapshot: Equatable {
     var isActive: Bool { id != nil }
 }
 
+/// Mutable, append-oriented storage for one live response. The UI receives a
+/// cheap revision publication; a value snapshot is materialized only when a
+/// consumer actually renders or finalizes the response.
+final class StreamingReplyAccumulator {
+    private(set) var id: UUID?
+    private(set) var text = ""
+    private(set) var directReasoning = ""
+    private(set) var reasoningSections: [String] = []
+    private(set) var turnCharacterCount = 0
+
+    func begin(id: UUID) {
+        self.id = id
+        text.removeAll(keepingCapacity: true)
+        directReasoning.removeAll(keepingCapacity: true)
+        reasoningSections.removeAll(keepingCapacity: true)
+    }
+
+    @discardableResult
+    func append(
+        text textDelta: String,
+        reasoning reasoningDelta: String,
+        sectionDeltas: [Int: String] = [:]
+    ) -> Bool {
+        guard id != nil,
+              !textDelta.isEmpty || !reasoningDelta.isEmpty || !sectionDeltas.isEmpty
+        else { return false }
+        text += textDelta
+        directReasoning += reasoningDelta
+        turnCharacterCount += textDelta.count + reasoningDelta.count
+        for index in sectionDeltas.keys.sorted() {
+            let safeIndex = max(index, 0)
+            while reasoningSections.count <= safeIndex {
+                reasoningSections.append("")
+            }
+            let delta = sectionDeltas[index] ?? ""
+            reasoningSections[safeIndex] += delta
+            turnCharacterCount += delta.count
+        }
+        return true
+    }
+
+    func snapshot() -> StreamingReplySnapshot {
+        let sectionReasoning = reasoningSections.joined(separator: "\n\n")
+        return StreamingReplySnapshot(
+            id: id,
+            text: text,
+            reasoning: sectionReasoning.isEmpty ? directReasoning : sectionReasoning,
+            reasoningSections: reasoningSections,
+            turnCharacterCount: turnCharacterCount
+        )
+    }
+
+    func finish(
+        authoritativeText: String?,
+        authoritativeReasoningSections: [String]?
+    ) -> StreamingReplySnapshot {
+        var result = snapshot()
+        if let authoritativeText { result.text = authoritativeText }
+        if let authoritativeReasoningSections {
+            result.reasoningSections = authoritativeReasoningSections
+            result.reasoning = authoritativeReasoningSections.joined(separator: "\n\n")
+        }
+        id = nil
+        text = ""
+        directReasoning = ""
+        reasoningSections = []
+        return result
+    }
+
+    func reset() {
+        id = nil
+        text = ""
+        directReasoning = ""
+        reasoningSections = []
+        turnCharacterCount = 0
+    }
+}
+
 /// Token-level state lives outside AppModel's published transcript array.
 /// Consequently an append invalidates only the active row and token label,
 /// rather than every historical row, sidebar and composer.
 @MainActor
 final class StreamingReplyState: ObservableObject {
-    @Published private(set) var snapshot = StreamingReplySnapshot()
+    @Published private(set) var revision: UInt = 0
+    private let accumulator = StreamingReplyAccumulator()
+
+    var snapshot: StreamingReplySnapshot { accumulator.snapshot() }
 
     func begin(id: UUID) {
-        var next = snapshot
-        next.id = id
-        next.text = ""
-        next.reasoning = ""
-        next.reasoningSections = []
-        snapshot = next
+        accumulator.begin(id: id)
+        revision &+= 1
+        locusPerformanceSignposter.emitEvent("Publish Streaming Revision", "begin")
     }
 
     func append(text: String, reasoning: String) {
-        guard snapshot.id != nil, !text.isEmpty || !reasoning.isEmpty else { return }
-        var next = snapshot
-        next.text += text
-        next.reasoning += reasoning
-        next.turnCharacterCount += text.count + reasoning.count
-        snapshot = next
+        append(text: text, reasoning: reasoning, reasoningSections: [:])
+    }
+
+    func append(
+        text: String,
+        reasoning: String,
+        reasoningSections: [Int: String]
+    ) {
+        guard accumulator.append(
+            text: text,
+            reasoning: reasoning,
+            sectionDeltas: reasoningSections
+        ) else { return }
+        revision &+= 1
+        locusPerformanceSignposter.emitEvent(
+            "Publish Streaming Revision",
+            "revision=\(self.revision)"
+        )
     }
 
     func appendReasoning(_ text: String, sectionIndex: Int) {
-        guard snapshot.id != nil, !text.isEmpty else { return }
-        var next = snapshot
-        let index = max(sectionIndex, 0)
-        while next.reasoningSections.count <= index {
-            next.reasoningSections.append("")
-        }
-        next.reasoningSections[index] += text
-        next.reasoning = next.reasoningSections.joined(separator: "\n\n")
-        next.turnCharacterCount += text.count
-        snapshot = next
+        append(text: "", reasoning: "", reasoningSections: [sectionIndex: text])
     }
 
     func finish(
@@ -71,27 +152,20 @@ final class StreamingReplyState: ObservableObject {
         authoritativeText: String? = nil,
         authoritativeReasoningSections: [String]? = nil
     ) -> StreamingReplySnapshot? {
-        guard snapshot.id == id else { return nil }
-        var finished = snapshot
-        if let authoritativeText {
-            finished.text = authoritativeText
-        }
-        if let authoritativeReasoningSections {
-            finished.reasoningSections = authoritativeReasoningSections
-            finished.reasoning = authoritativeReasoningSections.joined(separator: "\n\n")
-        }
-        snapshot = StreamingReplySnapshot(
-            id: nil,
-            text: "",
-            reasoning: "",
-            reasoningSections: [],
-            turnCharacterCount: finished.turnCharacterCount
+        guard accumulator.id == id else { return nil }
+        let finished = accumulator.finish(
+            authoritativeText: authoritativeText,
+            authoritativeReasoningSections: authoritativeReasoningSections
         )
+        revision &+= 1
+        locusPerformanceSignposter.emitEvent("Publish Streaming Revision", "finish")
         return finished
     }
 
     func resetTurn() {
-        snapshot = StreamingReplySnapshot()
+        accumulator.reset()
+        revision &+= 1
+        locusPerformanceSignposter.emitEvent("Publish Streaming Revision", "reset")
     }
 }
 

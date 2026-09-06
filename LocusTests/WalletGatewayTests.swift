@@ -3661,6 +3661,9 @@ final class WalletGatewayTests: XCTestCase {
     }
 
     func testGatewayPersistsFinalizedSuiActivityAndQuarantinesUnknownCoin() async throws {
+        let suiteName = "WalletSuiActivityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
         signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
@@ -3694,6 +3697,7 @@ final class WalletGatewayTests: XCTestCase {
         let gateway = WalletGateway(
             signer: signer,
             environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
             publicStore: store
         )
         await gateway.refreshStatus()
@@ -3715,6 +3719,9 @@ final class WalletGatewayTests: XCTestCase {
     }
 
     func testGatewayPersistsFinalizedSolanaActivityAndQuarantinesUnknownAssets() async throws {
+        let suiteName = "WalletSolanaActivityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let signer = FakeWalletSigner()
         signer.accountChain = .solana
         signer.accountNetworkIDs = [WalletNetworkCatalog.solanaDevnet.id]
@@ -3755,6 +3762,7 @@ final class WalletGatewayTests: XCTestCase {
         let gateway = WalletGateway(
             signer: signer,
             environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
             publicStore: store
         )
         await gateway.refreshStatus()
@@ -3813,6 +3821,9 @@ final class WalletGatewayTests: XCTestCase {
     }
 
     func testGatewayPersistsFinalizedSuiObjectActivityInQuarantine() async throws {
+        let suiteName = "WalletSuiObjectActivityTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let signer = FakeWalletSigner()
         signer.accountChain = .sui
         signer.accountNetworkIDs = [WalletNetworkCatalog.suiTestnet.id]
@@ -3836,6 +3847,7 @@ final class WalletGatewayTests: XCTestCase {
         let gateway = WalletGateway(
             signer: signer,
             environment: ["LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1"],
+            userDefaults: defaults,
             publicStore: store
         )
         await gateway.refreshStatus()
