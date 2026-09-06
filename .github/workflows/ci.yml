@@ -338,6 +338,34 @@ jobs:
           test -z "$(find "$app_store/Contents" \
             \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
             -print -quit)"
+      - name: Experimental wallet release configuration compiles without activation
+        env:
+          LOCUS_BUNDLE_MODE: skip
+        run: |
+          xcodebuild build \
+            -project Locus.xcodeproj \
+            -scheme LocusExperimental \
+            -configuration ReleaseExperimental \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/locus-release-experimental" \
+            CODE_SIGNING_ALLOWED=NO
+          experimental="$RUNNER_TEMP/locus-release-experimental/Build/Products/ReleaseExperimental/Locus Experimental.app"
+          app_store="$RUNNER_TEMP/locus-release-mas/Build/Products/ReleaseMAS/Locus.app"
+          Tools/AuditWalletBuildBoundary.sh "$experimental" "$app_store"
+          for authority in "$experimental" \
+            "$experimental/Contents/XPCServices/WalletSigner.xpc" \
+            "$experimental/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc"; do
+            test "$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletExperimentalMainnetEnabled' \
+              "$authority/Contents/Info.plist")" = true
+          done
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableAutomaticChecks' \
+            "$experimental/Contents/Info.plist")" = false
+          test -z "$(/usr/libexec/PlistBuddy -c 'Print :LocusWalletReleaseActivationURL' \
+            "$experimental/Contents/Info.plist")"
+          Tools/AuditWalletSignerBinary.sh \
+            "$experimental/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
+          # Compile/boundary evidence only: no signing, provisioning, activation,
+          # provider credentials, or real mainnet execution is claimed here.
       - name: Retain native and local-chain result bundles on success or failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

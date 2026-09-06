@@ -1319,6 +1319,7 @@ final class WalletGateway: ObservableObject {
         guard usesBundledReleaseActivation || isExperimentalActivationTestFixture,
               let inputs = activationVerificationInputs else { return }
         let (publicKey, ceiling, identity) = inputs
+        let consentGeneration = experimentalActivationConsentGeneration
         guard let authorityStatus = try? await signer.releaseAuthorityStatus() else {
             launchGate = try! WalletLaunchGate()
             verifiedReleaseAuthority = nil
@@ -1348,6 +1349,7 @@ final class WalletGateway: ObservableObject {
                       signerStatus.checkpoint == verified.checkpoint else {
                     throw WalletReleaseActivationError.identityMismatch
                 }
+                guard consentGeneration == experimentalActivationConsentGeneration else { return }
                 let checkpoint = verified.checkpoint
                 let admitted = (try? verified.requireAdmission(installationID: authorityStatus.installationID)) != nil
                 let isNewAuthority = checkpoint != verifiedReleaseAuthority?.checkpoint

@@ -614,6 +614,25 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertFalse(gateway.experimentalMainnetActive)
         XCTAssertTrue(gateway.activePolicies.isEmpty)
     }
+
+    func testExperimentalGatewayLockDuringRefreshDoesNotPublishSuccess() async throws {
+        let (gateway, signer, data) = try experimentalGatewayFixture()
+        try await gateway.previewExperimentalMainnetActivation(data)
+        let id = try XCTUnwrap(gateway.experimentalMainnetActivationPreview?.id)
+        let verify = try XCTUnwrap(signer.releaseHistoryApplyHandler)
+        signer.releaseHistoryApplyHandler = { [weak gateway, weak signer] request in
+            let committed = try await verify(request)
+            if signer?.releaseHistoryApplyCount == 2 { gateway?.lock() }
+            return committed
+        }
+        do { try await gateway.enableExperimentalMainnetActivation(previewID: id); XCTFail("Lock during refresh published success") } catch { }
+        XCTAssertEqual(signer.releaseHistoryApplyCount, 2)
+        XCTAssertEqual(signer.releaseHistoryStateChangeCount, 1)
+        XCTAssertNotNil(signer.currentReleaseStatus.checkpoint)
+        XCTAssertEqual(gateway.status, .locked)
+        XCTAssertFalse(gateway.experimentalMainnetActive)
+        XCTAssertTrue(gateway.activePolicies.isEmpty)
+    }
     #endif
 
     /// Intake fixtures deliberately contain invalid signatures. Intake may
