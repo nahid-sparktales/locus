@@ -2515,7 +2515,6 @@ private struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
-    @State private var realizationTarget: TranscriptScrollTarget?
     /// Owned here, outside the lazy list, so recycling a row cannot take the
     /// selection with it — and so a drag can run from one message into another.
     @StateObject private var selection = TranscriptSelectionStore()
@@ -2534,17 +2533,14 @@ private struct ConversationView: View {
                     if transcript.isEmpty {
                         EmptyConversationView()
                             .environmentObject(model)
-                    } else {
-                        ForEach(rows) { row in
-                            renderRow(row, in: transcript)
-                        }
+                    }
+                    // Keep repeating rows directly visible to the lazy
+                    // container's ID traversal even before they are realized.
+                    ForEach(rows) { row in
+                        renderRow(row, in: transcript)
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
-                // Identify the repeating outer rows as the scroll targets,
-                // including those that the lazy layout has not realized yet.
-                // Nested cards and the terminal spacer are not separate rows.
-                .scrollTargetLayout()
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation transcript")
                 .background { TranscriptSelectionScope() }
@@ -2561,7 +2557,7 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                realizationTarget = .item(token.sessionGeneration, id)
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
                         }
                     )
@@ -2571,7 +2567,7 @@ private struct ConversationView: View {
                         token: token,
                         realizeTail: {
                             if let id = token.tailID {
-                                realizationTarget = .item(token.sessionGeneration, id)
+                                proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id))
                             }
                         }
                     )
@@ -2582,10 +2578,6 @@ private struct ConversationView: View {
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
             }
-            // SwiftUI's target-layout binding resolves unrealized row IDs.
-            // It also tracks reader scrolling; native geometry remains the
-            // authority for final alignment and completion, not this binding.
-            .scrollPosition(id: $realizationTarget)
             .accessibilityIdentifier("conversation.scroll")
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {

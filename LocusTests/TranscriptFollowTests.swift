@@ -997,6 +997,9 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(realizations, 2, "Returning to previously consumed geometry must not repeat discovery")
         document.setFrameSize(NSSize(width: 360, height: 1_200))
         pump()
+        XCTAssertEqual(realizations, 2, "Changed document bounds are not a settled container acknowledgment")
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
         XCTAssertEqual(realizations, 3, "A distinct native document measurement can advance pending realization")
 
         coordinator.detach()
@@ -1008,11 +1011,13 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(realizations, 3, "New geometry cannot take ownership from a detached reader")
 
         coordinator.jumpToLatest()
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
         pump()
         XCTAssertEqual(realizations, 4, "An explicit jump starts a fresh bounded realization attempt")
         coordinator.setSelectionDragActive(true)
         moveViewport(to: 220)
         document.setFrameSize(NSSize(width: 360, height: 1_400))
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
         coordinator.contentMayHaveChanged()
         pump()
         XCTAssertFalse(coordinator.followState.isFollowingOutput)
@@ -1395,6 +1400,113 @@ final class TranscriptFollowTests: XCTestCase {
         coordinator.jumpToLatest()
         pump()
         XCTAssertEqual(realizations, 2)
+    }
+
+    func testDiscoveryRequiresSettledContainerDocumentAndViewportSizeAcknowledgments() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 })
+        coordinator.attach(from: anchor)
+        func acknowledgeActualFrame() {
+            anchor.layoutSubtreeIfNeeded()
+            XCTAssertFalse(anchor.needsLayout)
+            coordinator.renderContainerDidLayout(
+                token: token, attachment: coordinator.layoutAttachmentRevision, from: anchor
+            )
+        }
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 1)
+
+        // The document/viewport are unchanged, but the actual native content
+        // container has completed a different layout than the recorded ACK.
+        let firstFrame = anchor.frame
+        anchor.setFrameSize(NSSize(width: 360, height: 900))
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 1)
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 2, "New container-only evidence must advance discovery exactly once")
+        for _ in 0..<100 { acknowledgeActualFrame(); coordinator.contentMayHaveChanged() }
+        pump()
+        XCTAssertEqual(realizations, 2)
+        anchor.frame = firstFrame
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 2, "An already consumed geometry cannot create an oscillating retry")
+
+        document.setFrameSize(NSSize(width: 360, height: 1_200))
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 2, "A stale document extent cannot authorize discovery")
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 3)
+
+        scroll.setFrameSize(NSSize(width: 360, height: 340))
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 3, "A stale viewport size cannot authorize discovery")
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 4)
+
+        coordinator.detach()
+        anchor.setFrameSize(NSSize(width: 360, height: 800))
+        acknowledgeActualFrame()
+        pump()
+        XCTAssertEqual(realizations, 4)
+        XCTAssertFalse(coordinator.followState.isFollowingOutput)
+    }
+
+    func testDiscoveryPendingNativeLayoutRetiresReadinessUntilTheNextActualAcknowledgment() throws {
+        let scroll = mountNativeScroll()
+        let document = try XCTUnwrap(scroll.documentView)
+        document.setFrameSize(NSSize(width: 360, height: 1_000))
+        let anchor = NSView(frame: document.bounds)
+        document.addSubview(anchor)
+        let coordinator = TranscriptScrollCoordinator()
+        defer { coordinator.detachAll() }
+        let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+        var realizations = 0
+        coordinator.installRenderTarget(token, realizeTail: { realizations += 1 })
+        coordinator.attach(from: anchor)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 1)
+
+        // No geometry has changed yet. Explicit Jump starts its discovery
+        // synchronously, before the pending native layout can run.
+        anchor.needsLayout = true
+        coordinator.jumpToLatest(animated: true)
+        XCTAssertEqual(realizations, 1, "An unfinished container cannot reuse a previous readiness record")
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 2,
+            "The real layout acknowledgment must resume the explicit request even at the same final size")
+
+        anchor.needsLayout = true
+        coordinator.jumpToLatest(animated: true)
+        XCTAssertEqual(realizations, 2)
+        coordinator.setSelectionDragActive(true)
+        acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
+        pump()
+        XCTAssertEqual(realizations, 2, "Later selection cancels the earlier pending Jump")
+        coordinator.setSelectionDragActive(false)
+        coordinator.contentMayHaveChanged()
+        pump()
+        XCTAssertEqual(realizations, 2)
+        coordinator.jumpToLatest()
+        pump()
+        XCTAssertEqual(realizations, 3)
     }
 
     private func acknowledgeContainerLayout(
