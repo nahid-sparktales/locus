@@ -69,5 +69,53 @@ user configuration.
 Both local editions have `LocusUpdateMode=manual` and no app update feed. They
 never start Sparkle or honor old automatic-update preferences. The independently
 verified Codex component feed remains available. Separate public app feeds,
-notarization, LocusX Google registration, and public wallet migration are deferred.
+LocusX Google registration, and public wallet migration are deferred.
 Do not publish these local artifacts through the old appcast.
+
+## Public manual Locus releases
+
+An ordinary wallet-free Locus release may be signed and notarized for manual
+download while retaining `LocusUpdateMode=manual`. This does not start Sparkle,
+change update preferences, or migrate existing wallet data. LocusX is excluded
+from this procedure. There is no automatic upgrade from earlier editions to
+this manual release.
+
+1. Commit the version, build number, changelog, and generated project. Run the
+   Python and standard native tests. Build scheme `Locus`, configuration
+   `Release`, from that clean revision in separate DerivedData with the full
+   bundled runtime (`LOCUS_BUNDLE_MODE=skip` must not be set). Audit the complete
+   app with `Tools/AuditAppEdition.py --edition locus`.
+2. Prepare a release staging directory containing `components.json` and every
+   referenced component archive. Copy the previous release's pair if unchanged,
+   or run `Tools/PackageComponents.sh`. Run `Tools/VerifyComponentAssets.sh`.
+3. Copy the previous public release's signed `appcast.xml` into staging without
+   changing its bytes. For the 2.5.0 release, retain the feed from tag `v2.4.0`.
+   This file remains necessary because older installed apps request
+   `releases/latest/download/appcast.xml`. Every enclosure must point to a
+   version-pinned prior release archive. Never point it at the new ZIP or a
+   `latest` URL, and never add this manual release to the feed.
+4. Have the SparkTales Developer ID Application identity, the existing Sparkle
+   key (`io.sparktales`) in the login Keychain, and verified Sparkle 2.9.6 tools
+   available. The tools default to `.release-tools/Sparkle-2.9.6`; an explicit
+   verified location can be supplied with `LOCUS_SPARKLE_TOOLS_DIR`. Set the
+   public `LOCUS_GITHUB_OAUTH_CLIENT_ID` and the notarization credential variables
+   `LOCUS_ASC_KEY_ID`, `LOCUS_ASC_ISSUER_ID`, and `LOCUS_ASC_KEY_PATH` locally.
+   Never place private credentials in the repository or release assets.
+5. Package using the explicit manual-publication option:
+
+   ```sh
+   LOCUS_PUBLIC_MANUAL_RELEASE=1 LOCUS_NOTARIZE=1 \
+     Tools/PackageRelease.sh /absolute/path/Locus.app /absolute/staging/Locus-macOS.zip
+   ```
+
+   The default rejection of public manual builds stays in place without this
+   option. The packager audits the wallet-free edition, verifies the retained
+   feed's signature and prior-version URLs, signs the full app, notarizes and
+   staples it, verifies the extracted ZIP with Gatekeeper, and checks that the
+   signed legacy feed is still unchanged. It does not generate or promote an
+   appcast. Builds without notarization remain private verification artifacts.
+6. Upload `Locus-macOS.zip`, the unchanged `appcast.xml`, `components.json`, and
+   every referenced component archive into one draft GitHub release before
+   publishing it as latest. Verify the asset hashes and the public latest
+   component/feed endpoints after publication. The release notes must identify
+   this as a manual wallet-free download; older apps retain their existing feed.
