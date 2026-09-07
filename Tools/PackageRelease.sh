@@ -27,10 +27,27 @@ edition="$(/usr/bin/plutil -extract LocusEdition raw -o - "${info_plist}" 2>/dev
 [[ "${edition}" == "locus" || "${edition}" == "locusx" ]] || {
     echo "error: missing or invalid app edition" >&2; exit 1
 }
-# Local builds must never become an entry in the legacy public app feed.
-if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}" 2>/dev/null || true)" == "manual" \
-    && "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+# A manual Locus release may be published only through this explicit path.
+# It preserves the old signed feed; it must never add the new app to that feed.
+update_mode="$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}" 2>/dev/null || true)"
+public_manual_release="${LOCUS_PUBLIC_MANUAL_RELEASE:-0}"
+[[ "${public_manual_release}" == "0" || "${public_manual_release}" == "1" ]] || {
+    echo "error: LOCUS_PUBLIC_MANUAL_RELEASE must be 0 or 1" >&2; exit 1
+}
+if [[ "${public_manual_release}" == "1" ]]; then
+    [[ "${edition}" == "locus" && "${update_mode}" == "manual" \
+        && "${LOCUS_NOTARIZE:-0}" == "1" \
+        && "${LOCUS_WALLET_RELEASE_CHANNEL:-disabled}" == "disabled" \
+        && -z "${LOCUS_WALLET_EXPORT_PROVENANCE:-}" ]] || {
+        echo "error: public manual releases require notarized wallet-free manual Locus" >&2; exit 1
+    }
+elif [[ "${update_mode}" == "manual" && "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     echo "error: local editions require a separate release/feed setup before publication" >&2; exit 1
+fi
+legacy_feed_sha=""
+if [[ "${public_manual_release}" == "1" ]]; then
+    legacy_feed_sha="$(python3 "${repo_root}/Tools/VerifyLegacyAppcast.py" \
+        "${zip_out:h}/appcast.xml" "${info_plist}")"
 fi
 python3 "${repo_root}/Tools/AuditAppEdition.py" "${app}" --edition "${edition}"
 
@@ -341,6 +358,11 @@ host_entitlements="${repo_root}/Config/LocusDirect.entitlements"
     --entitlements "${host_entitlements}" --sign "${identity}" "${app}"
 "${repo_root}/Tools/AuditDistribution.sh" "${app}"
 /usr/bin/codesign --verify --deep --strict "${app}"
+if [[ "${public_manual_release}" == "1" ]]; then
+    # GenerateAppcast normally enforces these public artifact gates. Manual
+    # publication skips feed generation, but must retain the same checks.
+    python3 "${repo_root}/Tools/VerifyPublicManualApp.py" "${app}"
+fi
 echo "Seal valid after signing."
 
 if [[ -d "${runtime}" ]]; then
@@ -393,6 +415,9 @@ trap '/bin/rm -rf "${check_dir}"' EXIT
 /usr/bin/ditto -x -k "${zip_out}" "${check_dir}"
 /usr/bin/codesign --verify --deep --strict "${check_dir}/$(basename "${app}")" \
     || { echo "error: zip round-trip broke the signature." >&2; exit 1; }
+if [[ "${public_manual_release}" == "1" ]]; then
+    python3 "${repo_root}/Tools/VerifyPublicManualApp.py" "${check_dir}/Locus.app"
+fi
 echo "Zip round-trip verified."
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     # The real question is not whether it is signed but whether a Mac that has
@@ -412,7 +437,18 @@ fi
 /usr/bin/shasum -a 256 "${zip_out}"
 /bin/ls -lh "${zip_out}"
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
-    "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml" stable
+    if [[ "${public_manual_release}" == "1" ]]; then
+        # Recheck both signature and bytes after the notarization wait. Never
+        # rewrite or re-sign the feed copied from the prior public release.
+        final_feed_sha="$(python3 "${repo_root}/Tools/VerifyLegacyAppcast.py" \
+            "${zip_out:h}/appcast.xml" "${info_plist}")"
+        [[ "${final_feed_sha}" == "${legacy_feed_sha}" ]] || {
+            echo "error: preserved legacy appcast changed during packaging" >&2; exit 1
+        }
+        echo "Preserved the signed legacy appcast; this manual release is not offered by Sparkle."
+    else
+        "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml" stable
+    fi
     echo "Upload Locus-macOS.zip, appcast.xml, components.json, and" \
         "${(j:, :)component_archives} to the same draft GitHub release."
     echo "They travel together: installed apps resolve both the appcast and the"

@@ -40,6 +40,10 @@ extension AppModel {
             taskCapsules.error = "Finish the active task before starting this capsule stage."
             return
         }
+        if capsuleDispatch != nil, goals.goal(for: currentSessionID)?.status == .active {
+            taskCapsules.error = "Pause the current goal before starting a capsule stage."
+            return
+        }
         // A normal message following a capsule must use the user's regular
         // route, even if its worker still carries the temporary planning model.
         // Capture before any awaited work so sidebar/account changes cannot
@@ -79,6 +83,7 @@ extension AppModel {
                 showToast("Wait for the current reply before sending attachments")
                 return
             }
+            if !requeueingOnFailure { goals.noteUserInput(sessionID: currentSessionID, text: text) }
             queuedMessages.append(text)
             taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
             if consumeMatchingDraft,
@@ -102,21 +107,34 @@ extension AppModel {
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
         let dispatchedMode: WorkMode = privateIdentity ? .work : capsuleDispatch?.mode ?? selectedMode
+        let savedGoal = capsuleDispatch == nil && !privateIdentity && !isSlashPassthrough
+            && dispatchedMode == .work ? goals.goal(for: currentSessionID).flatMap {
+                $0.status == .active ? $0 : nil
+            } : nil
+        if let savedGoal, let issue = goalExecutionIssue(savedGoal) {
+            goals.suspend(sessionID: currentSessionID)
+            Task { await goals.block(sessionID: savedGoal.sessionID, reason: issue) }
+            showToast(issue)
+            return
+        }
         let teamMention = TeamMentionResolver.selection(
             in: text,
             profiles: agentProfiles,
             teams: agentTeams
         )
-        let wantsTeam = capsuleDispatch == nil && !privateIdentity && dispatchedMode != .ask
+        let wantsTeam = savedGoal.map { $0.execution["runner"]?.string == "team" }
+            ?? (capsuleDispatch == nil && !privateIdentity && dispatchedMode != .ask
             && !isSlashPassthrough
-            && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil)
-        let dispatchedTeam = wantsTeam ? teamManifest(for: text) : nil
+            && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil))
+        let savedTeamID = savedGoal?.execution["team_id"]?.string.flatMap(UUID.init(uuidString:))
+        let dispatchedTeam = wantsTeam ? teamManifest(for: text, teamID: savedTeamID) : nil
         if wantsTeam, dispatchedTeam == nil { return }
         let dispatchedSoloSwarm = capsuleDispatch == nil && !privateIdentity && dispatchedTeam == nil
             && selectedAgentTeamID == nil
             && dispatchedMode != .ask
             && !isSlashPassthrough
         if settings.automaticModelRoutingEnabled, capsuleDispatch == nil, !privateIdentity,
+           goals.goal(for: currentSessionID)?.status != .active,
            !automaticRoutingPrepared,
            !isSlashPassthrough,
            dispatchedTeam == nil
@@ -169,6 +187,12 @@ extension AppModel {
             ? nil : simulatorControl.target(for: dispatchedSessionID)
         let dispatchedRestoredContext = isSlashPassthrough || privateIdentity ? nil : restoredTranscriptContext
         if !isSlashPassthrough { restoredTranscriptContext = nil }
+        let dispatchedGoalID = savedGoal?.id
+        if dispatchedGoalID != nil, !requeueingOnFailure {
+            goals.noteUserInput(sessionID: dispatchedSessionID, text: text)
+        }
+        let dispatchedGoalInputID = dispatchedGoalID == nil ? nil
+            : goals.takeUserInput(sessionID: dispatchedSessionID, text: text)
 
         isBusy = true
         turnStartedAt = Date()
@@ -273,24 +297,39 @@ extension AppModel {
             }
             do {
                 let queuedTeam = dispatchedTeam?["team"] as? [String: Any]
+                var queuedBody: [String: Any] = [
+                    "run_id": reservedRunID,
+                    "session_id": dispatchedSessionID,
+                    "message_id": visibleBlock.id.uuidString,
+                    "workspace_root": dispatchedWorkspaceRoot,
+                    "execution_path": dispatchedExecutionPath,
+                    "request": messageText,
+                    "run_kind": dispatchedTeam == nil ? "solo" : "team",
+                    "team_id": queuedTeam?["id"] as? String ?? "",
+                    "team_name": queuedTeam?["name"] as? String ?? "",
+                    "execution_environment": dispatchedEnvironment.rawValue,
+                    "solo_swarm": dispatchedSoloSwarm,
+                ]
+                if let dispatchedGoalID {
+                    guard let goal = await self.goals.flushUserInput(sessionID: dispatchedSessionID),
+                          goal.id == dispatchedGoalID, goal.status == .active else {
+                        throw NSError(domain: "PersistentGoal", code: 409, userInfo: [
+                            NSLocalizedDescriptionKey: "The goal changed or your instructions could not be saved. Resume the goal and send again."
+                        ])
+                    }
+                    queuedBody["goal_id"] = goal.id
+                    queuedBody["goal_revision"] = goal.revision
+                    if let dispatchedGoalInputID { queuedBody["goal_input_id"] = dispatchedGoalInputID }
+                }
                 let _: OrchestrationRun = try await self.backend.post(
                     "/api/runs/queue",
-                    body: [
-                        "run_id": reservedRunID,
-                        "session_id": dispatchedSessionID,
-                        "message_id": visibleBlock.id.uuidString,
-                        "workspace_root": dispatchedWorkspaceRoot,
-                        "execution_path": dispatchedExecutionPath,
-                        "request": messageText,
-                        "run_kind": dispatchedTeam == nil ? "solo" : "team",
-                        "team_id": queuedTeam?["id"] as? String ?? "",
-                        "team_name": queuedTeam?["name"] as? String ?? "",
-                        "execution_environment": dispatchedEnvironment.rawValue,
-                        "solo_swarm": dispatchedSoloSwarm,
-                    ],
+                    body: queuedBody,
                     as: OrchestrationRun.self
                 )
             } catch {
+                if let dispatchedGoalInputID {
+                    self.goals.restoreUserInput(sessionID: dispatchedSessionID, text: text, inputID: dispatchedGoalInputID)
+                }
                 if let previousRuntimeState {
                     self.taskConversationStates[dispatchedSessionID] = previousRuntimeState
                 } else {
@@ -349,7 +388,10 @@ extension AppModel {
             ]
             if privateIdentity { request["identity_mode"] = true }
             if let capsuleDispatch { request["capsule_context"] = capsuleDispatch.context }
-            if let agentConfig = encodedJSONObject(capsuleDispatch?.profile.resolvedBehavior ?? self.primaryAgentBehavior) {
+            if let savedConfig = savedGoal?.execution["agent_config"],
+               let agentConfig = encodedJSONValue(savedConfig) {
+                request["agent_config"] = agentConfig
+            } else if let agentConfig = encodedJSONObject(capsuleDispatch?.profile.resolvedBehavior ?? self.primaryAgentBehavior) {
                 request["agent_config"] = agentConfig
             }
             if let dispatchedTeam { request["team"] = dispatchedTeam }
@@ -429,6 +471,16 @@ extension AppModel {
                     restoringOverride: worker.hasCapsuleProviderOverride,
                     ordinaryProviderBody: ordinaryProviderBody
                 )
+                if let dispatchedGoalID,
+                   let goal = self.goals.goal(for: dispatchedSessionID), goal.id == dispatchedGoalID {
+                    if let issue = await self.prepareChatWorkerProvider(using: worker.service,
+                        provider: goal.execution["provider"]?.string,
+                        providerAccountID: goal.execution["provider_account_id"]?.string,
+                        model: goal.execution["model"]?.string) {
+                        throw NSError(domain: "PersistentGoal", code: 409,
+                                      userInfo: [NSLocalizedDescriptionKey: issue])
+                    }
+                }
                 let _: OrchestrationRun = try await self.backend.patch(
                     "/api/runs/\(reservedRunID)/queue",
                     body: ["action": "admit"],
@@ -721,6 +773,10 @@ extension AppModel {
     /// and continues the same turn without an intermediate `turn_done`.
     func steerDraft() {
         guard admitTranscriptInput() else { return }
+        if goals.goal(for: currentSessionID)?.status == .active {
+            stopAndSendDraft()
+            return
+        }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy,
               steeringState?.hasPrefix("Stopping") != true,
@@ -744,7 +800,9 @@ extension AppModel {
         guard admitTranscriptInput() else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        goals.noteUserInput(sessionID: currentSessionID, text: text)
         queuedMessages.append(text)
+        taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
         if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
         }
@@ -758,7 +816,42 @@ extension AppModel {
         guard admitTranscriptInput() else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isBusy, !hasPendingPermission, !text.isEmpty else { return }
-        guard conversationBackend.send(["type": "interrupt"]) else {
+        let goalActive = goals.goal(for: currentSessionID)?.status == .active
+        if goalActive {
+            let sessionID = currentSessionID
+            goals.noteUserInput(sessionID: sessionID, text: text)
+            queuedMessages.insert(text, at: 0)
+            taskWorkers[sessionID]?.queuedMessages = queuedMessages
+            if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text { draftText = "" }
+            steeringState = "Saving direction…"
+            Task { [weak self] in
+                guard let self,
+                      let goal = await self.goals.flushUserInput(sessionID: sessionID),
+                      goal.status == .active else { return }
+                let transport = self.taskWorkers[sessionID]?.service
+                    ?? (self.currentSessionID == sessionID ? self.conversationBackend : nil)
+                let running = self.taskWorkers[sessionID]?.occupiesExecutionSlot
+                    ?? (self.currentSessionID == sessionID && self.isBusy)
+                if running {
+                    _ = transport?.send(["type": "interrupt", "reason": "goal_steer"])
+                    if self.currentSessionID == sessionID { self.steeringState = "Stopping, then sending…" }
+                } else {
+                    self.drainGoalQueuedMessages(sessionID: sessionID)
+                }
+            }
+            return
+        }
+        interruptAndReplace(with: text, preservingGoal: false)
+    }
+
+    private func interruptAndReplace(with text: String, preservingGoal: Bool) {
+        guard isBusy else {
+            send(text, preservingDraftOnFailure: true, requeueingOnFailure: preservingGoal)
+            return
+        }
+        var request: [String: Any] = ["type": "interrupt"]
+        if preservingGoal { request["reason"] = "goal_steer" }
+        guard conversationBackend.send(request) else {
             showToast("Reconnect the local agent — the active turn could not be stopped")
             return
         }
@@ -778,15 +871,36 @@ extension AppModel {
 
     func removeQueuedMessage(at index: Int) {
         guard queuedMessages.indices.contains(index) else { return }
-        queuedMessages.remove(at: index)
-        taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
+        if goals.goal(for: currentSessionID)?.status.isTerminal != false {
+            queuedMessages.remove(at: index)
+            taskWorkers[currentSessionID]?.queuedMessages = queuedMessages
+            return
+        }
+        let sessionID = currentSessionID
+        let text = queuedMessages[index]
+        Task { @MainActor [weak self] in
+            guard let self, await goals.discardUserInput(sessionID: sessionID, text: text) else { return }
+            var messages = currentSessionID == sessionID ? queuedMessages
+                : taskWorkers[sessionID]?.queuedMessages ?? paneState(containing: sessionID)?.queuedMessages ?? []
+            let removal = messages.indices.contains(index) && messages[index] == text
+                ? index : messages.firstIndex(of: text)
+            if let removal { messages.remove(at: removal) }
+            if currentSessionID == sessionID { queuedMessages = messages }
+            taskWorkers[sessionID]?.queuedMessages = messages
+            paneState(containing: sessionID)?.queuedMessages = messages
+            drainGoalQueuedMessages(sessionID: sessionID)
+            goals.wake()
+        }
     }
 
     func drainQueuedMessages() {
-        guard canAcceptTranscriptInput, !isBusy, !hasPendingPermission, !planApprovalPending,
+        guard canAcceptTranscriptInput, !goals.isDiscardingUserInput(sessionID: currentSessionID),
+              !isBusy, !hasPendingPermission, !planApprovalPending,
               pendingUserQuestion == nil, !queuedMessages.isEmpty else {
             return
         }
+        if let goal = goals.goal(for: currentSessionID), !goal.status.isTerminal,
+           goal.status != .active { return }
         guard isAgentOnline else { return }
         // A queued message was composed before any attachments added while it
         // waited; those belong to the user's next explicit send.
@@ -918,8 +1032,19 @@ extension AppModel {
         }
     }
 
-    func stop() {
+    func stop() { stop(persistingGoalPause: true) }
+
+    func stop(persistingGoalPause: Bool) {
         guard admitTranscriptInput() else { return }
+        if persistingGoalPause, goals.goal(for: currentSessionID)?.status == .active {
+            let sessionID = currentSessionID
+            goals.suspend(sessionID: sessionID)
+            Task { [weak self] in
+                guard let self, await self.goals.pause(sessionID: sessionID, reason: "Stopped by you.") else { return }
+                self.stopGoalTurn(sessionID: sessionID)
+            }
+            return
+        }
         identityVault.cancelReviews(sessionID: currentSessionID)
         if let pendingTurn = pendingChatTurns[currentSessionID] {
             let queuedRunID = taskConversationStates[currentSessionID]?.runID
@@ -1020,15 +1145,16 @@ extension AppModel {
     }
 
     func stopRunningWorkForQuit(completion: @escaping @MainActor () -> Void) {
+        goals.shutdown()
         terminal.terminate()
         for pendingTurn in pendingChatTurns.values { pendingTurn.cancel() }
         pendingChatTurns.removeAll()
         pendingChatTurnTokens.removeAll()
         chatAdmissionQueue = ChatAdmissionQueue()
         for runtime in taskWorkers.values {
-            _ = runtime.service.send(["type": "interrupt"])
+            _ = runtime.service.send(["type": "interrupt", "reason": "app_shutdown"])
         }
-        _ = backend.send(["type": "interrupt"])
+        _ = backend.send(["type": "interrupt", "reason": "app_shutdown"])
         computerControl.cancelPendingActions()
         cancelSimulatorActions()
         simulatorControl.detachAll()

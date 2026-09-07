@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 CAPABILITY_ENV = {
+    "persistent_goals_v1": "LOCUS_CAPABILITY_PERSISTENT_GOALS_V1",
     "durable_runs": "LOCUS_CAPABILITY_DURABLE_RUNS",
     "recovery_controls": "LOCUS_CAPABILITY_RECOVERY_CONTROLS",
     "evaluations": "LOCUS_CAPABILITY_EVALUATIONS",

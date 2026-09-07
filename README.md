@@ -22,10 +22,10 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> The latest public release, [v2.4.0](https://github.com/nahid-sparktales/locus/releases/tag/v2.4.0),
-> predates this split. Its downloadable app still belongs to the earlier product.
-> A public wallet-free release has not been published yet. Build the current
-> app from source using the instructions below.
+> [Download Locus 2.5.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.5.0/Locus-macOS.zip).
+> This is the wallet-free edition and uses manual app updates. Existing Locus
+> chats, accounts, settings, and browser data stay in place. See the
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.5.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 
@@ -37,6 +37,9 @@ the separate **LocusX** edition.
   interact with sites, and switch to a mobile viewport.
 - **Plan and delegate.** Plan work, refine a request in Grill mode, or let an agent act. Follow tasks,
   tool activity, outputs, and agent teams from the Overview.
+- **Keep working toward a goal.** Save an objective with optional usage limits.
+  Solo agents and teams continue across turns with verified completion,
+  pause/resume controls, and recovery when you reopen Locus.
 - **Run recurring agents.** Schedule work or connect event triggers, with
   dedicated chats, bounded permissions, and visible run history.
 - **Choose your models.** Use Ollama, ChatGPT-plan access, OpenAI, Claude,
@@ -81,9 +84,10 @@ target is also wallet-free. Existing wallet files and Keychain entries are left
 untouched; wallet data is not automatically imported or migrated. LocusX Gmail sign-in
 is unavailable until its separate Google OAuth registration is configured.
 
-Current local editions use **manual app updates**. They do not start the legacy
+Current editions use **manual app updates**. They do not start the legacy
 app updater, including when old automatic-update preferences are present.
-Public release feeds for the split editions remain unconfigured. See the
+The previous signed feed stays available to older apps and does not automatically
+move them to the new edition. Separate automatic update feeds remain unconfigured. See the
 [editions guide](Docs/Editions.md) for build boundaries and profile details.
 
 ## Models and requirements

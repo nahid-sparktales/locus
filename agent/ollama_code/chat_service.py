@@ -166,6 +166,7 @@ class ChatService:
         self.active_solo_swarm: SoloSwarmExecutor | None = None
         self.active_team: TeamPreparation | None = None
         self.active_run_id: str | None = None
+        self.goal_runtime: Any = None
         self.cancel_requested_runs: set[str] = set()
         self.pause_requested = False
         self.active_evaluation_id: str | None = None
@@ -315,6 +316,18 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        if self.goal_runtime is not None:
+            event = {**event, "goal_id": self.goal_runtime.goal_id,
+                     "goal_revision": self.goal_runtime.revision}
+            if event_type in {"permission_request", "question_required", "question_ready"}:
+                self.goal_runtime.begin_wait(str(event.get("request_id") or uuid.uuid4().hex), event_type)
+            elif event_type in {"permission_resolved", "question_resolved"}:
+                self.goal_runtime.end_wait(str(event.get("request_id") or ""))
+        if self.goal_runtime is not None and (
+            event_type == "question_ready"
+            or event_type == "tool_result" and event.get("denied") is True
+        ):
+            self.goal_runtime.stop_reason = "waiting_input"
         if event_type == "turn_done" and self.active_solo_swarm is not None:
             event = dict(event)
             worker_usage = self.active_solo_swarm.usage
@@ -435,6 +448,18 @@ class ChatService:
                     self.run_store.set_state(run_id, terminal_state, recoverable=False)
             except (RunStoreError, sqlite3.DatabaseError, OSError):
                 pass
+        if event_type == "turn_done" and self.goal_runtime is not None:
+            from .goals import GoalError
+            event = dict(event)
+            try:
+                goal = self.goal_runtime.finish(str(event.get("reason") or "complete"))
+                event["goal"] = goal
+                self.emit({"type": "goal_snapshot", "goal": goal})
+            except (GoalError, sqlite3.DatabaseError, OSError) as exc:
+                # A durable goal transition is execution authority. A failed
+                # write must never signal that another run can be admitted.
+                event["goal_error"] = str(exc)
+                self.emit({"type": "goal_error", "message": str(exc)})
         if event_type in {"agent_job_started", "agent_job_continuing",
                           "agent_job_incomplete", "agent_job_completed", "dispatch_plan",
                           "dispatcher_plan_rejected", "agent_spawned",
@@ -515,6 +540,8 @@ class ChatService:
         with self._pending_permissions_guard:
             for fut in self.pending_permissions.values():
                 if not fut.done():
+                    if self.goal_runtime is not None:
+                        self.goal_runtime.stop_reason = "waiting_input"
                     fut.set_result("deny")
 
     # -- structured question (blocks the worker thread until answered) --
@@ -532,6 +559,10 @@ class ChatService:
         # the turn slot until the process died. Fail fast with guidance instead
         # — the model is told to proceed and state its assumption.
         if self.ws is None:
+            if self.goal_runtime is not None:
+                self.goal_runtime.stop_reason = "waiting_input"
+                self.goal_runtime.begin_wait(uuid.uuid4().hex, "question_required")
+                return "Error: the goal requires your answer. It will wait until you return."
             return (
                 "Error: nobody is available to answer right now — this turn is "
                 "running unattended. Proceed with your best judgment and state "
@@ -572,6 +603,8 @@ class ChatService:
         with self._pending_questions_guard:
             for future in self.pending_questions.values():
                 if not future.done():
+                    if self.goal_runtime is not None:
+                        self.goal_runtime.stop_reason = "waiting_input"
                     future.set_result({"action": "cancel", "answers": []})
 
     def cancel_all_questions(self, *, suspend_async: bool = False) -> None:
@@ -1427,6 +1460,10 @@ class ChatService:
                         ),
                     })
                     self.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+                if self.goal_runtime is not None:
+                    from .goal_runtime import attach_goal_runtime
+                    attach_goal_runtime(self.core, None)
+                    self.goal_runtime = None
 
             self.turn_future.add_done_callback(observe_completion)
             return True

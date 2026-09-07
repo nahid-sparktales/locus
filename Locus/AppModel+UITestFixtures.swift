@@ -1,6 +1,77 @@
 import AppKit
 import Foundation
 
+private final class GoalUITestProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var goal: [String: Any]?
+
+    static func reset(_ record: [String: Any]?) {
+        lock.lock()
+        goal = record
+        lock.unlock()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let input = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        Self.lock.lock()
+        var response: [String: Any]
+        if request.httpMethod == "POST", url.path.hasSuffix("/goal") {
+            let sessionID = url.pathComponents.dropLast().last ?? "seed-current"
+            var record = input
+            record["id"] = "goal-\(sessionID)"
+            record["session_id"] = sessionID
+            record["revision"] = 1
+            record["status"] = "active"
+            record["updated_at"] = Date().timeIntervalSince1970
+            Self.goal = record
+            response = record
+        } else if request.httpMethod == "PATCH", var record = Self.goal {
+            switch input["action"] as? String {
+            case "pause": record["status"] = "paused"
+            case "resume": record["status"] = "active"
+            case "cancel": record["status"] = "cancelled"
+            case "edit":
+                for key in ["objective", "model_call_budget", "token_budget", "execution"] {
+                    if let value = input[key] { record[key] = value }
+                }
+            default: break
+            }
+            record["revision"] = (record["revision"] as? Int ?? 0) + 1
+            record["reason"] = input["reason"] ?? ""
+            record["updated_at"] = Date().timeIntervalSince1970
+            Self.goal = record
+            response = record
+        } else if url.path == "/api/goals" {
+            response = ["goals": Self.goal.map { [$0] } ?? []]
+        } else {
+            response = ["goal": Self.goal.map { $0 as Any } ?? NSNull()]
+        }
+        Self.lock.unlock()
+        let payload = (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
+        let http = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                   headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 extension AppModel {
     func seedUITestState(runFixture: String? = nil) {
         // A fixed path so UI tests see a deterministic workspace name ("tmp")
@@ -625,6 +696,9 @@ extension AppModel {
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_OPTIONAL_QUESTION"] == "1" {
             seedOptionalQuestionFixture()
         }
+        if let goalFixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GOAL"] {
+            seedGoalFixture(goalFixture)
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BLOCKING_QUESTION"] == "1" {
             selectedMode = .grill
             pendingBlockingQuestion = AgentQuestionRequest(
@@ -684,6 +758,33 @@ extension AppModel {
             let tab: InspectorTab = documentationSurface == "plan" ? .plan : .files
             openInspectorTabs = [tab]
             inspectorTab = tab
+        }
+    }
+
+    /// A feature-scoped in-process transport exercises the real goal editor and
+    /// state mutations without connecting a worker or a model account.
+    private func seedGoalFixture(_ state: String) {
+        backendCapabilities["persistent_goals_v1"] = true
+        let sessionID = currentSessionID
+        var record: [String: Any]?
+        if state != "empty" {
+            record = ["id": "goal-\(sessionID)", "session_id": sessionID,
+                      "objective": "Implement and verify persistent goals", "revision": 1,
+                      "status": GoalStatus(rawValue: state)?.rawValue ?? "active",
+                      "reason": state == "blocked" ? "A fixture question needs your answer." : "",
+                      "summary": "The saved plan is ready.", "evidence": ["Fixture checks passed"],
+                      "model_calls": 4, "prompt_tokens": 900, "completion_tokens": 250,
+                      "execution": ["provider": "ollama", "model": "Fixture model", "workspace_root": "/tmp"],
+                      "updated_at": Date().timeIntervalSince1970]
+        }
+        GoalUITestProtocol.reset(record)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GoalUITestProtocol.self]
+        let fixtureBackend = BackendService(baseURL: URL(string: "http://127.0.0.1:9")!,
+            authToken: "goal-ui-fixture", session: URLSession(configuration: configuration))
+        goals.configure(backend: fixtureBackend, canContinue: { _ in false }, dispatch: { _, _ in false })
+        if let record {
+            _ = goals.handleEvent(["type": "goal_snapshot", "goal": record], sessionID: sessionID)
         }
     }
 

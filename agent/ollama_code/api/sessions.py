@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..core import AgentCore
+from ..goals import GoalError, GoalStore
 from ..session_runtime import session_has_active_run, transcript_index
 from ..sessions import (
     ChatOrganizationStore,
@@ -44,6 +45,18 @@ def _session_has_active_run(service: ChatService, session_id: str) -> bool:
     return session_has_active_run(service.run_store, session_id)
 
 
+def _transition_session_goal(service: ChatService, session_id: str, action: str) -> None:
+    """Revoke continuation authority before a chat leaves the live library."""
+    goals = GoalStore(service.run_store)
+    goal = goals.for_session(session_id)
+    if goal is None or goal["status"] in {"completed", "cancelled"}:
+        return
+    try:
+        goals.update(goal["id"], action, reason="The chat was archived." if action == "pause" else "The chat was removed.")
+    except GoalError as error:
+        raise HTTPException(409, str(error)) from error
+
+
 def _agent_owning_chat(service: ChatService, session_id: str) -> str | None:
     """The agent whose events land in this chat, if one still exists.
 
@@ -76,12 +89,17 @@ def sessions(
     limit: int = Query(100, ge=1, le=500),
     query: str = Query("", max_length=500),
 ) -> dict[str, Any]:
+    summaries = SessionStore.summaries(
+        limit=limit,
+        include_archived=include_archived,
+        query=query,
+    )
+    goals: dict[str, dict[str, Any]] = {}
+    for goal in GoalStore(service.run_store).list():
+        if goal["session_id"] not in goals or goal["status"] not in {"completed", "cancelled"}:
+            goals[goal["session_id"]] = goal
     return {
-        "sessions": SessionStore.summaries(
-            limit=limit,
-            include_archived=include_archived,
-            query=query,
-        ),
+        "sessions": [{**summary, "goal": goals.get(summary["id"])} for summary in summaries],
         "current": service.core.session.session_id,
     }
 
@@ -254,6 +272,9 @@ def session_new(
 def sessions_clear(service: ServiceDependency) -> dict[str, Any]:
     """Move every saved session except the active one to the recovery folder."""
     active_session = service.core.session.session_id
+    for path in SessionStore.list_sessions():
+        if path.stem != active_session:
+            _transition_session_goal(service, path.stem, "cancel")
     if any(
         path.stem != active_session
         and _session_has_active_run(service, path.stem)
@@ -276,6 +297,7 @@ def session_delete(session_id: str, service: ServiceDependency) -> dict[str, Any
     """Move one chat to recovery, replacing it first when it is active."""
     if SessionStore.path_for(session_id) is None:
         raise HTTPException(404, f"session not found: {session_id}")
+    _transition_session_goal(service, session_id, "cancel")
     if _session_has_active_run(service, session_id):
         raise HTTPException(409, "wait for this chat to stop before deleting it")
     owner = _agent_owning_chat(service, session_id)
@@ -543,6 +565,8 @@ def session_metadata_update(
         raise HTTPException(409, f"this chat receives {owner}'s runs; pause the agent instead")
     if archived and session_id == service.core.session.session_id:
         raise HTTPException(409, "start a new session before archiving the active one")
+    if archived:
+        _transition_session_goal(service, session_id, "pause")
     if archived and _session_has_active_run(service, session_id):
         raise HTTPException(409, "wait for this chat to stop before archiving it")
 
@@ -611,7 +635,7 @@ def session_resume(session_id: str, service: ServiceDependency) -> dict[str, Any
         "ok": True,
         "text": result.get("text"),
         "messages": (result.get("data") or {}).get("messages", []),
-        "session_info": service.core.session_info(),
+        "session_info": {**service.core.session_info(), "goal": GoalStore(service.run_store).for_session(session_id)},
         "agent_activities": activity["activities"],
         "orchestration_state": activity.get("orchestration_state"),
         "orchestration_run_id": activity.get("run_id"),

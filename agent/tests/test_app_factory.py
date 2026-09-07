@@ -4,9 +4,10 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from ollama_code import server
+from ollama_code.runstore import RunStore
 
 
-def _service(name: str):
+def _service(name: str, directory: Path):
     core = SimpleNamespace(
         provider_state=lambda: {"provider": name},
         provider="ollama",
@@ -17,11 +18,9 @@ def _service(name: str):
         workspace_root=name,
         session=SimpleNamespace(session_id=f"{name}-session"),
     )
-    run_store = SimpleNamespace(
-        schedules=lambda: [{"service": name}],
-        usage_summary=lambda **_options: {"service": name},
-        read_only=False,
-    )
+    run_store = RunStore(directory / f"{name}-runs.sqlite3")
+    run_store.schedules = lambda: [{"service": name}]
+    run_store.usage_summary = lambda **_options: {"service": name}
     codex = SimpleNamespace(account=lambda **_options: {"service": name})
     return SimpleNamespace(core=core, run_store=run_store, codex=codex)
 
@@ -35,9 +34,9 @@ def _route_contract() -> list[str]:
     return contract
 
 
-def test_create_app_keeps_service_state_isolated():
-    first = TestClient(server.create_app(chat_service=_service("first")))
-    second = TestClient(server.create_app(chat_service=_service("second")))
+def test_create_app_keeps_service_state_isolated(tmp_path):
+    first = TestClient(server.create_app(chat_service=_service("first", tmp_path)))
+    second = TestClient(server.create_app(chat_service=_service("second", tmp_path)))
     unconfigured = TestClient(server.create_app())
     try:
         assert first.get("/api/provider").json() == {"provider": "first"}
@@ -52,7 +51,7 @@ def test_create_app_keeps_service_state_isolated():
         unconfigured.close()
 
 
-def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
+def test_domain_owned_routes_keep_service_state_isolated(monkeypatch, tmp_path):
     from ollama_code.api import continuity, knowledge, workspace
 
     monkeypatch.setattr(
@@ -74,8 +73,8 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
             list_snapshots=lambda workspace, **_options: [{"workspace": workspace}]
         ),
     )
-    first = TestClient(server.create_app(chat_service=_service("first")))
-    second = TestClient(server.create_app(chat_service=_service("second")))
+    first = TestClient(server.create_app(chat_service=_service("first", tmp_path)))
+    second = TestClient(server.create_app(chat_service=_service("second", tmp_path)))
     try:
         assert first.get("/api/git/status").json()["workspace"] == "first"
         assert second.get("/api/git/status").json()["workspace"] == "second"
@@ -94,9 +93,9 @@ def test_domain_owned_routes_keep_service_state_isolated(monkeypatch):
         second.close()
 
 
-def test_websocket_routes_keep_service_state_isolated():
-    first = TestClient(server.create_app(chat_service=_service("first"), auth_token="token"))
-    second = TestClient(server.create_app(chat_service=_service("second"), auth_token="token"))
+def test_websocket_routes_keep_service_state_isolated(tmp_path):
+    first = TestClient(server.create_app(chat_service=_service("first", tmp_path), auth_token="token"))
+    second = TestClient(server.create_app(chat_service=_service("second", tmp_path), auth_token="token"))
     try:
         with first.websocket_connect(
             "/ws/internal/codex", headers={"x-locus-token": "token"}

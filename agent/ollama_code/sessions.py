@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import re
 import shutil
 import threading
@@ -616,6 +617,18 @@ class SessionStore:
                 f.write(line)
         except OSError:
             pass  # session logging must never crash the app
+
+    def append_strict(self, record: dict[str, Any]) -> None:
+        """Persist execution-critical goal history before acknowledging work.
+
+        Ordinary transcript logging remains best effort. Goal recovery needs
+        a confirmed tool-result record before a mutation can become replay-safe.
+        """
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+        with _APPEND_LOCK, self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
 
     # ------------------------------------------------------------------ reads
 

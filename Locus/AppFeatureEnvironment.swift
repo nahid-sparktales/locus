@@ -358,6 +358,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.workspaceFiles)
             .environmentObject(model.library)
             .environmentObject(model.identityVault)
+            .environmentObject(model.goals)
             .environmentObject(model.outputsLibrary)
             .environmentObject(model.onboarding)
             .environmentObject(model.agentInspector)

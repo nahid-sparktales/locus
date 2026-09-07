@@ -143,8 +143,10 @@ class SoloSwarmExecutor:
         tool_is_read_only: Callable[[str], bool] | None = None,
         tool_is_parallel_safe: Callable[[str], bool] | None = None,
         virtual_tools: Callable[[], set[str]] | None = None,
+        goal_runtime: Any = None,
     ) -> None:
         self.route = route
+        self.goal_runtime = goal_runtime
         self.emit = emit
         self.should_stop = should_stop
         self.workspace_tools = ReadOnlyWorkspaceTools(route.workspace, knowledge_search)
@@ -388,12 +390,15 @@ class SoloSwarmExecutor:
             self._reserve_call()
             calls += 1
             try:
+                goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
                 response = self.route.client.chat_stream(
                     self.route.model,
                     messages,
                     tools=schemas,
                     should_stop=self._worker_should_stop,
                 )
+                if goal_call is not None:
+                    self.goal_runtime.settle(goal_call, response)
             except InterruptedError:
                 raise
             except Exception:  # noqa: BLE001 - retain this worker's usage and its siblings
@@ -491,7 +496,8 @@ class SoloSwarmExecutor:
                 return "Error: this tool was not granted to this Solo worker."
             return self._execute_task_tool(task, name, arguments, call_id)
 
-        self.route.client.run_turn(
+        run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
+        run_native(
             thread_id=thread_id,
             text=self._worker_prompt(task),
             model=self.route.model,
@@ -560,6 +566,16 @@ class SoloSwarmExecutor:
                 return
             self.emit(event)
 
+        goal_requests = threading.local()
+        child_goal_calls = [self.goal_runtime.reserve() for _ in tasks] if self.goal_runtime is not None else []
+        def reserve_hosted_request():
+            self._reserve_call()
+            if self.goal_runtime is not None:
+                goal_requests.identifier = self.goal_runtime.reserve()
+        def record_hosted_usage(prompt, completion):
+            self._record_tokens(prompt, completion)
+            if self.goal_runtime is not None:
+                self.goal_runtime.settle(goal_requests.identifier, prompt_tokens=prompt, completion_tokens=completion)
         hosted = OpenAIResponsesMultiAgentClient(
             api_key=str(client.api_key),
             model=self.route.model,
@@ -571,8 +587,8 @@ class SoloSwarmExecutor:
             emit=hosted_event,
             should_stop=self.should_stop,
             knowledge_search=self.knowledge_search,
-            before_request=self._reserve_call,
-            usage_observer=self._record_tokens,
+            before_request=reserve_hosted_request,
+            usage_observer=record_hosted_usage,
             tools=self._responses_tool_schemas(tasks[0]),
             tool_executor=hosted_tool_executor,
             developer_instructions=self._worker_instructions(tasks[0]),
@@ -595,6 +611,8 @@ class SoloSwarmExecutor:
         if max(response.agent_count - 1, 0) != len(tasks):
             raise OpenAIResponsesMultiAgentError("hosted root did not execute every approved worker")
         results: list[dict[str, Any]] = []
+        for identifier in child_goal_calls:
+            self.goal_runtime.settle(identifier)
         aggregate_prompt = int(response.usage.get("prompt_tokens") or 0)
         aggregate_completion = int(response.usage.get("completion_tokens") or 0)
         for index, raw in enumerate(raw_results):

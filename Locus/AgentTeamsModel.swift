@@ -61,6 +61,7 @@ final class AgentTeamsModel: ObservableObject {
     private var accountsProvider: () -> [ProviderAccount] = { [] }
     private var accountModelsProvider: (UUID) -> [String]? = { _ in nil }
     private var toastHandler: (String) -> Void = { _ in }
+    private var executionRouteWillChange: () -> Void = {}
     private let credentialStore: any CredentialStoring
 
     init(credentialStore: any CredentialStoring = CredentialStore.shared) {
@@ -108,7 +109,8 @@ final class AgentTeamsModel: ObservableObject {
         localModelsProvider: @escaping () -> [ModelInfo],
         accountsProvider: @escaping () -> [ProviderAccount],
         accountModelsProvider: @escaping (UUID) -> [String]?,
-        toastHandler: @escaping (String) -> Void
+        toastHandler: @escaping (String) -> Void,
+        executionRouteWillChange: @escaping () -> Void = {}
     ) {
         self.isBusyProvider = isBusyProvider
         self.workspacePersistenceRequested = workspacePersistenceRequested
@@ -116,6 +118,7 @@ final class AgentTeamsModel: ObservableObject {
         self.accountsProvider = accountsProvider
         self.accountModelsProvider = accountModelsProvider
         self.toastHandler = toastHandler
+        self.executionRouteWillChange = executionRouteWillChange
     }
 
     func suggestedQuickTeamName() -> String {
@@ -150,6 +153,7 @@ final class AgentTeamsModel: ObservableObject {
             )
             // Publish only after the complete staged result validates. This
             // prevents a failed quick setup from leaving orphaned profiles.
+            executionRouteWillChange()
             agentProfiles = build.profiles
             agentTeams.append(build.team)
             persistAgentTeams()
@@ -205,12 +209,14 @@ final class AgentTeamsModel: ObservableObject {
     }
 
     func selectAgentTeam(_ id: UUID?) {
+        if selectedAgentTeamID != id { executionRouteWillChange() }
         soloSwarmEnabled = id == nil
         selectedAgentTeamID = id
         toastHandler(id == nil ? "Solo mode" : "Team mode")
     }
 
     func selectSoloRoute() {
+        if selectedAgentTeamID != nil { executionRouteWillChange() }
         selectedAgentTeamID = nil
         soloSwarmEnabled = true
         toastHandler("Solo mode")
@@ -219,6 +225,7 @@ final class AgentTeamsModel: ObservableObject {
     func savePrimaryAgentBehavior(_ behavior: AgentBehavior) {
         var updated = behavior
         updated.clamp()
+        executionRouteWillChange()
         primaryAgentBehavior = updated
         if persistenceEnabled {
             AgentTeamStore.savePrimaryBehavior(updated)

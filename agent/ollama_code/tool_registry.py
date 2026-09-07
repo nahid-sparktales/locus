@@ -869,6 +869,7 @@ class ToolRegistry:
         self._agent_role = ""
         self._user_capability_policy: dict[str, bool] = {}
         self._solo_swarm_enabled = False
+        self.goal_enabled = False
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
         self._ask_question_enabled = False
@@ -1160,6 +1161,9 @@ class ToolRegistry:
         if self._offers_ask_question():
             schemas.append(ASK_QUESTION_SCHEMA)
         schemas.extend(self.collaboration_schemas())
+        if self.goal_enabled:
+            from .goal_runtime import GOAL_TOOL_SCHEMAS
+            schemas.extend(GOAL_TOOL_SCHEMAS)
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool or not self._allows_mcp_item(tool, "tools", qualified=name):
@@ -1218,6 +1222,9 @@ class ToolRegistry:
         if self._offers_ask_question():
             schemas.append(ASK_QUESTION_SCHEMA)
         schemas.extend(self.collaboration_schemas())
+        if self.goal_enabled:
+            from .goal_runtime import GOAL_TOOL_SCHEMAS
+            schemas.extend(GOAL_TOOL_SCHEMAS)
         schemas.extend(self.identity_schemas())
         schemas.extend(
             schema for schema in self.simulator_schemas()
@@ -1565,6 +1572,8 @@ class ToolRegistry:
         return "\n".join(lines)
 
     def is_safe(self, name: str) -> bool:
+        if name in {"get_goal", "update_goal"}:
+            return self.goal_enabled
         if name in COLLABORATION_NAMES:
             return self._collaboration_enabled and name != "integrate_agent" and self._user_allows(name)
         if name == "ask_question_async":
@@ -1677,6 +1686,8 @@ class ToolRegistry:
         return True
 
     def tool_info(self, name: str) -> dict[str, Any] | None:
+        if name in {"get_goal", "update_goal"} and self.goal_enabled:
+            return {"origin": "builtin", "annotations": {"readOnlyHint": True}}
         if name == "identity_vault" and self.identity_enabled:
             return {"origin": "identity", "annotations": {"readOnlyHint": False}}
         if name == "submit_workflow_result" and self._workflow_outputs:

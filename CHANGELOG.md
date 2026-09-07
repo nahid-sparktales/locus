@@ -2,8 +2,21 @@
 
 ## Unreleased
 
+## 2.5.0 — 2026-09-06
+
 ### Added
 
+- **Wallet-free Locus.** The public Mac download now contains the standard
+  edition. Existing chats, accounts, settings, and browser data stay in place;
+  the optional wallet remains in the separate LocusX edition.
+- **Persistent goals.** Give an ordinary chat an objective and optional usage
+  allowances. Solo agents and teams continue across turns, retain progress on
+  reopening, and report verified completion. Pause, Resume, Edit, and End keep
+  control beside the composer; queued instructions take priority.
+- **Solo collaboration.** The conversation agent can delegate bounded work to
+  helpers while keeping results and verification with the coordinating agent.
+- **Private Identity tasks.** Keep reusable personal and business details in
+  an encrypted vault, with explicit review before sharing details or documents.
 - **Task Capsules.** Save a detailed plan with separate planning,
   implementation, and optional review models. ChatGPT and Kimi Code membership
   routes keep their exact accounts, alongside API and local model support.
@@ -24,6 +37,9 @@
 
 ### Changed
 
+- Locus 2.5 uses manual app updates. The previous signed app feed is preserved
+  for older installations; upgrading to the wallet-free edition is an explicit
+  download. ChatGPT-plan component downloads remain available.
 - Generated reports inside build folders can be captured in Outputs. Saved
   history remains available when original workspace files disappear.
 - Agent progress and outcomes appear before configuration. Automation state,

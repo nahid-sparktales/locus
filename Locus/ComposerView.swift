@@ -277,6 +277,7 @@ struct ComposerView: View {
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var workspaceFiles: WorkspaceFileModel
+    @EnvironmentObject private var goals: GoalModel
     @EnvironmentObject private var applicationContext: ApplicationContextService
     @EnvironmentObject private var simulatorControl: SimulatorControlService
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -307,6 +308,8 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            GoalCardView(model: goals, sessionID: model.currentSessionID)
+                .frame(maxWidth: 740)
             if !composerState.queuedMessages.isEmpty {
                 queueRow
                     .disabled(!model.canAcceptTranscriptInput)
@@ -461,6 +464,7 @@ struct ComposerView: View {
             QuickTeamBuilderView(suggestedName: agentTeams.suggestedQuickTeamName())
                 .environmentObject(model)
         }
+        .sheet(isPresented: $goals.isPresented) { GoalEditorView(model: goals) }
         .onAppear { restoreFocus() }
         .onDisappear { voiceControl.cancelRecording() }
         .alert(
@@ -862,6 +866,17 @@ struct ComposerView: View {
 
     private var modeControls: some View {
         Group {
+            if model.backendCapabilities["persistent_goals_v1"] == true {
+                Button { model.presentGoalEditor() } label: {
+                    Label("Goal", systemImage: "scope")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .padding(.horizontal, 8).frame(height: 24)
+                }
+                .buttonStyle(.locus())
+                .disabled(!model.canStartGoal)
+                .help("Keep working toward a saved objective")
+                .accessibilityIdentifier("composer.goal")
+            }
             ForEach([WorkMode.plan, WorkMode.grill]) { mode in
                 Button {
                     model.selectedMode = model.selectedMode == mode ? .work : mode

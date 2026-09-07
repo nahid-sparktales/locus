@@ -50,6 +50,45 @@ Each additive orchestration stage has an independent
 and disabled model tools are omitted from their schemas; stored data is not
 removed.
 
+### Persistent goals
+
+Health capability `persistent_goals_v1` advertises per-chat goals. The
+authenticated API provides `GET /api/goals` (`{goals: [...]}`),
+`GET /api/sessions/{session_id}/goal` (`{goal: object|null}`), and
+`POST /api/sessions/{session_id}/goal` to create one unfinished goal with
+`objective`, `execution`, and optional `model_call_budget` and `token_budget`.
+Execution saves the exact provider/account/model or team references, workspace,
+execution path/environment, and agent behavior without credentials.
+
+`PATCH /api/goals/{goal_id}` accepts user lifecycle actions `pause`, `resume`,
+`cancel`, `edit`, and `block`; edits use `expected_revision`. A `steer` action
+with an idempotent `input_id` fences completion while submitted user input is
+waiting. `discard_input` with the same ID removes a queued instruction without
+releasing other pending instructions. Ordinary `/api/runs/queue` requests may include `goal_id`,
+`goal_revision`, and `goal_input_id`; attaching a run consumes that input (or
+the oldest pending input when the ID is omitted).
+
+`POST /api/goals/{goal_id}/claim`, with `expected_revision`, atomically returns
+`{goal, run}`. `run` is null when work cannot be admitted; repeated claims
+return the same queued continuation. A recoverable team checkpoint returns its
+existing run for the ordinary assessment/resume flow with freshly resolved
+credentials. Goal-linked work uses the regular worker admission and acceptance
+handshake, never an independent unbounded executor loop.
+
+Goal records include status (`active`, `paused`, `blocked`, `limit_reached`,
+`completed`, or `cancelled`), objective/revision, reason, summary, evidence,
+next step, cumulative usage, and current run identity. Goal snapshots and
+linked events identify the goal and revision; session payloads may include an
+additive goal summary. Ordinary `turn_done` success does not imply achievement.
+Only the coordinating agent's trusted `get_goal`/`update_goal` tools, or a
+validated team synthesis report, can propose verified completion. User edits
+and newer instructions invalidate stale proposals.
+
+The native app freezes goal scheduling before shutdown and sends
+`interrupt` with `reason: "app_shutdown"` to preserve automatic recovery intent.
+An ordinary interrupt pauses the goal. Required answers, uncertain actions,
+and unresolved usage remain recovery boundaries after disconnect or restart.
+
 ### Durable runs and orchestration aliases
 
 `GET /api/runs` lists authoritative SQLite records for Solo, team, and

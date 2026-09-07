@@ -509,18 +509,18 @@ extension AppModel {
         return nil
     }
 
-    func finishSessionOverview(reason: String, durationMilliseconds: Int?) {
+    func finishSessionOverview(reason: String, durationMilliseconds: Int?, goal: PersistentGoal? = nil) {
         let now = Self.sessionTimestamp
         synchronizeSessionPlan(todos)
         let state = sessionOverview.state
         let failedReason = state.statusReason
         let outcome: SessionRunSummary.Outcome = reason == "complete"
-            ? (state.plan.allSatisfy { $0.state == .done } ? .completed : .partial)
+            ? (goal.map { $0.status == .completed } ?? state.plan.allSatisfy { $0.state == .done } ? .completed : .partial)
             : .failed
         let assistantText = blocks.last(where: { $0.kind == .assistant })?.text
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let summary = String((assistantText?.nilIfEmpty
+        let summary = String((goal.map { $0.summary?.nilIfEmpty ?? "Goal progress saved." } ?? assistantText?.nilIfEmpty
             ?? (outcome == .completed ? "The requested work completed." : "The run stopped before every step completed."))
             .prefix(180))
         let run = SessionRunSummary(

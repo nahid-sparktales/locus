@@ -108,7 +108,7 @@ def _cwd_after_chdir(fallback: str) -> str:
 _SOLO_ROOT_ONLY_TOOLS = {
     "spawn_agent", "list_agents", "read_agent", "send_agent_message", "followup_agent",
     "interrupt_agent", "resume_agent", "wait_agents", "integrate_agent", "ask_question_async",
-    "delegate_read_only",
+    "delegate_read_only", "get_goal", "update_goal",
     # Only the visible root chat has a user to ask.
     "ask_question",
     "todo_write",
@@ -393,6 +393,9 @@ class AgentCore:
         # of provider clients prevents managed OAuth from ever entering an API
         # key route.
         self.codex_manager: Any = None
+        self.goal_runtime: Any = None
+        self.goal_checkpoint: Any = None
+        self._goal_pending_actions: dict[int, tuple[str, bool, str]] = {}
         self._chatgpt_thread_id = ""
         self._chatgpt_thread_fingerprint = ""
         self._chatgpt_thread_protocol = ""
@@ -728,6 +731,8 @@ class AgentCore:
             self._native_guidance.pop(identifier, None)
 
     def _should_stop_stream(self) -> bool:
+        if self.goal_runtime is not None and self.goal_runtime.should_stop():
+            self._interrupt.set()
         if self.external_should_stop is not None and self.external_should_stop():
             self._interrupt.set()
         return self._interrupt.is_set() or self._steer_event.is_set()
@@ -857,6 +862,9 @@ class AgentCore:
                 "content": solo_contract,
                 "editable": False,
             })
+        if self.tool_ctx.goal is not None and resolved_mode in {"work", "build"}:
+            from .goal_runtime import GOAL_CONTRACT
+            text += "\n\n" + GOAL_CONTRACT
         self.prompt_layers = layers
         return {"role": "system", "content": text}
 
@@ -1727,6 +1735,9 @@ class AgentCore:
                 "recommended answer, then end your turn. Do not modify any "
                 "files in this mode."
             )
+        if self.tool_ctx.goal is not None:
+            from .goal_runtime import GOAL_CONTRACT
+            sections.append(GOAL_CONTRACT)
         sections.append("## Locus answer contract\n" + ANSWER_CONTRACT)
         return "\n\n".join(sections)
 
@@ -1950,7 +1961,10 @@ class AgentCore:
             return
         self.messages.append(message)
         if persist and not event_id:
-            self.session.append(record)
+            if self.goal_runtime is not None and hasattr(self.session, "append_strict"):
+                self.session.append_strict(record)
+            else:
+                self.session.append(record)
 
     def _persist_display_message(self, message: dict[str, Any]) -> None:
         """Persist transcript-only output without feeding it back to a provider.
@@ -1979,6 +1993,7 @@ class AgentCore:
         # A question belongs to the turn that asks it. A stale one would
         # wrongly suppress the next turn's final-answer pass.
         self.tool_ctx.user_question = None
+        self._goal_pending_actions.clear()
         if self.identity_mode and self.provider == "chatgpt":
             self._emit({"type": "error", "message": "Private Identity tasks require a local model or an API provider. Managed ChatGPT retains provider-side thread context and cannot use private vault sources."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
@@ -2119,7 +2134,8 @@ class AgentCore:
                     parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
                 ):
                     kwargs.pop("client_message_id")
-            completed = manager.run_turn(**kwargs)
+            completed = (self.goal_runtime.run_native(manager.run_turn, usage_baseline=(self._chatgpt_thread_total_input, self._chatgpt_thread_total_output), **kwargs)
+                         if self.goal_runtime is not None else manager.run_turn(**kwargs))
             if isinstance(completed, dict):
                 if completed.get("status") == "failed":
                     failure = completed.get("error") or {}
@@ -3308,6 +3324,14 @@ class AgentCore:
                     "tool_call_id": tc.call_id or tc.name,
                     "content": result,
                 })
+                pending_goal_action = self._goal_pending_actions.pop(id(tc), None)
+                if pending_goal_action is not None:
+                    # A helper's transcript lives in its durable collaboration
+                    # checkpoint; roots persist strict JSONL above.
+                    if self.goal_checkpoint is not None:
+                        self.goal_checkpoint()
+                    action_id, action_ok, action_result = pending_goal_action
+                    self.goal_runtime.finish_action(action_id, ok=action_ok, result=action_result)
                 if self._steer_event.is_set():
                     for skipped in resp.tool_calls[index + 1:]:
                         self._add_message({
@@ -3473,6 +3497,7 @@ class AgentCore:
         schemas without touching ``_turn_allows_tools``, which would swap the
         Just Chat system prompt in underneath.
         """
+        goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
         self._emit({"type": "message_start"})
         think_filter = ThinkFilter()
         inline_thinking: list[str] = []
@@ -3530,6 +3555,8 @@ class AgentCore:
                     on_thinking=on_thinking,
                     options=self.chat_options(),
                 )
+                if goal_call is not None and resp is not None:
+                    self.goal_runtime.settle(goal_call, resp)
             finally:
                 self.client.identity_private_request = previous_identity
                 if configured_timeout is not None and previous_timeout is not None:
@@ -3763,6 +3790,10 @@ class AgentCore:
         execution_lock: Any | None = None,
         track_active: bool = True,
     ) -> str:
+        if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
+            return "Error: goal tools belong only to the active goal coordinator."
+        if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():
+            return "Error: the goal is paused or needs attention; this action was not run."
         if event_context is None:
             event_context = self.tool_event_context
         if execution_lock is None and not self.tool_registry.is_parallel_safe_tool(tc.name):
@@ -3897,6 +3928,11 @@ class AgentCore:
                 })
                 return result
         with execution_lock if execution_lock is not None else nullcontext():
+            goal_action = (self.goal_runtime is not None
+                           and not self.tool_registry.is_read_only_tool(tc.name)
+                           and tc.name not in {"get_goal", "update_goal"})
+            if goal_action:
+                self.goal_runtime.start_action(call_id, tc.name)
             if track_active:
                 self.active_tool_call_id = call_id
             try:
@@ -3951,10 +3987,19 @@ class AgentCore:
                         if info.get("origin") == "builtin"
                         else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
                     )
+            except Exception:
+                if goal_action:
+                    self.goal_runtime.stop_reason = "goal_unavailable"
+                raise
             finally:
                 if track_active:
                     self.active_tool_call_id = ""
         ok = not result.startswith("Error")
+        if goal_action:
+            if self.provider != "chatgpt" and self._in_tool_call and track_active:
+                self._goal_pending_actions[id(tc)] = (call_id, ok, result)
+            else:
+                self.goal_runtime.finish_action(call_id, ok=ok, result=result)
         self._emit({
             "type": "tool_result",
             "id": call_id,

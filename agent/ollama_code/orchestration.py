@@ -760,6 +760,7 @@ class TeamOrchestrator:
         self.scheduler = scheduler
         self.run_store = run_store
         self.approve_dispatch = approve_dispatch
+        self.goal_runtime: Any = None
         self._call_count = 0
         self._metered_tokens = 0
         self._estimated_cost = 0.0
@@ -1453,6 +1454,33 @@ class TeamOrchestrator:
             prepared.team.budget,
         )
 
+    @staticmethod
+    def _goal_completion_issues(prepared: TeamPreparation, reviews: list[AgentResult]) -> list[str]:
+        issues = []
+        completed = set(getattr(prepared, "completed_writer_job_ids", ()))
+        for job in getattr(prepared, "writer_jobs", ()):
+            if job.id not in completed:
+                issues.append(f"Coding job {job.id} has not completed.")
+        results = [*prepared.results, *prepared.writer_results]
+        for result in results:
+            if getattr(result, "error", ""):
+                issues.append(f"Job {result.job_id} failed: {result.error}")
+        received = {getattr(result, "job_id", "") for result in prepared.results}
+        reviewers = {getattr(result, "agent_id", "") for result in reviews}
+        for job in getattr(prepared.plan, "jobs", ()):
+            if job.kind == "specialist" and job.id not in received:
+                issues.append(f"Required specialist job {job.id} has no result.")
+            if job.kind == "reviewer" and job.agent_id not in reviewers:
+                issues.append(f"Required review {job.id} has no result.")
+        for review in reviews:
+            try:
+                value = _extract_json(review.output)
+            except OrchestrationError:
+                value = {}
+            if getattr(review, "error", "") or not isinstance(value, dict) or value.get("verdict") != "approved":
+                issues.append(f"Review {getattr(review, 'job_id', 'review')} has not approved the changes.")
+        return issues
+
     def synthesize(self, prepared: TeamPreparation, reviews: list[AgentResult], diff_text: str) -> str:
         if prepared.team.id.startswith("capsule-"):
             reports = [result.output.strip() for result in prepared.writer_results if result.output.strip()]
@@ -1474,6 +1502,7 @@ class TeamOrchestrator:
             "request": prepared.original_request,
             "dispatch_plan": prepared.plan.structured(),
             "specialist_results": [result.structured() for result in prepared.results],
+            "writer_results": [result.structured() for result in prepared.writer_results],
             "review_results": [result.structured() for result in reviews],
             "diff_summary": diff_text[:40_000],
         }
@@ -1483,6 +1512,20 @@ class TeamOrchestrator:
             "separate explicit action when applicable. Do not invent work not present in the evidence.\n\n"
             + json.dumps(payload, ensure_ascii=False)
         )
+        if self.goal_runtime is not None:
+            payload["persistent_goal"] = self.goal_runtime.snapshot()
+            payload["completion_blocks"] = self._goal_completion_issues(prepared, reviews)
+            prompt = (
+                "Produce the final user-facing synthesis and verified persistent-goal report "
+                "using only the supplied implementation and verification evidence. Return "
+                "strict JSON: {\"answer\": string, \"goal\": {\"status\": \"continue\"|\"complete\"|\"blocked\", "
+                "\"summary\": string, \"evidence\": string[], \"next_step\": string, \"blocker\": string}}. "
+                "Complete requires evidence for every requirement, with no remaining work. "
+                "Continue requires a concrete next_step; blocked requires the external blocker. "
+                "Do not complete merely because this run or its budget ended. If completion_blocks "
+                "is nonempty, choose continue with the verification or repair work still required.\n\n"
+                + json.dumps(payload, ensure_ascii=False)
+            )
         result = self._call_agent(
             prepared.run_id,
             AgentJob("synthesis", dispatcher.id, prompt, (), "specialist"),
@@ -1490,7 +1533,38 @@ class TeamOrchestrator:
             prepared.team.budget,
             stream_visible=False,
         )
-        return result.output.strip()
+        if self.goal_runtime is None:
+            return result.output.strip()
+        from .goal_runtime import validate_goal_report
+        from .goals import GoalError
+        for attempt in range(2):
+            try:
+                value = _extract_json(result.output)
+                if not isinstance(value, dict) or set(value) != {"answer", "goal"}:
+                    raise GoalError("Synthesis must contain answer and goal.")
+                answer = value.get("answer")
+                if not isinstance(answer, str) or not answer.strip():
+                    raise GoalError("Synthesis answer must be a nonempty string.")
+                report = validate_goal_report(value["goal"])
+                if report["status"] == "complete" and payload["completion_blocks"]:
+                    raise GoalError("Completion contradicts unfinished work: " + "; ".join(payload["completion_blocks"]))
+            except (GoalError, OrchestrationError) as error:
+                if attempt or self.remaining_model_calls(prepared.team.budget) <= 0:
+                    self.goal_runtime.stop_reason = "invalid_goal_report"
+                    self.emit({"type": "note", "run_id": prepared.run_id,
+                               "text": "The goal report could not be verified. Goal continuation is paused."})
+                    return "The team finished this run, but its goal report needs attention before continuing."
+                result = self._call_agent(
+                    prepared.run_id,
+                    AgentJob("synthesis-repair", dispatcher.id,
+                             prompt + "\n\nRepair only the response format. Validation error: " + str(error)
+                             + "\nPrevious response:\n" + result.output, (), "specialist"),
+                    dispatcher, prepared.team.budget, stream_visible=False,
+                )
+                continue
+            self.goal_runtime.submit_report(report)
+            return answer.strip()
+        raise AssertionError("goal synthesis validation did not terminate")
 
     def evaluate_rubric(
         self,
@@ -1788,6 +1862,14 @@ class TeamOrchestrator:
         def emit(event: dict[str, Any]) -> None:
             self.emit({"run_id": run_id, **event})
 
+        goal_calls = threading.local()
+        def before_goal_request():
+            if self.goal_runtime is not None:
+                goal_calls.identifier = self.goal_runtime.reserve()
+        def settle_goal_request(prompt_tokens, completion_tokens):
+            if self.goal_runtime is not None:
+                self.goal_runtime.settle(goal_calls.identifier,
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
         return OpenAIResponsesMultiAgentClient(
             api_key=str(dispatcher.route.get("api_key") or ""),
             model=dispatcher.model,
@@ -1800,6 +1882,8 @@ class TeamOrchestrator:
             max_output_tokens=dispatcher.token_limit,
             emit=emit,
             should_stop=self.should_stop,
+            before_request=before_goal_request,
+            usage_observer=settle_goal_request,
         )
 
     def _account_openai_responses(
@@ -2392,6 +2476,7 @@ class TeamOrchestrator:
                     "parallel_tool_calls": False,
                 }
         with self._scheduler_slot(run_id, profile, effective_stop):
+            goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
             response = client.chat_stream(
                 profile.model,
                 messages,
@@ -2400,6 +2485,8 @@ class TeamOrchestrator:
                 should_stop=effective_stop,
                 options=options,
             )
+            if goal_call is not None:
+                self.goal_runtime.settle(goal_call, response)
         if effective_stop():
             raise InterruptedError("orchestration redirected or cancelled")
         used = response.prompt_eval_count + response.eval_count
