@@ -31,6 +31,7 @@ final class TaskCapsuleModel: ObservableObject {
     private var startReview: (TaskCapsule) -> Void = { _ in }
     private var askPlanner: (TaskCapsule, String) -> Void = { _, _ in }
     private var manageProfilesHandler: () -> Void = {}
+    private var openConversationHandler: (String) -> Void = { _ in }
     @Published private var pendingPlanning: [String: TaskCapsulePlanningRequest] = [:]
     private var submittedPlans: [String: PlanDocument] = [:]
     private var refreshGeneration = UUID()
@@ -70,7 +71,8 @@ final class TaskCapsuleModel: ObservableObject {
         startExecution: @escaping (TaskCapsule) -> Void,
         startReview: @escaping (TaskCapsule) -> Void,
         askPlanner: @escaping (TaskCapsule, String) -> Void,
-        manageProfiles: @escaping () -> Void = {}
+        manageProfiles: @escaping () -> Void = {},
+        openConversation: @escaping (String) -> Void = { _ in }
     ) {
         self.backend = backend
         self.workspacePathProvider = workspacePathProvider
@@ -83,6 +85,7 @@ final class TaskCapsuleModel: ObservableObject {
         self.startReview = startReview
         self.askPlanner = askPlanner
         manageProfilesHandler = manageProfiles
+        openConversationHandler = openConversation
     }
 
     var profiles: [AgentProfile] { profilesProvider().filter(\.isConfigured) }
@@ -91,10 +94,18 @@ final class TaskCapsuleModel: ObservableObject {
     var isEditingRecipe: Bool { editingCapsuleID != nil && editingCapsuleID == selectedID }
     var hasActivePlan: Bool { activePlanProvider().map(Self.hasSteps) ?? false }
     var isBusy: Bool { isBusyProvider() || isSaving || !activeStageSessions.isEmpty }
-    var canGenerate: Bool {
-        !draftRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && recipeError(draftRecipe) == nil && !workspaceRoot.isEmpty && !isBusy
+    /// Share the button's availability with its visible explanation so setup
+    /// never leaves a disabled primary action without a next step.
+    var planningUnavailableReason: String? {
+        if workspaceRoot.isEmpty { return "Open a workspace to save your capsule in." }
+        if isBusy { return "Finish the active task before starting a new plan." }
+        if let issue = recipeError(draftRecipe) { return issue }
+        if draftRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Describe your task above, or choose an example to get started."
+        }
+        return nil
     }
+    var canGenerate: Bool { planningUnavailableReason == nil }
     var canCapturePlan: Bool { hasActivePlan && recipeError(draftRecipe) == nil && !workspaceRoot.isEmpty && !isBusy }
     func profileLabel(_ profile: AgentProfile) -> String { profileLabelProvider(profile) }
     func profileLabel(id: String?) -> String {
@@ -121,6 +132,12 @@ final class TaskCapsuleModel: ObservableObject {
     func manageProfiles() {
         isPresented = false
         manageProfilesHandler()
+    }
+
+    func openConversation(sessionID: String) {
+        guard !sessionID.isEmpty else { return }
+        isPresented = false
+        openConversationHandler(sessionID)
     }
 
     func newCapsule() {

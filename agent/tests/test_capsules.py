@@ -274,3 +274,36 @@ def test_origin_run_requires_matching_task_and_workspace_and_exposes_only_usage(
         assert len(CapsuleStore(str(workspace)).list()) == 2
     finally:
         client.close()
+
+
+def test_run_conversation_link_requires_available_run_in_capsule_workspace(workspace, payload, tmp_path):
+    store = CapsuleStore(str(workspace))
+    capsule = store.create(payload)
+    store.record_run(capsule["id"], "implementation-run", "execute", "completed")
+    run = {
+        "id": "implementation-run", "session_id": "implementation-task",
+        "workspace_root": str(workspace), "state": "completed",
+    }
+    service = SimpleNamespace(
+        core=SimpleNamespace(cwd=str(workspace), workspace_root=str(workspace)),
+        run_store=SimpleNamespace(run=lambda _id: run),
+    )
+    client = TestClient(server.create_app(chat_service=service))
+    try:
+        def presented_run():
+            response = client.get(f"/api/capsules/{capsule['id']}")
+            assert response.status_code == 200, response.text
+            return response.json()["capsule"]["runs"][0]
+
+        assert presented_run()["session_id"] == "implementation-task"
+        assert "session_id" not in store.get(capsule["id"])["runs"][0]
+        run["workspace_root"] = str(tmp_path / "other-workspace")
+        assert "session_id" not in presented_run()
+        run["workspace_root"] = str(workspace)
+        for invalid_session in (None, "", "   ", 123, {"id": "task"}):
+            run["session_id"] = invalid_session
+            assert "session_id" not in presented_run()
+        run = None
+        assert "session_id" not in presented_run()
+    finally:
+        client.close()

@@ -219,7 +219,7 @@ struct LocusApp: App {
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
                 Button(model.inspectorZoomed ? "Restore Panel" : "Expand Panel") {
-                    withAnimation(LocusMotion.spatial) { model.toggleInspectorZoom() }
+                    model.toggleInspectorZoom()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .option])
                 .disabled(model.justChatEnabled)
@@ -970,12 +970,10 @@ struct RootView: View {
                 transaction.disablesAnimations = true
             }
         }
-        // Keyed on the sidebar and the zoom flag only: including the inspector
-        // would put the width change in scope too, and the panel would lag
-        // behind the cursor during a resize drag. Zoom is safe — it flips on
-        // toggle, never during a drag. Collapse animates at its call sites.
+        // Manual sidebar toggles animate; inspector zoom commits its final
+        // geometry without interpolating expensive transcript/WebKit layout.
+        // Divider widths stay outside animation so they follow the cursor.
         .animation(LocusMotion.spatial, value: model.sidebarCollapsed)
-        .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = toastCenter.toast {

@@ -430,6 +430,13 @@ extension AppModel {
         ] == "1" {
             let imagePath = "/tmp/locus-performance-fixture.png"
             writePerformanceFixtureImage(to: imagePath)
+            let fileList = (0..<10).map { index in
+                let name = "locus-performance-source-\(index).swift"
+                try? "// Local resize fixture \(index)\n".write(
+                    toFile: "/tmp/\(name)", atomically: true, encoding: .utf8
+                )
+                return "- `\(name)` — source file with a description that wraps in a narrow conversation."
+            }.joined(separator: "\n")
             let prose = (0..<12).map { index in
                 """
                 ## Performance section \(index + 1)
@@ -471,7 +478,7 @@ extension AppModel {
                 ChatBlock(
                     id: UUID(uuidString: "00000000-0000-0000-0000-000000000903")!,
                     kind: .assistant,
-                    text: prose + "\n\n![Performance image](\(imagePath))",
+                    text: prose + "\n\n![Performance image](\(imagePath))\n\nFiles in this workspace:\n\n" + fileList,
                     assistantPhase: .finalAnswer
                 ),
                 ChatBlock(

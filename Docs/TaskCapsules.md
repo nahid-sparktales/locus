@@ -1,27 +1,40 @@
 # Task Capsules
 
-Task Capsules save a plan with separate profiles for planning, implementation,
+Task Capsules save a plan with model choices for planning, implementation,
 and optional review. The implementation model receives the saved specification
 and executes its ordered steps. It does not call the planning model to recreate
 the plan or write a final summary.
 
-## Using ChatGPT and Kimi plans
+## Getting started
 
-1. Connect your ChatGPT account and Kimi Code membership in Locus's model
-   accounts. Kimi Code membership and Kimi's metered API are distinct accounts.
-2. In agent profiles, create a planning profile using your preferred ChatGPT
-   model and an implementation profile using Kimi Code. Give the implementation
-   profile workspace write access. Choose models available on those accounts;
-   capsules do not hard-code model names.
+1. Connect the model account you want to use, or choose a local model. For
+   example, you can plan with ChatGPT and implement with Kimi Code. Kimi Code
+   membership and Kimi's metered API are distinct accounts.
+2. In settings, choose **Add Agent**, select an account under **Provider route**,
+   and choose a model. For implementation, set **Access ceiling** to **Workspace
+   edits**. One profile can handle planning and implementation, or use separate
+   profiles such as ChatGPT for planning and Kimi Code for implementation.
+   Choose models available on those accounts; capsules do not hard-code model names.
 3. Open **Locus → Task Capsules…** (⌥⌘K) in the workspace you want to work on.
-4. Enter a request, choose **Plan with** and **Implement with**, and optionally
-   select **Review with**. Set the usage allowances if needed.
+4. Describe your task, or choose an editable example and replace its bracketed
+   details. The capsule name is optional. Choose **Plan with** and **Implement
+   with**, and optionally select **Review with**. The same profile can serve
+   multiple roles. **Advanced · Usage limits** contains the optional allowances.
 5. Choose **Generate plan**. Planning happens read-only in the conversation;
    answer any clarification there. A successful structured plan is saved
    automatically. You can also save an existing conversation plan.
-6. Reopen Task Capsules, inspect the instructions and checks, and choose
-   **Run saved capsule**. Run history keeps each stage's outcome and available
-   usage measurements. **Review result** performs a separate read-only review.
+6. Reopen Task Capsules, inspect the instructions, checks, constraints, and design
+   decisions, and choose **Run plan**. **Expand steps** shows every step’s details.
+   Run history keeps each stage's outcome and available usage measurements, with
+   a link back to its conversation. **Review result** performs a separate read-only
+   review. A previously executed plan offers **Run again**.
+
+The primary action stays visible while you review a long plan. With no agent
+profiles yet, **Set up models** takes you to settings and preserves your draft.
+If setup is incomplete, a message explains what is needed. Saved capsules can be searched in
+the sidebar; smaller windows use a capsule menu. A waiting planner offers
+**Continue planning** to return directly to its conversation. Your description
+is preserved when you close the sheet or open profile settings.
 
 Each stage uses the exact account associated with its profile. An unavailable
 account stops the stage. Subscription routes never silently fall back to a
@@ -42,8 +55,8 @@ older plans without detailed steps also work, but have fewer explicit checks.
 
 Fingerprints cover only the files named in detailed steps, including files to
 create. Locus checks them against the saved baseline before execution. Changed,
-removed, or unexpectedly created files pause the handoff; **Ask the planner for
-help** can inspect the current workspace and save a revised plan. A legacy plan
+removed, or unexpectedly created files pause the handoff; **Update the plan or
+ask for help** can inspect the current workspace and save a revised plan. A legacy plan
 without named files has no file baseline. This is not a whole-repository change
 detector.
 
@@ -67,7 +80,7 @@ detector.
   billing ceiling. It excludes planning, standalone review, tool charges, and
   image generation. Subscription routes track calls and tokens without
   inventing per-token subscription prices.
-- **Edit models and limits** changes the saved recipe explicitly. It preserves
+- **Edit** in **Models & limits** changes the saved recipe explicitly. It preserves
   the existing file baseline and run history. Increasing an allowance does not
   erase previous attempts.
 

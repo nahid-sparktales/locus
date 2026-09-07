@@ -146,7 +146,11 @@ final class TaskCapsuleRoutingTests: XCTestCase {
     }
 
     func testEveryGenericCapsuleRecoveryOpensTheSavedPlanWithoutChangingWorkspace() async throws {
-        BackendStub.respond(toPath: "/api/capsules") { _ in ["capsules": []] }
+        let recoveryRefreshes = expectation(description: "Every recovery action refreshes its saved capsules")
+        BackendStub.respond(toPath: "/api/capsules") { _ in
+            recoveryRefreshes.fulfill()
+            return ["capsules": []]
+        }
         let model = AppModel(startImmediately: false, backendOverride: makeService(port: 9))
         let workspace = model.workspacePath
         let capsuleID = UUID().uuidString.lowercased()
@@ -165,6 +169,7 @@ final class TaskCapsuleRoutingTests: XCTestCase {
             ("replay", { model.replayOrchestration(run) }),
             ("duplicate", { model.duplicateOrchestration(run) }),
         ]
+        recoveryRefreshes.expectedFulfillmentCount = actions.count
 
         for (label, action) in actions {
             model.taskCapsules.isPresented = false
@@ -175,7 +180,10 @@ final class TaskCapsuleRoutingTests: XCTestCase {
             XCTAssertEqual(model.workspacePath, workspace, label)
             XCTAssertEqual(model.taskCapsules.workspaceRoot, TaskCapsuleModel.canonicalWorkspace(workspace), label)
         }
-        await model.taskCapsules.refresh()
+        // open() schedules its own refresh. Starting an additional refresh
+        // does not join those requests, which could reach the shared stub
+        // after the next test has reset it and contaminate routing assertions.
+        await fulfillment(of: [recoveryRefreshes], timeout: 5)
         XCTAssertEqual(model.taskCapsules.status,
                        "Review the partial work and ask the planner for an updated plan before running again.")
         XCTAssertTrue(BackendStub.requests.allSatisfy {

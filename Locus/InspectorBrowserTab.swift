@@ -22,9 +22,7 @@ struct InspectorBrowserTab: View {
             },
             isExpanded: model.inspectorZoomed,
             onToggleExpand: { [weak model] in
-                withAnimation(LocusMotion.spatial) {
-                    model?.toggleInspectorZoom()
-                }
+                model?.toggleInspectorZoom()
             },
             onPrivateFill: { model.useIdentityApplicationLocally(upload: false) },
             onPrivateUpload: { model.useIdentityApplicationLocally(upload: true) },
@@ -820,25 +818,44 @@ struct BrowserPanel: View {
 @MainActor
 final class BrowserCanvasContainer: NSView {
     weak var host: OffscreenWebHost?
+    private var lastLayoutSize: CGSize?
+
+    override func setBoundsSize(_ newSize: NSSize) {
+        guard newSize != bounds.size else { return }
+        super.setBoundsSize(newSize)
+        // Frame changes already schedule AppKit layout; bounds-only changes
+        // do not, even though they change the space available to the page.
+        needsLayout = true
+    }
 
     override func layout() {
         super.layout()
-        guard let host, bounds.width > 0, bounds.height > 0 else { return }
+        guard let host, host.webView.superview === self,
+              bounds.width > 0, bounds.height > 0,
+              bounds.size != lastLayoutSize else { return }
+        lastLayoutSize = bounds.size
         host.setViewport(bounds.size)
     }
 
     func display(_ newHost: OffscreenWebHost) {
+        // Loading progress and other browser state can refresh SwiftUI many
+        // times without changing the page or the available space.
+        guard host !== newHost || newHost.webView.superview !== self else { return }
         if let host, host !== newHost { parkIfStillOwner() }
         host = newHost
+        lastLayoutSize = nil
         newHost.lend(to: self)
         needsLayout = true
-        layoutSubtreeIfNeeded()
+        // Let AppKit coalesce this with the enclosing inspector's layout. A
+        // synchronous layout here re-enters page layout during SwiftUI updates.
     }
 
     func parkIfStillOwner() {
-        guard let host, host.webView.superview === self else { return }
-        host.park()
+        guard let host else { return }
         self.host = nil
+        lastLayoutSize = nil
+        guard host.webView.superview === self else { return }
+        host.park()
     }
 }
 

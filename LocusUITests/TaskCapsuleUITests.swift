@@ -39,6 +39,22 @@ final class TaskCapsuleUITests: XCTestCase {
         XCTAssertTrue((element("capsules.request").value as? String ?? "").contains("selected worker"))
     }
 
+    func testExampleStartsAnEditableDraftWithoutRunningAPlan() {
+        openCapsules()
+        let generate = element("capsules.generate")
+        XCTAssertTrue(generate.waitForExistence(timeout: 5))
+        XCTAssertFalse(generate.isEnabled)
+        let nextStep = element("capsules.nextStep")
+        XCTAssertTrue(nextStep.exists)
+        element("capsules.example.Fix a bug").click()
+        XCTAssertTrue((element("capsules.request").value as? String ?? "").contains("[describe the issue]"))
+        XCTAssertTrue(generate.isEnabled)
+        XCTAssertTrue(doneButton.exists, "Choosing an example must leave the draft open for editing")
+        doneButton.click()
+        openCapsules()
+        XCTAssertTrue((element("capsules.request").value as? String ?? "").contains("[describe the issue]"))
+    }
+
     private func openCapsules() {
         app.typeKey("k", modifierFlags: [.command, .option])
         XCTAssertTrue(doneButton.waitForExistence(timeout: 5))
