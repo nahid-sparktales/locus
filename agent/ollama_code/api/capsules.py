@@ -20,7 +20,7 @@ def capsule_store(service: ChatService, workspace_root: str = "") -> CapsuleStor
 
 
 def _present(service: ChatService, capsule: dict[str, Any]) -> dict[str, Any]:
-    """Attach current, non-secret usage when the durable run still exists."""
+    """Attach safe usage and conversation links when the durable run still exists."""
     lookup = getattr(getattr(service, "run_store", None), "run", None)
     if not callable(lookup):
         return capsule
@@ -40,6 +40,9 @@ def _present(service: ChatService, capsule: dict[str, Any]) -> dict[str, Any]:
             }
             if isinstance(run.get("state"), str):
                 enriched["state"] = run["state"]
+            session_id = run.get("session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                enriched["session_id"] = session_id
         runs.append(enriched)
     return {**capsule, "runs": runs}
 

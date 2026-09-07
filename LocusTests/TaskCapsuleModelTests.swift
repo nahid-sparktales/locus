@@ -1,3 +1,6 @@
+import AppKit
+import ApplicationServices
+import SwiftUI
 import XCTest
 
 @testable import Locus
@@ -9,6 +12,7 @@ final class TaskCapsuleModelTests: XCTestCase {
     private var executor = AgentProfile(name: "Kimi implementer", model: "worker", accessCeiling: .workspaceWrite)
     private var planningRequests: [TaskCapsulePlanningRequest] = []
     private var executionRequests: [TaskCapsule] = []
+    private var openedConversations: [String] = []
 
     override func setUp() async throws {
         try await super.setUp()
@@ -16,6 +20,7 @@ final class TaskCapsuleModelTests: XCTestCase {
         workspace = "/tmp/capsule-tests"
         planningRequests = []
         executionRequests = []
+        openedConversations = []
     }
 
     private var recipe: TaskCapsuleRecipe {
@@ -44,15 +49,16 @@ final class TaskCapsuleModelTests: XCTestCase {
                     createdAt: "2026-09-06T15:00:00Z", updatedAt: "2026-09-06T15:00:00Z")
     }
 
-    private func makeModel() -> TaskCapsuleModel {
+    private func makeModel(profiles: [AgentProfile]? = nil) -> TaskCapsuleModel {
         let model = TaskCapsuleModel()
         model.configure(
             backend: stubbedBackendService(), workspacePathProvider: { self.workspace },
-            profilesProvider: { [self.planner, self.executor] },
+            profilesProvider: { profiles ?? [self.planner, self.executor] },
             activePlanProvider: { nil }, isBusyProvider: { false },
             startPlanning: { self.planningRequests.append($0) },
             startExecution: { self.executionRequests.append($0) },
-            startReview: { _ in }, askPlanner: { _, _ in }
+            startReview: { _ in }, askPlanner: { _, _ in },
+            openConversation: { self.openedConversations.append($0) }
         )
         return model
     }
@@ -68,6 +74,133 @@ final class TaskCapsuleModelTests: XCTestCase {
         XCTAssertNoBackendTraffic()
     }
 
+    func testTaskCapsuleRendersDraftSavedPlanAndSetupAtCompactSizes() async throws {
+        // SwiftUI exposes its virtual nodes after a public accessibility
+        // client reads this test process; native getters alone leave it dormant.
+        let accessibilityReady = expectation(description: "Capsule accessibility tree is ready")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(getpid())
+            XCTAssertEqual(AXUIElementSetMessagingTimeout(application, 0.2), .success)
+            var windows: CFTypeRef?
+            XCTAssertEqual(AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windows), .success)
+            accessibilityReady.fulfill()
+        }
+        await fulfillment(of: [accessibilityReady], timeout: 1)
+        var saved = capsule
+        saved.plan.constraints = ["Keep the character’s face and pose unchanged."]
+        saved.plan.decisions = ["Use a localized edit so the approved background stays intact."]
+        let record = try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved))
+        BackendStub.respond(toPath: "/api/capsules") { _ in ["capsules": [record]] }
+        BackendStub.respond(toPath: "/api/capsules/\(saved.id)") { _ in ["capsule": record] }
+        let model = makeModel()
+        await model.refresh()
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-capsule-renders-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+
+        for size in [NSSize(width: 940, height: 760), NSSize(width: 680, height: 620)] {
+            let suffix = "\(Int(size.width))x\(Int(size.height))"
+            model.newCapsule()
+            try await renderCapsule(model, size: size, name: "Draft-\(suffix)",
+                                    primaryAction: "capsules.generate", output: output)
+            model.selectedID = saved.id
+            try await renderCapsule(model, size: size, name: "Saved-plan-\(suffix)",
+                                    primaryAction: "capsules.run", output: output)
+            XCTAssertEqual(model.selectedCapsule?.plan.stepDetails.first?.checks, ["Face stays unchanged"])
+            XCTAssertEqual(model.selectedCapsule?.plan.constraints, saved.plan.constraints)
+            try await renderCapsule(model, size: size, name: "Edit-choices-\(suffix)",
+                                    primaryAction: "capsules.saveRecipe", output: output,
+                                    transition: { model.beginEditingRecipe() })
+            model.cancelRecipeEditing()
+        }
+
+        let setup = makeModel(profiles: [])
+        await setup.refresh()
+        try await renderCapsule(setup, size: NSSize(width: 680, height: 620), name: "Setup-680x620",
+                                primaryAction: "capsules.setupModels", output: output)
+        XCTAssertFalse(setup.canGenerate)
+        XCTAssertNotNil(setup.planningUnavailableReason)
+        XCTAssertTrue(planningRequests.isEmpty, "Rendering setup must not start model work")
+        XCTAssertTrue(executionRequests.isEmpty, "Reviewing a saved plan must not execute it")
+        XCTAssertTrue(BackendStub.requests.allSatisfy { $0.httpMethod == "GET" })
+        let artifactLocation = XCTAttachment(string: output.path)
+        artifactLocation.name = "Capsule render artifact directory"
+        artifactLocation.lifetime = .keepAlways
+        add(artifactLocation)
+        print("Capsule render artifacts: \(output.path)")
+    }
+
+    private func renderCapsule(
+        _ model: TaskCapsuleModel, size: NSSize, name: String, primaryAction: String,
+        output: URL, transition: (() -> Void)? = nil
+    ) async throws {
+        let host = NSHostingView(rootView: TaskCapsuleView(model: model).preferredColorScheme(.dark))
+        host.sizingOptions = []
+        host.frame = NSRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+
+        for _ in 0..<8 {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        if let transition {
+            transition()
+            for _ in 0..<8 {
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(30))
+            }
+        }
+        host.layoutSubtreeIfNeeded()
+        host.display()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: output.appendingPathComponent("\(name).png"))
+        let snapshot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        snapshot.name = name
+        snapshot.lifetime = .keepAlways
+        add(snapshot)
+
+        XCTAssertEqual(host.bounds.size, size, "\(name) must fit the requested window")
+        XCTAssertEqual(window.contentView?.frame.size, size)
+        XCTAssertEqual(CGFloat(bitmap.pixelsWide), size.width * window.backingScaleFactor, accuracy: 1)
+        XCTAssertEqual(CGFloat(bitmap.pixelsHigh), size.height * window.backingScaleFactor, accuracy: 1)
+        XCTAssertGreaterThan(png.count, 2_000, "\(name) must render visible content")
+
+        var pending: [Any] = [host]
+        var visited = Set<ObjectIdentifier>()
+        var identifiers = Set<String>()
+        var primaryFrame: NSRect?
+        var accessibility: [String] = []
+        while let value = pending.popLast(), visited.count < 800 {
+            guard let node = TranscriptAccessibilityNode(value),
+                  visited.insert(ObjectIdentifier(node.object)).inserted else { continue }
+            if let identifier = node.identifier, !identifier.isEmpty {
+                identifiers.insert(identifier)
+                accessibility.append("\(node.role?.rawValue ?? "unknown") \(identifier) \(NSStringFromRect(node.frame))")
+                if identifier == primaryAction { primaryFrame = node.frame }
+            }
+            pending.append(contentsOf: node.children)
+            if let view = node.object as? NSView { pending.append(contentsOf: view.subviews) }
+        }
+        let metadata = XCTAttachment(string: accessibility.joined(separator: "\n"))
+        metadata.name = "\(name) accessibility"
+        metadata.lifetime = .keepAlways
+        add(metadata)
+        XCTAssertLessThan(visited.count, 800, "Accessibility traversal must finish within its bound")
+        XCTAssertTrue(identifiers.contains(primaryAction), "\(name) must expose the primary action’s own identifier")
+        if let primaryFrame {
+            XCTAssertFalse(primaryFrame.isEmpty)
+            XCTAssertTrue(window.convertToScreen(host.bounds).contains(primaryFrame),
+                          "\(name) must keep its primary action visible inside the window")
+        }
+    }
+
     func testReadOnlyProfileCannotBecomeImplementationDefault() async throws {
         try registerBackend()
         let model = makeModel()
@@ -79,6 +212,37 @@ final class TaskCapsuleModelTests: XCTestCase {
         XCTAssertNotNil(model.recipeError(invalid))
         XCTAssertNil(model.recipeError(recipe))
         XCTAssertNil(recipe.maximumEstimatedCost, "Subscription use must not default to a dollar budget")
+    }
+
+    func testPlanningAvailabilityExplainsTheNextRequiredStep() async throws {
+        try registerBackend()
+        let model = makeModel()
+        XCTAssertFalse(model.canGenerate)
+        XCTAssertTrue(model.planningUnavailableReason?.contains("workspace") == true)
+        await model.refresh()
+        XCTAssertFalse(model.canGenerate)
+        XCTAssertTrue(model.planningUnavailableReason?.contains("Describe your task") == true)
+        model.draftRequest = "Make the requested edits"
+        XCTAssertTrue(model.canGenerate)
+        XCTAssertNil(model.planningUnavailableReason)
+        model.draftRecipe.executorProfileID = planner.id.uuidString
+        XCTAssertFalse(model.canGenerate)
+        XCTAssertEqual(model.planningUnavailableReason, model.recipeError(model.draftRecipe))
+        XCTAssertTrue(planningRequests.isEmpty, "Explaining setup must not start model work")
+    }
+
+    func testContinuePlanningOpensConversationAndPreservesItsPendingRequest() async {
+        let model = makeModel()
+        model.planningStarted(request, sessionID: "planning-session")
+        await model.planningFinished(sessionID: "planning-session", succeeded: true)
+        model.isPresented = true
+        model.openConversation(sessionID: "planning-session")
+        XCTAssertEqual(openedConversations, ["planning-session"])
+        XCTAssertFalse(model.isPresented)
+        XCTAssertNotNil(model.pendingPlanningRequest(for: "planning-session"))
+        XCTAssertTrue(planningRequests.isEmpty)
+        XCTAssertTrue(executionRequests.isEmpty)
+        XCTAssertNoBackendTraffic()
     }
 
     func testInterruptedPlanningNeverSavesSubmittedPlan() async throws {

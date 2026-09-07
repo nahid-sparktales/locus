@@ -1185,6 +1185,120 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testArtifactListingReusesFileResolutionAcrossResizeRenders() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-artifact-resize-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let names = (0..<10).map { "file-\($0).md" }
+        for name in names {
+            try Data("notes".utf8).write(to: workspace.appendingPathComponent(name))
+        }
+
+        let cache = WorkspaceArtifactRenderCache()
+        cache.setLiveResizing(true)
+        let resolve: (String?) -> WorkspaceArtifactReference? = {
+            cache.classify($0, workspacePath: workspace.path)
+        }
+        // Each resize render promotes the bullet and builds its selectable
+        // inline text. Neither path should repeat filesystem work per frame.
+        for _ in 0..<10 {
+            for name in names {
+                let runs: [MarkdownInlineRun] = [
+                    .init(text: name, style: .code),
+                    .init(text: " — workspace notes"),
+                ]
+                let chip = try XCTUnwrap(MarkdownArtifactPromotion.leadingArtifact(
+                    in: runs, workspacePath: workspace.path, resolveArtifact: resolve
+                ))
+                let text = MarkdownNativeText.attributed(
+                    runs, size: 13, weight: .regular, color: .primary,
+                    lineSpacing: 5, inlineCodeSize: 12,
+                    workspacePath: workspace.path, resolveArtifact: resolve
+                )
+                XCTAssertEqual(text.string, "\(name) — workspace notes")
+                XCTAssertEqual(text.attribute(.link, at: 0, effectiveRange: nil) as? URL, chip.navigationURL)
+                XCTAssertEqual(MarkdownLinkPolicy.renderedURL(
+                    for: runs[0], workspacePath: workspace.path, resolveArtifact: resolve
+                ), chip.navigationURL)
+            }
+        }
+        XCTAssertEqual(cache.resolutionCountForTesting, names.count)
+    }
+
+    @MainActor
+    func testArtifactResizeCacheRefreshesChangedMissingAndRemovedFilesAfterGesture() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-artifact-refresh-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let notes = workspace.appendingPathComponent("notes.md")
+        let created = workspace.appendingPathComponent("created.md")
+        try Data("a".utf8).write(to: notes)
+
+        let cache = WorkspaceArtifactRenderCache()
+        cache.setLiveResizing(true)
+        XCTAssertEqual(cache.classify("notes.md", workspacePath: workspace.path)?.byteCount, 1)
+        XCTAssertNil(cache.classify("created.md", workspacePath: workspace.path))
+        try Data("updated notes".utf8).write(to: notes)
+        try Data("new".utf8).write(to: created)
+        XCTAssertEqual(cache.classify("notes.md", workspacePath: workspace.path)?.byteCount, 1)
+        XCTAssertNil(cache.classify("created.md", workspacePath: workspace.path))
+        XCTAssertEqual(cache.resolutionCountForTesting, 2)
+
+        cache.setLiveResizing(false)
+        XCTAssertEqual(cache.classify("notes.md", workspacePath: workspace.path)?.byteCount, 13)
+        XCTAssertEqual(cache.classify("created.md", workspacePath: workspace.path)?.byteCount, 3)
+        // Outside a gesture there is no persistent filesystem cache.
+        try FileManager.default.removeItem(at: notes)
+        XCTAssertNil(cache.classify("notes.md", workspacePath: workspace.path))
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: false)
+        XCTAssertNil(cache.classify("notes.md", workspacePath: workspace.path))
+        cache.setLiveResizing(true)
+        XCTAssertNil(cache.classify("notes.md", workspacePath: workspace.path))
+    }
+
+    @MainActor
+    func testArtifactResizeCacheDoesNotAuthorizeNavigationOrCrossWorkspaces() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("locus-artifact-boundary-\(UUID().uuidString)", isDirectory: true)
+        let workspace = base.appendingPathComponent("workspace", isDirectory: true)
+        let other = base.appendingPathComponent("other", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let sources = workspace.appendingPathComponent("Sources", isDirectory: true)
+        let otherSources = other.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: otherSources, withIntermediateDirectories: false)
+        let notes = sources.appendingPathComponent("notes.md")
+        let outside = otherSources.appendingPathComponent("notes.md")
+        try Data("a".utf8).write(to: notes)
+        try Data("other".utf8).write(to: outside)
+
+        let cache = WorkspaceArtifactRenderCache()
+        cache.setLiveResizing(true)
+        let candidate = "Sources/notes.md:12:4"
+        let original = try XCTUnwrap(cache.classify(candidate, workspacePath: workspace.path))
+        XCTAssertEqual(original.sourceLocation, .init(line: 12, column: 4))
+        XCTAssertEqual(WorkspaceArtifactReference.fromNavigationURL(
+            original.navigationURL, workspacePath: workspace.path
+        ), original)
+        XCTAssertEqual(cache.classify(candidate, workspacePath: other.path)?.byteCount, 5)
+        try FileManager.default.removeItem(at: notes)
+        try FileManager.default.createSymbolicLink(at: notes, withDestinationURL: outside)
+        XCTAssertNotNil(cache.classify(candidate, workspacePath: workspace.path))
+        XCTAssertNil(WorkspaceArtifactReference.classify(
+            original.url.path, workspacePath: workspace.path
+        ), "Opening a cached chip must revalidate its absolute path")
+        XCTAssertNil(WorkspaceArtifactReference.fromNavigationURL(
+            original.navigationURL, workspacePath: workspace.path
+        ), "Cached presentation must never authorize a changed symlink target")
+        cache.setLiveResizing(false)
+        XCTAssertNil(cache.classify(candidate, workspacePath: workspace.path))
+    }
+
     func testFileReferencesGetFullCardAtTopLevelAndChipInLists() {
         // A reply that lists a directory writes one bullet per file. Promoting
         // each of those to a 58pt card with three buttons turned a seven-file

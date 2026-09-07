@@ -79,9 +79,7 @@ struct InspectorRail: View {
 
     private var zoomButton: some View {
         Button {
-            withAnimation(LocusMotion.spatial) {
-                model.toggleInspectorZoom()
-            }
+            model.toggleInspectorZoom()
         } label: {
             Image(
                 systemName: model.inspectorZoomed

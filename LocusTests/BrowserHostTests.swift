@@ -93,10 +93,111 @@ final class BrowserHostTests: XCTestCase {
         XCTAssertEqual(canvas.subviews.count, 1, "No outer magnifying scroll view should wrap the page")
 
         canvas.frame.size = CGSize(width: 760, height: 480)
-        canvas.needsLayout = true
+        XCTAssertTrue(canvas.needsLayout, "An actual frame resize must schedule page layout")
         canvas.layoutSubtreeIfNeeded()
         XCTAssertEqual(host.viewport, CGSize(width: 760, height: 480))
         XCTAssertEqual(host.webView.frame.size, CGSize(width: 760, height: 480))
+    }
+
+    func testBrowserCanvasTracksBoundsOnlyResize() {
+        let (host, _) = makeHost()
+        let canvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 760, height: 480)
+        )
+        canvas.display(host)
+        canvas.layoutSubtreeIfNeeded()
+
+        let resized = CGSize(width: 520, height: 360)
+        canvas.setBoundsSize(resized)
+        XCTAssertTrue(canvas.needsLayout)
+        canvas.layoutSubtreeIfNeeded()
+        XCTAssertEqual(host.viewport, resized)
+        XCTAssertEqual(host.webView.frame.size, resized)
+
+        canvas.setBoundsSize(resized)
+        XCTAssertFalse(canvas.needsLayout, "Unchanged bounds should not schedule another layout")
+    }
+
+    func testUnchangedViewportDoesNotWriteWebViewFrameAgain() {
+        let webView = FrameTrackingWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let host = OffscreenWebHost(webView: webView)
+        host.setViewport(CGSize(width: 1, height: 1))
+        webView.frameWriteCount = 0
+
+        for _ in 0..<20 {
+            host.setViewport(CGSize(width: 80, height: 80))
+        }
+
+        XCTAssertEqual(host.viewport, CGSize(width: 120, height: 120))
+        XCTAssertEqual(webView.frameWriteCount, 0, "Repeated clamped sizes should not enter WebKit resizing")
+    }
+
+    func testRepeatedCanvasUpdatesDoNotRelayoutOrOverrideViewportPreset() {
+        let webView = FrameTrackingWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let host = OffscreenWebHost(webView: webView)
+        let canvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 520, height: 360)
+        )
+        canvas.display(host)
+        canvas.layoutSubtreeIfNeeded()
+        host.setViewport(BrowserViewport.mobile.size)
+        canvas.layoutSubtreeIfNeeded()
+        webView.frameWriteCount = 0
+
+        for _ in 0..<20 { canvas.display(host) }
+
+        XCTAssertFalse(canvas.needsLayout, "SwiftUI state updates should not schedule page layout")
+        canvas.needsLayout = true
+        canvas.layoutSubtreeIfNeeded()
+        XCTAssertEqual(host.viewport, BrowserViewport.mobile.size)
+        XCTAssertEqual(webView.frame.size, BrowserViewport.mobile.size)
+        XCTAssertEqual(webView.frameWriteCount, 0)
+
+        canvas.frame.size = CGSize(width: 760, height: 480)
+        canvas.layoutSubtreeIfNeeded()
+        XCTAssertEqual(host.viewport, canvas.bounds.size, "An actual inspector resize should still fit the page")
+    }
+
+    func testBorrowedViewportDefersParkedWindowResizeUntilParking() throws {
+        let (host, _) = makeHost()
+        let parkedWindow = try XCTUnwrap(host.webView.window)
+        let parkedFrame = parkedWindow.frame
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 360))
+        host.lend(to: container)
+
+        let resized = CGSize(width: 900, height: 650)
+        host.setViewport(resized)
+        XCTAssertEqual(host.viewport, resized)
+        XCTAssertEqual(host.webView.frame.size, resized)
+        XCTAssertEqual(parkedWindow.frame, parkedFrame, "The unused window should not resize alongside the inspector")
+
+        host.park()
+        XCTAssertTrue(host.isParked)
+        XCTAssertEqual(parkedWindow.contentView?.bounds.size, resized)
+        XCTAssertEqual(host.webView.frame.size, resized)
+    }
+
+    func testPreviousCanvasCannotResizeOrParkANewBorrowersPage() {
+        let (host, _) = makeHost()
+        let previousCanvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 520, height: 360)
+        )
+        previousCanvas.display(host)
+        previousCanvas.layoutSubtreeIfNeeded()
+        let currentCanvas = BrowserCanvasContainer(
+            frame: NSRect(x: 0, y: 0, width: 900, height: 650)
+        )
+        currentCanvas.display(host)
+        currentCanvas.layoutSubtreeIfNeeded()
+
+        previousCanvas.frame.size = CGSize(width: 600, height: 400)
+        previousCanvas.layoutSubtreeIfNeeded()
+        previousCanvas.parkIfStillOwner()
+
+        XCTAssertTrue(host.webView.superview === currentCanvas)
+        XCTAssertEqual(host.viewport, currentCanvas.bounds.size)
+        XCTAssertEqual(host.webView.frame.size, currentCanvas.bounds.size)
+        XCTAssertNil(previousCanvas.host)
     }
 
     func testWidePageExposesHorizontalOverflowInResponsiveCanvas() async throws {
@@ -176,5 +277,18 @@ final class BrowserHostTests: XCTestCase {
 
         host.setKeptLive(true)
         XCTAssertTrue(host.isKeptLive)
+    }
+}
+
+@MainActor
+private final class FrameTrackingWebView: WKWebView {
+    var frameWriteCount = 0
+
+    override var frame: NSRect {
+        get { super.frame }
+        set {
+            frameWriteCount += 1
+            super.frame = newValue
+        }
     }
 }

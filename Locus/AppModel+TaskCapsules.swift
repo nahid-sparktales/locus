@@ -55,6 +55,15 @@ extension AppModel {
             manageProfiles: { [weak self] in
                 self?.settingsPage = .agents
                 self?.settingsPresented = true
+            },
+            openConversation: { [weak self] sessionID in
+                guard let self else { return }
+                guard sessionID != currentSessionID else { return }
+                guard let session = sessions.first(where: { $0.id == sessionID }) else {
+                    showToast("This capsule's conversation is no longer available")
+                    return
+                }
+                resume(session)
             }
         )
     }

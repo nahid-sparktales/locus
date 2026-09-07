@@ -120,11 +120,10 @@ final class OffscreenWebHost {
     /// it at a time — `NSView` has a single superview, so lending it twice
     /// takes it away from the first borrower.
     func lend(to container: NSView) {
-        if webView.superview !== container {
-            webView.removeFromSuperview()
-            container.addSubview(webView)
-        }
-        webView.frame = container.bounds
+        guard webView.superview !== container else { return }
+        webView.removeFromSuperview()
+        container.addSubview(webView)
+        if webView.frame != container.bounds { webView.frame = container.bounds }
         webView.autoresizingMask = [.width, .height]
     }
 
@@ -133,7 +132,11 @@ final class OffscreenWebHost {
     func park() {
         guard !isParked else { return }
         webView.removeFromSuperview()
-        webView.frame = NSRect(origin: .zero, size: viewport)
+        // Visible resizing records the viewport without moving this unused
+        // window. Bring its geometry up to date once, before returning the view.
+        resizeParkedPanel()
+        let frame = NSRect(origin: .zero, size: viewport)
+        if webView.frame != frame { webView.frame = frame }
         webView.autoresizingMask = [.width, .height]
         panel.contentView?.addSubview(webView)
         // The parked panel keeps WebKit's "visible" state so pages stay live,
@@ -156,11 +159,18 @@ final class OffscreenWebHost {
             height: max(120, min(size.height, 4_000))
         )
         viewport = clamped
-        panel.setFrame(
-            NSRect(origin: Self.parkingOrigin, size: clamped),
-            display: false
-        )
-        webView.frame = NSRect(origin: .zero, size: clamped)
+        if isParked { resizeParkedPanel() }
+        let frame = NSRect(origin: .zero, size: clamped)
+        // AppKit may already have resized the borrowed view through its
+        // autoresizing mask. Reassigning its frame still enters WebKit's
+        // viewport machinery, even when the resulting rectangle is unchanged.
+        if webView.frame != frame { webView.frame = frame }
+    }
+
+    private func resizeParkedPanel() {
+        let frame = NSRect(origin: Self.parkingOrigin, size: viewport)
+        guard panel.frame != frame else { return }
+        panel.setFrame(frame, display: false)
     }
 
     // MARK: - Real input

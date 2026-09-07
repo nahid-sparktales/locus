@@ -701,13 +701,16 @@ enum MarkdownNativeText {
         color: Color,
         lineSpacing: CGFloat,
         inlineCodeSize: CGFloat,
-        workspacePath: String?
+        workspacePath: String?,
+        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = lineSpacing
         for run in runs {
-            let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath)
+            let url = MarkdownLinkPolicy.renderedURL(
+                for: run, workspacePath: workspacePath, resolveArtifact: resolveArtifact
+            )
             let spec = MarkdownInlineStyleSpec.resolve(
                 run: run,
                 baseSize: size,
@@ -1041,8 +1044,11 @@ struct StreamingMarkdownBodyView: View {
     }
 }
 
+@MainActor
 private struct MarkdownBlocksView: View {
     @Environment(\.locusAccent) private var accent
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    @State private var artifactCache = WorkspaceArtifactRenderCache()
     let blocks: [MarkdownRenderBlock]
     let workspacePath: String?
     let density: MarkdownRenderDensity
@@ -1057,6 +1063,7 @@ private struct MarkdownBlocksView: View {
     var textColor: Color?
 
     var body: some View {
+        let _ = artifactCache.setLiveResizing(isLiveResizing)
         // Spacing is per-transition rather than uniform, so headings can take
         // more room above than below.
         VStack(alignment: .leading, spacing: 0) {
@@ -1104,7 +1111,7 @@ private struct MarkdownBlocksView: View {
                     }
                 case .compactChip:
                     if let reference = MarkdownArtifactPromotion.leadingArtifact(
-                        in: runs, workspacePath: workspacePath
+                        in: runs, workspacePath: workspacePath, resolveArtifact: resolveArtifact
                     ) {
                         WorkspaceArtifactChipRow(
                             reference: reference,
@@ -1266,7 +1273,8 @@ private struct MarkdownBlocksView: View {
                     color: color,
                     lineSpacing: lineSpacing,
                     inlineCodeSize: density.inlineCodeFontSize,
-                    workspacePath: workspacePath
+                    workspacePath: workspacePath,
+                    resolveArtifact: resolveArtifact
                 ),
                 span: span,
                 store: selectionStore,
@@ -1330,7 +1338,9 @@ private struct MarkdownBlocksView: View {
     ) -> AttributedString {
         var result = AttributedString()
         for run in runs {
-            let url = MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspacePath)
+            let url = MarkdownLinkPolicy.renderedURL(
+                for: run, workspacePath: workspacePath, resolveArtifact: resolveArtifact
+            )
             let spec = MarkdownInlineStyleSpec.resolve(
                 run: run,
                 baseSize: baseSize,
@@ -1355,10 +1365,11 @@ private struct MarkdownBlocksView: View {
 
     private func standaloneArtifact(in runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
         guard runs.count == 1, let run = runs.first else { return nil }
-        return WorkspaceArtifactReference.classify(
-            MarkdownArtifactPromotion.candidate(in: run),
-            workspacePath: workspacePath
-        )
+        return resolveArtifact(MarkdownArtifactPromotion.candidate(in: run))
+    }
+
+    private func resolveArtifact(_ raw: String?) -> WorkspaceArtifactReference? {
+        artifactCache.classify(raw, workspacePath: workspacePath)
     }
 
     private func open(_ url: URL) {
@@ -1377,6 +1388,11 @@ private struct MarkdownBlocksView: View {
     }
 
     private func open(_ reference: WorkspaceArtifactReference) {
+        // The gesture cache is for presentation only. A file may have changed
+        // or a symlink may have moved since this chip was rendered.
+        guard WorkspaceArtifactReference.classify(
+            reference.url.path, workspacePath: workspacePath
+        ) != nil else { return }
         if let onOpenWorkspaceReference {
             onOpenWorkspaceReference(reference)
         } else {
@@ -1415,16 +1431,14 @@ enum MarkdownArtifactPromotion {
     /// annotation's actions are never attributed to the wrong file.
     static func leadingArtifact(
         in runs: [MarkdownInlineRun],
-        workspacePath: String?
+        workspacePath: String?,
+        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil
     ) -> WorkspaceArtifactReference? {
+        let resolve = resolveArtifact ?? { WorkspaceArtifactReference.classify($0, workspacePath: workspacePath) }
         guard let first = runs.first,
-              let reference = WorkspaceArtifactReference.classify(
-                candidate(in: first), workspacePath: workspacePath
-              ),
+              let reference = resolve(candidate(in: first)),
               runs.dropFirst().allSatisfy({ run in
-                  WorkspaceArtifactReference.classify(
-                    candidate(in: run), workspacePath: workspacePath
-                  ) == nil
+                  resolve(candidate(in: run)) == nil
               })
         else { return nil }
         return reference
@@ -1516,21 +1530,17 @@ struct WorkspaceArtifactReference: Hashable, Sendable {
                 parsed.path,
                 workspacePath: workspacePath
               ),
-              FileManager.default.fileExists(atPath: url.path)
-        else { return nil }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-              !isDirectory.boolValue
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]),
+              values.isDirectory == false
         else { return nil }
 
         let root = URL(fileURLWithPath: workspacePath, isDirectory: true)
         let relative = WorkspaceIndex.relativePath(url, root: root.path)
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         return Self(
             url: url,
             relativePath: relative,
             kind: kind(for: url.pathExtension),
-            byteCount: values?.fileSize.map(Int64.init),
+            byteCount: values.fileSize.map(Int64.init),
             sourceLocation: parsed.location
         )
     }
@@ -1573,11 +1583,57 @@ struct WorkspaceArtifactReference: Hashable, Sendable {
     }
 }
 
+/// A file listing asks about each path both for its chip and its inline link.
+/// Retain those filesystem answers only while its column is being resized;
+/// the first render after the gesture reads current metadata again. Navigation
+/// deliberately continues to use the uncached classifier above.
+@MainActor
+final class WorkspaceArtifactRenderCache {
+    private struct Key: Hashable {
+        let raw: String
+        let workspacePath: String
+    }
+
+    private struct Entry {
+        let reference: WorkspaceArtifactReference?
+    }
+
+    private var values: [Key: Entry] = [:]
+    private var isLiveResizing = false
+    private(set) var resolutionCountForTesting = 0
+
+    func setLiveResizing(_ active: Bool) {
+        guard isLiveResizing != active else { return }
+        isLiveResizing = active
+        values.removeAll(keepingCapacity: active)
+    }
+
+    func classify(_ raw: String?, workspacePath: String?) -> WorkspaceArtifactReference? {
+        guard let raw, let workspacePath else { return nil }
+        let key = Key(raw: raw, workspacePath: workspacePath)
+        if isLiveResizing, let cached = values[key] { return cached.reference }
+        resolutionCountForTesting += 1
+        let reference = WorkspaceArtifactReference.classify(raw, workspacePath: workspacePath)
+        if isLiveResizing {
+            // A long streaming response must not retain unbounded candidates
+            // during a resize. Each Markdown subtree owns its own small cache.
+            if values.count >= 256 { values.removeAll(keepingCapacity: true) }
+            values[key] = Entry(reference: reference)
+        }
+        return reference
+    }
+}
+
 enum WorkspacePathReferenceParser {
     struct Parsed: Hashable, Sendable {
         let path: String
         let location: WorkspaceSourceLocation?
     }
+
+    private static let locationExpressions = [
+        #"#L([0-9]+)(?:C([0-9]+))?$"#,
+        #":([0-9]+)(?::([0-9]+))?$"#
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
 
     static func parse(_ raw: String?) -> Parsed? {
         guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1593,13 +1649,8 @@ enum WorkspacePathReferenceParser {
             return nil
         }
 
-        let patterns = [
-            #"#L([0-9]+)(?:C([0-9]+))?$"#,
-            #":([0-9]+)(?::([0-9]+))?$"#
-        ]
-        for pattern in patterns {
-            guard let expression = try? NSRegularExpression(pattern: pattern),
-                  let match = expression.firstMatch(
+        for expression in locationExpressions {
+            guard let match = expression.firstMatch(
                     in: value,
                     range: NSRange(value.startIndex..., in: value)
                   ),
@@ -1655,12 +1706,14 @@ enum MarkdownLinkPolicy {
         return containedWorkspaceFileURL(parsed.path, workspacePath: workspacePath)
     }
 
-    static func renderedURL(for run: MarkdownInlineRun, workspacePath: String?) -> URL? {
+    static func renderedURL(
+        for run: MarkdownInlineRun,
+        workspacePath: String?,
+        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil
+    ) -> URL? {
         let localCandidate = run.destination ?? (run.style.contains(.code) ? run.text : nil)
-        if let reference = WorkspaceArtifactReference.classify(
-            localCandidate,
-            workspacePath: workspacePath
-        ) {
+        let resolve = resolveArtifact ?? { WorkspaceArtifactReference.classify($0, workspacePath: workspacePath) }
+        if let reference = resolve(localCandidate) {
             return reference.navigationURL
         }
         return safeURL(run.destination, workspacePath: workspacePath)

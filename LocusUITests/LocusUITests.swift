@@ -2671,6 +2671,35 @@ final class LocusUITests: XCTestCase {
         waitForExpectations(timeout: 3)
     }
 
+    func testBusyTranscriptKeepsBrowserAndDraftAcrossRepeatedExpansion() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PERFORMANCE_TRANSCRIPT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
+        app.typeKey("5", modifierFlags: .command)
+        let address = anyElement("browser.url")
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        address.click()
+        address.typeText("https://example.com/unsent-draft")
+
+        for _ in 0..<3 {
+            anyElement("browser.expand").click()
+            XCTAssertEqual(anyElement("inspector.resizeHandle").label, "Expanded panel width")
+            XCTAssertEqual(address.value as? String, "https://example.com/unsent-draft")
+            app.typeKey("e", modifierFlags: [.command, .option])
+            XCTAssertEqual(anyElement("inspector.resizeHandle").label, "Inspector width")
+            XCTAssertEqual(address.value as? String, "https://example.com/unsent-draft")
+            XCTAssertTrue(anyElement("conversation.scroll").exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Busy transcript after repeated browser expansion"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     func testInspectorTabsSwitchWithCommandNumberShortcuts() {
         // ⌘2 — Changes, populated from the seeded git status.
         app.typeKey("2", modifierFlags: .command)
