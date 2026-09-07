@@ -358,6 +358,11 @@ host_entitlements="${repo_root}/Config/LocusDirect.entitlements"
     --entitlements "${host_entitlements}" --sign "${identity}" "${app}"
 "${repo_root}/Tools/AuditDistribution.sh" "${app}"
 /usr/bin/codesign --verify --deep --strict "${app}"
+if [[ "${public_manual_release}" == "1" ]]; then
+    # GenerateAppcast normally enforces these public artifact gates. Manual
+    # publication skips feed generation, but must retain the same checks.
+    python3 "${repo_root}/Tools/VerifyPublicManualApp.py" "${app}"
+fi
 echo "Seal valid after signing."
 
 if [[ -d "${runtime}" ]]; then
@@ -410,6 +415,9 @@ trap '/bin/rm -rf "${check_dir}"' EXIT
 /usr/bin/ditto -x -k "${zip_out}" "${check_dir}"
 /usr/bin/codesign --verify --deep --strict "${check_dir}/$(basename "${app}")" \
     || { echo "error: zip round-trip broke the signature." >&2; exit 1; }
+if [[ "${public_manual_release}" == "1" ]]; then
+    python3 "${repo_root}/Tools/VerifyPublicManualApp.py" "${check_dir}/Locus.app"
+fi
 echo "Zip round-trip verified."
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     # The real question is not whether it is signed but whether a Mac that has

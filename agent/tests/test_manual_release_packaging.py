@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("legacy_appcast", ROOT / "Tools/VerifyLegacyAppcast.py")
 legacy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(legacy)
+PUBLIC_SPEC = importlib.util.spec_from_file_location(
+    "public_manual_app", ROOT / "Tools/VerifyPublicManualApp.py",
+)
+public_app = importlib.util.module_from_spec(PUBLIC_SPEC)
+PUBLIC_SPEC.loader.exec_module(public_app)
 
 
 def info(**changes):
@@ -163,3 +168,73 @@ def test_packaging_fails_before_mutation_without_required_public_boundary(
     assert expected in result.stderr
     assert plist.read_bytes() == original
     assert not (tmp_path / "Locus-macOS.zip").exists()
+
+
+@pytest.fixture
+def signed_app(tmp_path, monkeypatch):
+    app = tmp_path / "Locus.app"
+    (app / "Contents/MacOS").mkdir(parents=True)
+    (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info(CFBundleExecutable="Locus")))
+    (app / "Contents/MacOS/Locus").write_bytes(b"fixture")
+    state = {
+        "signature": "Identifier=io.sparktales.locus\nTeamIdentifier=4X4RJA7GMD\n"
+        "Authority=Developer ID Application: SparkTales Inc. (4X4RJA7GMD)\n",
+        "architecture": "arm64\n", "seal_valid": True,
+    }
+
+    def inspect(command):
+        if "--verify" in command:
+            if not state["seal_valid"]:
+                raise subprocess.CalledProcessError(1, command)
+            return ""
+        return state["architecture"] if "lipo" in command[0] else state["signature"]
+
+    monkeypatch.setattr(public_app, "inspect", inspect)
+    return app, state
+
+
+def test_manual_public_archive_preserves_shared_release_gates(signed_app):
+    app, _ = signed_app
+    public_app.verify(app)
+
+
+@pytest.mark.parametrize("signature", [
+    "Identifier=io.sparktales.locus\nTeamIdentifier=OTHERTEAM1\nAuthority=Developer ID Application: Other",
+    "Identifier=io.sparktales.locus\nTeamIdentifier=4X4RJA7GMD\nAuthority=Apple Development: SparkTales",
+    "Identifier=another.app\nTeamIdentifier=4X4RJA7GMD\nAuthority=Developer ID Application: SparkTales",
+])
+def test_manual_public_archive_rejects_other_signing_authority(signed_app, signature):
+    app, state = signed_app
+    state["signature"] = signature
+    with pytest.raises(ValueError, match="SparkTales Developer ID"):
+        public_app.verify(app)
+
+
+@pytest.mark.parametrize("architecture", ["x86_64", "arm64 x86_64"])
+def test_manual_public_archive_rejects_incompatible_architecture(signed_app, architecture):
+    app, state = signed_app
+    state["architecture"] = architecture
+    with pytest.raises(ValueError, match="only arm64"):
+        public_app.verify(app)
+
+
+def test_manual_public_archive_rejects_invalid_seal(signed_app):
+    app, state = signed_app
+    state["seal_valid"] = False
+    with pytest.raises(subprocess.CalledProcessError):
+        public_app.verify(app)
+
+
+def test_manual_public_archive_rejects_embedded_tests(signed_app):
+    app, _ = signed_app
+    (app / "Contents/PlugIns/LocusTests.xctest").mkdir(parents=True)
+    with pytest.raises(ValueError, match="test bundle"):
+        public_app.verify(app)
+
+
+def test_manual_public_archive_requires_canonical_app_name(signed_app):
+    app, _ = signed_app
+    renamed = app.with_name("Candidate.app")
+    app.rename(renamed)
+    with pytest.raises(ValueError, match="contain Locus.app"):
+        public_app.verify(renamed)

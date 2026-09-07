@@ -112,7 +112,9 @@ this manual release.
    option. The packager audits the wallet-free edition, verifies the retained
    feed's signature and prior-version URLs, signs the full app, notarizes and
    staples it, verifies the extracted ZIP with Gatekeeper, and checks that the
-   signed legacy feed is still unchanged. It does not generate or promote an
+   signed legacy feed is still unchanged. The signed app and extracted copy
+   must retain the SparkTales Developer ID, contain only arm64, and exclude test
+   bundles. It does not generate or promote an
    appcast. Builds without notarization remain private verification artifacts.
 6. Upload `Locus-macOS.zip`, the unchanged `appcast.xml`, `components.json`, and
    every referenced component archive into one draft GitHub release before
