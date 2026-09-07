@@ -483,6 +483,17 @@ final class LocusUITests: XCTestCase {
                element.frame.maxY <= self.app.windows.firstMatch.frame.minY {
                 return true
             }
+            // SwiftUI keeps scrolled-out text in the accessibility tree.
+            // XCTest 16 can sample the desktop or Dock at that off-window
+            // frame, producing a contrast failure for pixels the app did not
+            // draw. Visible and partially visible elements still get audited.
+            if issue.auditType == .contrast,
+               let element = issue.element,
+               !element.frame.isEmpty,
+               !element.frame.intersects(self.app.windows.firstMatch.frame) {
+                print("Contrast deferred for off-window element: \(element.value ?? element.label)")
+                return true
+            }
             // XCTest 26 reports SwiftUI Menu and Picker wrappers as missing an
             // action even though the owning native popup is labeled, keyboard
             // operable, and exercised by functional tests in this suite.
@@ -3253,13 +3264,17 @@ final class LocusUITests: XCTestCase {
         add(tree)
         XCTAssertTrue(expanded)
 
-        let source = revealAgentOverviewItem("agentOverview.source")
+        let source = revealAgentOverviewItem("agentOverview.source", fullyVisible: true)
         XCTAssertTrue((source.label + " \(source.value ?? "")").contains("Weekdays at 09:00"))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Expanded agent configuration"
         screenshot.lifetime = .keepAlways
         add(screenshot)
         try auditCurrentSurface()
+        // Include the heading as well as the instruction in the visible
+        // audit; a merely hittable paragraph can leave its heading clipped.
+        let behavior = revealAgentOverviewItem("agentOverview.behavior", fullyVisible: true)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(behavior.frame))
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.instruction").exists)
         try auditCurrentSurface()
     }
@@ -3790,17 +3805,21 @@ final class LocusUITests: XCTestCase {
     }
 
     @discardableResult
-    private func revealAgentOverviewItem(_ identifier: String) -> XCUIElement {
+    private func revealAgentOverviewItem(_ identifier: String, fullyVisible: Bool = false) -> XCUIElement {
         let item = anyElement(identifier)
         let panel = anyElement("agentOverview")
         XCTAssertTrue(panel.waitForExistence(timeout: Self.launchContentTimeout))
-        if item.exists && item.isHittable { return item }
+        func isRevealed() -> Bool {
+            guard item.exists, item.isHittable else { return false }
+            return !fullyVisible || panel.frame.intersection(app.windows.firstMatch.frame).contains(item.frame)
+        }
+        if isRevealed() { return item }
         panel.scroll(byDeltaX: 0, deltaY: 2500)
         for _ in 0..<15 {
-            if item.exists && item.isHittable { return item }
+            if isRevealed() { return item }
             panel.scroll(byDeltaX: 0, deltaY: -200)
         }
-        XCTAssertTrue(item.exists, "Could not reach \(identifier)")
+        XCTAssertTrue(fullyVisible ? isRevealed() : item.exists, "Could not reach \(identifier)")
         return item
     }
 

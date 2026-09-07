@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- Task Capsules now guide model setup, keep the next action visible, and make
+  saved plans, edits, and past runs easier to find and review at compact sizes.
+
+### Fixed
+
+- Expanding the browser avoids repeated transcript layout and file lookups,
+  improving responsiveness in conversations with many file links.
+
 ## 2.5.0 — 2026-09-06
 
 ### Added
