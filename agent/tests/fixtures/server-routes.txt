@@ -195,6 +195,7 @@ GET /api/permissions
 POST /api/permissions
 GET /api/config
 POST /api/config
+POST /api/response-preview
 POST /api/context/reload
 WEBSOCKET /ws/internal/codex
 WEBSOCKET /ws/chat

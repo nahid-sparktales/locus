@@ -961,8 +961,8 @@ extension AppModel {
     /// Copies a completed assistant response from its authoritative source.
     /// Rendering never depends on the currently expanded portion of a code
     /// block or table, so a visually collapsed response still copies in full.
-    func copyResponse(_ source: String, format: ResponseCopyFormat) {
-        let text = ResponseCopyPayload.text(from: source, format: format)
+    func copyResponse(_ source: String, format: ResponseCopyFormat, reasoningFormat: AssistantReasoningFormat = .legacyTags) {
+        let text = ResponseCopyPayload.text(from: source, format: format, reasoningFormat: reasoningFormat)
         guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

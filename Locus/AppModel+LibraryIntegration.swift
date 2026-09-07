@@ -2,6 +2,18 @@ import AppKit
 import Foundation
 
 extension AppModel {
+    func responseOutputContext(sessionID: String) -> ResponseOutputContext {
+        ResponseOutputContext(sessionID: sessionID, allowsEditing: persistenceEnabled || (isUITesting && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RESPONSE_OUTPUT"] == "1"), outputs: outputsLibrary,
+            showFiles: { [weak self] workspace, showHidden in
+                guard let self, OutputsLibraryStore.canonical(workspace) == OutputsLibraryStore.canonical(self.workspacePath) else { return }
+                if let showHidden { self.workspaceBrowser.showHidden = showHidden }
+                self.workspaceBrowser.query = ""
+                self.selectInspectorTab(.files)
+            }, openVersion: { [weak self] outputID, versionID, workspace in
+                self?.openLibraryOutput(itemID: outputID, versionID: versionID, workspace: workspace)
+            })
+    }
+
     func configureLibraryFeatures() {
         library.configure(backend: backend)
         outputsLibrary.configure(emitter: sessionOverview, enabled: persistenceEnabled)

@@ -306,10 +306,19 @@ enum ConfigureAgentTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .configurations: "Configurations"
+        case .configurations: "Runtime"
         case .agents: "Agents"
-        case .sources: "Sources"
-        case .runHistory: "Run History"
+        case .sources: "Connections"
+        case .runHistory: "Activity"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .agents: "sparkles"
+        case .runHistory: "clock.arrow.circlepath"
+        case .sources: "point.3.connected.trianglepath.dotted"
+        case .configurations: "slider.horizontal.3"
         }
     }
 }

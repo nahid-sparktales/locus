@@ -4,6 +4,7 @@ import SwiftUI
 
 struct NotebookSheet: View {
     @ObservedObject var notebook: NotebookModel
+    var availableSize: CGSize? = nil
     @Environment(\.dismiss) private var dismiss
     @FocusState private var titleFocused: Bool
     @FocusState private var listFocused: Bool
@@ -11,6 +12,12 @@ struct NotebookSheet: View {
     @State private var titleEntry: NotebookEntry?
     @State private var pendingPermanentDelete: NotebookEntry?
     @State private var confirmsEmptyTrash = false
+
+    private var presentationSize: CGSize {
+        let available = availableSize.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
+        return CGSize(width: min(880, available?.width ?? 880),
+                      height: min(620, available?.height ?? 620))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,7 +31,9 @@ struct NotebookSheet: View {
                 detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 600, idealWidth: 880, maxWidth: 880, minHeight: 480, idealHeight: 620, maxHeight: 620)
+        // Native sheets otherwise choose the flexible minimum even when the
+        // window has room. Shrink only to the presenting window's actual size.
+        .frame(width: presentationSize.width, height: presentationSize.height)
         .background(LocusTheme.panel)
         .focusedSceneValue(\.notebookModel, notebook)
         .focusedSceneValue(\.notebookCreateNote, createNote)
@@ -77,8 +86,8 @@ struct NotebookSheet: View {
     private var header: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Notebook").font(.locus(size: 17, weight: .bold))
-                Text("Your notes, alongside the notes from your chats and workspaces.")
+                Text("Notebook").font(.locus(size: 15, weight: .bold))
+                Text("Personal, workspace, chat, and shared notes.")
                     .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -140,7 +149,7 @@ struct NotebookSheet: View {
             }
             .padding(.horizontal, 10).padding(.bottom, 9)
             HStack {
-                Text(notebook.showingTrash ? "RECENTLY DELETED" : "NOTES")
+                Text(notebook.showingTrash ? "Recently Deleted" : "Notes")
                     .font(.locus(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
                 Menu {
@@ -212,12 +221,13 @@ struct NotebookSheet: View {
             }
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 7) {
+                LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(notebook.sections) { section in
                         if !notebook.showingTrash {
-                            Text(section.title.uppercased())
+                            Text(section.title)
                                 .font(.locus(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.textSecondary)
-                                .padding(.top, 4).accessibilityAddTraits(.isHeader)
+                                .padding(.horizontal, 9).padding(.top, 10).padding(.bottom, 3)
+                                .accessibilityAddTraits(.isHeader)
                         }
                         ForEach(section.entries) { entry in row(entry) }
                     }
@@ -225,7 +235,11 @@ struct NotebookSheet: View {
                 .padding(.horizontal, 10).padding(.bottom, 12)
             }
             .focusable().focused($listFocused)
+            // Focus belongs to the list for Delete. Its native ring and the
+            // inherited button rings would outline the whole list and every row.
+            .focusEffectDisabled()
             .onDeleteCommand(perform: deleteSelectedFromList)
+            .accessibilityLabel(notebook.showingTrash ? "Recently deleted notes" : "Notes")
             .accessibilityIdentifier("notebook.list")
         }
     }
@@ -243,27 +257,39 @@ struct NotebookSheet: View {
                     .font(.locus(size: 11, weight: .semibold))
                     .foregroundStyle(isSelected ? LocusTheme.accentAction : LocusTheme.muted).frame(width: 16)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.title).font(.locus(size: 11, weight: .semibold)).foregroundStyle(LocusTheme.textPrimary).lineLimit(1)
-                    Text(entry.subtitle).font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary).lineLimit(1).truncationMode(.middle)
+                    Text(entry.title).font(.locus(size: 10, weight: .semibold)).foregroundStyle(LocusTheme.textPrimary).lineLimit(1)
                     Text(entry.isPurgePending ? "Deletion incomplete · Retry to finish" : entry.characterCount == 0 ? "Empty note" : entry.preview)
                         .font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
-                        .lineLimit(2).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                    if let modified = entry.modifiedAt {
-                        Text(modified.formatted(date: .abbreviated, time: .shortened))
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                        .lineLimit(entry.isPurgePending ? 2 : 1).multilineTextAlignment(.leading)
+                    HStack(spacing: 8) {
+                        Text(entry.subtitle).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        if let modified = entry.modifiedAt {
+                            Text(modified, format: .dateTime.month(.abbreviated).day())
+                                .fixedSize()
+                        }
                     }
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-            .locusCard(radius: 9)
-            .overlay {
-                if isSelected { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.accentAction, lineWidth: 1.5) }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(isSelected ? LocusTheme.accentAction.opacity(0.12) : .clear,
+                        in: RoundedRectangle(cornerRadius: 7))
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule().fill(LocusTheme.accentAction).frame(width: 3, height: 22)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
             }
         }
         .buttonStyle(.locus())
+        .clipShape(RoundedRectangle(cornerRadius: 7))
         .contextMenu { noteActions(entry) }
-        .help(entry.abbreviatedPath.isEmpty ? entry.subtitle : entry.abbreviatedPath)
+        .help([entry.abbreviatedPath.isEmpty ? entry.subtitle : entry.abbreviatedPath,
+               entry.modifiedAt.map { "Updated \($0.formatted(date: .abbreviated, time: .shortened))" }]
+            .compactMap { $0 }.joined(separator: "\n"))
         .accessibilityLabel("\(entry.title), \(entry.subtitle)")
         .accessibilityValue(entry.isPurgePending ? "Deletion incomplete" : entry.characterCount == 0 ? "Empty" : entry.preview)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -327,7 +353,7 @@ struct NotebookSheet: View {
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("Note actions").accessibilityIdentifier("notebook.noteActions")
         }
-        .padding(16)
+        .padding(.horizontal, 16).padding(.vertical, 12)
         .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.separator).frame(height: 1) }
     }
 

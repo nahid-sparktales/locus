@@ -20,7 +20,7 @@ extension AppModel {
             handleIdentityEvent(event, runtime: taskWorkers[owner], transport: source ?? conversationBackend)
             return
         }
-        if type == "run_started" || type == "orchestration_started",
+        if ["run_started", "orchestration_started", "message_start", "assistant_item_start"].contains(type),
            let runID = event["run_id"] as? String,
            (event["session_id"] as? String ?? currentSessionID) == currentSessionID {
             outputsLibrary.bindRunIdentity(workspace: workspacePath, sessionID: currentSessionID,
@@ -110,7 +110,7 @@ extension AppModel {
             let phase = kind == "message"
                 ? AssistantPhase.resolved(event["phase"] as? String)
                 : nil
-            let id = startAssistantStream(sourceItemID: itemID, phase: phase)
+            let id = startAssistantStream(sourceItemID: itemID, phase: phase, runID: event["run_id"] as? String, reasoningFormat: .native)
             taskWorkers[currentSessionID]?.streamingBlockID = id
 
         case "assistant_item_delta":
@@ -125,7 +125,7 @@ extension AppModel {
                 let phase = kind == "message"
                     ? AssistantPhase.resolved(event["phase"] as? String)
                     : nil
-                startAssistantStream(sourceItemID: itemID, phase: phase)
+                startAssistantStream(sourceItemID: itemID, phase: phase, runID: event["run_id"] as? String, reasoningFormat: .native)
             }
             guard let block = blocks.first(where: { $0.sourceItemID == itemID }),
                   block.id == streamingAssistantID
@@ -145,13 +145,14 @@ extension AppModel {
                 let phase = kind == "message"
                     ? AssistantPhase.resolved(event["phase"] as? String)
                     : nil
-                startAssistantStream(sourceItemID: itemID, phase: phase)
+                startAssistantStream(sourceItemID: itemID, phase: phase, runID: event["run_id"] as? String, reasoningFormat: .native)
             }
             flushPendingTokens()
             guard let index = blocks.firstIndex(where: { $0.sourceItemID == itemID }) else {
                 break
             }
             let wasStreaming = blocks[index].isStreaming
+            let previousText = blocks[index].text
             let authoritativeText = kind == "message" ? event["text"] as? String : nil
             let sections = kind == "reasoning"
                 ? (event["sections"] as? [String] ?? [])
@@ -183,6 +184,7 @@ extension AppModel {
                     transcriptBlocks[index].isStreaming = false
                 }
             }
+            applyResponseMetadata(event, at: index, previousText: previousText)
             if wasStreaming, let runtime = taskWorkers[currentSessionID] {
                 runtime.streamingBlockID = nil
                 runtime.streamingText = ""
@@ -202,7 +204,9 @@ extension AppModel {
                 runtime.streamingReasoning = ""
                 updateBackgroundChatState(runtime)
             }
-            startAssistantStream()
+            startAssistantStream(sourceItemID: event["item_id"] as? String,
+                phase: AssistantPhase.resolved(event["phase"] as? String),
+                runID: event["run_id"] as? String, reasoningFormat: .native)
             taskWorkers[currentSessionID]?.streamingBlockID = streamingAssistantID
 
         case "token":
@@ -215,7 +219,23 @@ extension AppModel {
 
         case "message_end":
             flushPendingTokens()
-            if let id = streamingAssistantID { commitStreamingReply(id, finished: true) }
+            let itemID = event["item_id"] as? String
+            let id = itemID.flatMap { item in blocks.first { $0.sourceItemID == item }?.id }
+                ?? streamingAssistantID
+                ?? startAssistantStream(sourceItemID: itemID, runID: event["run_id"] as? String, reasoningFormat: .native)
+            let authoritativeText = event["content"] as? String ?? event["text"] as? String
+            let previousText = blocks.first(where: { $0.id == id })?.text
+            if id == streamingAssistantID {
+                commitStreamingReply(id, finished: true, authoritativeText: authoritativeText)
+            }
+            if let index = blocks.firstIndex(where: { $0.id == id }) {
+                updateTranscriptBlocks {
+                    if let authoritativeText { $0[index].text = authoritativeText }
+                    if let reasoning = event["reasoning_text"] as? String { $0[index].reasoningText = reasoning }
+                    $0[index].isStreaming = false
+                }
+                applyResponseMetadata(event, at: index, previousText: previousText)
+            }
             streamingAssistantID = nil
             if let runtime = taskWorkers[currentSessionID] {
                 runtime.streamingBlockID = nil
@@ -298,6 +318,7 @@ extension AppModel {
                 updateTranscriptBlocks {
                     $0[index].tool?.status = denied ? .denied : ok ? .done : .error
                     $0[index].tool?.result = event["result"] as? String
+                    $0[index].tool?.activityLabel = ok && !denied ? event["activity_label"] as? String : nil
                 }
             } else {
                 // Never drop a result: without a matching card the outcome of
@@ -308,7 +329,8 @@ extension AppModel {
                     summary: event["summary"] as? String ?? "Tool result",
                     detail: "",
                     status: denied ? .denied : ok ? .done : .error,
-                    result: event["result"] as? String
+                    result: event["result"] as? String,
+                    activityLabel: ok && !denied ? event["activity_label"] as? String : nil
                 )))
             }
             if let runtime = taskWorkers[currentSessionID],
@@ -1022,10 +1044,24 @@ extension AppModel {
         }
     }
 
+    private func applyResponseMetadata(_ event: [String: Any], at index: Int, previousText: String? = nil) {
+        let document = (event["response_parts"] as? [String: Any]).flatMap { decode(ResponseDocument.self, from: $0) }
+        updateTranscriptBlocks { values in
+            if let itemID = event["item_id"] as? String { values[index].sourceItemID = itemID }
+            if let runID = event["run_id"] as? String { values[index].runID = runID }
+            if let phase = event["phase"] as? String { values[index].assistantPhase = AssistantPhase.resolved(phase) }
+            if let format = event["reasoning_format"] as? String { values[index].reasoningFormat = AssistantReasoningFormat(rawValue: format) ?? AssistantReasoningFormat.none }
+            if event["response_parts"] != nil { values[index].responseParts = document }
+            else if let previousText, previousText != values[index].text { values[index].responseParts = nil }
+        }
+    }
+
     @discardableResult
     private func startAssistantStream(
         sourceItemID: String? = nil,
-        phase: AssistantPhase? = nil
+        phase: AssistantPhase? = nil,
+        runID: String? = nil,
+        reasoningFormat: AssistantReasoningFormat? = .native
     ) -> UUID {
         if let sourceItemID,
            let existing = blocks.first(where: { $0.sourceItemID == sourceItemID }) {
@@ -1044,7 +1080,9 @@ extension AppModel {
             kind: .assistant,
             assistantPhase: phase,
             sourceItemID: sourceItemID,
-            isStreaming: true
+            reasoningFormat: reasoningFormat,
+            isStreaming: true,
+            runID: runID
         ))
         streamingReply.begin(id: id)
         return id

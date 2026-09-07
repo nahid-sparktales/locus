@@ -102,11 +102,10 @@ def test_answer_contract_is_locked_for_tool_modes_and_absent_from_just_chat():
         )
         assert contract["editable"] is False
         assert contract["content"] == ANSWER_CONTRACT
-        assert "A bare list of names, paths, or values is not an answer" in prompt
-        # File listings stay chip-promotable: the renderer needs bare
-        # backticked paths leading each bullet, and the reply still ends in
-        # prose rather than trailing off at the last filename.
-        assert "interactive file chip" in prompt
+        assert "scale detail to the request, not the number of tools used" in prompt
+        # Typed outputs replace mandatory annotated file bullets and recaps.
+        # Plain Markdown remains a supported fallback.
+        assert "validated parts appear after your final prose" in prompt
         # The editable layer cannot quietly cancel it: the contract is composed
         # into the locked half, which the runtime declares outranks user text.
         assert prompt.index("Locked answer contract") < prompt.index(
@@ -117,8 +116,8 @@ def test_answer_contract_is_locked_for_tool_modes_and_absent_from_just_chat():
     assert not [
         layer for layer in chat_layers if layer["name"] == "Locked answer contract"
     ]
-    assert "A bare list of names" not in chat_prompt
-    assert "interactive file chip" not in chat_prompt
+    assert "attach_output_parts" not in chat_prompt
+    assert "validated parts appear after your final prose" not in chat_prompt
 
 
 def test_agent_configuration_round_trips_as_versioned_additive_payload():

@@ -26,7 +26,7 @@ struct AgentInspectorDetailView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 Button { inspector.back() } label: {
                     Label(backLabel, systemImage: "chevron.left")
                 }
@@ -102,8 +102,15 @@ struct AgentInspectorDetailView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(AgentInspectorCopy.runTitle(run)).lineLimit(2)
-                        Text(AgentInspectorCopy.state(run.state))
-                            .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        HStack(spacing: 8) {
+                            AgentRunStateLabel(rawState: run.state)
+                            Spacer(minLength: 0)
+                            if let duration = AgentInspectorCopy.duration(run) {
+                                Text(duration).font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                            }
+                        }
+                        Text(Date(timeIntervalSince1970: run.createdAt), format: .dateTime)
+                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
                 }
                 .buttonStyle(.locus())
@@ -117,10 +124,11 @@ struct AgentInspectorDetailView: View {
         if let item = inspector.snapshot.item {
             if let delivery = item.delivery {
                 let event = AgentOverview.Event(delivery: delivery)
-                heading(event.title, subtitle: "Incoming event")
+                heading(event.title, subtitle: "Incoming event · \(definition?.name ?? "Agent")",
+                        rawState: item.executionState ?? AgentInspectorCopy.effectiveActivityState(deliveryState: delivery.state, runState: delivery.runState))
                 section("Status") {
-                    Text("Delivery: \(AgentInspectorCopy.deliveryState(item.deliveryState ?? delivery.state))")
-                    Text("Work: \(item.executionState.map(AgentInspectorCopy.state) ?? "Not started")")
+                    detailFact("Delivery", value: AgentInspectorCopy.deliveryState(item.deliveryState ?? delivery.state))
+                    detailFact("Execution", value: item.executionState.map(AgentInspectorCopy.state) ?? "Not started")
                 }
                 section("What started this") {
                     Text(delivery.source.title)
@@ -128,8 +136,8 @@ struct AgentInspectorDetailView: View {
                         ?? delivery.event.actor["name"]?.string {
                         Text("From \(sender)").foregroundStyle(LocusTheme.textSecondary)
                     }
-                    Text(Date(timeIntervalSince1970: delivery.receivedAt), style: .date)
-                        .foregroundStyle(LocusTheme.textSecondary)
+                    Text(Date(timeIntervalSince1970: delivery.receivedAt), format: .dateTime)
+                        .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
                     if !delivery.event.text.isEmpty {
                         DisclosureGroup("Incoming content · untrusted source", isExpanded: expandedIncomingContent) {
                             Text(delivery.event.text)
@@ -169,10 +177,9 @@ struct AgentInspectorDetailView: View {
                 }
             } else if let occurrence = item.occurrence {
                 heading(occurrence.trigger == "manual" ? "Requested run" : "Scheduled run",
-                        subtitle: AgentInspectorCopy.deliveryState(item.deliveryState ?? occurrence.state))
-                if let state = item.executionState {
-                    Text("Work: \(AgentInspectorCopy.state(state))")
-                }
+                        subtitle: "Schedule · \(occurrence.scheduleName)",
+                        rawState: item.executionState ?? occurrence.state)
+                detailFact("Delivery", value: AgentInspectorCopy.deliveryState(item.deliveryState ?? occurrence.state))
                 section("What started this") {
                     Text(occurrence.scheduleName)
                     Text(Date(timeIntervalSince1970: occurrence.scheduledFor), format: .dateTime)
@@ -192,12 +199,12 @@ struct AgentInspectorDetailView: View {
                         .accessibilityIdentifier("agentInspector.openChat")
                 }
             }
-            section("Execution history") {
+            section("Executions") {
                 if item.executions.isEmpty {
-                    Text("No execution has been recorded for this item.")
+                    Text("No execution has been recorded. A run appears here once this item starts work.")
                         .foregroundStyle(LocusTheme.textSecondary)
                 }
-                ForEach(Array(item.executions.enumerated()), id: \.element.id) { index, execution in
+                ForEach(item.executions) { execution in
                     Button {
                         let origin: AgentInspectorOrigin? = item.delivery.map { .event($0.id) }
                             ?? item.occurrence.map { .occurrence($0.id) }
@@ -205,11 +212,15 @@ struct AgentInspectorDetailView: View {
                     } label: {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(item.executions.count == 1 ? "View work" : "Execution \(index + 1)")
+                                Text(item.executions.count == 1 ? "Inspect run" : "Attempt \(execution.attempt)")
                                 Text(execution.state.map(AgentInspectorCopy.state) ?? "History no longer available")
                                     .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                                if let created = execution.createdAt {
+                                    Text(Date(timeIntervalSince1970: created), format: .dateTime)
+                                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                                }
                                 if execution.retryParentID != nil {
-                                    Text("Retry").font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                                    Text("Retry").font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
                                 }
                             }
                             Spacer(minLength: 4)
@@ -221,13 +232,17 @@ struct AgentInspectorDetailView: View {
                     .accessibilityIdentifier("agentInspector.execution.\(execution.runID)")
                 }
             }
+        } else if !inspector.isLoading && inspector.error == nil {
+            missingDetail("Activity unavailable", detail: "This item may have been removed from saved history. Return to the agent to inspect other activity.")
         }
     }
 
     @ViewBuilder
     private func runDetail(agent: AgentInspectorAgent, origin: AgentInspectorOrigin?) -> some View {
         if let run = inspector.snapshot.run {
-            heading(AgentInspectorCopy.runTitle(run), subtitle: AgentInspectorCopy.state(run.state))
+            heading(AgentInspectorCopy.runTitle(run),
+                    subtitle: definition?.name ?? "Agent run", rawState: run.state)
+            runTiming(run)
             if ["waiting_permission", "waiting_approval", "waiting_dispatch_approval", "waiting_computer"].contains(run.state) {
                 section("Needs your attention") {
                     Text("Review the request before this work can continue.")
@@ -258,6 +273,7 @@ struct AgentInspectorDetailView: View {
                     ForEach(work.files.prefix(10)) { file in
                         Text("\(URL(fileURLWithPath: file.path).lastPathComponent) · \(file.effect)")
                             .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                            .help(file.path)
                     }
                 }
                 if let sessionID = run.sessionID {
@@ -276,23 +292,15 @@ struct AgentInspectorDetailView: View {
                     .buttonStyle(.locus()).accessibilityIdentifier("agentInspector.runOutputs")
                 }
             }
-            section("Time and usage") {
-                if let duration = AgentInspectorCopy.duration(run) {
-                    Text("Duration: \(duration)")
-                } else {
-                    Text("Duration: unavailable").foregroundStyle(LocusTheme.textSecondary)
-                }
-                if let tokens = AgentInspectorCopy.tokens(run) {
-                    Text("Tokens used: \(tokens.formatted())")
-                } else {
-                    Text("Token usage: not reported").foregroundStyle(LocusTheme.textSecondary)
-                }
-                if let calls = run.usage?["model_calls"]?.integer {
-                    Text("Model requests: \(calls.formatted())")
-                }
-            }
-            DisclosureGroup("Details", isExpanded: expandedDetails) {
+            runActions(work)
+            DisclosureGroup("Technical details & usage", isExpanded: expandedDetails) {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let tokens = AgentInspectorCopy.tokens(run) {
+                        detailFact("Tokens used", value: tokens.formatted())
+                    }
+                    if let calls = run.usage?["model_calls"]?.integer {
+                        detailFact("Model requests", value: calls.formatted())
+                    }
                     Text("Created \(Date(timeIntervalSince1970: run.createdAt).formatted())")
                     if let admittedAt = run.admittedAt {
                         Text("Work started \(Date(timeIntervalSince1970: admittedAt).formatted())")
@@ -307,7 +315,66 @@ struct AgentInspectorDetailView: View {
             }
             .id("run-details")
             .accessibilityIdentifier("agentInspector.runDetails")
+        } else if !inspector.isLoading && inspector.error == nil {
+            missingDetail("Run unavailable", detail: "This execution may have been removed from saved history. Return to the agent to inspect other activity.")
         }
+    }
+
+    private func runTiming(_ run: OrchestrationRun) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            detailFact(run.admittedAt == nil ? "Created" : "Started", value: Date(timeIntervalSince1970: run.admittedAt ?? run.createdAt)
+                .formatted(date: .abbreviated, time: .shortened))
+            if let duration = AgentInspectorCopy.duration(run) {
+                detailFact("Duration", value: duration)
+            } else if let start = run.admittedAt, run.completedAt == nil,
+                      AgentActivityState(rawState: run.state) == .running {
+                HStack {
+                    Text("Elapsed").foregroundStyle(LocusTheme.textSecondary)
+                    Spacer()
+                    Text(Date(timeIntervalSince1970: start), style: .timer).monospacedDigit()
+                }
+            }
+        }
+        .font(.locus(size: 12))
+        .accessibilityIdentifier("agentInspector.runTiming")
+    }
+
+    @ViewBuilder
+    private func runActions(_ work: RunWork) -> some View {
+        let tools = Array(Set(inspector.snapshot.events.filter { $0.type == "tool_result" }
+            .compactMap { $0.text("tool")?.nilIfEmpty })).sorted()
+        if work.toolSteps > 0 {
+            section("Actions taken") {
+                detailFact("Tool calls", value: "\(work.toolSteps)")
+                if !tools.isEmpty {
+                    Text(tools.joined(separator: " · "))
+                        .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        .textSelection(.enabled)
+                }
+                if !work.commands.isEmpty {
+                    Text("Recent commands").font(.locus(size: 11, weight: .semibold))
+                    ForEach(work.commands.suffix(5)) { command in
+                        HStack(alignment: .top, spacing: 7) {
+                            Image(systemName: command.ok ? "checkmark" : "exclamationmark.circle")
+                                .foregroundStyle(command.ok ? LocusTheme.textSecondary : LocusTheme.warning)
+                            Text(command.summary).lineLimit(3).textSelection(.enabled)
+                        }
+                        .font(.locus(size: 12))
+                    }
+                }
+            }
+            .accessibilityIdentifier("agentInspector.runActions")
+        }
+    }
+
+    private func missingDetail(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "clock.badge.questionmark")
+                .font(.locus(size: 14, weight: .semibold))
+            Text(detail).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+        .accessibilityIdentifier("agentInspector.unavailable")
     }
 
     private func openChat(_ sessionID: String) {
@@ -329,10 +396,11 @@ struct AgentInspectorDetailView: View {
         return "Idle"
     }
 
-    private func heading(_ title: String, subtitle: String, status: String? = nil) -> some View {
+    private func heading(_ title: String, subtitle: String, status: String? = nil, rawState: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.locus(size: 16, weight: .semibold)).textSelection(.enabled)
                 .accessibilityIdentifier("agentInspector.title")
+            if let rawState { AgentRunStateLabel(rawState: rawState) }
             if let status {
                 Text(status).font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.textSecondary)
@@ -350,16 +418,32 @@ struct AgentInspectorDetailView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(LocusTheme.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.top, 14)
+        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
         .id(title)
     }
 
+    private func detailFact(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).foregroundStyle(LocusTheme.textSecondary)
+            Spacer(minLength: 4)
+            Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
+        }
+        .font(.locus(size: 12))
+        .accessibilityElement(children: .combine)
+    }
+
     private func issue(_ raw: String) -> some View {
-        section("Needs attention") {
-            Text(AgentOverview.humanizedError(raw)).textSelection(.enabled)
-        }.foregroundStyle(LocusTheme.warning)
+        VStack(alignment: .leading, spacing: 7) {
+            Label("Needs attention", systemImage: "exclamationmark.circle")
+                .font(.locus(size: 12, weight: .semibold))
+            Text(AgentOverview.humanizedError(raw))
+                .font(.locus(size: 12)).textSelection(.enabled)
+        }
+        .foregroundStyle(LocusTheme.warning)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12).background(LocusTheme.warning.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -373,17 +457,114 @@ struct AgentInspectorLoadStatus: View {
                 .accessibilityIdentifier("agentInspector.loading")
         } else if let error = inspector.error {
             VStack(alignment: .leading, spacing: 8) {
+                Label(inspector.loadedAt == nil ? "Couldn’t load activity" : "Activity may be out of date", systemImage: "arrow.clockwise.circle")
+                    .font(.locus(size: 12, weight: .semibold))
                 Text(error).foregroundStyle(LocusTheme.textSecondary)
-                Button("Try again") { Task { await inspector.refresh(backend: model.backend) } }
+                if let loadedAt = inspector.loadedAt {
+                    Text("Last updated \(loadedAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                }
+                Button(inspector.isLoading ? "Retrying…" : "Try again") { Task { await inspector.refresh(backend: model.backend) } }
                     .buttonStyle(.locus()).disabled(inspector.isLoading)
             }
             .font(.locus(size: 12))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10).background(LocusTheme.warning.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
             .accessibilityIdentifier("agentInspector.loadError")
         }
     }
 }
 
+/// Classifies persisted execution state for every activity surface. A received
+/// delivery is not necessarily a completed execution, and unknown states must
+/// never look like successes.
+enum AgentActivityState: Equatable {
+    case completed, running, waiting, attention, neutral
+
+    init(rawState: String) {
+        switch rawState {
+        case "completed": self = .completed
+        case "claiming", "dispatching", "planning", "running", "advancing", "awaiting_run": self = .running
+        case "pending", "queued": self = .waiting
+        case "failed", "interrupted", "paused", "waiting_permission", "waiting_dispatch_approval",
+             "waiting_approval", "waiting_computer": self = .attention
+        default: self = .neutral
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .completed: LocusTheme.success
+        case .running: LocusTheme.signalDeep
+        case .waiting, .neutral: LocusTheme.textSecondary
+        case .attention: LocusTheme.warning
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .completed: "checkmark.circle"
+        case .running: "arrow.triangle.2.circlepath"
+        case .waiting: "clock"
+        case .attention: "exclamationmark.circle"
+        case .neutral: "minus.circle"
+        }
+    }
+}
+
+private struct AgentRunStateLabel: View {
+    let rawState: String
+    private var state: AgentActivityState { AgentActivityState(rawState: rawState) }
+
+    var body: some View {
+        Label(AgentInspectorCopy.state(rawState), systemImage: state.symbol)
+            .font(.locus(size: 11, weight: .medium))
+            .foregroundStyle(state.color)
+            .accessibilityElement(children: .combine)
+    }
+}
+
 extension AgentInspectorCopy {
+    static func agentStatusTitle(_ status: AgentOverview.Status, vocabulary: Vocabulary = .events,
+                                 isRunning: Bool = false, sourceNeedsAttention: Bool = false) -> String {
+        if isRunning { return "Running" }
+        if sourceNeedsAttention || status.isWarning { return "Needs attention" }
+        if status == .fired { return "Completed" }
+        return status == .active ? "Ready" : status.title(for: vocabulary)
+    }
+
+    /// A receipt that failed or was cancelled cannot become successful merely
+    /// because its previous linked execution finished. Successful handoffs may
+    /// still have live or waiting work, so they use a reported execution state.
+    static func effectiveActivityState(deliveryState: String, runState: String?) -> String {
+        if ["failed", "interrupted", "cancelled", "skipped"].contains(deliveryState) {
+            return deliveryState
+        }
+        return runState?.nilIfEmpty ?? deliveryState
+    }
+
+    static func sourceNeedsAttention(definition: AgentDefinition?, connection: ConnectorConnection?) -> Bool {
+        guard let definition, definition.enabled, definition.trigger != nil else { return false }
+        guard let connection else { return true }
+        return !connection.enabled || connection.health.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "connected"
+    }
+
+    static func activityState(_ event: AgentOverview.Event) -> AgentActivityState {
+        if let delivery = event.delivery {
+            return AgentActivityState(rawState: effectiveActivityState(deliveryState: delivery.state, runState: delivery.runState))
+        }
+        // Schedule occurrence rows already expose their localized state title.
+        // Match the same formatter instead of treating every terminal item as
+        // a success. This also leaves future, unrecognized states neutral.
+        for state in ["completed", "running", "claiming", "queued", "failed", "interrupted", "paused",
+                      "waiting_permission", "waiting_computer", "cancelled", "skipped"]
+        where Self.state(state) == event.stateTitle {
+            return AgentActivityState(rawState: state)
+        }
+        return .neutral
+    }
+
     static func duration(_ run: OrchestrationRun) -> String? {
         guard let start = run.admittedAt, let end = run.completedAt,
               start.isFinite, end.isFinite, end >= start else { return nil }

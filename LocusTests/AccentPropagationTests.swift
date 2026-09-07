@@ -52,48 +52,34 @@ final class AccentPropagationTests: XCTestCase {
         super.tearDown()
     }
 
-    func testMarkdownArtifactChipFollowsAccentWithoutBeingRebuilt() throws {
-        // A list-item reference mounts the compact chip, whose kind icon is
-        // accent-tinted.
-        try assertMarkdownArtifactFollowsAccent(text: "- `notes.md`")
+    func testMarkdownListReferenceStaysNeutralWhenAccentChanges() throws {
+        // Ordinary references now remain inline; their code styling is neutral.
+        try assertMarkdownReferenceStaysNeutral(text: "- `notes.md`")
     }
 
-    func testListItemFileReferenceMountsAChipNotProse() throws {
-        // Same-length names, one resolving to a real workspace file and one
-        // not: if the chip failed to mount, both bullets would render as the
-        // identical pill-styled prose and the images could not differ.
+    func testResolvedFileReferenceKeepsInlineTextAndNavigation() throws {
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("locus-chip-mount-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
         try Data("notes".utf8).write(to: workspace.appendingPathComponent("notes.md"))
 
-        let lime = selection(.lime)
-        apply(lime)
-        let chip = mount(StableMarkdownHost(
-            accent: AccentBox(lime),
-            text: "- `notes.md`",
-            workspacePath: workspace.path
-        ))
-        let prose = mount(StableMarkdownHost(
-            accent: AccentBox(lime),
-            text: "- `notas.md`",
-            workspacePath: workspace.path
-        ))
-        let chipImage = try XCTUnwrap(snapshot(chip))
-        let proseImage = try XCTUnwrap(snapshot(prose))
-        XCTAssertGreaterThan(
-            differingPixels(chipImage, proseImage), 0,
-            "A resolvable list-item file reference must mount the chip's chrome"
-        )
+        let run = MarkdownInlineRun(text: "notes.md", style: .code)
+        let link = try XCTUnwrap(MarkdownLinkPolicy.renderedURL(for: run, workspacePath: workspace.path))
+        XCTAssertEqual(link.scheme, "locus-workspace")
+        let attributed = MarkdownNativeText.attributed([run], size: 14, weight: .regular,
+            color: LocusTheme.ink, lineSpacing: 4, inlineCodeSize: 13, workspacePath: workspace.path)
+        XCTAssertEqual(attributed.string, "notes.md")
+        XCTAssertEqual(attributed.attribute(.link, at: 0, effectiveRange: nil) as? URL, link)
+        XCTAssertNotNil(attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
     }
 
-    func testMarkdownArtifactCardFollowsAccentWithoutBeingRebuilt() throws {
-        // A top-level reference mounts the full card.
-        try assertMarkdownArtifactFollowsAccent(text: "`notes.md`")
+    func testMarkdownStandaloneReferenceStaysNeutralWhenAccentChanges() throws {
+        // A standalone reference also stays inline, without accent-tinted chrome.
+        try assertMarkdownReferenceStaysNeutral(text: "`notes.md`")
     }
 
-    private func assertMarkdownArtifactFollowsAccent(text: String) throws {
+    private func assertMarkdownReferenceStaysNeutral(text: String) throws {
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("locus-accent-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -130,13 +116,13 @@ final class AccentPropagationTests: XCTestCase {
         ))
         let rebuiltOnPink = try XCTUnwrap(snapshot(rebuilt))
 
-        XCTAssertGreaterThan(
+        XCTAssertEqual(
             differingPixels(onLime, onPink), 0,
-            "The mounted artifact tile kept the previous accent instead of following the change"
+            "A workspace reference must keep its neutral inline styling when the accent changes"
         )
         XCTAssertEqual(
             differingPixels(onPink, rebuiltOnPink), 0,
-            "A mounted artifact tile must match one built fresh under the same accent"
+            "A mounted reference must match one built fresh under the same accent"
         )
     }
 

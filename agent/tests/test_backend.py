@@ -5454,14 +5454,14 @@ def test_answer_contract_reaches_both_prompt_paths_but_not_just_chat(tmp_path):
     core = _core(tmp_path, [])
 
     work = core.system_message()["content"]
-    assert "A bare list of names, paths, or values is not an answer" in work
+    assert "scale detail to the request, not the number of tools used" in work
     assert "follows the locked answer contract" in work
 
-    assert "A bare list of names" not in core.system_message(mode="ask")["content"]
+    assert "attach_output_parts" not in core.system_message(mode="ask")["content"]
 
     # The native-prompt route drops the system message entirely, so the
     # contract has to ride in the developer layer or it never arrives.
-    assert "A bare list of names" in core._parity_developer_instructions()
+    assert "attach_output_parts" in core._parity_developer_instructions()
 
 
 def test_a_turn_that_works_and_says_nothing_gets_one_written_answer(tmp_path):

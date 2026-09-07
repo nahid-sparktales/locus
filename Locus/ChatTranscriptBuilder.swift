@@ -43,20 +43,24 @@ enum ChatTranscriptBuilder {
                     text: message.content,
                     assistantPhase: message.phase,
                     sourceItemID: message.itemID,
+                    responseParts: message.responseParts,
+                    reasoningFormat: message.reasoningFormat,
                     reasoningText: message.reasoning,
                     reasoningSections: message.reasoningSections,
+                    runID: message.runID,
                     historyIndex: index
                 )
             case "tool":
                 ChatBlock(
                     kind: .tool,
                     tool: ToolPayload(
-                        toolID: UUID().uuidString,
+                        toolID: message.itemID ?? UUID().uuidString,
                         tool: message.name ?? "tool",
                         summary: message.name ?? "tool",
                         detail: "",
                         status: .done,
-                        result: message.content
+                        result: message.content,
+                        activityLabel: message.activityLabel
                     ),
                     historyIndex: index
                 )

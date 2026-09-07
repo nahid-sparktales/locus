@@ -171,6 +171,33 @@ actor OutputsLibraryStore {
         return directory.appendingPathComponent("Snapshots/\(hash)/content\(ext.isEmpty ? "" : "." + ext)")
     }
 
+    /// Written once against exact producing-run provenance. Rendering an old
+    /// response never rebinds its card to whichever file is newest today.
+    func bindResponse(key: String, workspace: String, path: String, sessionID: String, runID: String) throws -> ResponseArtifactBinding? {
+        guard !sessionID.isEmpty, !runID.isEmpty else { return nil }
+        try open()
+        let metadataKey = "response-binding:" + Self.digest(Data(key.utf8))
+        if let saved = try strings("SELECT value FROM metadata WHERE key=?", [metadataKey]).first,
+           let binding = try? JSONDecoder().decode(ResponseArtifactBinding.self, from: Data(saved.utf8)) {
+            return binding
+        }
+        let root = Self.canonical(workspace)
+        guard let url = Self.containedURL(path, workspace: root) else { return nil }
+        let relativePath = String(url.path.dropFirst(root.count + 1))
+        guard let output = try list(workspace: root).first(where: { $0.target == relativePath }),
+              let version = output.versions.last(where: { $0.belongsTo(sessionID: sessionID, runID: runID) }) else { return nil }
+        let binding = ResponseArtifactBinding(outputID: output.id, versionID: version.id, path: relativePath, unavailableReason: version.unavailableReason)
+        let encoded = String(decoding: try JSONEncoder().encode(binding), as: UTF8.self)
+        try execute("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", [metadataKey, encoded])
+        return binding
+    }
+
+    func responseVersionAvailable(_ binding: ResponseArtifactBinding, workspace: String) throws -> Bool {
+        guard let output = try list(workspace: workspace).first(where: { $0.id == binding.outputID }),
+              let version = output.versions.first(where: { $0.id == binding.versionID }) else { return false }
+        return versionURL(output, version: version) != nil
+    }
+
     func versionURL(_ output: LibraryOutput, version: OutputVersion) -> URL? {
         guard let hash = version.hash else { return nil }
         let url = snapshotURL(hash: hash, target: output.target)

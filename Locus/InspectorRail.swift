@@ -10,6 +10,7 @@ import SwiftUI
 struct InspectorRail: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredTab: InspectorTab?
 
     /// Direct rail destinations stay one click away. The remaining workspace
@@ -28,6 +29,11 @@ struct InspectorRail: View {
                 railTab(.agent)
             }
             railTab(.plan)
+            if model.sidebarDestination == .agents {
+                railTab(.runs)
+            }
+            Rectangle().fill(LocusTheme.line).frame(width: 18, height: 1).padding(.vertical, 5)
+                .accessibilityHidden(true)
             railTab(.terminal)
             railTab(.preview)
             railTab(.notes)
@@ -46,7 +52,7 @@ struct InspectorRail: View {
     private var panelToggleButton: some View {
         let selected = !model.inspectorCollapsed
         return Button {
-            withAnimation(LocusMotion.spatial) {
+            withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                 model.toggleInspectorPanel()
             }
         } label: {
@@ -101,7 +107,7 @@ struct InspectorRail: View {
         let selected = !model.inspectorCollapsed && model.inspectorTab == tab
         let hovered = hoveredTab == tab
         return Button {
-            withAnimation(LocusMotion.spatial) {
+            withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                 model.toggleInspectorTab(tab)
             }
         } label: {
@@ -133,7 +139,7 @@ struct InspectorRail: View {
         }
         .buttonStyle(.locus())
         .onHover { isInside in hoveredTab = isInside ? tab : nil }
-        .help(tab.title)
+        .help(tab.help)
         .accessibilityLabel("\(tab.title) inspector")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityIdentifier("inspector.rail.\(tab.rawValue)")
@@ -142,7 +148,7 @@ struct InspectorRail: View {
     private var moreMenu: some View {
         Menu {
             Button(model.splitViewActive ? "Close Side Chat" : "Open Side Chat") {
-                withAnimation(LocusMotion.spatial) {
+                withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                     model.toggleSplitView()
                 }
             }
@@ -150,9 +156,9 @@ struct InspectorRail: View {
 
             Divider()
 
-            ForEach(Self.menuTabs) { tab in
+            ForEach(Self.menuTabs.filter { model.sidebarDestination != .agents || $0 != .runs }) { tab in
                 Button(menuTitle(for: tab)) {
-                    withAnimation(LocusMotion.spatial) {
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         model.selectInspectorTab(tab)
                     }
                 }
@@ -188,7 +194,7 @@ struct InspectorRail: View {
         if tab == .changes, gitWorkspace.changedFileCount > 0 {
             return "\(tab.title) (\(gitWorkspace.changedFileCount))"
         }
-        if tab == .runs { return "Team Runs" }
+        if tab == .runs { return "Run History" }
         if tab == .router { return "Model Router" }
         return tab.title
     }

@@ -209,8 +209,8 @@ struct InspectorAgentsTab: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("AGENTS.md")
                         .font(.locus(size: 12, weight: .bold, design: .monospaced))
-                    Text("Workspace instructions")
-                        .font(.locus(size: 8, weight: .medium))
+                    Text("Shared workspace guidance")
+                        .font(.locus(size: 11, weight: .medium))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("agents.content")
                 }
@@ -241,8 +241,8 @@ struct InspectorAgentsTab: View {
                 }
             }
 
-            Text("Give the coding agent durable project conventions, commands, boundaries, and verification steps.")
-                .font(.locus(size: 9))
+            Text("Project conventions and boundaries for every agent working in this workspace.")
+                .font(.locus(size: 12))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -252,13 +252,13 @@ struct InspectorAgentsTab: View {
                 Label("Project file", systemImage: "person.2")
                 Spacer(minLength: 0)
             }
-            .font(.locus(size: 8, weight: .medium))
+            .font(.locus(size: 11, weight: .medium))
             .foregroundStyle(LocusTheme.muted)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Loaded for every Work turn and stored as a project file")
 
-            Text("Keep secrets out. Commit the file when teammates should receive the same guidance.")
-                .font(.locus(size: 8))
+            Text("These instructions belong to the workspace. Configure an individual agent’s purpose and trigger in Manage Agents.")
+                .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement()
@@ -267,7 +267,7 @@ struct InspectorAgentsTab: View {
 
             if let error = agentInstructions.agentInstructionsError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.locus(size: 8, weight: .medium))
+                    .font(.locus(size: 11, weight: .medium))
                     .foregroundStyle(LocusTheme.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agents.error")
@@ -289,7 +289,7 @@ struct InspectorAgentsTab: View {
                     systemImage: agentInstructions.agentInstructionsHasUnsavedChanges
                         ? "circle.fill" : "checkmark.circle.fill"
                 )
-                .font(.locus(size: 8, weight: .semibold))
+                .font(.locus(size: 11, weight: .semibold))
                 .foregroundStyle(
                     agentInstructions.agentInstructionsHasUnsavedChanges
                         ? LocusTheme.warning
@@ -310,7 +310,7 @@ struct InspectorAgentsTab: View {
             ))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .tint(LocusTheme.accentAction)
-                .font(.locus(size: 10, design: .monospaced))
+                .font(.locus(size: 12, design: .monospaced))
                 .lineSpacing(2)
                 .scrollContentBackground(.hidden)
                 .padding(8)
@@ -319,15 +319,15 @@ struct InspectorAgentsTab: View {
                 .accessibilityIdentifier("agents.editor")
 
             HStack(spacing: 10) {
-                Text(model.isBusy ? "Available after the current run" : "Applies to the next Work turn")
-                    .font(.locus(size: 8))
+                Text(model.isBusy ? "Save after this run" : model.hasPendingPermission ? "Resolve the pending request to save" : "Applies on the next Work turn")
+                    .font(.locus(size: 11))
                     .foregroundStyle(LocusTheme.muted)
                 Spacer(minLength: 4)
                 Button("Revert") {
                     agentInstructions.revertAgentInstructions()
                 }
                 .buttonStyle(.locus())
-                .font(.locus(size: 9, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .disabled(!agentInstructions.agentInstructionsHasUnsavedChanges || agentInstructions.isSavingAgentInstructions)
                 .accessibilityIdentifier("agents.revert")
                 Button {
@@ -340,7 +340,7 @@ struct InspectorAgentsTab: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(LocusTheme.accentAction)
                 .controlSize(.small)
                 .disabled(
                     !agentInstructions.agentInstructionsHasUnsavedChanges
@@ -348,6 +348,7 @@ struct InspectorAgentsTab: View {
                         || model.isBusy
                         || model.hasPendingPermission
                 )
+                .help(model.isBusy ? "Wait for the current run to finish before saving" : model.hasPendingPermission ? "Resolve the pending approval before saving" : "Save workspace instructions")
                 .accessibilityIdentifier("agents.save")
             }
             .padding(.horizontal, 13)
@@ -375,7 +376,7 @@ struct InspectorAgentsTab: View {
             }
         } label: {
             Label("Starter prompts", systemImage: "plus.circle")
-                .font(.locus(size: 9, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -392,7 +393,7 @@ struct InspectorAgentsTab: View {
             Text("No AGENTS.md in this workspace")
                 .font(.locus(size: 11, weight: .bold))
             Text("Create one at the workspace root, then add the instructions the agent should follow while planning, editing, and verifying work.")
-                .font(.locus(size: 9))
+                .font(.locus(size: 12))
                 .foregroundStyle(LocusTheme.muted)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
@@ -403,7 +404,7 @@ struct InspectorAgentsTab: View {
                 Label("Create AGENTS.md", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.ink)
+            .tint(LocusTheme.accentAction)
             .controlSize(.small)
             .disabled(model.isBusy || model.hasPendingPermission || agentInstructions.isSavingAgentInstructions)
             .accessibilityIdentifier("agents.create")
@@ -420,7 +421,7 @@ struct InspectorAgentsTab: View {
                 }
             } label: {
                 Text("Create from a starter")
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

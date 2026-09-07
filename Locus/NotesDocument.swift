@@ -356,14 +356,21 @@ final class NotesStore: ObservableObject {
     static func create(
         title: String,
         attributed: NSAttributedString = NSAttributedString(string: ""),
+        documentID: NotesDocumentID? = nil,
         applicationSupport: URL = applicationSupportDirectory
     ) throws -> NotesStore {
         let title = try validatedTitle(title)
         guard attributed.string.count <= maximumCharacters else {
             throw NotebookStorageError.tooLong
         }
-        let store = shared(documentID: .standalone(), scope: .global,
-                           applicationSupport: applicationSupport)
+        let identity = documentID ?? .standalone()
+        guard identity.isValid, identity.isStandalone else { throw NotebookStorageError.invalidDocument }
+        let store = shared(documentID: identity, scope: .global, applicationSupport: applicationSupport)
+        // Stable response-draft identities must reopen existing notes, including
+        // deletion tombstones, rather than overwrite or resurrect their content.
+        if documentID != nil, (FileManager.default.fileExists(atPath: store.fileURL.path) || FileManager.default.fileExists(atPath: store.styledFileURL.path)) || store.lifecycle != .active {
+            return store
+        }
         store.publishesContentChanges = false
         do {
             try store.catalog.reload()

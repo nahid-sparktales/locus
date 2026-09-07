@@ -110,15 +110,15 @@ extension AppModel {
         }
     }
 
-    /// Opens Configure Agent straight into an empty trigger editor. The first
-    /// field there is the kind, so a person who wanted a price alert is one
-    /// control away rather than back at the sheet's creation cards.
-    func presentNewAgent(kind: EventTriggerKind = .event) {
-        configureAgentPendingTriggerEdit = PendingEventTriggerEdit(
-            trigger: nil,
-            targetSessionID: currentSessionID,
-            triggerKind: kind
-        )
+    /// New Agents begin with an explicit choice of what starts their work.
+    /// A kind supplied by a contextual action still opens that editor directly.
+    func presentNewAgent(kind: EventTriggerKind? = nil) {
+        configureAgentPendingCreation = kind == nil
+        if let kind {
+            configureAgentPendingTriggerEdit = PendingEventTriggerEdit(
+                trigger: nil, targetSessionID: currentSessionID, triggerKind: kind
+            )
+        }
         presentConfigureAgent(draftText: draftText)
     }
 

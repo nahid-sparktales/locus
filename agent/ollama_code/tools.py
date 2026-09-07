@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import USER_AGENT, proxy
+from .response_parts import ATTACH_OUTPUT_PARTS_SCHEMA
 
 MAX_OUTPUT = 30_000
 MAX_WEB_FETCH_BYTES = 2 * 1024 * 1024
@@ -46,7 +47,7 @@ IGNORE_DIRS = {
 #: Read-only tools that never require permission.
 SAFE_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
-    "ask_user_question",
+    "ask_user_question", "attach_output_parts",
     # Asking the user a question mutates nothing, so it never prompts.
     "ask_question",
     "submit_workflow_result", "get_goal", "update_goal",
@@ -77,6 +78,9 @@ class ToolContext:
 
     todos: list[dict[str, str]] = field(default_factory=list)
     plan_document: dict[str, Any] | None = None
+    response_parts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    response_parts_enabled: bool = True
+    response_parts_allow_workspace: bool = True
     #: The question this turn asked the user, surfaced as a popup by the app.
     user_question: dict[str, Any] | None = None
     #: Structured output from the current automation Agent step. The service
@@ -892,6 +896,21 @@ def _impl_git_diff(args: dict[str, Any], ctx: ToolContext) -> str:
     return _run_git(ctx, *git_args)
 
 
+def _impl_attach_output_parts(args: dict[str, Any], ctx: ToolContext) -> str:
+    from .response_parts import MAX_DOCUMENT_BYTES, MAX_PARTS, ResponsePartsError, normalize_parts
+    if not ctx.response_parts_enabled:
+        return "Error: presentation output is unavailable to this worker or mode."
+    try:
+        parts = normalize_parts(args.get("parts"), ctx.cwd, allow_workspace=ctx.response_parts_allow_workspace)
+        updated = {**ctx.response_parts, **{part["id"]: part for part in parts}}
+        if len(updated) > MAX_PARTS or len(json.dumps(updated, ensure_ascii=False).encode()) > MAX_DOCUMENT_BYTES:
+            raise ResponsePartsError("staged output exceeds the response document limit")
+        ctx.response_parts = updated
+        return f"Staged {len(parts)} output parts. They will follow your final prose; do not repeat their contents."
+    except (ResponsePartsError, OSError, RuntimeError, ValueError) as error:
+        return f"Error: {error}"
+
+
 def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     title = str(args.get("title") or "Implementation plan").strip()[:160]
     summary = str(args.get("summary") or "").strip()[:4_000]
@@ -1268,6 +1287,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_status": _impl_git_status,
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
+    "attach_output_parts": _impl_attach_output_parts,
     "submit_workflow_result": _impl_submit_workflow_result,
     "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
@@ -1683,5 +1703,7 @@ ASK_QUESTION_SCHEMA = _schema(
     },
     ["questions"],
 )
+
+TOOL_SCHEMAS.append(ATTACH_OUTPUT_PARTS_SCHEMA)
 
 TOOL_NAMES = [s["function"]["name"] for s in TOOL_SCHEMAS]

@@ -1071,7 +1071,7 @@ final class AgentOverviewTests: XCTestCase {
         model.sidebarDestination = .agents
         model.newChatForSidebarDestination()
         XCTAssertTrue(model.configureAgentPresented)
-        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(model.configureAgentTab, .agents)
         XCTAssertNil(model.configureAgentPendingTriggerEdit)
 
         // With an agent selected, the same action stays in Agents and starts

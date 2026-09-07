@@ -403,7 +403,8 @@ class ChatService:
                 except (RunStoreError, sqlite3.DatabaseError, OSError):
                     pass
         persisted_types = {
-            "message_start", "message_end", "tool_call_proposed", "permission_request",
+            "message_start", "message_end", "assistant_item_start", "assistant_item_end",
+            "tool_call_proposed", "permission_request",
             "question_required", "question_resolved", "question_ready",
             "permission_resolved", "computer_action_resolved",
             "tool_result", "steer_ack", "steer_applied", "computer_action_request",

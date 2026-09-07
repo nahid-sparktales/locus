@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+/// Agents own their instructions, trigger and conversations. Connections are
+/// shared infrastructure; runtime limits apply across the whole application.
 struct ConfigureAgentView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -8,1002 +10,812 @@ struct ConfigureAgentView: View {
     @ObservedObject var automation: EventAutomationModel
     @ObservedObject var schedule: ScheduleModel
     @State private var connectionSheet: ConnectorKind?
-    @State private var selection: AgentConfigurationReference?
+    @State private var chosenCreationKind: AgentConfigurationKind?
+    @State private var selectionID: String?
+    @State private var search = ""
+    @State private var agentFilter = "all"
+    @State private var historyAgentID = ""
+    @State private var historyFilter: AgentActivityFilter = .all
     @State private var pendingConnectionRemoval: ConnectorConnection?
+    @State private var pendingAgentRemoval: AgentDefinition?
     @State private var knownConfigurationIDs: Set<String>?
+    @State private var isLoadingActivity = false
+    @State private var initialRefreshFinished = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            tabBar
-            Group {
-                switch app.configureAgentTab {
-                case .configurations: configurationsTab
-                case .agents: agentsTab
-                case .sources: sourcesTab
-                case .runHistory: runHistoryTab
+            HStack(spacing: 0) {
+                navigation
+                Divider()
+                VStack(spacing: 0) {
+                    if let error = automation.lastError ?? schedule.lastLoadError {
+                        errorBanner(error).padding([.horizontal, .top], 20)
+                    }
+                    Group {
+                        switch app.configureAgentTab {
+                        case .agents: agentsTab
+                        case .runHistory: runHistoryTab
+                        case .sources: sourcesTab
+                        case .configurations: runtimeTab
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .background(LocusTheme.surfaceCanvas)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .transition(.opacity)
         }
-        .frame(minWidth: 720, idealWidth: 860, minHeight: 620, idealHeight: 720)
+        .frame(minWidth: 860, idealWidth: 1000, minHeight: 600, idealHeight: 740)
         .background(LocusTheme.panel)
+        .tint(LocusTheme.accentAction)
         .animation(reduceMotion ? nil : LocusMotion.content, value: app.configureAgentTab)
-        .accessibilityIdentifier("configureAgent.sheet")
         .accessibilityElement(children: .contain)
-        .sheet(item: $connectionSheet) { kind in
-            ConnectorSetupView(kind: kind, automation: automation)
-        }
+        .accessibilityIdentifier("configureAgent.sheet")
+        .sheet(isPresented: $app.configureAgentCreationPresented, onDismiss: openChosenEditor) { creationSheet }
+        .sheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
         .sheet(isPresented: Binding(
             get: { schedule.scheduleEditorDraft != nil },
             set: { if !$0 { schedule.scheduleEditorDraft = nil } }
         )) {
             if let draft = schedule.scheduleEditorDraft {
-                ScheduleEditorView(draft: draft)
-                    .environmentObject(app)
+                ScheduleEditorView(draft: draft).environmentObject(app)
             }
         }
         .sheet(item: $automation.editorDraft) { draft in
-            EventTriggerEditorView(
-                draft: draft,
-                automation: automation,
-                sessions: sessionCatalog.snapshot.sessions,
-                currentModel: app.agentRouteModel
-            )
+            EventTriggerEditorView(draft: draft, automation: automation,
+                sessions: sessionCatalog.snapshot.sessions, currentModel: app.agentRouteModel)
         }
-        .sheet(item: $automation.webhookSetup) { setup in
-            WebhookSecretView(setup: setup)
-        }
-        .alert(
-            "Remove \(pendingConnectionRemoval?.displayName ?? "source")?",
-            isPresented: Binding(
-                get: { pendingConnectionRemoval != nil },
-                set: { if !$0 { pendingConnectionRemoval = nil } }
-            )
-        ) {
+        .sheet(item: $automation.webhookSetup) { WebhookSecretView(setup: $0) }
+        .alert("Remove \(pendingConnectionRemoval?.displayName ?? "connection")?",
+            isPresented: Binding(get: { pendingConnectionRemoval != nil },
+                                 set: { if !$0 { pendingConnectionRemoval = nil } })) {
             Button("Cancel", role: .cancel) { pendingConnectionRemoval = nil }
             Button("Remove", role: .destructive) {
-                if let connection = pendingConnectionRemoval {
-                    automation.deleteConnection(connection)
-                }
+                if let connection = pendingConnectionRemoval { automation.deleteConnection(connection) }
                 pendingConnectionRemoval = nil
             }
-        } message: {
-            Text("Its Keychain credentials and local settings will be removed. Delivery history is kept.")
-        }
+        } message: { Text("Its credentials and local settings will be removed. Activity history is kept.") }
+        .alert("Delete \(pendingAgentRemoval?.name ?? "Agent")?",
+            isPresented: Binding(get: { pendingAgentRemoval != nil },
+                                 set: { if !$0 { pendingAgentRemoval = nil } })) {
+            Button("Cancel", role: .cancel) { pendingAgentRemoval = nil }
+            Button("Delete Agent", role: .destructive) {
+                if let definition = pendingAgentRemoval { app.deleteAgent(definition) }
+                pendingAgentRemoval = nil
+            }
+        } message: { Text("This removes its trigger. Existing chats and activity history are kept.") }
         .task {
             await refresh()
-            knownConfigurationIDs = Set(configurationReferences.map(\.id))
+            initialRefreshFinished = true
+            knownConfigurationIDs = Set(references.map(\.id))
             normalizeSelection()
             applyRequestedFocus()
         }
         .onAppear { app.mountPendingConfigureAgentEditor() }
         .onChange(of: app.configureAgentFocusConfigurationID) { applyRequestedFocus() }
-        .onChange(of: app.configureAgentPendingTriggerEdit) {
-            app.mountPendingConfigureAgentEditor()
-        }
-        .onChange(of: configurationReferences.map(\.id)) { _, newValue in
-            let currentIDs = Set(newValue)
-            defer { knownConfigurationIDs = currentIDs }
-            guard let knownConfigurationIDs else {
-                normalizeSelection()
-                return
-            }
-            if let newID = currentIDs.subtracting(knownConfigurationIDs).first,
-               let reference = configurationReferences.first(where: { $0.id == newID }) {
-                selection = reference
+        .onChange(of: app.configureAgentPendingTriggerEdit) { app.mountPendingConfigureAgentEditor() }
+        .onChange(of: app.configureAgentPendingCreation) { app.mountPendingConfigureAgentEditor() }
+        .onChange(of: references.map(\.id)) { _, ids in
+            defer { knownConfigurationIDs = Set(ids) }
+            if let knownConfigurationIDs,
+               let added = Set(ids).subtracting(knownConfigurationIDs).sorted().first {
+                selectionID = added
+                search = ""
+                agentFilter = "all"
                 app.configureAgentTab = .agents
-            } else {
-                normalizeSelection()
+            } else { normalizeSelection() }
+        }
+        .task(id: app.configureAgentTab) {
+            if app.configureAgentTab == .runHistory { await refreshActivity() }
+        }
+        .task(id: selectionID) {
+            if let task = selectedDefinition?.schedule {
+                await schedule.refreshOccurrences(for: task, announceFailure: false)
             }
         }
     }
 
     private var header: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "gearshape.2.fill")
-                .font(.locus(size: 18, weight: .semibold))
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.locus(size: 17, weight: .semibold))
                 .foregroundStyle(LocusTheme.signalDeep)
                 .frame(width: 38, height: 38)
-                .background(LocusTheme.signal.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
             VStack(alignment: .leading, spacing: 3) {
-                Text("Manage Agents")
-                    .font(.locus(size: 17, weight: .bold))
-                Text("Choose what starts the work, where it runs, and what it may do.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                Text("Manage Agents").font(.locus(size: 18, weight: .bold))
+                Text("Create, configure and follow your Agents.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             }
-            Spacer(minLength: 16)
-            Button {
-                Task { await refresh() }
-            } label: {
+            Spacer()
+            Button { Task { await refresh(); if app.configureAgentTab == .runHistory { await refreshActivity() } } } label: {
                 if automation.isRefreshing || schedule.isRefreshingSchedules {
                     ProgressView().controlSize(.small).frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: "arrow.clockwise").frame(width: 18, height: 18)
-                }
+                } else { Image(systemName: "arrow.clockwise").frame(width: 18, height: 18) }
             }
             .buttonStyle(.locus(.icon))
-            .help("Refresh configurations")
-            .accessibilityLabel("Refresh configurations")
+            .disabled(automation.isRefreshing || schedule.isRefreshingSchedules)
+            .help("Refresh Agents and activity").accessibilityLabel("Refresh Agents")
             .accessibilityIdentifier("configureAgent.refresh")
             Button("Done") { app.dismissConfigureAgent() }
-                .keyboardShortcut(.cancelAction)
-                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.cancelAction).buttonStyle(.bordered)
                 .accessibilityIdentifier("configureAgent.close")
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 17)
-        .locusSurface(.toolbar)
+        .padding(.horizontal, 22).padding(.vertical, 17)
     }
 
-    private var tabBar: some View {
-        HStack(spacing: 3) {
-            ForEach(ConfigureAgentTab.allCases) { tab in
-                Button {
-                    app.configureAgentTab = tab
-                } label: {
-                    Text(tab.title)
-                        .font(.locus(size: 9, weight: app.configureAgentTab == tab
-                            ? .bold : .semibold))
-                        .frame(maxWidth: .infinity, minHeight: 26)
-                        .background(app.configureAgentTab == tab
-                            ? LocusTheme.white : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-                    .buttonStyle(.locus(.quiet))
-                    .accessibilityValue(app.configureAgentTab == tab ? "Selected" : "Not selected")
-                    .accessibilityIdentifier("configureAgent.tab.\(tab.rawValue)")
-            }
-        }
-        .frame(maxWidth: 520)
-        .padding(3)
-        .background(LocusTheme.paperDeep.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line)
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Configure Agent section")
-        .accessibilityIdentifier("configureAgent.tabs")
-    }
-
-    private var configurationsTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if !app.configureAgentDraftSuggestion.isEmpty {
-                    draftSuggestionBanner
-                }
-
-                eventProcessingCard
-
-                VStack(alignment: .leading, spacing: 10) {
-                    sectionHeading(
-                        "Start something new",
-                        detail: "Create a focused rule for when this agent should begin working."
-                    )
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 190), spacing: 12)],
-                        spacing: 12
-                    ) {
-                        creationCard(
-                            kind: .schedule,
-                            detail: "Run once or repeat on a schedule."
-                        ) { app.presentScheduleEditor() }
-                        creationCard(
-                            kind: .event,
-                            detail: "React to Gmail, Telegram, or a signed webhook."
-                        ) {
-                            automation.presentEditor(
-                                targetSessionID: app.currentSessionID,
-                                triggerKind: .event
-                            )
-                        }
-                        creationCard(
-                            kind: .price,
-                            detail: "Watch a stock or crypto threshold."
-                        ) {
-                            automation.presentEditor(
-                                targetSessionID: app.currentSessionID,
-                                triggerKind: .price
-                            )
+    private var navigation: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach([ConfigureAgentTab.agents, .runHistory, .sources, .configurations]) { tab in
+                Button { app.configureAgentTab = tab } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: tab.symbol).frame(width: 18)
+                        Text(tab.title).font(.locus(size: 11, weight: .semibold))
+                        Spacer(minLength: 0)
+                        if tab == .agents {
+                            Text("\(references.count)").font(.locus(size: 8)).monospacedDigit()
+                                .foregroundStyle(LocusTheme.muted)
                         }
                     }
+                    .padding(.horizontal, 10).frame(height: 36)
+                    .background(app.configureAgentTab == tab ? LocusTheme.signal.opacity(0.10) : .clear,
+                                in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(app.configureAgentTab == tab ? LocusTheme.ink : LocusTheme.inkSoft)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.locus(.quiet))
+                .accessibilityAddTraits(app.configureAgentTab == tab ? .isSelected : [])
+                .accessibilityValue(app.configureAgentTab == tab ? "Selected" : "Not selected")
+                .accessibilityIdentifier("configureAgent.tab.\(tab.rawValue)")
             }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 22)
+            Spacer()
+            Divider().padding(.vertical, 8)
+            Label("Runs on this Mac", systemImage: "desktopcomputer")
+                .font(.locus(size: 8, weight: .medium)).foregroundStyle(LocusTheme.muted)
+            Text("Keep Locus open for automatic work.")
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(12).frame(width: 170)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("configureAgent.center")
+        .accessibilityLabel("Agent navigation").accessibilityIdentifier("configureAgent.tabs")
     }
 
     private var agentsTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    sectionHeading(
-                        "Your configurations",
-                        detail: "Schedules, incoming events, and price alerts in one place."
-                    )
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                sectionHeading("Agents", detail: "An Agent is saved instructions, a trigger, and a place to work.")
+                Spacer(minLength: 10)
+                Button { app.configureAgentCreationPresented = true } label: {
+                    Label("New Agent", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent).accessibilityIdentifier("configureAgent.newAgent")
+            }.padding(20)
+            if !app.configureAgentDraftSuggestion.isEmpty {
+                HStack {
+                    Label("Use your current request as an Agent’s instructions", systemImage: "text.bubble")
+                        .font(.locus(size: 9))
                     Spacer()
-                    Text("\(configurationReferences.count)")
-                        .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                    Button("Create from request") { app.configureAgentCreationPresented = true }
                 }
-
-                if let error = automation.lastError, !error.isEmpty {
-                    errorBanner(error)
-                }
-
-                if configurationReferences.isEmpty {
-                    ContentUnavailableView(
-                        "No Agents Yet",
-                        systemImage: "gearshape.2",
-                        description: Text(
-                            "Open Configurations to configure your first agent."
-                        )
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .locusCard(radius: 12)
-                } else {
-                    LazyVStack(spacing: 10) {
-                        ForEach(schedule.scheduledTasks) { task in
-                            TimeTriggerRow(
-                                task: task,
-                                selected: selection?.id == "schedule:\(task.id)",
-                                onSelect: { selectSchedule(task) },
-                                onEdit: { app.presentScheduleEditor(task: task) },
-                                onRun: { schedule.runScheduleNow(task) },
-                                onToggle: {
-                                    schedule.setScheduleEnabled(task, enabled: !task.enabled)
-                                },
-                                onDelete: { schedule.deleteSchedule(task) }
-                            )
-                        }
-                        ForEach(automation.triggers) { trigger in
-                            EventTriggerRow(
-                                trigger: trigger,
-                                connection: automation.connections.first {
-                                    $0.id == trigger.connectionID
-                                },
-                                targetChat: sessionCatalog.snapshot
-                                    .sessionsByID[trigger.targetSessionID]?
-                                    .displayTitle ?? "Missing chat",
-                                selected: selection?.id == configurationID(for: trigger),
-                                onSelect: { selectTrigger(trigger) },
-                                onEdit: {
-                                    automation.presentEditor(
-                                        trigger: trigger,
-                                        targetSessionID: trigger.targetSessionID,
-                                        isDedicatedAgent: sessionCatalog.snapshot
-                                            .sessionsByID[trigger.targetSessionID]?
-                                            .isAgentChat == true
-                                    )
-                                },
-                                onToggle: {
-                                    automation.setTrigger(trigger, enabled: !trigger.enabled)
-                                },
-                                onRearm: { automation.rearm(trigger) },
-                                onDelete: { automation.deleteTrigger(trigger) }
-                            )
-                        }
+                .padding(12).background(LocusTheme.signal.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+                .padding([.horizontal, .bottom], 20)
+                .accessibilityIdentifier("configureAgent.draftSuggestion")
+            }
+            if !initialRefreshFinished && references.isEmpty {
+                loadingState("Loading Agents…")
+            } else if references.isEmpty {
+                VStack(spacing: 14) {
+                    ContentUnavailableView("Your first Agent starts here", systemImage: "sparkles",
+                        description: Text("Give it instructions and choose when it should work. Each Agent keeps its own conversations and activity."))
+                    Button("Create Agent") { app.configureAgentCreationPresented = true }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("configureAgent.empty.create")
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: 0) {
+                    agentList
+                    Divider()
+                    if let definition = selectedDefinition {
+                        agentDetail(definition)
+                    } else {
+                        ContentUnavailableView("Choose an Agent", systemImage: "sparkles",
+                            description: Text("See its instructions, trigger, access and recent activity."))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 22)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("configureAgent.agents")
+        .accessibilityElement(children: .contain).accessibilityIdentifier("configureAgent.agents")
+    }
+
+    private var agentList: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                TextField("Find an Agent", text: $search).textFieldStyle(.plain)
+                    .accessibilityIdentifier("configureAgent.search")
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.locus(.icon)).accessibilityLabel("Clear Agent search")
+                }
+            }.padding(9).background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 7))
+            Picker("Filter Agents", selection: $agentFilter) {
+                Text("All Agents").tag("all")
+                Text("Enabled").tag("enabled")
+                Text("Paused").tag("paused")
+                Text("Needs attention").tag("attention")
+            }.labelsHidden().accessibilityIdentifier("configureAgent.filter")
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(filteredReferences) { reference in
+                        if let definition = definition(for: reference) {
+                            agentListRow(reference, definition: definition)
+                        }
+                    }
+                    if filteredReferences.isEmpty {
+                        Text("No matching Agents").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).padding(.vertical, 24)
+                        Button("Clear filters") { search = ""; agentFilter = "all" }.buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+        .padding(12).frame(width: 230)
+    }
+
+    private func agentListRow(_ reference: AgentConfigurationReference, definition: AgentDefinition) -> some View {
+        let value = overview(definition)
+        return Button { selectionID = reference.id } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: reference.kind.symbol)
+                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 20, height: 24)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(reference.title).font(.locus(size: 11, weight: .semibold)).lineLimit(2)
+                    HStack(spacing: 5) {
+                        Circle().fill(statusColor(value)).frame(width: 5, height: 5)
+                        Text(statusTitle(value)).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(selectionID == reference.id ? LocusTheme.signal.opacity(0.11) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus(.quiet))
+        .accessibilityAddTraits(selectionID == reference.id ? .isSelected : [])
+        .accessibilityLabel("\(reference.title), \(statusTitle(value)), \(reference.kind.title)")
+        .accessibilityIdentifier("configureAgent.\(reference.kind == .schedule ? "timeTrigger" : "eventTrigger").\(reference.configurationID)")
+    }
+
+    private func agentDetail(_ definition: AgentDefinition) -> some View {
+        let value = overview(definition)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top) {
+                        Text(value.name).font(.locus(size: 19, weight: .bold)).textSelection(.enabled)
+                        Spacer(minLength: 8)
+                        Menu {
+                            Button("Delete Agent…", role: .destructive) { pendingAgentRemoval = definition }
+                        } label: { Image(systemName: "ellipsis") }
+                        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Agent actions")
+                    }
+                    Label(statusTitle(value), systemImage: value.runningChatCount > 0 ? "circle.dotted" : "circle.fill")
+                        .font(.locus(size: 9, weight: .medium)).foregroundStyle(statusColor(value))
+                        .accessibilityIdentifier("configureAgent.detail.status")
+                    Text(value.status.detail(for: value.vocabulary))
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    detailActions(definition, overview: value)
+                }
+                if let error = value.lastError {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label("Needs attention", systemImage: "exclamationmark.triangle")
+                            .font(.locus(size: 10, weight: .semibold))
+                        Text(error).font(.locus(size: 9)).textSelection(.enabled)
+                        Button("Inspect activity") { showHistory(definition) }.buttonStyle(.bordered)
+                    }
+                    .foregroundStyle(LocusTheme.warning).padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(LocusTheme.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                }
+                Divider()
+                detailSection("Instructions", symbol: "text.alignleft") {
+                    Text(value.instruction.isEmpty ? "No instructions saved. Edit this Agent to add them." : value.instruction)
+                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.inkSoft)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                Divider()
+                detailSection("Trigger", symbol: definition.isSchedule ? "calendar.badge.clock" : "bolt") {
+                    Text(value.summary).font(.locus(size: 10, weight: .medium))
+                    if let trigger = definition.trigger {
+                        let connection = automation.connections.first { $0.id == trigger.connectionID }
+                        Text(connection.map { "Connection · \($0.enabled ? $0.health.capitalized : "Disabled")" } ?? "Source connection is missing. Edit this Agent to choose another.")
+                            .font(.locus(size: 9)).foregroundStyle(connectionNeedsAttention(value) ? LocusTheme.warning : LocusTheme.muted)
+                    }
+                    ForEach(value.filters, id: \.self) { filter in
+                        Text(filter).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                    if let task = definition.schedule {
+                        Text(task.enabled
+                             ? (task.nextRunDate.map { "Next run · \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "No upcoming run")
+                             : "Schedule paused — automatic runs are off")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                    if let price = value.priceState { Text(price).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted) }
+                    if let date = value.lastEventAt {
+                        Text("Last triggered · \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                Divider()
+                detailSection("Access & environment", symbol: "lock.shield") {
+                    ForEach(value.facts.filter { !["Created", "Next run", "Source", "Connection"].contains($0.label) }) { fact in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(fact.label).foregroundStyle(LocusTheme.muted)
+                            Spacer(minLength: 4)
+                            Text(fact.value).multilineTextAlignment(.trailing)
+                                .foregroundStyle(fact.isWarning ? LocusTheme.warning : LocusTheme.inkSoft)
+                        }.font(.locus(size: 9))
+                    }
+                    Text(definition.isSchedule
+                         ? "Uses the app’s permission policy when a run starts. Approvals pause the run and notify you."
+                         : "File changes, commands and external actions follow Locus’s shared approval policy. Connected services above are the ones this trigger may act through.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    Text("Runs on this Mac while Locus is open.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }
+                Divider()
+                detailSection("Recent activity", symbol: "clock.arrow.circlepath") {
+                    let records = activityRecords.filter { $0.agent.id == AgentInspectorAgent(definition).id }
+                    if let record = records.first {
+                        activityRow(record)
+                    } else {
+                        Text("No recorded runs yet. Activity appears when this Agent is triggered.")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                    Button("View activity") { showHistory(definition) }
+                        .buttonStyle(.locus()).foregroundStyle(LocusTheme.signalDeep)
+                        .accessibilityIdentifier("configureAgent.detail.activity")
+                }
+            }.padding(22)
+        }.accessibilityIdentifier("configureAgent.detail")
+    }
+
+    private func detailActions(_ definition: AgentDefinition, overview: AgentOverview) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 7) { primaryDetailActions(definition); secondaryDetailActions(definition, overview: overview) }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) { primaryDetailActions(definition) }
+                HStack(spacing: 7) { secondaryDetailActions(definition, overview: overview) }
+            }
+        }.padding(.top, 5)
+    }
+
+    @ViewBuilder private func primaryDetailActions(_ definition: AgentDefinition) -> some View {
+        Button("Open Agent") {
+            app.dismissConfigureAgent()
+            app.selectAgent(AgentInspectorAgent(definition))
+        }.buttonStyle(.borderedProminent).accessibilityIdentifier("configureAgent.detail.open")
+        Button("Edit") {
+            if let task = definition.schedule { app.presentScheduleEditor(task: task) }
+            else if let trigger = definition.trigger {
+                automation.presentEditor(trigger: trigger, targetSessionID: trigger.targetSessionID,
+                    isDedicatedAgent: sessionCatalog.snapshot.sessionsByID[trigger.targetSessionID]?.isAgentChat == true)
+            }
+        }.buttonStyle(.bordered).accessibilityIdentifier("configureAgent.detail.edit")
+    }
+
+    @ViewBuilder private func secondaryDetailActions(_ definition: AgentDefinition, overview: AgentOverview) -> some View {
+        if definition.isSchedule {
+            Button("Run now") { app.runAgentNow(definition) }.buttonStyle(.bordered)
+                .accessibilityIdentifier("configureAgent.detail.runNow")
+        }
+        if overview.canRearm, let trigger = definition.trigger {
+            Button("Re-arm") { automation.rearm(trigger) }.buttonStyle(.bordered)
+        }
+        Button(definition.enabled ? "Pause" : "Resume") {
+            app.setAgentEnabled(definition, enabled: !definition.enabled)
+        }.buttonStyle(.bordered).disabled(app.isChangingAgentEnabled(definition))
+            .help("Pausing stops automatic starts. A run already in progress can continue.")
+            .accessibilityIdentifier("configureAgent.detail.toggle")
+    }
+
+    private func detailSection<Content: View>(_ title: String, symbol: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: symbol).font(.locus(size: 11, weight: .semibold))
+            content()
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var runHistoryTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeading("Activity", detail: "Recent scheduled runs and incoming events, together. Inspect a record for actions, outputs and errors.")
+            HStack {
+                Picker("Agent", selection: $historyAgentID) {
+                    Text("All Agents").tag("")
+                    ForEach(references) { Text($0.title).tag($0.id) }
+                }.labelsHidden().frame(maxWidth: 250)
+                    .accessibilityIdentifier("configureAgent.history.configuration")
+                Spacer()
+                Picker("Status", selection: $historyFilter) {
+                    ForEach(AgentActivityFilter.allCases) { Text($0.title).tag($0) }
+                }.labelsHidden().frame(width: 165).accessibilityIdentifier("configureAgent.history.status")
+            }
+            Divider()
+            if !schedule.occurrenceLoadErrors.isEmpty {
+                errorBanner("Some scheduled activity couldn’t be loaded. Refresh to try again.")
+            }
+            if isLoadingActivity && activityRecords.isEmpty { loadingState("Loading activity…") }
+            else if filteredActivity.isEmpty {
+                ContentUnavailableView(activityRecords.isEmpty ? "No activity yet" : "No matching activity",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text(activityRecords.isEmpty
+                        ? "When a schedule runs or an event arrives, its progress and result appear here."
+                        : "Choose another Agent or status to see more activity."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(filteredActivity) { record in
+                            activityRow(record).padding(.vertical, 13)
+                            Divider()
+                        }
+                    }
+                }
+                Text("Showing recent loaded activity. Open a record to inspect its execution and retained Agent history.")
+                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+            }
+        }.padding(20).accessibilityIdentifier("configureAgent.runHistory")
+    }
+
+    private func activityRow(_ record: AgentActivityRecord) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: record.symbol).foregroundStyle(activityColor(record))
+                .frame(width: 22, height: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(record.agentName).font(.locus(size: 11, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 5)
+                    Text(record.statusTitle).font(.locus(size: 9, weight: .medium))
+                        .foregroundStyle(activityColor(record))
+                }
+                Text(record.title).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft).lineLimit(2)
+                Text("\(record.sourceTitle) · \(Date(timeIntervalSince1970: record.timestamp).formatted(date: .abbreviated, time: .shortened))")
+                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                if let error = record.error, !error.isEmpty {
+                    Text(error).font(.locus(size: 9)).foregroundStyle(record.needsAttention ? LocusTheme.warning : LocusTheme.muted).lineLimit(2)
+                }
+                HStack(spacing: 12) {
+                    Button("Inspect") {
+                        app.dismissConfigureAgent()
+                        app.selectAgent(record.agent)
+                        app.agentInspector.show(record.context)
+                    }.accessibilityIdentifier("configureAgent.activity.\(record.id).inspect")
+                    if let delivery = record.delivery, record.canRetry {
+                        Button(automation.retryingDeliveryIDs.contains(delivery.id) ? "Retrying…" : "Retry") {
+                            automation.retry(delivery)
+                        }.disabled(automation.retryingDeliveryIDs.contains(delivery.id))
+                    }
+                }.buttonStyle(.locus()).font(.locus(size: 9, weight: .semibold)).foregroundStyle(LocusTheme.signalDeep)
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("configureAgent.activity.\(record.id)")
     }
 
     private var sourcesTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top) {
-                    sectionHeading(
-                        "Connected sources",
-                        detail: "Credentials stay in your Mac Keychain and are never added to chats."
-                    )
+                    sectionHeading("Connections", detail: "Shared sources that can start an Agent or provide allowed actions.")
                     Spacer()
                     Menu {
                         ForEach(ConnectorKind.allCases) { kind in
-                            Button { connectionSheet = kind } label: {
-                                Label(kind.title, systemImage: kind.symbol)
-                            }
+                            Button { connectionSheet = kind } label: { Label(kind.title, systemImage: kind.symbol) }
                         }
-                    } label: {
-                        Label("Add Source", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("eventAutomations.addConnection")
+                    } label: { Label("Connect source", systemImage: "plus") }
+                    .buttonStyle(.borderedProminent).accessibilityIdentifier("eventAutomations.addConnection")
                 }
-
                 if automation.connections.isEmpty {
-                    ContentUnavailableView(
-                        "No Sources Connected",
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("Connect Gmail, Telegram, a signed webhook, or a read-only price feed.")
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 260)
-                    .locusCard(radius: 12)
-                } else {
-                    LazyVStack(spacing: 10) {
-                        ForEach(automation.connections) { connection in
-                            sourceRow(connection)
-                        }
-                    }
-                }
-
-                Label(
-                    "Removing a source requires confirmation. Sources in use must be detached from their configurations first.",
-                    systemImage: "lock.shield"
-                )
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-            }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 22)
-        }
-        .accessibilityIdentifier("configureAgent.sources")
-    }
-
-    private var runHistoryTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionHeading(
-                    "Run history",
-                    detail: "Inspect the durable runs created by one configuration."
-                )
-                Spacer()
-                Picker("Configuration", selection: $selection) {
-                    if configurationReferences.isEmpty {
-                        Text("No configurations").tag(AgentConfigurationReference?.none)
-                    } else {
-                        ForEach(configurationReferences) { reference in
-                            Text("\(reference.kind.title) — \(reference.title)")
-                                .tag(Optional(reference))
-                        }
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 330)
-                .accessibilityIdentifier("configureAgent.history.configuration")
-            }
-
-            Divider()
-
-            Group {
-                if let reference = selection {
-                    if reference.kind == .schedule {
-                        let values = schedule.occurrencesBySchedule[reference.configurationID] ?? []
-                        if values.isEmpty {
-                            historyEmptyState(
-                                title: "No Time-Trigger Runs",
-                                symbol: "clock",
-                                detail: "Runs from the selected time trigger appear here."
-                            )
-                        } else {
-                            ScrollView {
-                                LazyVStack(spacing: 9) {
-                                    ForEach(values) { occurrence in
-                                        ScheduleOccurrenceCard(occurrence: occurrence) {
-                                            openChat(occurrence.sessionID)
-                                        }
-                                    }
+                    Text("Choose a source to get started. Then use it in an Agent’s incoming event trigger.")
+                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                    ForEach(ConnectorKind.allCases) { kind in
+                        Button { connectionSheet = kind } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: kind.symbol).foregroundStyle(LocusTheme.signalDeep).frame(width: 26)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(kind.title).font(.locus(size: 11, weight: .semibold))
+                                    Text(connectionDescription(kind)).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                                 }
-                                .padding(.vertical, 2)
-                            }
-                        }
-                    } else if filteredDeliveries.isEmpty {
-                        historyEmptyState(
-                            title: "No Triggered Runs",
-                            symbol: "tray",
-                            detail: "Durably recorded events for this configuration appear here."
-                        )
-                    } else {
-                        ScrollView {
-                            LazyVStack(spacing: 9) {
-                                ForEach(filteredDeliveries, id: \.id) { delivery in
-                                    EventDeliveryCard(
-                                        delivery: delivery,
-                                        retrying: automation.retryingDeliveryIDs.contains(delivery.id),
-                                        onRetry: { automation.retry(delivery) },
-                                        onOpen: { openChat(delivery.conversationSessionID) }
-                                    )
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
+                                Spacer()
+                                Image(systemName: "plus")
+                            }.padding(14).contentShape(Rectangle())
+                        }.buttonStyle(.locus(.card)).accessibilityIdentifier("configureAgent.connect.\(kind.rawValue)")
+                        Divider()
                     }
                 } else {
-                    historyEmptyState(
-                        title: "Choose a Configuration",
-                        symbol: "clock.arrow.circlepath",
-                        detail: "Select a configuration to see its run and delivery history."
-                    )
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(.horizontal, 22)
-        .padding(.bottom, 22)
-        .onChange(of: selection) { _, value in
-            guard value?.kind == .schedule,
-                  let task = schedule.scheduledTasks.first(where: {
-                      $0.id == value?.configurationID
-                  }) else { return }
-            Task { await schedule.refreshOccurrences(for: task) }
-        }
-        .accessibilityIdentifier("configureAgent.runHistory")
-    }
-
-    private var draftSuggestionBanner: some View {
-        let request = app.configureAgentDraftSuggestion
-        let priceSuggestion = EventAutomationModel.suggestedPriceCondition(from: request)
-        return VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "wand.and.stars")
-                    .font(.locus(size: 15, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
-                    .frame(width: 28, height: 28)
-                    .background(LocusTheme.signal.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
-                        Text("Turn this request into an automation")
-                            .font(.locus(size: 11, weight: .bold))
-                        if priceSuggestion != nil {
-                            Text("PRICE SUGGESTED")
-                                .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                                .foregroundStyle(LocusTheme.signalDeep)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(LocusTheme.signal.opacity(0.14))
-                                .clipShape(Capsule())
-                        }
+                    ForEach(automation.connections) { connection in
+                        sourceRow(connection)
+                        Divider()
                     }
-                    Text(request)
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineLimit(3)
-                        .textSelection(.enabled)
                 }
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                Button("Use for Time") { app.presentScheduleEditor(prompt: request) }
-                    .accessibilityIdentifier("configureAgent.suggestion.time")
-                Button("Use for Event") { useSuggestion(.event, request: request) }
-                    .accessibilityIdentifier("configureAgent.suggestion.event")
-                if priceSuggestion != nil {
-                    Button("Use for Price") { useSuggestion(.price, request: request) }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("configureAgent.suggestion.price")
-                } else {
-                    Button("Use for Price") { useSuggestion(.price, request: request) }
-                        .accessibilityIdentifier("configureAgent.suggestion.price")
-                }
-                Spacer()
-            }
-            .font(.locus(size: 9, weight: .semibold))
-        }
-        .padding(14)
-        .locusSurface(.floating, radius: 12)
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.28))
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("configureAgent.draftSuggestion")
-    }
-
-    private var eventProcessingCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 9) {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.locus(size: 13, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
-                    .frame(width: 28, height: 28)
-                    .background(LocusTheme.signal.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Event processing")
-                        .font(.locus(size: 11, weight: .bold))
-                    Text("Different agent chats can run together.")
-                        .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                Spacer(minLength: 12)
-                Stepper(
-                    "Up to \(app.settings.maximumActiveChats) chats and agent events at once",
-                    value: Binding(
-                        get: { app.settings.maximumActiveChats },
-                        set: { value in
-                            var updated = app.settings
-                            updated.maximumActiveChats = value
-                            app.applySettings(updated, showConfirmation: false)
-                        }
-                    ),
-                    in: 1...4
-                )
-                .fixedSize()
-                .accessibilityLabel(
-                    "Up to \(app.settings.maximumActiveChats) chats and agent events at once"
-                )
-                .accessibilityIdentifier("configureAgent.maximumActiveChats")
-            }
-            Text("Events for one chat wait in arrival order. Choose 1 for fully sequential processing. Write-capable chats sharing an unisolated folder also wait until that folder is free.")
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(13)
-        .locusCard(radius: 11)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("configureAgent.eventProcessing")
-    }
-
-    private func creationCard(
-        kind: AgentConfigurationKind,
-        detail: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: kind.symbol)
-                        .font(.locus(size: 17, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
-                    Spacer()
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundStyle(LocusTheme.signalDeep)
-                }
-                Text(kind.title)
-                    .font(.locus(size: 11, weight: .bold))
-                    .foregroundStyle(LocusTheme.ink)
-                Text(detail)
-                    .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
-            .locusCard(radius: 12)
-        }
-        .buttonStyle(.locus(.card))
-        .accessibilityIdentifier("configureAgent.create.\(kind.rawValue)")
+                Label("Credentials are stored in your Mac’s Keychain and kept out of chats.", systemImage: "lock.shield")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            }.padding(20)
+        }.accessibilityIdentifier("configureAgent.sources")
     }
 
     private func sourceRow(_ connection: ConnectorConnection) -> some View {
-        let inUse = automation.triggers.contains { trigger in
-            trigger.connectionID == connection.id
-                || trigger.actionConnectionIDs.contains(connection.id)
-        }
+        let users = automation.triggers.filter { $0.connectionID == connection.id || $0.actionConnectionIDs.contains(connection.id) }
         return HStack(alignment: .top, spacing: 12) {
-            Image(systemName: connection.kind.symbol)
-                .font(.locus(size: 15, weight: .semibold))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(connection.health == "error"
-                    ? LocusTheme.warning : LocusTheme.signalDeep)
-                .background(LocusTheme.paperDeep.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text(connection.displayName)
-                        .font(.locus(size: 11, weight: .bold))
-                    Text(connection.health.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundStyle(connection.health == "error"
-                            ? LocusTheme.warning : LocusTheme.muted)
+            Image(systemName: connection.kind.symbol).font(.locus(size: 16))
+                .foregroundStyle(LocusTheme.signalDeep).frame(width: 30, height: 32)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(connection.displayName).font(.locus(size: 12, weight: .semibold))
+                    Text(connection.enabled ? connection.health.replacingOccurrences(of: "_", with: " ").capitalized : "Disabled")
+                        .font(.locus(size: 9)).foregroundStyle(connection.lastError == nil ? LocusTheme.muted : LocusTheme.warning)
                 }
-                Text("\(connection.kind.title) · \(sourceSecurityDescription(connection.kind))")
-                    .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
-                if let lastPolledAt = connection.lastPolledAt {
-                    Text("Last checked \(Date(timeIntervalSince1970: lastPolledAt).formatted(date: .abbreviated, time: .shortened))")
-                        .font(.locus(size: 7, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                Text("\(connection.kind.title) · \(users.count) \(users.count == 1 ? "Agent" : "Agents")")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                if !users.isEmpty {
+                    Text(users.map(\.name).joined(separator: ", "))
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
+                }
+                if let date = connection.lastPolledAt {
+                    Text("Last checked \(Date(timeIntervalSince1970: date).formatted(date: .abbreviated, time: .shortened))")
+                        .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
                 }
                 if let error = connection.lastError, !error.isEmpty {
-                    Text(error)
-                        .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.warning)
-                        .lineLimit(3)
+                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning).textSelection(.enabled)
+                }
+                if !users.isEmpty {
+                    Text("To remove this connection, first update the Agents using it.")
+                        .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
                 }
             }
-            Spacer(minLength: 12)
-            Button("Remove", role: .destructive) {
-                pendingConnectionRemoval = connection
+            Spacer(minLength: 4)
+            Button("Remove…", role: .destructive) { pendingConnectionRemoval = connection }
+                .buttonStyle(.bordered).disabled(!users.isEmpty)
+                .help(users.isEmpty ? "Remove connection" : "This connection is used by \(users.count) Agents")
+        }.padding(.vertical, 10).accessibilityIdentifier("configureAgent.source.\(connection.id)")
+    }
+
+    private var runtimeTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                sectionHeading("Runtime", detail: "Shared controls for how chats and Agents work on this Mac.")
+                detailSection("Concurrent work", symbol: "arrow.triangle.branch") {
+                    Text("Choose how many chats and Agent events can work at once.")
+                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                    Picker("Concurrent work", selection: Binding(get: { app.settings.maximumActiveChats }, set: { value in
+                        var settings = app.settings
+                        settings.maximumActiveChats = value
+                        app.applySettings(settings, showConfirmation: false)
+                        app.showToast("Concurrent work updated")
+                    })) {
+                        Text("1 · One at a time").tag(1)
+                        Text("2 at a time").tag(2)
+                        Text("3 at a time").tag(3)
+                        Text("4 at a time").tag(4)
+                    }.labelsHidden().frame(maxWidth: 270)
+                        .accessibilityIdentifier("configureAgent.maximumActiveChats")
+                    Text("Events in the same chat run in arrival order. Chats that can change the same shared folder wait until it is free.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }.accessibilityIdentifier("configureAgent.eventProcessing")
+                Divider()
+                detailSection("Where Agents run", symbol: "desktopcomputer") {
+                    Text("Locus coordinates automatic work on this Mac. Keep the app open and your model and connections available.")
+                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                    Text("An Agent’s environment determines whether it works directly in a workspace or in an isolated worktree. Its selected model may be local or hosted.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }
+                Divider()
+                detailSection("Behavior & teams", symbol: "person.3") {
+                    Text("Reusable specialists and teams define how models collaborate. Manage them in Settings.")
+                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                    Button("Specialists & teams…") { app.dismissConfigureAgent(); app.presentSettings(.agents) }
+                        .buttonStyle(.bordered)
+                }
+            }.padding(24)
+        }.accessibilityIdentifier("configureAgent.center")
+    }
+
+    private var creationSheet: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Create an Agent").font(.locus(size: 20, weight: .bold))
+                    Text("What should start its work?").font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                }
+                Spacer()
+                Button { app.configureAgentCreationPresented = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.locus(.icon)).keyboardShortcut(.cancelAction).accessibilityLabel("Cancel Agent creation")
             }
-            .buttonStyle(ActivityActionButtonStyle())
-            .disabled(inUse)
-            .help(inUse ? "Remove configurations that use this source first" : "Remove this source")
-        }
-        .padding(13)
-        .locusCard(radius: 11)
-        .accessibilityIdentifier("configureAgent.source.\(connection.id)")
+            Text("Add instructions, choose a trigger, and give your Agent a place to work. You can chat with it and refine its setup at any time.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+            if !app.configureAgentDraftSuggestion.isEmpty {
+                Text(app.configureAgentDraftSuggestion).font(.locus(size: 10)).lineLimit(3)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(LocusTheme.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+            }
+            VStack(spacing: 8) {
+                creationOption(.schedule, title: "On a schedule", detail: "A daily review, a weekly report, or a one-time task.")
+                creationOption(.event, title: "When an event arrives", detail: "React to Gmail, Telegram, or a signed webhook.")
+                creationOption(.price, title: "When a price changes", detail: "Watch a stock or crypto price and act at a threshold.")
+            }
+            Text("Automatic work runs while Locus is open. You stay in control of its access and can pause it at any time.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+        }.padding(26).frame(width: 560).background(LocusTheme.panel)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("configureAgent.creation")
     }
 
-    private func errorBanner(_ error: String) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(LocusTheme.warning)
-            Text(error).font(.locus(size: 8)).lineLimit(2)
-            Spacer()
-            Button("Retry") { Task { await refresh() } }
-                .buttonStyle(ActivityActionButtonStyle())
-        }
-        .padding(10)
-        .background(LocusTheme.warning.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    private func creationOption(_ kind: AgentConfigurationKind, title: String, detail: String) -> some View {
+        Button {
+            chosenCreationKind = kind
+            app.configureAgentCreationPresented = false
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: kind.symbol).font(.locus(size: 18, weight: .medium))
+                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 32)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(LocusTheme.ink)
+                    Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.locus(size: 9, weight: .semibold)).foregroundStyle(LocusTheme.muted)
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 12)).contentShape(Rectangle())
+        }.buttonStyle(.locus(.card)).accessibilityIdentifier("configureAgent.create.\(kind.rawValue)")
     }
 
+    private func openChosenEditor() {
+        guard let kind = chosenCreationKind else { return }
+        chosenCreationKind = nil
+        guard app.configureAgentPresented else { return }
+        if kind == .schedule { app.presentScheduleEditor(prompt: app.configureAgentDraftSuggestion) }
+        else {
+            automation.presentEditor(targetSessionID: app.currentSessionID,
+                naturalLanguageRequest: app.configureAgentDraftSuggestion,
+                triggerKind: kind == .price ? .price : .event)
+        }
+    }
+
+    private var references: [AgentConfigurationReference] {
+        let schedules = schedule.scheduledTasks.map { AgentConfigurationReference(kind: .schedule, configurationID: $0.id, title: $0.name) }
+        let triggers = automation.triggers.map { AgentConfigurationReference(kind: $0.triggerKind == .price ? .price : .event, configurationID: $0.id, title: $0.name) }
+        return (schedules + triggers).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+    private var filteredReferences: [AgentConfigurationReference] {
+        references.filter { reference in
+            guard let definition = definition(for: reference) else { return false }
+            let matches = search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || "\(reference.title) \(definition.trigger?.instruction ?? definition.schedule?.prompt ?? "") \(reference.kind.title)".localizedCaseInsensitiveContains(search)
+            let stateMatches = agentFilter == "all" || (agentFilter == "enabled" && definition.enabled)
+                || (agentFilter == "paused" && !definition.enabled)
+                || (agentFilter == "attention" && statusTitle(overview(definition)) == "Needs attention")
+            return matches && stateMatches
+        }
+    }
+    private var selectedDefinition: AgentDefinition? { references.first { $0.id == selectionID }.flatMap(definition) }
+    private func definition(for reference: AgentConfigurationReference) -> AgentDefinition? {
+        if reference.kind == .schedule { return schedule.scheduledTasks.first { $0.id == reference.configurationID }.map(AgentDefinition.schedule) }
+        return automation.triggers.first { $0.id == reference.configurationID }.map(AgentDefinition.trigger)
+    }
+    private func overview(_ definition: AgentDefinition) -> AgentOverview {
+        AgentOverview.resolve(agentID: definition.id, definition: definition, ownershipDefinitions: app.agentDefinitions,
+            connections: automation.connections, actionConnections: automation.connections,
+            sessions: sessionCatalog.snapshot.sessions, deliveries: automation.deliveries,
+            occurrences: schedule.occurrencesBySchedule[definition.id] ?? [], currentSessionID: app.currentSessionID,
+            runningSessionIDs: app.runningChatSessionIDs, startedAt: app.runningChatStartTimes)
+    }
+    private func connectionNeedsAttention(_ value: AgentOverview) -> Bool {
+        guard automation.hasLoaded else { return false }
+        return AgentInspectorCopy.sourceNeedsAttention(definition: value.definition, connection: value.connection)
+    }
+    private func statusTitle(_ value: AgentOverview) -> String {
+        AgentInspectorCopy.agentStatusTitle(value.status, vocabulary: value.vocabulary,
+            isRunning: value.runningChatCount > 0, sourceNeedsAttention: connectionNeedsAttention(value))
+    }
+    private func statusColor(_ value: AgentOverview) -> Color {
+        if value.runningChatCount > 0 { return LocusTheme.signalDeep }
+        if value.lastError?.isEmpty == false || connectionNeedsAttention(value) { return LocusTheme.warning }
+        return value.status == .active ? LocusTheme.success : LocusTheme.muted
+    }
+    private var activityRecords: [AgentActivityRecord] {
+        AgentActivityRecord.merged(deliveries: automation.deliveries,
+            occurrences: schedule.occurrencesBySchedule.values.flatMap { $0 }, definitions: app.agentDefinitions)
+    }
+    private var filteredActivity: [AgentActivityRecord] {
+        activityRecords.filter { record in
+            let reference = references.first { $0.id == historyAgentID }
+            let matchesAgent = historyAgentID.isEmpty || reference.map {
+                $0.configurationID == record.agent.agentID && ($0.kind == .schedule) == (record.agent.kind == .schedule)
+            } == true
+            return matchesAgent && historyFilter.includes(record)
+        }
+    }
+    private func activityColor(_ record: AgentActivityRecord) -> Color {
+        if record.needsAttention { return LocusTheme.warning }
+        if record.isInProgress { return LocusTheme.signalDeep }
+        return record.state == "completed" ? LocusTheme.success : LocusTheme.muted
+    }
+    private func showHistory(_ definition: AgentDefinition) {
+        historyAgentID = references.first { $0.configurationID == definition.id && ($0.kind == .schedule) == definition.isSchedule }?.id ?? ""
+        historyFilter = .all
+        app.configureAgentTab = .runHistory
+    }
+    private func normalizeSelection() {
+        if !references.contains(where: { $0.id == selectionID }) {
+            let current = app.inspectedAgentReference
+            selectionID = references.first { reference in
+                reference.configurationID == current?.agentID && (reference.kind == .schedule) == (current?.kind == .schedule)
+            }?.id ?? references.first?.id
+        }
+        if !historyAgentID.isEmpty && !references.contains(where: { $0.id == historyAgentID }) { historyAgentID = "" }
+    }
+    private func applyRequestedFocus() {
+        guard let id = app.configureAgentFocusConfigurationID, references.contains(where: { $0.id == id }) else { return }
+        selectionID = id
+        historyAgentID = id
+        historyFilter = .all
+        app.configureAgentFocusConfigurationID = nil
+    }
     private func sectionHeading(_ title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.locus(size: 12, weight: .bold))
-            Text(detail).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.locus(size: 17, weight: .bold))
+            Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    private func historyEmptyState(title: String, symbol: String, detail: String) -> some View {
-        ContentUnavailableView(title, systemImage: symbol, description: Text(detail))
+    private func loadingState(_ title: String) -> some View {
+        VStack(spacing: 12) { ProgressView(); Text(title).font(.locus(size: 10)).foregroundStyle(LocusTheme.muted) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    private var configurationReferences: [AgentConfigurationReference] {
-        schedule.scheduledTasks.map {
-            AgentConfigurationReference(kind: .schedule, configurationID: $0.id, title: $0.name)
-        } + automation.triggers.map {
-            AgentConfigurationReference(
-                kind: $0.triggerKind == .price ? .price : .event,
-                configurationID: $0.id,
-                title: $0.name
-            )
-        }
+    private func errorBanner(_ error: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(LocusTheme.warning)
+            Text(error).font(.locus(size: 9)).textSelection(.enabled)
+            Spacer()
+            Button("Retry") { Task { await refresh(); await refreshActivity() } }.buttonStyle(.bordered)
+        }.padding(12).background(LocusTheme.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
     }
-
-    private var filteredDeliveries: [EventDelivery] {
-        guard let selection, selection.kind != .schedule else { return [] }
-        return automation.deliveries.filter { $0.triggerID == selection.configurationID }
-    }
-
-    private func configurationID(for trigger: EventTrigger) -> String {
-        "\(trigger.triggerKind == .price ? "price" : "event"):\(trigger.id)"
-    }
-
-    private func selectSchedule(_ task: ScheduledTask) {
-        selection = AgentConfigurationReference(
-            kind: .schedule, configurationID: task.id, title: task.name
-        )
-        Task { await schedule.refreshOccurrences(for: task) }
-    }
-
-    private func selectTrigger(_ trigger: EventTrigger) {
-        selection = AgentConfigurationReference(
-            kind: trigger.triggerKind == .price ? .price : .event,
-            configurationID: trigger.id,
-            title: trigger.name
-        )
-    }
-
-    private func useSuggestion(_ kind: EventTriggerKind, request: String) {
-        automation.presentEditor(
-            targetSessionID: app.currentSessionID,
-            naturalLanguageRequest: request,
-            triggerKind: kind
-        )
-    }
-
-    /// Honors a deep link from elsewhere in the app (the Agent tab's Run
-    /// History, for one) once the configuration it names is in the list.
-    private func applyRequestedFocus() {
-        guard let id = app.configureAgentFocusConfigurationID,
-              let reference = configurationReferences.first(where: { $0.id == id })
-        else { return }
-        selection = reference
-        app.configureAgentFocusConfigurationID = nil
-        if reference.kind == .schedule,
-           let task = schedule.scheduledTasks.first(where: { $0.id == reference.configurationID }) {
-            Task { await schedule.refreshOccurrences(for: task) }
-        }
-    }
-
-    private func normalizeSelection() {
-        guard !configurationReferences.contains(where: { $0.id == selection?.id }) else { return }
-        selection = configurationReferences.first
-        if selection?.kind == .schedule,
-           let task = schedule.scheduledTasks.first(where: { $0.id == selection?.configurationID }) {
-            Task { await schedule.refreshOccurrences(for: task) }
-        }
-    }
-
-    private func openChat(_ sessionID: String?) {
-        guard let sessionID,
-              let session = sessionCatalog.snapshot.sessionsByID[sessionID] else { return }
-        app.dismissConfigureAgent()
-        app.resume(session)
-    }
-
-    private func sourceSecurityDescription(_ kind: ConnectorKind) -> String {
+    private func connectionDescription(_ kind: ConnectorKind) -> String {
         switch kind {
-        case .gmail: "OAuth token in Keychain"
-        case .telegram: "Bot token in Keychain"
-        case .webhook: "HMAC secret in Keychain"
-        case .priceFeed: "Read-only feed credentials in Keychain"
+        case .gmail: "Start work when matching email arrives."
+        case .telegram: "Receive messages and commands from your bot."
+        case .webhook: "Receive signed events from integrations and apps."
+        case .priceFeed: "Read stock or crypto quotes for price alerts."
         }
     }
-
-    @MainActor
-    private func refresh() async {
-        async let refreshEvents: Void = automation.refresh(announceFailure: false)
-        async let refreshSchedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
-        _ = await (refreshEvents, refreshSchedules)
+    @MainActor private func refresh() async {
+        async let events: Void = automation.refresh(announceFailure: false)
+        async let schedules: Void = schedule.refreshScheduledTasks(announceFailure: false)
+        _ = await (events, schedules)
     }
-
+    @MainActor private func refreshActivity() async {
+        guard !isLoadingActivity else { return }
+        isLoadingActivity = true
+        defer { isLoadingActivity = false }
+        // Bound requests for large fleets rather than sending one hundred at once.
+        let tasks = schedule.scheduledTasks
+        for start in stride(from: 0, to: tasks.count, by: 4) {
+            guard !Task.isCancelled else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for task in tasks[start..<min(start + 4, tasks.count)] {
+                    group.addTask { await schedule.refreshOccurrences(for: task, announceFailure: false) }
+                }
+            }
+        }
+    }
 }
 
 private struct AgentConfigurationReference: Identifiable, Hashable {
     let kind: AgentConfigurationKind
     let configurationID: String
     let title: String
-
     var id: String { "\(kind.rawValue):\(configurationID)" }
-}
-
-private struct TimeTriggerRow: View {
-    let task: ScheduledTask
-    let selected: Bool
-    let onSelect: () -> Void
-    let onEdit: () -> Void
-    let onRun: () -> Void
-    let onToggle: () -> Void
-    let onDelete: () -> Void
-    @State private var confirmsDelete = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: onSelect) {
-                HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: task.enabled ? "calendar.badge.clock" : "pause.circle")
-                        .foregroundStyle(task.lastError == nil
-                            ? (task.enabled ? LocusTheme.signalDeep : LocusTheme.muted)
-                            : LocusTheme.warning)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(task.name).font(.locus(size: 10, weight: .bold))
-                            Text("TIME TRIGGER")
-                                .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                        Text(nextDescription)
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text("Fresh chat · \(URL(fileURLWithPath: task.workspaceRoot).lastPathComponent)")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text(task.prompt).font(.locus(size: 9)).lineLimit(2)
-                        if let error = task.lastError, !error.isEmpty {
-                            Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.warning)
-                        }
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.locus(.card))
-            HStack(spacing: 7) {
-                Button("Run Now", action: onRun)
-                Button("Edit", action: onEdit)
-                Button(task.enabled ? "Pause" : "Resume", action: onToggle)
-                Spacer()
-                Button("Delete", role: .destructive) { confirmsDelete = true }
-            }
-            .font(.locus(size: 8, weight: .semibold))
-            .buttonStyle(ActivityActionButtonStyle())
-        }
-        .padding(11)
-        .background(selected ? LocusTheme.signal.opacity(0.12) : LocusTheme.white.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(selected ? LocusTheme.signalDeep : LocusTheme.line) }
-        .accessibilityIdentifier("configureAgent.timeTrigger.\(task.id)")
-        .alert("Delete \(task.name)?", isPresented: $confirmsDelete) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: { Text("Its generated chats and run history will be kept.") }
-    }
-
-    private var nextDescription: String {
-        guard let date = task.nextRunDate else { return task.enabled ? "No next run" : "Paused" }
-        return "Next \(date.formatted(date: .abbreviated, time: .shortened))"
-    }
-}
-
-private struct ScheduleOccurrenceCard: View {
-    let occurrence: ScheduleOccurrence
-    let onOpen: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Time Trigger", systemImage: "calendar.badge.clock")
-                    .font(.locus(size: 9, weight: .bold))
-                Spacer()
-                Text(occurrence.state.replacingOccurrences(of: "_", with: " ").uppercased())
-                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
-            }
-            Text(occurrence.scheduleName).font(.locus(size: 10, weight: .semibold))
-            Text(Date(timeIntervalSince1970: occurrence.scheduledFor)
-                .formatted(date: .abbreviated, time: .shortened))
-                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
-            if let error = occurrence.error, !error.isEmpty {
-                Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.warning)
-            }
-            if occurrence.sessionID != nil {
-                Button("Open Chat", action: onOpen)
-                    .font(.locus(size: 8, weight: .semibold))
-                    .buttonStyle(ActivityActionButtonStyle())
-            }
-        }
-        .padding(10)
-        .background(LocusTheme.white.opacity(0.78))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.line) }
-    }
-}
-
-private struct EventTriggerRow: View {
-    let trigger: EventTrigger
-    let connection: ConnectorConnection?
-    var targetChat = "Existing chat"
-    let selected: Bool
-    let onSelect: () -> Void
-    let onEdit: () -> Void
-    let onToggle: () -> Void
-    let onRearm: () -> Void
-    let onDelete: () -> Void
-    @State private var confirmsDelete = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: onSelect) {
-                HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: trigger.enabled
-                        ? (trigger.triggerKind == .price ? "chart.line.uptrend.xyaxis.circle.fill" : "bolt.circle.fill")
-                        : "pause.circle")
-                        .foregroundStyle(trigger.lastError == nil
-                            ? (trigger.enabled ? LocusTheme.signalDeep : LocusTheme.muted)
-                            : LocusTheme.warning)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(trigger.name)
-                                .font(.locus(size: 10, weight: .bold))
-                            Text(status.uppercased())
-                                .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                                .foregroundStyle(trigger.lastError == nil
-                                    ? LocusTheme.muted : LocusTheme.warning)
-                        }
-                        Text("\(trigger.triggerKind.title) · \(connection?.displayName ?? "Missing connection") · \(trigger.mode.title)")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text("Target chat · \(targetChat)")
-                            .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
-                        Text(trigger.instruction)
-                            .font(.locus(size: 9))
-                            .lineLimit(2)
-                        if let error = trigger.lastError, !error.isEmpty {
-                            Text(error)
-                                .font(.locus(size: 8, weight: .semibold))
-                                .foregroundStyle(LocusTheme.warning)
-                                .lineLimit(3)
-                        }
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.locus(.card))
-            HStack(spacing: 7) {
-                Button("Edit", action: onEdit)
-                if trigger.triggerKind == .price && trigger.runtimeState.fired == true {
-                    Button("Re-arm", action: onRearm)
-                }
-                Button(trigger.enabled ? "Pause" : "Resume", action: onToggle)
-                Spacer()
-                Button("Delete", role: .destructive) { confirmsDelete = true }
-            }
-            .font(.locus(size: 8, weight: .semibold))
-            .buttonStyle(ActivityActionButtonStyle())
-        }
-        .padding(11)
-        .background(selected ? LocusTheme.signal.opacity(0.12) : LocusTheme.white.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(selected ? LocusTheme.signalDeep : LocusTheme.line) }
-        .accessibilityIdentifier("configureAgent.eventTrigger.\(trigger.id)")
-        .alert("Delete \(trigger.name)?", isPresented: $confirmsDelete) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("Its delivery and chat run history will be kept.")
-        }
-    }
-
-    private var status: String {
-        if trigger.lastError != nil { return "Needs attention" }
-        if trigger.triggerKind == .price && trigger.runtimeState.fired == true { return "Fired" }
-        return trigger.enabled ? "Active" : "Paused"
-    }
-}
-
-private struct EventDeliveryCard: View {
-    let delivery: EventDelivery
-    let retrying: Bool
-    let onRetry: () -> Void
-    let onOpen: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(delivery.source.title, systemImage: delivery.source.symbol)
-                    .font(.locus(size: 9, weight: .bold))
-                Spacer()
-                Text(delivery.displayState.uppercased())
-                    .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(delivery.error == nil ? LocusTheme.muted : LocusTheme.warning)
-            }
-            Text(delivery.event.subject.isEmpty ? delivery.event.eventType : delivery.event.subject)
-                .font(.locus(size: 10, weight: .semibold))
-                .lineLimit(2)
-            if delivery.event.eventType == "price.quote",
-               let price = delivery.event.data["price"]?.string {
-                Text("Observed price: \(price)")
-                    .font(.locus(size: 9, weight: .semibold, design: .monospaced))
-            }
-            if !delivery.event.text.isEmpty {
-                Text(delivery.event.text)
-                    .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .lineLimit(3)
-            }
-            Text("Untrusted event data · \(Date(timeIntervalSince1970: delivery.receivedAt).formatted(date: .abbreviated, time: .shortened))")
-                .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
-            if delivery.matchedTriggerCount > 1 {
-                Text("Matched \(delivery.matchedTriggerCount) agents")
-                    .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
-            }
-            if let error = delivery.error, !error.isEmpty {
-                Text(error)
-                    .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.warning)
-            }
-            HStack {
-                if ["failed", "interrupted", "cancelled"].contains(delivery.state) {
-                    Button(retrying ? "Retrying…" : "Retry", action: onRetry)
-                        .disabled(retrying)
-                }
-                if delivery.conversationSessionID != nil { Button("Open Chat", action: onOpen) }
-                Spacer()
-            }
-            .font(.locus(size: 8, weight: .semibold))
-            .buttonStyle(ActivityActionButtonStyle())
-        }
-        .padding(10)
-        .background(LocusTheme.white.opacity(0.78))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.line) }
-        .accessibilityIdentifier("eventDelivery.\(delivery.id)")
-    }
 }
 
 private struct ConnectorSetupView: View {
@@ -1203,55 +1015,71 @@ private struct EventTriggerEditorView: View {
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var draft: EventTriggerEditorDraft
     @State private var connectionSheet: ConnectorKind?
+    @State private var showFilters = false
+    @State private var showEnvironment = false
+    @State private var showActions = false
+    @State private var showWorkflow = false
+    @State private var confirmsDiscard = false
+    @State private var saveError: String?
+    @FocusState private var nameFocused: Bool
+    private let originalDraft: EventTriggerEditorDraft
     @ObservedObject var automation: EventAutomationModel
     let sessions: [SessionSummary]
     let currentModel: String
 
-    init(
-        draft: EventTriggerEditorDraft,
-        automation: EventAutomationModel,
-        sessions: [SessionSummary],
-        currentModel: String
-    ) {
+    init(draft: EventTriggerEditorDraft, automation: EventAutomationModel,
+         sessions: [SessionSummary], currentModel: String) {
         _draft = State(initialValue: draft)
+        originalDraft = draft
         self.automation = automation
         self.sessions = sessions
         self.currentModel = currentModel
+        _showFilters = State(initialValue: draft.id != nil)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(editorTitle)
-                    .font(.locus(size: 15, weight: .bold))
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button(draft.id == nil ? "Activate" : "Save") {
-                    Task { if await automation.saveTrigger(draft) { dismiss() } }
+            HStack(spacing: 12) {
+                Image(systemName: draft.triggerKind == .price ? "chart.line.uptrend.xyaxis" : "bolt")
+                    .font(.locus(size: 19)).foregroundStyle(LocusTheme.signalDeep)
+                    .frame(width: 38, height: 38)
+                    .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(editorTitle).font(.locus(size: 17, weight: .bold))
+                    Text("Give it a purpose. Choose what wakes it up.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(automation.isSaving || missingRequirement != nil)
-                .help(missingRequirement ?? (draft.id == nil
-                    ? "Start listening for these events"
-                    : "Save this agent"))
-                .accessibilityIdentifier("eventTrigger.save")
-            }
-            if let missingRequirement {
-                Text(missingRequirement)
-                    .font(.locus(size: 8, weight: .medium))
-                    .foregroundStyle(LocusTheme.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 12)
-                    .accessibilityIdentifier("eventTrigger.requirement")
-            }
+                Spacer()
+            }.padding(20)
             Divider()
             Form {
-                Section("What starts it") {
+                Section("Agent") {
+                    TextField("Name", text: $draft.name).focused($nameFocused)
+                        .accessibilityIdentifier("eventTrigger.name")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Instructions").font(.locus(size: 10, weight: .semibold))
+                        TextEditor(text: instructionBinding)
+                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.inkSoft)
+                            .tint(LocusTheme.signalDeep).scrollContentBackground(.hidden)
+                            .frame(minHeight: 95).padding(7)
+                            .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .topLeading) {
+                                if instructionBinding.wrappedValue.isEmpty {
+                                    Text("When an event arrives, what should this Agent do?")
+                                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                                        .padding(12).allowsHitTesting(false)
+                                }
+                            }
+                            .accessibilityLabel("Instructions").accessibilityIdentifier("eventTrigger.instruction")
+                        Text("For example: Summarize the email, extract action items, and draft a reply for me to review.")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                Section("Trigger") {
                     if draft.id == nil {
-                        Picker("Configuration", selection: $draft.triggerKind) {
-                            Text("Incoming Event").tag(EventTriggerKind.event)
-                            Text("Price Alert").tag(EventTriggerKind.price)
+                        Picker("Start work", selection: $draft.triggerKind) {
+                            Text("Incoming event").tag(EventTriggerKind.event)
+                            Text("Price alert").tag(EventTriggerKind.price)
                         }
                         .onChange(of: draft.triggerKind) { _, kind in
                             draft.connectionID = ""
@@ -1260,178 +1088,194 @@ private struct EventTriggerEditorView: View {
                             if kind == .price { draft.filters.priceCondition = PriceCondition() }
                         }
                     }
-                    TextField("Name", text: $draft.name)
-                    Picker("Connection", selection: $draft.connectionID) {
-                        Text(eligibleConnections.isEmpty
-                            ? "No sources connected yet" : "Choose a connection").tag("")
-                        ForEach(eligibleConnections) { connection in
-                            Text(connection.displayName).tag(connection.id)
-                        }
-                    }
+                    Picker("Source", selection: $draft.connectionID) {
+                        Text(eligibleConnections.isEmpty ? "Connect a source below" : "Choose a source").tag("")
+                        ForEach(eligibleConnections) { Text($0.displayName).tag($0.id) }
+                    }.accessibilityIdentifier("eventTrigger.connection")
                     .onChange(of: draft.connectionID) { _, value in
                         let kind = automation.connections.first { $0.id == value }?.kind
                         if draft.triggerKind == .price {
                             draft.actionConnectionIDs = []
                             draft.filters.eventNames = kind == .webhook ? ["price.quote"] : []
-                        } else if draft.actionConnectionIDs.isEmpty,
-                                  kind != .webhook, kind != .priceFeed {
-                            draft.actionConnectionIDs = [value]
                         }
+                        // Selecting an event source never grants permission to
+                        // send messages through it; actions have their own controls.
                     }
                     Menu {
                         ForEach(addableConnectorKinds) { kind in
-                            Button {
-                                connectionSheet = kind
-                            } label: {
-                                Label(kind.title, systemImage: kind.symbol)
-                            }
-                            .accessibilityIdentifier("eventTrigger.addSource.\(kind.rawValue)")
+                            Button { connectionSheet = kind } label: { Label(kind.title, systemImage: kind.symbol) }
+                                .accessibilityIdentifier("eventTrigger.addSource.\(kind.rawValue)")
                         }
                     } label: {
-                        Label(
-                            eligibleConnections.isEmpty ? "Connect a source…" : "Add a source…",
-                            systemImage: "plus"
-                        )
-                        .font(.locus(size: 9, weight: .semibold))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .accessibilityIdentifier("eventTrigger.addSource")
-                    sourceFilters
-                }
-                Section("What it does") {
-                    Picker("Destination", selection: $draft.targetSessionID) {
-                        Text("Its own agent chat")
-                            .tag(EventTriggerEditorDraft.dedicatedAgentChat)
-                        Text("Choose an existing chat").tag("")
-                        ForEach(sessions.filter { !$0.isArchived }) { session in
-                            Text(session.displayTitle).tag(session.id)
-                        }
-                    }
-                    if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
-                        if draft.id != nil, let model = existingAgentModel {
-                            // An edit keeps the agent's own model, because it
-                            // used to follow whatever the app was set to. The
-                            // change is available, but it has to be asked for:
-                            // it is also the way a broken route is repaired.
+                        Label(eligibleConnections.isEmpty ? "Connect a source…" : "Add a source…", systemImage: "plus")
+                    }.menuStyle(.borderlessButton).accessibilityIdentifier("eventTrigger.addSource")
+                    if draft.triggerKind == .price { sourceFilters }
+                    else if !draft.connectionID.isEmpty {
+                        DisclosureGroup(isExpanded: $showFilters) { sourceFilters } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(draft.adoptCurrentRoute
-                                    ? "Moves to \(currentModel) when you save."
-                                    : "Runs on \(model). Saving keeps that model.")
-                                    .font(.locus(size: 8, weight: .medium))
-                                    .foregroundStyle(LocusTheme.textSecondary)
-                                if !draft.adoptCurrentRoute, currentModel != model {
-                                    Button("Switch to \(currentModel)") {
-                                        draft.adoptCurrentRoute = true
-                                    }
-                                    .buttonStyle(.locus())
-                                    .font(.locus(size: 8, weight: .semibold))
-                                    .accessibilityIdentifier("eventTrigger.route.adopt")
-                                }
+                                Text("Only matching events").font(.locus(size: 10, weight: .medium))
+                                Text(filterSummary).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                             }
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("eventTrigger.route")
-                        } else {
-                            Text("Creates one lasting conversation in Agents that every matching event arrives in. It keeps its own agent identity while retaining access to the selected chat’s workspace, so future context and AGENTS.md settings can attach to it.")
-                                .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
+                        }.accessibilityIdentifier("eventTrigger.filters")
                     }
-                    if app.automationWorkflowsEnabled {
-                        AutomationWorkflowEditorView(
-                            workflow: $draft.workflow,
-                            connectors: workflowConnectorOptions
-                        )
-                    } else {
-                        Picker("Mode", selection: $draft.mode) {
-                            ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Instruction")
-                                .font(.locus(size: 9, weight: .semibold))
-                                .foregroundStyle(LocusTheme.textSecondary)
-                            TextEditor(text: $draft.instruction)
-                                .foregroundStyle(LocusTheme.inkSoft)
-                                .tint(LocusTheme.accentAction)
-                                .scrollContentBackground(.hidden)
-                                .background(LocusTheme.surfaceCard)
-                                .font(.locus(size: 10))
-                                .frame(minHeight: 110)
-                                .overlay(alignment: .topLeading) {
-                                    if draft.instruction.isEmpty {
-                                        Text("What should this agent do with each event?")
-                                            .font(.locus(size: 10))
-                                            .foregroundStyle(LocusTheme.muted)
-                                            .padding(.leading, 5)
-                                            .padding(.top, 8)
-                                            .allowsHitTesting(false)
-                                    }
-                                }
-                                .accessibilityLabel("Instruction")
-                                .accessibilityIdentifier("eventTrigger.instruction")
-                        }
-                    }
-                    if app.automationWorkflowsEnabled {
-                        Picker("Runner", selection: $draft.runner) {
-                            ForEach(ScheduleRunner.selectableCases) { runner in
-                                Text(runner.title).tag(runner)
-                            }
-                        }
-                        if draft.runner == .team {
-                            Picker("Team", selection: $draft.teamID) {
-                                Text("Choose a team").tag(String?.none)
-                                ForEach(agentTeams.agentTeams) { team in
-                                    Text(team.name).tag(Optional(team.id.uuidString))
-                                }
-                            }
-                            .onChange(of: draft.teamID) { _, value in
-                                draft.teamName = value.flatMap { id in
-                                    agentTeams.agentTeams.first(where: {
-                                        $0.id.uuidString == id
-                                    })?.name
-                                } ?? ""
-                            }
-                        }
-                    }
-                    Text("This saved instruction is trusted configuration. Incoming bodies and JSON values are untrusted data and cannot alter permissions or this trigger.")
-                        .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
                 }
-                Section("Allowed actions") {
-                    ForEach(automation.connections.filter {
-                        $0.kind != .webhook && $0.kind != .priceFeed
-                    }) { connection in
-                        Toggle(connection.displayName, isOn: Binding(
-                            get: { draft.actionConnectionIDs.contains(connection.id) },
-                            set: { enabled in
+                Section("Access") {
+                    DisclosureGroup(isExpanded: $showActions) {
+                        ForEach(actionConnections) { connection in
+                            Toggle(isOn: Binding(get: { draft.actionConnectionIDs.contains(connection.id) }, set: { enabled in
+                                draft.actionConnectionIDs.removeAll { $0 == connection.id }
                                 if enabled { draft.actionConnectionIDs.append(connection.id) }
-                                else { draft.actionConnectionIDs.removeAll { $0 == connection.id } }
-                            }
-                        ))
+                            })) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(connection.displayName)
+                                    Text(connection.kind == .gmail ? "Allow email actions, including sending" : "Allow actions through this Telegram bot")
+                                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                }
+                            }.accessibilityIdentifier("eventTrigger.action.\(connection.id)")
+                        }
+                        if actionConnections.isEmpty {
+                            Text("No services with external actions are connected.").foregroundStyle(LocusTheme.muted)
+                        }
+                        Text("Webhooks and price feeds only supply events. They cannot perform external actions.")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Connected-service actions").font(.locus(size: 10, weight: .medium))
+                            Text(actionSummary).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        }
+                    }.accessibilityIdentifier("eventTrigger.actions")
+                    Text("File edits, commands, network requests and external actions follow Locus’s shared approval policy. Approvals can pause a run until you respond.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                }
+                Section {
+                    DisclosureGroup(isExpanded: $showEnvironment) { environmentFields } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Environment & conversation").font(.locus(size: 10, weight: .medium))
+                            Text("\(draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat ? "Dedicated Agent chat" : "Existing chat") · \(existingAgentModel ?? currentModel)")
+                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
+                        }
+                    }.accessibilityIdentifier("eventTrigger.environment")
+                    if app.automationWorkflowsEnabled {
+                        DisclosureGroup("Advanced workflow", isExpanded: $showWorkflow) {
+                            AutomationWorkflowEditorView(workflow: $draft.workflow, connectors: workflowConnectorOptions)
+                            Text("The instructions above are the first Agent step. Additional steps run in the saved workflow order.")
+                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        }.accessibilityIdentifier("eventTrigger.workflow")
                     }
-                    Text("Price sources and webhooks are ingestion-only. Other connections may be explicitly allowed; the target chat's permission mode still controls every action.")
-                        .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                    Toggle(draft.id == nil ? "Enable after creation" : "Trigger enabled", isOn: $draft.enabled)
+                        .accessibilityIdentifier("eventTrigger.enabled")
+                    Text(draft.enabled ? "Starts automatically when a matching event arrives while Locus is open." : "Saved paused. You can review its setup before enabling automatic work.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
-            .padding(.horizontal, 12)
+            .formStyle(.grouped).scrollContentBackground(.hidden).background(LocusTheme.surfaceCanvas)
+            Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                if let saveError {
+                    Text(saveError).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                        .accessibilityIdentifier("eventTrigger.error")
+                }
+                HStack(alignment: .center, spacing: 16) {
+                    Text(missingRequirement ?? (draft.enabled ? "Ready to start listening" : "Ready to create paused"))
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .accessibilityIdentifier("eventTrigger.requirement")
+                    Spacer(minLength: 4)
+                    if automation.isSaving { ProgressView().controlSize(.small) }
+                    Button("Cancel", action: cancel).keyboardShortcut(.cancelAction).disabled(automation.isSaving)
+                    Button(automation.isSaving ? "Saving…" : (draft.id == nil ? "Create Agent" : "Save changes")) {
+                        saveError = nil
+                        Task {
+                            if await automation.saveTrigger(draft) { dismiss() }
+                            else { saveError = "Couldn’t save this Agent. Review its source and destination, then try again." }
+                        }
+                    }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .disabled(automation.isSaving || missingRequirement != nil)
+                        .accessibilityIdentifier("eventTrigger.save")
+                }
+            }.padding(18)
         }
-        .frame(width: 680, height: 700)
-        .sheet(item: $connectionSheet) { kind in
-            ConnectorSetupView(kind: kind, automation: automation)
-        }
+        .frame(width: 680, height: 620).background(LocusTheme.panel)
+        .tint(LocusTheme.accentAction)
+        .interactiveDismissDisabled(draft != originalDraft || automation.isSaving)
+        .alert("Discard changes?", isPresented: $confirmsDiscard) {
+            Button("Keep editing", role: .cancel) {}
+            Button("Discard", role: .destructive) { dismiss() }
+        } message: { Text("Your Agent settings haven’t been saved.") }
+        .sheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
+        .onAppear { nameFocused = draft.name.isEmpty }
         .onChange(of: automation.connections.map(\.id)) { oldValue, newValue in
-            // A source connected from inside the editor is almost certainly the
-            // one this agent wants, so select it rather than making the person
-            // find it in the picker they just left.
             guard draft.connectionID.isEmpty,
                   let added = Set(newValue).subtracting(oldValue).first,
                   eligibleConnections.contains(where: { $0.id == added }) else { return }
             draft.connectionID = added
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("eventAutomations.editor")
+    }
+
+    private var instructionBinding: Binding<String> {
+        Binding(get: { draft.workflow.firstAgent?.instructionTemplate ?? draft.instruction }, set: { value in
+            draft.instruction = value
+            if let index = draft.workflow.steps.firstIndex(where: { $0.type == .agent }) {
+                draft.workflow.steps[index].instructionTemplate = value
+            }
+        })
+    }
+    private var actionConnections: [ConnectorConnection] {
+        automation.connections.filter { $0.kind != .webhook && $0.kind != .priceFeed }
+    }
+    private var actionSummary: String {
+        let names = actionConnections.filter { draft.actionConnectionIDs.contains($0.id) }.map(\.displayName)
+        return names.isEmpty ? "No external service actions allowed" : "Allowed: " + names.joined(separator: ", ")
+    }
+    private var filterSummary: String {
+        let chips = AgentOverview.filterChips(for: draft.filters, kind: draft.triggerKind)
+        return chips.isEmpty ? "All incoming events · add optional filters" : chips.joined(separator: " · ")
+    }
+    private func cancel() {
+        if draft != originalDraft { confirmsDiscard = true } else { dismiss() }
+    }
+    @ViewBuilder private var environmentFields: some View {
+        Picker("Conversation", selection: $draft.targetSessionID) {
+            Text("Its own Agent chat").tag(EventTriggerEditorDraft.dedicatedAgentChat)
+            Text("Choose an existing chat").tag("")
+            ForEach(sessions.filter { !$0.isArchived }) { Text($0.displayTitle).tag($0.id) }
+        }
+        if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+            Text("Matching events continue the same Agent chat. Side conversations stay separate. The Agent uses the selected workspace’s files and instructions.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            if draft.id != nil, let model = existingAgentModel {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(draft.adoptCurrentRoute ? "Will use \(currentModel) after saving." : "Model: \(model)")
+                    if !draft.adoptCurrentRoute, currentModel != model {
+                        Button("Switch to \(currentModel)") { draft.adoptCurrentRoute = true }
+                            .accessibilityIdentifier("eventTrigger.route.adopt")
+                    }
+                }.font(.locus(size: 9)).accessibilityIdentifier("eventTrigger.route")
+            } else {
+                Text("Model: \(currentModel)").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            }
+        }
+        Picker("Work mode", selection: $draft.mode) {
+            ForEach(WorkMode.allCases) { Text($0.title).tag($0) }
+        }.onChange(of: draft.mode) { _, mode in
+            if let index = draft.workflow.steps.firstIndex(where: { $0.type == .agent }) { draft.workflow.steps[index].mode = mode }
+        }
+        if app.automationWorkflowsEnabled {
+            Picker("Runner", selection: $draft.runner) {
+                ForEach(ScheduleRunner.selectableCases) { Text($0.title).tag($0) }
+            }
+            if draft.runner == .team {
+                Picker("Team", selection: $draft.teamID) {
+                    Text("Choose a team").tag(String?.none)
+                    ForEach(agentTeams.agentTeams) { Text($0.name).tag(Optional($0.id.uuidString)) }
+                }.onChange(of: draft.teamID) { _, value in
+                    draft.teamName = agentTeams.agentTeams.first { $0.id.uuidString == value }?.name ?? ""
+                }
+            }
+        }
+        Text("Incoming message bodies are event data. They cannot change this Agent’s instructions or permissions.")
+            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
     }
 
     @ViewBuilder
@@ -1519,7 +1363,7 @@ private struct EventTriggerEditorView: View {
                 draft.filters.predicates.append(EventFilterPredicate())
             }
         } else {
-            Text("Choose a connection to configure deterministic filters.")
+            Text("Choose a source to set optional matching conditions.")
                 .foregroundStyle(LocusTheme.muted)
         }
     }
@@ -1546,8 +1390,18 @@ private struct EventTriggerEditorView: View {
                 ? "Connect a source first — this agent has nothing to listen to."
                 : "Choose the source this agent listens to."
         }
+        if !eligibleConnections.contains(where: { $0.id == draft.connectionID }) {
+            return "Choose an available source for this Agent."
+        }
         if draft.targetSessionID.isEmpty {
-            return "Choose where this agent's events arrive."
+            return "Choose where this Agent’s events arrive."
+        }
+        if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+            if draft.templateSessionID.isEmpty || !sessions.contains(where: { $0.id == draft.templateSessionID }) {
+                return "Open a workspace chat before creating this Agent."
+            }
+        } else if !sessions.contains(where: { $0.id == draft.targetSessionID && !$0.isArchived }) {
+            return "Choose an available receiving chat."
         }
         let instruction = app.automationWorkflowsEnabled
             ? (draft.workflow.firstAgent?.instructionTemplate ?? "")
@@ -1560,6 +1414,9 @@ private struct EventTriggerEditorView: View {
             return "Choose the Team that handles each event."
         }
         if draft.triggerKind == .price {
+            guard draft.filters.priceCondition?.providerSymbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return "Add the price provider’s symbol, such as BTCUSDT."
+            }
             guard let threshold = draft.filters.priceCondition?.thresholdDecimal,
                   threshold > 0 else {
                 return "Add a positive price threshold."
@@ -1585,8 +1442,8 @@ private struct EventTriggerEditorView: View {
     }
 
     private var editorTitle: String {
-        if draft.id != nil { return "Edit \(draft.triggerKind.title)" }
-        return "New \(draft.triggerKind.title)"
+        if draft.id != nil { return "Edit Agent" }
+        return draft.triggerKind == .price ? "New Price Alert Agent" : "New Event Agent"
     }
 }
 

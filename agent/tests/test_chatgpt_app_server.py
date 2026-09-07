@@ -659,7 +659,7 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     assert "Always answer in haiku." in options.developer_instructions
     assert start["base_instructions"] == ""
     tool_names = [item["function"]["name"] for item in start["tools"]]
-    assert tool_names == ["shell", "apply_patch", "update_plan", "ask_user_question"]
+    assert tool_names == ["shell", "apply_patch", "update_plan", "ask_user_question", "attach_output_parts"]
 
     items = runtime.turn_kwargs[-1]["input_items"]
     texts = [item["text"] for item in items if item["type"] == "text"]
@@ -797,7 +797,7 @@ def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
     # The question tool rides every parity surface: Grill and Work turns need
     # the popup as much as Plan does.
     assert "ask_user_question" in plan
-    assert set(work) == {"shell", "apply_patch", "update_plan", "ask_user_question"}
+    assert set(work) == {"shell", "apply_patch", "update_plan", "ask_user_question", "attach_output_parts"}
 
     core.tool_ctx.delegate_read_only = lambda _arguments: '{"results":[]}'
     core.tool_registry.set_solo_swarm_enabled(True)
@@ -807,7 +807,7 @@ def test_parity_schemas_add_submit_plan_only_in_plan_mode(tmp_path):
     ]
     assert set(adaptive) == {
         "shell", "apply_patch", "update_plan", "delegate_read_only",
-        "ask_user_question",
+        "ask_user_question", "attach_output_parts",
     }
     core.run_turn(DECORATED)
     start = runtime.start_kwargs[-1]

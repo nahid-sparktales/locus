@@ -55,10 +55,44 @@ struct SessionOverviewView: View {
 
     private var summaryPage: some View {
         ScrollView {
-            PinnedSummaryCard(session: session, browser: model.browser) { detail = $0 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 12) {
+                chatScopeHeader
+                PinnedSummaryCard(session: session, browser: model.browser) { detail = $0 }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var chatScopeHeader: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Chat overview")
+                .font(.locus(size: 13, weight: .semibold))
+            Text("Plan, outputs, and sources from the open conversation.")
+                .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let chat = model.sessionCatalog.snapshot.sessionsByID[model.currentSessionID],
+               let agent = chat.agentReference(in: model.agentDefinitions) {
+                Button {
+                    model.selectAgent(agent)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(locusSymbol: LocusSymbol.robot)
+                        Text(model.inspectorAgentDefinition(agent)?.name ?? chat.agentName ?? "View agent")
+                            .lineLimit(1)
+                        Image(systemName: "arrow.up.right").font(.locus(size: 9))
+                    }
+                    .font(.locus(size: 11, weight: .medium))
+                    .foregroundStyle(LocusTheme.signalDeep)
+                    .frame(minHeight: 26)
+                }
+                .buttonStyle(.locus())
+                .help("View this chat’s agent, trigger, access, and activity")
+                .accessibilityIdentifier("plan.agentOverview")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("plan.chatScope")
     }
 }
 
@@ -73,7 +107,7 @@ struct SummaryDetailHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Button(action: onBack) {
-                Label("Summary", systemImage: "chevron.left")
+                Label("Overview", systemImage: "chevron.left")
                     .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.inkSoft)
                     .padding(.horizontal, 6)
@@ -81,7 +115,7 @@ struct SummaryDetailHeader: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .accessibilityLabel("Back to summary")
+            .accessibilityLabel("Back to chat overview")
             .accessibilityIdentifier("plan.summary.back")
             Spacer(minLength: 4)
             Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())

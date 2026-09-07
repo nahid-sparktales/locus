@@ -43,15 +43,19 @@ struct GoalCardView: View {
                     Spacer(minLength: 2)
                     if goal.status == .active {
                         Button("Pause") { model.pauseAndStop(sessionID: sessionID) }
+                            .help("Pause this goal and stop its current work")
                             .accessibilityIdentifier("goal.pause")
                     } else if goal.status.canResume {
                         Button("Resume") { Task { await model.resume(sessionID: sessionID) } }
+                            .help("Continue this goal in its chat")
                             .accessibilityIdentifier("goal.resume")
                     }
                     if !goal.status.isTerminal {
                         Button("Edit") { model.open(sessionID: sessionID) }
                             .accessibilityIdentifier("goal.edit")
                         Button("End") { Task { await model.cancel(sessionID: sessionID) } }
+                            .help("Stop current work and end this goal")
+                            .accessibilityLabel("End this goal")
                             .accessibilityIdentifier("goal.end")
                     }
                 }
@@ -95,7 +99,7 @@ struct GoalEditorView: View {
                     .disabled(model.isSaving)
                     .accessibilityIdentifier("goal.editor.cancel")
             }
-            Text("Locus keeps working across turns until the goal is complete, needs your help, or reaches an allowance. You can pause it at any time.")
+            Text("Locus keeps working in this chat until the goal is complete, needs your help, or reaches an allowance. You can pause it at any time.")
                 .font(.callout).foregroundStyle(LocusTheme.textSecondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("What should this task accomplish?").font(.callout.weight(.medium))
@@ -116,7 +120,11 @@ struct GoalEditorView: View {
             }
             Text("Allowances count usage across all turns of this goal. Provider limits still apply. Leave an allowance empty for no goal-specific limit.")
                 .font(.caption).foregroundStyle(LocusTheme.textTertiary)
-            if let error = model.error {
+            if model.isEditing {
+                Text("Saving changes pauses the goal and stops its current work. Resume when you are ready to continue.")
+                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+            }
+            if let error = model.error ?? visibleValidationError {
                 Text(error).font(.callout).foregroundStyle(LocusTheme.danger)
                     .accessibilityIdentifier("goal.editor.error")
             }
@@ -127,6 +135,7 @@ struct GoalEditorView: View {
                     .buttonStyle(.locus(.primary))
                     .keyboardShortcut(.defaultAction)
                     .disabled(!model.canSave)
+                    .help(model.draftValidationError ?? (model.isEditing ? "Save the goal in a paused state" : "Start working toward this goal in the current chat"))
                     .accessibilityIdentifier("goal.editor.save")
             }
         }
@@ -136,6 +145,13 @@ struct GoalEditorView: View {
         .buttonStyle(.locus())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("goal.editor")
+    }
+
+    private var visibleValidationError: String? {
+        // Keep a new, untouched form quiet, but explain a disabled save after
+        // the user has started entering an objective or an allowance.
+        guard !model.draftObjective.isEmpty || !model.draftModelCallBudget.isEmpty || !model.draftTokenBudget.isEmpty else { return nil }
+        return model.draftValidationError
     }
 
     private func budgetField(_ title: String, placeholder: String, value: Binding<String>, id: String) -> some View {

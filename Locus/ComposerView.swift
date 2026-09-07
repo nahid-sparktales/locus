@@ -874,7 +874,7 @@ struct ComposerView: View {
                 }
                 .buttonStyle(.locus())
                 .disabled(!model.canStartGoal)
-                .help("Keep working toward a saved objective")
+                .help("Save an objective for this chat. The Agent keeps working until it completes the goal, pauses, or needs your input.")
                 .accessibilityIdentifier("composer.goal")
             }
             ForEach([WorkMode.plan, WorkMode.grill]) { mode in
@@ -890,6 +890,8 @@ struct ComposerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.locus())
+                .help(mode == .plan ? "Prepare a plan for this chat before making changes" : "Clarify your request with questions before starting work")
+                .accessibilityAddTraits(model.selectedMode == mode ? .isSelected : [])
                 .accessibilityLabel("\(mode.title) mode")
                 .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
                 .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
@@ -1004,7 +1006,8 @@ struct ComposerView: View {
                     ContextPopover()
                         .environmentObject(model)
                 }
-                .accessibilityLabel("Open context pack")
+                .help("Choose files to include as context in this chat. Access permissions are managed separately.")
+                .accessibilityLabel("Open chat context")
                 .accessibilityIdentifier("composer.context")
 
                 ComposerAttachmentSourceMenu(style: .paperclip)
@@ -1175,7 +1178,7 @@ struct ComposerView: View {
         }
         .help("Permissions: \(model.permissionMode.detail)")
         .accessibilityLabel("Permission mode, \(model.permissionMode.title)")
-        .accessibilityValue(model.permissionMode.isRisky ? "Danger" : "Standard")
+        .accessibilityValue(model.permissionMode.detail)
         .accessibilityIdentifier("composer.permissionMode")
     }
 
@@ -1193,57 +1196,52 @@ struct ComposerView: View {
     }
 
     private var permissionModePopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Permission mode")
-                .font(.locus(size: 10, weight: .bold))
-
+        VStack(alignment: .leading, spacing: 13) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Tool approval policy").font(.locus(size: 13, weight: .semibold))
+                Text("Applies to chats and Agents across Locus.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            }
             ForEach(PermissionMode.allCases) { mode in
                 Button {
                     model.setPermissionMode(mode)
                     permissionModesPresented = false
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 10) {
                         Image(systemName: mode.symbol)
-                            .frame(width: 15)
-                        Text(mode.title)
-                        Spacer(minLength: 12)
-                        if model.permissionMode == mode {
-                            Image(systemName: "checkmark")
-                                .font(.locus(size: 8, weight: .bold))
+                            .foregroundStyle(mode.isRisky ? LocusTheme.warning : LocusTheme.signalDeep)
+                            .frame(width: 20, height: 22)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(mode.title).font(.locus(size: 11, weight: .semibold))
+                                .foregroundStyle(LocusTheme.ink)
+                            Text(mode.detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                        Spacer(minLength: 0)
+                        Image(systemName: model.permissionMode == mode ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(model.permissionMode == mode ? LocusTheme.signalDeep : LocusTheme.muted)
                     }
-                    .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(mode.isRisky ? LocusTheme.danger : LocusTheme.inkSoft)
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                    .background(model.permissionMode == mode
-                        ? LocusTheme.paperDeep : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(11).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(model.permissionMode == mode ? LocusTheme.signal.opacity(0.09) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 9))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.locus())
+                .accessibilityAddTraits(model.permissionMode == mode ? .isSelected : [])
                 .accessibilityIdentifier("composer.permissionMode.\(mode.rawValue)")
             }
-
-            Divider().overlay(LocusTheme.line)
-
-            Text(model.permissionMode.detail)
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+            Divider()
+            Text("Agent tool restrictions and connected-service permissions still apply. Previously approved tools may already run automatically.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
-
-            Button("Reset session allowances") {
+            Button("Reset approvals and ask before actions") {
                 model.resetPermissions()
                 permissionModesPresented = false
             }
-            .buttonStyle(.locus())
-            .font(.locus(size: 8, weight: .semibold))
-            .foregroundStyle(LocusTheme.inkSoft)
+            .buttonStyle(.locus()).font(.locus(size: 9, weight: .medium))
             .disabled(model.allowedTools.isEmpty && model.permissionMode == .ask)
         }
-        .padding(10)
-        .frame(width: 240)
-        .background(LocusTheme.white)
+        .padding(16).frame(width: 360).background(LocusTheme.panel)
     }
 
     private var promptTrimmed: String {
@@ -2139,11 +2137,11 @@ private struct ContextPopover: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("CONTEXT PACK")
+                    Text("CHAT CONTEXT")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
-                    Text("Selected project files")
+                    Text("Files included in this chat")
                         .font(.locus(size: 11, weight: .bold))
                 }
                 Spacer()
@@ -2201,7 +2199,7 @@ private struct ContextPopover: View {
                 VStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Reading files off the main thread…")
+                    Text("Reading selected files…")
                         .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -2214,7 +2212,7 @@ private struct ContextPopover: View {
                         .foregroundStyle(LocusTheme.muted)
                     Text("No context files yet")
                         .font(.locus(size: 10, weight: .semibold))
-                    Text("Add only the files this run should focus on.")
+                    Text("Add files you want the Agent to focus on. This selection adds context; it does not limit file access.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 }

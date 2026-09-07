@@ -190,6 +190,9 @@ struct HistoryMessage: Codable {
     let itemID: String?
     let runID: String?
     let eventTrigger: EventTranscriptContext?
+    var responseParts: ResponseDocument? = nil
+    var reasoningFormat: AssistantReasoningFormat? = nil
+    var activityLabel: String? = nil
 
     var teamRunID: String? { runID }
 
@@ -200,6 +203,9 @@ struct HistoryMessage: Codable {
         case runID = "run_id"
         case legacyTeamRunID = "team_run_id"
         case eventTrigger = "event_trigger"
+        case responseParts = "response_parts"
+        case reasoningFormat = "reasoning_format"
+        case activityLabel = "activity_label"
     }
 
     // A single null-content tool message must not fail an entire resume.
@@ -212,6 +218,10 @@ struct HistoryMessage: Codable {
         reasoningSections = try? container.decodeIfPresent([String].self, forKey: .reasoningSections)
         phase = try? container.decodeIfPresent(AssistantPhase.self, forKey: .phase)
         itemID = try? container.decodeIfPresent(String.self, forKey: .itemID)
+        responseParts = try? container.decodeIfPresent(ResponseDocument.self, forKey: .responseParts)
+        reasoningFormat = (try? container.decodeIfPresent(String.self, forKey: .reasoningFormat))
+            .map { AssistantReasoningFormat(rawValue: $0) ?? .none }
+        activityLabel = try? container.decodeIfPresent(String.self, forKey: .activityLabel)
         runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
             ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
         eventTrigger = try? container.decodeIfPresent(
@@ -228,6 +238,9 @@ struct HistoryMessage: Codable {
         try container.encodeIfPresent(reasoningSections, forKey: .reasoningSections)
         try container.encodeIfPresent(phase, forKey: .phase)
         try container.encodeIfPresent(itemID, forKey: .itemID)
+        try container.encodeIfPresent(responseParts, forKey: .responseParts)
+        try container.encodeIfPresent(reasoningFormat, forKey: .reasoningFormat)
+        try container.encodeIfPresent(activityLabel, forKey: .activityLabel)
         try container.encodeIfPresent(runID, forKey: .runID)
         try container.encodeIfPresent(eventTrigger, forKey: .eventTrigger)
     }
@@ -249,6 +262,9 @@ struct ToolPayload: Codable, Hashable {
     var status: ToolStatus
     var requestID: String?
     var result: String?
+    /// Optional, runtime-verified description of a successful tool result.
+    /// Older checkpoints and providers keep the generic activity summary.
+    var activityLabel: String? = nil
 }
 
 /// The status a compact tool-activity row presents for a group. Active work
@@ -315,6 +331,7 @@ struct CompactToolActivitySummary: Equatable {
         case plan
         case image
         case fallback(String)
+        case verified(String, symbol: String)
 
         init(tool: ToolPayload) {
             let name = tool.tool.lowercased()
@@ -346,6 +363,11 @@ struct CompactToolActivitySummary: Equatable {
             } else {
                 self = .fallback(Self.fallbackTitle(tool))
             }
+            if tool.status == .done,
+               let label = tool.activityLabel?.split(whereSeparator: \.isWhitespace).joined(separator: " "),
+               !label.isEmpty {
+                self = .verified(String(label.prefix(160)), symbol: systemImage)
+            }
         }
 
         var systemImage: String {
@@ -358,6 +380,7 @@ struct CompactToolActivitySummary: Equatable {
             case .plan: "checklist"
             case .image: "photo"
             case .fallback: "wrench.and.screwdriver"
+            case .verified(_, let symbol): symbol
             }
         }
 
@@ -371,6 +394,7 @@ struct CompactToolActivitySummary: Equatable {
             case .plan: "Updated plan"
             case .image: count == 1 ? "Created image" : "Created images"
             case .fallback(let title): title
+            case .verified(let title, _): title
             }
         }
 
@@ -410,6 +434,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Provider item identity used to reconcile starts, deltas, duplicate
     /// completions, and authoritative final content without guessing from text.
     var sourceItemID: String?
+    var responseParts: ResponseDocument?
+    var reasoningFormat: AssistantReasoningFormat?
     /// Native provider reasoning, kept separate from visible answer text.
     /// Optional decoding keeps existing checkpoints readable.
     var reasoningText: String?
@@ -438,7 +464,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     var historyIndex: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, text, assistantPhase, sourceItemID
+        case id, kind, text, assistantPhase, sourceItemID, responseParts, reasoningFormat
         case reasoningText, reasoningSections, isStreaming, tool, completion, historyIndex
         case runID = "run_id"
         case eventTrigger
@@ -452,6 +478,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         text: String = "",
         assistantPhase: AssistantPhase? = nil,
         sourceItemID: String? = nil,
+        responseParts: ResponseDocument? = nil,
+        reasoningFormat: AssistantReasoningFormat? = nil,
         reasoningText: String? = nil,
         reasoningSections: [String]? = nil,
         isStreaming: Bool = false,
@@ -467,6 +495,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.text = text
         self.assistantPhase = assistantPhase
         self.sourceItemID = sourceItemID
+        self.responseParts = responseParts
+        self.reasoningFormat = reasoningFormat
         self.reasoningText = reasoningText
         self.reasoningSections = reasoningSections
         self.isStreaming = isStreaming
@@ -484,6 +514,9 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         assistantPhase = try container.decodeIfPresent(AssistantPhase.self, forKey: .assistantPhase)
         sourceItemID = try container.decodeIfPresent(String.self, forKey: .sourceItemID)
+        responseParts = try? container.decodeIfPresent(ResponseDocument.self, forKey: .responseParts)
+        reasoningFormat = (try? container.decodeIfPresent(String.self, forKey: .reasoningFormat))
+            .map { AssistantReasoningFormat(rawValue: $0) ?? .none }
         reasoningText = try container.decodeIfPresent(String.self, forKey: .reasoningText)
         reasoningSections = try container.decodeIfPresent([String].self, forKey: .reasoningSections)
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
@@ -505,6 +538,8 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         try container.encode(text, forKey: .text)
         try container.encodeIfPresent(assistantPhase, forKey: .assistantPhase)
         try container.encodeIfPresent(sourceItemID, forKey: .sourceItemID)
+        try container.encodeIfPresent(responseParts, forKey: .responseParts)
+        try container.encodeIfPresent(reasoningFormat, forKey: .reasoningFormat)
         let compatibleReasoning = reasoningText
             ?? reasoningSections?.joined(separator: "\n\n").nilIfEmpty
         try container.encodeIfPresent(compatibleReasoning, forKey: .reasoningText)
@@ -763,13 +798,17 @@ enum TranscriptPresentation {
             result.append(.assistantSegment(AssistantPresentationSegment(
                 id: .init(sourceBlockID: block.id, ordinal: visibleOrdinal),
                 sourceBlock: block,
-                text: trimmed
+                text: text
             )))
             visibleOrdinal += 1
         }
 
         appendThinkingGroup(block.resolvedReasoningSections)
-        for segment in AssistantSegment.parse(block.text) {
+        if block.responseParts?.isSupported == true {
+            result.append(.assistantSegment(AssistantPresentationSegment(id: .init(sourceBlockID: block.id, ordinal: 0), sourceBlock: block, text: block.text)))
+            return result
+        }
+        for segment in AssistantSegment.parse(block.text, reasoningFormat: block.reasoningFormat ?? .legacyTags) {
             switch segment {
             case .thinking(let text, _):
                 appendThinkingGroup([text])

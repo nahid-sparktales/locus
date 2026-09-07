@@ -421,12 +421,12 @@ struct InspectorProxiesTab: View {
                 Button { addProfile() } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus(.icon))
                 .help("Add proxy profile")
                 Button { deleteSelectedProfile() } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus(.icon))
                 .disabled(selectedProfileID == ProxyProfile.primaryID)
                 .help("Delete selected profile")
             }
@@ -996,7 +996,7 @@ private struct InspectorOpenTabBar: View {
         let badgeWidth = InspectorOpenTabItem.reservedBadgeWidth(for: tab)
         // Text, optional status, and close control each get a stable slot. This
         // avoids the loose label/X spacing that made the old row feel uneven.
-        return min(104, max(55, labelWidth + badgeWidth + 35))
+        return min(140, max(62, labelWidth + badgeWidth + 35))
     }
 
 }
@@ -1024,6 +1024,7 @@ private struct InspectorOpenTabItem: View {
         HStack(spacing: 3) {
             InspectorTabActivationButton(
                 title: tab.title,
+                help: tab.help,
                 selected: selected,
                 accessibilityIdentifier: "inspector.tab.\(tab.rawValue)",
                 action: focus
@@ -1044,13 +1045,13 @@ private struct InspectorOpenTabItem: View {
         .padding(.trailing, 4)
         .frame(width: width, height: 28)
         .background(
-            isHovering ? LocusTheme.white.opacity(selected ? 0.28 : 0.38) : Color.clear
+            selected ? LocusTheme.signal.opacity(0.08) : isHovering ? LocusTheme.white.opacity(0.38) : Color.clear
         )
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if selected {
                 Capsule()
-                    .fill(LocusTheme.ink)
+                    .fill(LocusTheme.signalDeep)
                     .frame(height: 2)
                     .frame(width: min(labelWidth + 2, width - 30))
                     .padding(.leading, 8)
@@ -1102,6 +1103,7 @@ private struct InspectorTabCloseButton: View {
 /// safe area, which makes the first tab switch appear to do nothing.
 private struct InspectorTabActivationButton: NSViewRepresentable {
     let title: String
+    let help: String
     let selected: Bool
     let accessibilityIdentifier: String
     let action: () -> Void
@@ -1157,6 +1159,8 @@ private struct InspectorTabActivationButton: NSViewRepresentable {
         button.action = #selector(Coordinator.activate)
         button.mouseDownAction = context.coordinator.activate
         button.title = title
+        button.toolTip = help
+        button.setAccessibilityHelp(help)
         let font = NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .medium)
         let titleColor = InspectorTabAppearance.titleColor(
             colorScheme: context.environment.colorScheme,
@@ -1423,9 +1427,9 @@ private enum RunsStatusFilter: String, CaseIterable, Identifiable {
         case .all:
             true
         case .active:
-            ["queued", "dispatching", "running", "reviewing"].contains(run.state)
+            ["pending", "claiming", "queued", "dispatching", "planning", "running", "reviewing", "advancing", "awaiting_run"].contains(run.state)
         case .attention:
-            ["waiting_permission", "waiting_computer", "waiting_dispatch_approval",
+            ["waiting_permission", "waiting_computer", "waiting_dispatch_approval", "waiting_approval",
              "paused", "interrupted", "failed"].contains(run.state)
         case .finished:
             TeamRunState(rawValue: run.state)?.isTerminal == true
@@ -1531,16 +1535,21 @@ struct InspectorRunsTab: View {
                     // Decoration beside the panel's own title: unhidden, it is
                     // exposed with its raw SF Symbol name as its label.
                     .accessibilityHidden(true)
-                Text("RUNS")
-                    .font(.locus(size: 8, weight: .bold))
-                    .tracking(0.7)
+                Text("Run history")
+                    .font(.locus(size: 14, weight: .semibold))
                 Spacer()
                 Button {
                     Task { await runs.refreshOrchestrationRuns() }
                 } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.locus())
+                    .disabled(runs.isLoadingOrchestrationRuns)
                     .help("Refresh run history")
+                    .accessibilityLabel("Refresh run history")
             }
+            Text("Executions in this chat. Inspect a run to see its result, actions, and any requests for attention.")
+                .font(.locus(size: 11))
+                .foregroundStyle(LocusTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Picker("Run type", selection: Binding(
                 get: { scope },
                 set: { newScope in
@@ -1688,10 +1697,11 @@ struct InspectorRunsTab: View {
                         ? "circle.hexagongrid" : "clock.arrow.circlepath")
                         .font(.locus(size: 24))
                         .foregroundStyle(LocusTheme.muted)
-                    Text(scope == .soloSwarm ? "No Solo runs yet" : "No matching runs")
+                    Text(scope == .soloSwarm ? "No Solo runs yet" : runPickerRuns.isEmpty ? "No runs yet" : "No matching runs")
                         .font(.locus(size: 11, weight: .bold))
                     Text(scope == .soloSwarm
                         ? "Send a Solo Work, Plan, or Grill request. Locus delegates automatically when parallel investigation would help."
+                        : runPickerRuns.isEmpty ? "When this chat starts work, its executions and outcomes appear here."
                         : "Try another run type, status, or search term.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)

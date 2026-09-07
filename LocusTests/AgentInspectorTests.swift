@@ -185,6 +185,103 @@ final class AgentInspectorTests: XCTestCase {
         XCTAssertEqual(AgentInspectorCopy.tokens(try decoded()), 0)
     }
 
+    func testAgentStatusUsesTheSameVisibleAndAccessibleState() {
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.active), "Ready")
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.active, isRunning: true), "Running")
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.active, sourceNeedsAttention: true), "Needs attention")
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.active, isRunning: true, sourceNeedsAttention: true), "Running")
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.paused), "Paused")
+        for status in [AgentOverview.Status.stopped, .failing, .missingTrigger] {
+            XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(status), "Needs attention")
+        }
+        XCTAssertEqual(AgentInspectorCopy.agentStatusTitle(.fired), "Completed")
+    }
+
+    func testActivityStatesDistinguishWaitingAttentionAndUnknownFromSuccess() {
+        XCTAssertEqual(AgentActivityState(rawState: "completed"), .completed)
+        for state in ["pending", "queued"] {
+            XCTAssertEqual(AgentActivityState(rawState: state), .waiting, state)
+        }
+        for state in ["planning", "running", "advancing", "awaiting_run"] {
+            XCTAssertEqual(AgentActivityState(rawState: state), .running, state)
+        }
+        for state in ["failed", "interrupted", "waiting_permission", "waiting_approval", "waiting_computer", "paused"] {
+            XCTAssertEqual(AgentActivityState(rawState: state), .attention, state)
+        }
+        for state in ["skipped", "cancelled", "discarded", "future_backend_state"] {
+            XCTAssertEqual(AgentActivityState(rawState: state), .neutral, state)
+        }
+    }
+
+    func testReadyAgentRequiresAUsableConnectionButPausedAgentsRemainQuiet() {
+        var trigger = EventTrigger(id: "agent", name: "Inbox", connectionID: "source",
+            targetSessionID: "chat", instruction: "Review messages", mode: .work, triggerKind: .event,
+            filters: EventTriggerFilters(), runtimeState: PriceTriggerState(), actionConnectionIDs: [],
+            enabled: true, createdAt: 10, updatedAt: 10, lastEventAt: nil, lastRunID: nil, lastError: nil)
+        var connection = ConnectorConnection(id: "source", kind: .gmail, displayName: "Inbox",
+            publicConfig: [:], cursor: [:], enabled: true, health: "connected", lastError: nil,
+            lastPolledAt: nil, createdAt: 10, updatedAt: 10)
+        XCTAssertFalse(AgentInspectorCopy.sourceNeedsAttention(definition: .trigger(trigger), connection: connection))
+        XCTAssertTrue(AgentInspectorCopy.sourceNeedsAttention(definition: .trigger(trigger), connection: nil))
+        connection.health = "error"
+        XCTAssertTrue(AgentInspectorCopy.sourceNeedsAttention(definition: .trigger(trigger), connection: connection))
+        connection.health = "connected"
+        connection.enabled = false
+        XCTAssertTrue(AgentInspectorCopy.sourceNeedsAttention(definition: .trigger(trigger), connection: connection))
+        trigger.enabled = false
+        XCTAssertFalse(AgentInspectorCopy.sourceNeedsAttention(definition: .trigger(trigger), connection: connection))
+    }
+
+    func testDeliveryCompletionDoesNotHideExecutionAttention() {
+        let incoming = InboundEvent(source: .gmail, sourceEventID: "event", eventType: "email.received",
+            occurredAt: 10, actor: [:], subject: "Review this", text: "Message",
+            recipients: [], labels: [], attachments: [], data: [:])
+        func event(_ runState: String) -> AgentOverview.Event {
+            AgentOverview.Event(delivery: EventDelivery(id: "delivery", triggerID: "agent",
+                sourceEventID: "event", source: .gmail, receivedAt: 10, occurredAt: 10,
+                event: incoming, state: "completed", runState: runState, attempt: 1,
+                sessionID: "chat", runID: "run", error: nil, createdAt: 10, updatedAt: 10))
+        }
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("waiting_approval")), .attention)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("failed")), .attention)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("running")), .running)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("completed")), .completed)
+    }
+
+    func testTerminalDeliveryOutcomeWinsOverStaleExecutionState() {
+        let incoming = InboundEvent(source: .gmail, sourceEventID: "event", eventType: "email.received",
+            occurredAt: 10, actor: [:], subject: "Review this", text: "Message",
+            recipients: [], labels: [], attachments: [], data: [:])
+        for state in ["failed", "interrupted", "cancelled", "skipped"] {
+            let delivery = EventDelivery(id: "delivery", triggerID: "agent", sourceEventID: "event",
+                source: .gmail, receivedAt: 10, occurredAt: 10, event: incoming, state: state,
+                runState: "running", attempt: 1, sessionID: "chat", runID: "run", error: nil,
+                createdAt: 10, updatedAt: 10)
+            let event = AgentOverview.Event(delivery: delivery)
+            XCTAssertEqual(event.stateTitle, AgentInspectorCopy.state(state))
+            XCTAssertEqual(AgentInspectorCopy.activityState(event), AgentActivityState(rawState: state))
+            XCTAssertFalse(event.isInFlight)
+            XCTAssertEqual(event.isSkipped, state == "skipped")
+            XCTAssertEqual(event.canRetry, state != "skipped")
+        }
+        XCTAssertEqual(AgentInspectorCopy.effectiveActivityState(deliveryState: "queued", runState: ""), "queued")
+        XCTAssertEqual(AgentInspectorCopy.effectiveActivityState(deliveryState: "completed", runState: "failed"), "failed")
+        XCTAssertEqual(AgentInspectorCopy.effectiveActivityState(deliveryState: "failed", runState: "completed"), "failed")
+    }
+
+    func testScheduleActivityFilterIncludesApprovalWithoutFlaggingSkippedSlots() {
+        func event(_ state: String) -> AgentOverview.Event {
+            AgentOverview.Event(occurrence: ScheduleOccurrence(id: "slot", scheduleID: "agent",
+                scheduleName: "Review", scheduledFor: 10, trigger: "due", state: state,
+                sessionID: nil, runID: nil, error: nil, createdAt: 10, updatedAt: 10))
+        }
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("waiting_approval")), .attention)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("waiting_computer")), .attention)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("skipped")), .neutral)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("completed")), .completed)
+        XCTAssertEqual(AgentInspectorCopy.activityState(event("unknown")), .neutral)
+    }
+
     @MainActor
     func testAttentionFocusShowsOnlyTheSelectedRequestAndCanReturnToAll() {
         BackendStub.reset()

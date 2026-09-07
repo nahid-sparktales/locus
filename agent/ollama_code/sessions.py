@@ -714,7 +714,7 @@ class SessionStore:
             role = str(message.get("role") or "")
             if role not in {"user", "assistant", "tool"}:
                 continue
-            if message.get("_display_only") and not include_reasoning:
+            if role == "assistant" and message.get("_display_only") and not include_reasoning:
                 continue
             item: dict[str, Any] = {"role": role}
             if role == "user":
@@ -739,6 +739,9 @@ class SessionStore:
                         item["attachments"] = attachments
             elif role == "assistant":
                 item["content"] = str(message.get("content") or "")
+                for private, public in (("_response_parts", "response_parts"), ("_reasoning_format", "reasoning_format"), ("run_id", "run_id")):
+                    if message.get(private) is not None:
+                        item[public] = message[private]
                 phase = str(message.get("_phase") or "")
                 item_id = str(message.get("_item_id") or "")
                 if phase:
@@ -761,6 +764,12 @@ class SessionStore:
                     if reasoning:
                         item["reasoning"] = reasoning
             else:
+                if message.get("_activity_label"):
+                    item["activity_label"] = message["_activity_label"]
+                if message.get("run_id"):
+                    item["run_id"] = message["run_id"]
+                if message.get("_item_id"):
+                    item["item_id"] = message["_item_id"]
                 item["name"] = str(message.get("name") or "tool")[:255]
                 item["content"] = str(message.get("content") or "") if include_tool_details else ""
             output.append(item)

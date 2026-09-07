@@ -59,10 +59,32 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .notes: "Notes"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
-        case .agents: "AGENTS.md"
+        case .agents: "Instructions"
         case .router: "Router"
         case .proxies: "Proxies"
         }
+    }
+
+    /// Explain scope at the point of navigation: Agent covers an assistant,
+    /// Overview covers the open conversation, and Instructions covers a file.
+    var help: String {
+        let detail: String
+        switch self {
+        case .plan: detail = "This chat’s plan, outputs, sources, and context usage"
+        case .agent: detail = "Selected agent: trigger, access, chats, and activity"
+        case .notes: detail = "Editable notes shared at the scope you choose"
+        case .agents: detail = "Workspace instructions in AGENTS.md"
+        case .runs: detail = "This chat’s saved executions, progress, and failures"
+        case .changes: detail = "Review workspace file changes"
+        case .files: detail = "Browse files and outputs in this workspace"
+        case .terminal: detail = "Workspace terminal and background processes"
+        case .preview: detail = "Browse and inspect web pages"
+        case .simulator: detail = "Control the iOS simulator"
+        case .checkpoints: detail = "Restore an earlier workspace checkpoint"
+        case .router: detail = "Model routing and provider decisions"
+        case .proxies: detail = "Network proxy routes and connection health"
+        }
+        return "\(title) — \(detail)" + (shortcutKey.map { " (⌘\($0))" } ?? "")
     }
 
     var symbol: String {

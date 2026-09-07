@@ -35,6 +35,28 @@ struct DocumentReference: Codable, Hashable, Identifiable, Sendable {
     var path: String
     var contentHash: String?
     var location: DocumentLocation?
+    enum CodingKeys: String, CodingKey {
+        case workspace, path, location, contentHash
+        case sourceHash = "content_hash"
+    }
+    init(workspace: String, path: String, contentHash: String? = nil, location: DocumentLocation? = nil) {
+        self.workspace = workspace; self.path = path; self.contentHash = contentHash; self.location = location
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        workspace = try values.decode(String.self, forKey: .workspace)
+        path = try values.decode(String.self, forKey: .path)
+        contentHash = try values.decodeIfPresent(String.self, forKey: .sourceHash)
+            ?? values.decodeIfPresent(String.self, forKey: .contentHash)
+        location = try values.decodeIfPresent(DocumentLocation.self, forKey: .location)
+    }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(workspace, forKey: .workspace)
+        try values.encode(path, forKey: .path)
+        try values.encodeIfPresent(contentHash, forKey: .contentHash)
+        try values.encodeIfPresent(location, forKey: .location)
+    }
     var id: String { "\(workspace)|\(path)|\(contentHash ?? "")|\(location?.label ?? "")" }
     var navigationURL: URL? {
         var components = URLComponents()

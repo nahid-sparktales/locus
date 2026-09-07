@@ -176,7 +176,8 @@ struct InspectorPlanTab: View {
 /// visual language used by the rest of the inspector.
 struct ContextWindowInfoCard: View {
     @EnvironmentObject private var model: AppModel
-    @AppStorage("Locus.contextWindowInfo.collapsed") private var isCollapsed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("Locus.contextWindowInfo.collapsed") private var isCollapsed = true
 
     private var fraction: Double? { model.contextWindowUsageFraction }
 
@@ -209,17 +210,18 @@ struct ContextWindowInfoCard: View {
                     Text("Context window")
                     Spacer()
                     Text(usageLabel)
-                        .font(.locus(size: 7, weight: .bold, design: .monospaced))
+                        .font(.locus(size: 10, weight: .bold, design: .monospaced))
                         .tracking(0.45)
                         .foregroundStyle(accent)
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.locus(size: 7, weight: .bold))
+                        .font(.locus(size: 10, weight: .bold))
                         .foregroundStyle(LocusTheme.muted)
                 }
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .font(.locus(size: 9, weight: .bold))
+            .font(.locus(size: 12, weight: .bold))
             .foregroundStyle(LocusTheme.inkSoft)
             .accessibilityLabel(isCollapsed ? "Expand context window" : "Collapse context window")
             .accessibilityIdentifier("plan.contextWindow.toggle")
@@ -255,14 +257,14 @@ struct ContextWindowInfoCard: View {
                             statRow("Usable for chat", "\(usable.formatted()) tokens")
                         }
                         statRow(
-                            "Context pack next send",
+                            "Attached context",
                             "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
                         )
                         statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
                     }
 
                     Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.muted)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -281,18 +283,18 @@ struct ContextWindowInfoCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Context window information")
         .accessibilityIdentifier("plan.contextWindow")
-        .animation(LocusMotion.spatial, value: isCollapsed)
+        .animation(reduceMotion ? nil : LocusMotion.spatial, value: isCollapsed)
     }
 
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .font(.locus(size: 8))
+                .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
                 .lineLimit(1)
             Spacer(minLength: 4)
             Text(value)
-                .font(.locus(size: 8, weight: .semibold, design: .monospaced))
+                .font(.locus(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
