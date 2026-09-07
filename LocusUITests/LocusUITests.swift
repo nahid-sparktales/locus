@@ -156,6 +156,31 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    /// A SwiftUI `Stepper` on macOS is an `NSStepper` beside its label. The
+    /// native incrementor reports its accessibility value as a number, never
+    /// a String, and the identifier can land on the incrementor itself or on
+    /// a wrapping group depending on the macOS release. Accept the control's
+    /// numeric value or the label text the user actually sees, so the check
+    /// follows the rendered state rather than one attribute representation.
+    private func stepperShows(_ stepper: XCUIElement, seconds: Int) -> Bool {
+        let control = stepper.elementType == .stepper
+            ? stepper
+            : stepper.descendants(matching: .stepper).firstMatch
+        let value: Int? = {
+            guard control.exists else { return nil }
+            switch control.value {
+            case let number as NSNumber: return number.intValue
+            case let text as String: return Int(text.filter(\.isNumber))
+            default: return nil
+            }
+        }()
+        if value == seconds { return true }
+        let label = "Timeout: \(seconds)s"
+        return app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR title == %@ OR value == %@", label, label, label
+        )).firstMatch.exists
+    }
+
     #if LOCUS_WALLET
     /// Recovery is intentionally launched as an exact child executable rather
     /// than by XCTest. Resolve and validate that running child directly;
@@ -1576,11 +1601,14 @@ final class LocusUITests: XCTestCase {
         let increaseTimeout = timeout.descendants(matching: .incrementArrow).firstMatch
         let decreaseTimeout = timeout.descendants(matching: .decrementArrow).firstMatch
         revealSettingsControl(increaseTimeout, in: scroll)
-        XCTAssertEqual(timeout.value as? String, "600")
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 600) },
+            timeout.debugDescription)
         increaseTimeout.click()
-        XCTAssertTrue(waitUntil { timeout.value as? String == "630" })
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 630) },
+            timeout.debugDescription)
         decreaseTimeout.click()
-        XCTAssertTrue(waitUntil { timeout.value as? String == "600" })
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 600) },
+            timeout.debugDescription)
         XCTAssertTrue(anyElement("agent.advanced.tokenLimit").exists)
         XCTAssertTrue(cancel.isHittable)
         XCTAssertTrue(save.isHittable)
