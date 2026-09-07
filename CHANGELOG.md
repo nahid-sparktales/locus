@@ -30,6 +30,9 @@
 
 ### Fixed
 
+- Mobile chat refresh preserves partial answers when loading fails and ignores
+  stale responses after switching conversations.
+
 - Removing every connected-service action permission now persists the empty
   selection, including restrictions in workflow steps.
 - Agent creation from the sidebar waits for its parent sheet to mount.
