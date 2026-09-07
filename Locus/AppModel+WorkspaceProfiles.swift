@@ -10,6 +10,9 @@ import UserNotifications
 /// settings, and checkpoints.
 extension AppModel {
     func applyWorkspaceProfileIfNeeded(for info: SessionInfo) {
+        let wasRestoring = isRestoringManualModelRoute
+        isRestoringManualModelRoute = true
+        defer { isRestoringManualModelRoute = wasRestoring }
         let path = SessionSummary.canonicalWorkspacePath(info.cwd)
         guard appliedWorkspacePath != path || pendingWorkspacePath == path else { return }
         let changedWorkspace = appliedWorkspacePath != nil && appliedWorkspacePath != path
@@ -32,7 +35,7 @@ extension AppModel {
         }) {
             draftText = profile.draft
             soloSwarmEnabled = true
-            selectedMode = profile.mode
+            selectedMode = goals.goal(for: info.sessionID)?.status == .active ? .work : profile.mode
             settings.previewURL = profile.previewURL
             contextFiles = profile.contextFiles
             applyProfileRoute(profile, currentModel: info.model)

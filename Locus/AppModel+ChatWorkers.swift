@@ -128,6 +128,8 @@ extension AppModel {
                         text: workerError
                     ))
                 }
+                self.goals.handleEvent(["type": "error", "run_id": runID ?? ""], sessionID: runtime.sessionID)
+                await self.goals.refresh()
             }
         }
         runtime.service.onConnectionChange = { [weak self, weak runtime] connected in
@@ -285,6 +287,8 @@ extension AppModel {
                   !self.isShuttingDown
             else { return }
             self.eventAutomations.wakeDispatcher()
+            self.drainGoalQueuedMessages(sessionID: runtime.sessionID)
+            self.goals.wake()
         }
     }
 
@@ -474,6 +478,7 @@ extension AppModel {
     }
 
     private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
+        goals.handleEvent(event, sessionID: runtime.sessionID)
         if handleOptionalQuestionEvent(event, sessionID: runtime.sessionID) { return }
         taskCapsules.handleEvent(event, sessionID: runtime.sessionID)
         if let type = event["type"] as? String,
@@ -636,14 +641,16 @@ extension AppModel {
             let reason = event["reason"] as? String ?? "complete"
             outputsLibrary.endRun(sessionID: runtime.sessionID)
             if let overview = sessionOverview.states[runtime.sessionID] {
+                let goal = event["goal_id"] == nil ? nil : goals.goal(for: runtime.sessionID)
                 let summary = SessionRunSummary(
                     completedSteps: overview.plan.filter { $0.state == .done }.count,
                     totalSteps: overview.plan.count,
                     durationMs: (event["duration_ms"] as? Int)
                         ?? runtime.startedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) } ?? 0,
                     endedAt: Self.sessionTimestamp,
-                    summary: reason == "complete" ? "The task completed." : "The task stopped before finishing.",
-                    outcome: reason == "complete" ? .completed : .failed
+                    summary: goal.map { $0.summary?.nilIfEmpty ?? "Goal progress saved." }
+                        ?? (reason == "complete" ? "The task completed." : "The task stopped before finishing."),
+                    outcome: reason == "complete" ? (goal.map { $0.status == .completed } ?? true ? .completed : .partial) : .failed
                 )
                 sessionOverview.emit(.runFinished(summary: summary, suggestions: nil, at: Self.sessionTimestamp), sessionID: runtime.sessionID)
             }
@@ -724,7 +731,7 @@ extension AppModel {
             )
         } else if type == "turn_done" {
             let isWorkflowStep = event["workflow_execution_id"] as? String != nil
-            if state == .completed, !isWorkflowStep {
+            if state == .completed, !isWorkflowStep, event["goal_id"] == nil {
                 if runtime.pendingQuestion != nil {
                     notifyNeedsAttentionIfInactive(
                         body: "A background chat asked you a question.",
@@ -738,7 +745,7 @@ extension AppModel {
                         workspace: runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
                     )
                 }
-            } else if (state == .failed || state == .interrupted), !isWorkflowStep {
+            } else if (state == .failed || state == .interrupted), !isWorkflowStep, event["goal_id"] == nil {
                 notifyNeedsAttentionIfInactive(
                     body: "A background chat stopped and needs attention.",
                     sessionID: runtime.sessionID,

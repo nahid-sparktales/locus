@@ -140,6 +140,19 @@ def run_queue(
     if not session_id:
         raise HTTPException(422, "session_id is required")
     run_id = str(body.get("run_id") or uuid.uuid4().hex)
+    goal_id = str(body.get("goal_id") or "")
+    if goal_id:
+        _require_capability("persistent_goals_v1")
+        from ..goals import GoalError, GoalStore
+        try:
+            return GoalStore(service.run_store).queue_user_run(
+                goal_id, run_id, body.get("goal_revision"), session_id=session_id,
+                input_id=body.get("goal_input_id"),
+                **{key: body[key] for key in ("message_id", "team_id", "team_name", "workspace_root", "execution_path",
+                                               "request", "run_kind", "execution_environment", "retry_parent_id", "solo_swarm") if key in body},
+            )
+        except GoalError as error:
+            raise HTTPException(409, str(error)) from error
     return service.run_store.queue_run(
         run_id,
         session_id=session_id,
@@ -176,6 +189,9 @@ def run_queue_update(
 
 def run_retry(service: ServiceDependency, run_id: str) -> dict[str, Any]:
     store = service.run_store
+    from ..goals import GoalStore
+    if GoalStore(store).for_run(run_id) is not None:
+        raise HTTPException(409, "Use Goal Resume to continue this goal without resetting its allowance.")
     original = store.run(run_id)
     if original is None:
         raise HTTPException(404, f"run not found: {run_id}")
@@ -430,6 +446,18 @@ async def _resume_orchestration(
             409,
             "Open Task Capsules to review the partial work and ask the planner for an updated plan.",
         )
+    from ..goals import GoalError, GoalStore
+    goals = GoalStore(svc.run_store)
+    goal = goals.for_run(run_id)
+    if goal is not None:
+        if action != "resume" or goal["current_run_id"] != run_id:
+            raise HTTPException(409, "Use Goal Resume to continue this goal without replaying its work.")
+        try:
+            admission = goals.claim(goal["id"], goal["revision"])
+        except GoalError as error:
+            raise HTTPException(409, str(error)) from error
+        if (admission.get("run") or {}).get("id") != run_id:
+            raise HTTPException(409, "Use Goal Resume after resolving the goal's pending attention or allowance.")
     if not record.get("recoverable") or str(record.get("state") or "") not in {
         "paused",
         "interrupted",
@@ -441,6 +469,9 @@ async def _resume_orchestration(
     if not isinstance(manifest, dict):
         raise HTTPException(422, "resume requires the current in-memory team manifest")
     manifest = dict(manifest)
+    if goal is not None:
+        manifest.update(goal_id=goal["id"], goal_revision=goal["revision"],
+                        goal_ordinal=goal["continuation_ordinal"])
     same_run_actions = {"resume", "retry", "reassign", "run_with_locus"}
     if action in same_run_actions:
         manifest["run_id"] = run_id

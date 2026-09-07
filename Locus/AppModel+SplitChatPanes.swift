@@ -234,12 +234,16 @@ extension AppModel {
     }
 
     private func restorePanePreferences(for sessionID: String) {
+        let wasRestoring = isRestoringManualModelRoute
+        isRestoringManualModelRoute = true
+        defer { isRestoringManualModelRoute = wasRestoring }
         let state = paneState(containing: sessionID)
         draftText = state?.draft ?? splitPaneDrafts[sessionID] ?? ""
         chatAttachments = state?.attachments ?? splitPaneAttachments[sessionID] ?? []
         contextFiles = state?.contextFiles ?? []
         queuedMessages = state?.queuedMessages ?? []
-        if let mode = state?.mode ?? splitPaneModes[sessionID] { selectedMode = mode }
+        if goals.goal(for: sessionID)?.status == .active { selectedMode = .work }
+        else if let mode = state?.mode ?? splitPaneModes[sessionID] { selectedMode = mode }
         selectedAgentTeamID = state?.selectedTeamID ?? splitPaneTeams[sessionID] ?? nil
         soloSwarmEnabled = selectedAgentTeamID == nil
         if let query = state?.transcriptSearchQuery { transcriptSearchQuery = query }

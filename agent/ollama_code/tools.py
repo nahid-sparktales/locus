@@ -49,7 +49,7 @@ SAFE_TOOLS = {
     "ask_user_question",
     # Asking the user a question mutates nothing, so it never prompts.
     "ask_question",
-    "submit_workflow_result",
+    "submit_workflow_result", "get_goal", "update_goal",
     "search_workspace_knowledge", "search_memory", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
@@ -105,6 +105,7 @@ class ToolContext:
     #: turns and removed before the turn identity is released.
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None
     collaboration: Callable[[str, dict[str, Any]], str] | None = None
+    goal: Callable[[str, dict[str, Any]], str] | None = None
     #: Helper-only mailbox to its owning root. Never installed on the root.
     send_parent_message: Callable[[str], dict[str, Any]] | None = None
     ask_question_async: Callable[[dict[str, Any]], str] | None = None
@@ -1282,6 +1283,12 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
 def execute_tool(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
     """Run a tool by name. Never raises; errors are returned as text."""
     from .collaboration_tools import COLLABORATION_NAMES
+    if name in {"get_goal", "update_goal"}:
+        if ctx.goal is None:
+            return "Error: goal tools are available only to the active goal coordinator."
+        if not isinstance(arguments, dict):
+            return "Error: goal arguments must be an object."
+        return ctx.goal(name, arguments)
     if name == "send_parent_message":
         if ctx.send_parent_message is None:
             return "Error: parent messaging is available only to a helper."

@@ -211,3 +211,8 @@ POST /api/document-jobs
 POST /api/document-jobs/upload
 POST /api/document-jobs/{job_id}/cancel
 POST /api/documents/{document_id}/exclude
+GET /api/goals
+GET /api/sessions/{session_id}/goal
+POST /api/sessions/{session_id}/goal
+PATCH /api/goals/{goal_id}
+POST /api/goals/{goal_id}/claim

@@ -149,6 +149,10 @@ class AgentWorkerRuntime:
             model=parent.model,
             host=parent.host,
         )
+        from .goal_runtime import attach_goal_runtime
+        attach_goal_runtime(core, getattr(svc, "goal_runtime", None), coordinator=False)
+        if core.goal_runtime is not None:
+            core.goal_checkpoint = self._persist
         self._should_stop = core._interrupt.is_set
         self._on_checkpoint = None
         self._mailbox_ack_seq = int(spec.checkpoint.get("mailbox_ack_seq") or 0)

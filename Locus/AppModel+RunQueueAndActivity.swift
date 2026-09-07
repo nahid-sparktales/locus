@@ -465,7 +465,7 @@ extension AppModel {
     }
 
     func restorePersistedQueuedRuns() {
-        let queued = activity.activityRuns.filter { $0.state == "queued" }.sorted {
+        let queued = activity.activityRuns.filter { $0.state == "queued" && $0.manifest?["goal_id"] == nil }.sorted {
             ($0.queuePosition ?? .max) < ($1.queuePosition ?? .max)
         }
         for run in queued where restoredQueuedRunIDs.insert(run.id).inserted {
@@ -501,10 +501,22 @@ extension AppModel {
             showToast("A saved queued run needs its original chat, workspace, and model account")
             return
         }
+        guard !Task.isCancelled else { return }
+        let goalLinked = run.manifest?["goal_id"] != nil
+        var sentToWorker = false
+        defer {
+            if goalLinked, !sentToWorker, worker.reservedRunID == run.id,
+               taskConversationStates[sessionID]?.runID == run.id {
+                finishChatRuntime(worker, state: .interrupted, error: worker.lastError)
+                clearUndispatchedGoalPresentation(sessionID: sessionID, runID: run.id)
+            }
+        }
         let mode = run.manifest?["mode"]?.string.flatMap { WorkMode.canonical($0) } ?? .work
         worker.reservedRunID = run.id
+        worker.lastError = nil
         worker.dispatchedMode = mode
         worker.executionState = .queued
+        if goalLinked { prepareGoalTurnPresentation(sessionID: sessionID, run: run) }
         taskConversationStates[sessionID] = TaskConversationState(
             sessionID: sessionID,
             taskID: run.taskID,
@@ -525,6 +537,18 @@ extension AppModel {
             return
         }
         do {
+            if run.manifest?["goal_id"] != nil {
+                if let issue = await prepareChatWorkerProvider(
+                    using: worker.service,
+                    provider: run.manifest?["provider"]?.string,
+                    providerAccountID: run.manifest?["provider_account_id"]?.string,
+                    model: run.manifest?["model"]?.string
+                ) {
+                    finishChatRuntime(worker, state: .interrupted, error: issue)
+                    return
+                }
+            }
+            guard !Task.isCancelled, worker.reservedRunID == run.id else { return }
             let _: OrchestrationRun = try await backend.patch(
                 "/api/runs/\(run.id)/queue", body: ["action": "admit"],
                 as: OrchestrationRun.self
@@ -539,8 +563,14 @@ extension AppModel {
                 "run_id": run.id,
                 "request_id": run.id,
             ]
-            if let config = encodedJSONObject(primaryAgentBehavior) {
+            if let saved = run.manifest?["agent_config"], let config = encodedJSONValue(saved) {
                 request["agent_config"] = config
+            } else if let config = encodedJSONObject(primaryAgentBehavior) {
+                request["agent_config"] = config
+            }
+            if let goalID = run.manifest?["goal_id"]?.string {
+                request["goal_id"] = goalID
+                request["goal_revision"] = run.manifest?["goal_revision"]?.integer
             }
             if let outputs = run.manifest?["workflow_outputs"],
                let encoded = encodedJSONValue(outputs) {
@@ -595,6 +625,7 @@ extension AppModel {
                 }
                 return
             }
+            sentToWorker = true
             worker.startedAt = Date()
             updateBackgroundChatState(worker)
             guard await waitForTurnAcceptance(run.id, from: worker) else {

@@ -57,6 +57,8 @@ from .continuity import (
 from .core import AgentCore
 from .document_extract import MAX_SOURCE_BYTES
 from .evaluation_runtime import EvaluationTeamRunner
+from .goal_runtime import attach_goal_runtime, bind_goal_runtime
+from .goals import GoalError
 from .http_limits import RequestBodyLimitMiddleware
 from .knowledge import KnowledgeError, KnowledgeStore
 from .knowledge_runtime import knowledge_store as _domain_knowledge_store
@@ -325,8 +327,22 @@ session_update = session_metadata_update
 # ---------------------------------------------------------------- WebSocket
 
 
+def _goal_retry_error(svc: ChatService) -> str | None:
+    from .goals import GoalError, GoalStore
+    try:
+        latest = svc.run_store.list_runs(session_id=svc.core.session.session_id, limit=1)
+        if latest and GoalStore(svc.run_store).for_run(latest[0]["id"]) is not None:
+            return "Use Goal Resume to continue this goal without replaying its work or resetting its allowance."
+    except (GoalError, sqlite3.DatabaseError, OSError) as exc:
+        return str(exc)
+    return None
+
+
 def _run_slash(svc: ChatService, text: str) -> None:
     """Worker-thread entry for slash commands; emits slash_result at the end."""
+    if text.strip().split(maxsplit=1)[0] == "/retry" and (error := _goal_retry_error(svc)):
+        svc._on_core_event({"type": "slash_result", "command": "retry", "text": error, "error": True})
+        return
     result = svc.core.handle_slash(text, svc.decide)
     svc._on_core_event({"type": "slash_result", **result})
 
@@ -488,6 +504,15 @@ def _run_user_turn(
         execution_environment=environment,
     )
     svc.active_run_id = run_id
+    try:
+        bind_goal_runtime(svc, run_id, mode=mode, excluded=(just_chat or private_identity or bool(workflow_outputs)))
+    except Exception as exc:
+        svc.emit({"type": "error", "message": f"The saved goal could not start: {exc}"})
+        svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+        attach_goal_runtime(svc.core, None)
+        svc.goal_runtime = None
+        svc.active_run_id = None
+        return
     svc.core.tool_ctx.workflow_result = None
     svc.core.tool_ctx.workflow_outputs = svc.core.tool_registry.set_workflow_outputs(
         workflow_outputs
@@ -563,6 +588,7 @@ def _run_user_turn(
                 tool_is_read_only=svc.core.solo_worker_tool_is_read_only,
                 tool_is_parallel_safe=svc.core.solo_worker_tool_is_parallel_safe,
                 virtual_tools=svc.core.solo_worker_virtual_tools,
+                goal_runtime=getattr(svc, "goal_runtime", None),
             )
         except SoloSwarmError as exc:
             # Durable, so the Runs panel can tell "the agent saw no reason to
@@ -639,6 +665,11 @@ def _run_user_turn(
             if not previous_suppress:
                 svc.emit(dict(svc.core.last_turn_result))
         completed = True
+    except GoalError as exc:
+        svc.emit({"type": "note", "text": str(exc)})
+        svc.emit({"type": "turn_done", "reason": "model_call_budget"
+                  if getattr(svc.goal_runtime, "stop_reason", "") == "limit_reached"
+                  else "interrupted", "duration_ms": 0})
     except Exception:
         # Preserve a durable terminal boundary while the run identity is still
         # attached. The executor completion guard sees it and does not repeat it.
@@ -677,6 +708,8 @@ def _run_user_turn(
         svc.core.tool_ctx.workflow_outputs = []
         svc.core.tool_ctx.delegate_read_only = None
         svc.active_solo_swarm = None
+        attach_goal_runtime(svc.core, None)
+        svc.goal_runtime = None
         svc.core.reset_system_message()
         svc.active_run_id = None
         svc.core.tool_ctx.memory_run_id = ""
@@ -713,6 +746,11 @@ def _run_team_turn(
     stage = "validating the team setup"
     try:
         run_id, team, parsed_profiles, _ = parse_manifest(manifest)
+        queued = svc.run_store.run(run_id) or {}
+        admitted = queued.get("manifest") or {}
+        for key in ("goal_id", "goal_revision", "goal_ordinal", "goal_automatic"):
+            if key in admitted:
+                manifest[key] = admitted[key]
         svc.run_store.start_run(
             run_id,
             session_id=core.session.session_id,
@@ -732,6 +770,7 @@ def _run_team_turn(
             ),
             execution_environment=("worktree" if svc.current_task else "local"),
         )
+        bind_goal_runtime(svc, run_id, coordinator=False, excluded=bool(manifest.get("capsule") or manifest.get("scheduled") or workflow_outputs))
         record = svc.run_store.run(run_id) or {}
         manifest["traceparent"] = traceparent_for_run(record)
         # Persist the visible request before dispatch can spend minutes on
@@ -801,6 +840,7 @@ def _run_team_turn(
             run_store=svc.run_store,
             approve_dispatch=svc.request_dispatch_approval,
         )
+        orchestrator.goal_runtime = getattr(svc, "goal_runtime", None)
         svc.active_orchestrator = orchestrator
         prepared: TeamPreparation | None = None
         request = text
@@ -1043,6 +1083,7 @@ def _run_team_turn(
                 finally:
                     _restore_writer_route(core, route_snapshot)
                 assert revision_result is not None
+                prepared.writer_results.append(revision_result)
                 svc.emit({
                     "type": "agent_job_completed",
                     "run_id": prepared.run_id,
@@ -1205,6 +1246,11 @@ def _run_team_turn(
             "state": "failed",
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         })
+    except GoalError as exc:
+        terminal_reason = "model_call_budget" if getattr(svc.goal_runtime, "stop_reason", "") == "limit_reached" else "interrupted"
+        svc.emit({"type": "note", "text": str(exc)})
+        svc.emit({"type": "orchestration_completed", "run_id": run_id, "state": "interrupted",
+                  "duration_ms": max(int((time.monotonic() - started) * 1_000), 0)})
     except Exception as exc:  # noqa: BLE001 - terminal guard for worker failures
         terminal_reason = "error"
         logger.exception("team run failed unexpectedly while %s", stage)
@@ -1281,6 +1327,8 @@ def _run_team_turn(
                 "iteration_limit": core.last_turn_result.get("iteration_limit"),
             })
         svc.emit(terminal_event)
+        attach_goal_runtime(core, None)
+        svc.goal_runtime = None
         core.tool_ctx.workflow_outputs = []
         core._emit_info()
         svc.active_run_id = None
@@ -1778,6 +1826,8 @@ def _run_team_writer(
 ) -> AgentResult:
     """Run one bounded slice of a mutation-capable member's coding job."""
     core = core_override or svc.core
+    if getattr(svc, "goal_runtime", None) is not None:
+        attach_goal_runtime(core, svc.goal_runtime, coordinator=False)
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     if remaining <= 0:
         raise OrchestrationError("team model-call budget exhausted before the coding job ran")
@@ -2424,6 +2474,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if not svc.answer_mcp_input(request_id, action, content):
             _command_error(svc, "mcp_input_response", "That MCP input request is no longer waiting.")
     elif mtype == "interrupt":
+        if msg.get("reason") not in {"app_shutdown", "goal_steer"}:
+            from .goals import GoalError, GoalStore
+            try:
+                store = GoalStore(svc.run_store)
+                goal = store.for_session(core.session.session_id)
+                if goal and goal.get("status") == "active":
+                    svc.emit({"type": "goal_snapshot", "goal": store.update(goal["id"], "pause", reason="Stopped by the user.")})
+            except (GoalError, sqlite3.DatabaseError, OSError) as exc:
+                _command_error(svc, "interrupt", str(exc))
+        elif msg.get("reason") == "app_shutdown":
+            runtime = getattr(svc, "goal_runtime", None)
+            if runtime is not None:
+                runtime.stop_reason = "app_shutdown"
         core.interrupt()
         svc.interrupt_parallel_writers()
         if svc.active_evaluation_core is not None:
@@ -2440,6 +2503,9 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_dispatch_decisions()
         svc.cancel_all_mcp_inputs()
     elif mtype == "retry_last":
+        if error := _goal_retry_error(svc):
+            _command_error(svc, "retry_last", error)
+            return
         if not svc.start_turn(loop, core.retry_last, svc.decide):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "new_session":

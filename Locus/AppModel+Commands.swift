@@ -177,6 +177,7 @@ extension AppModel {
     }
 
     func selectModel(_ model: String) {
+        if model != selectedModel { pauseGoalForRouteChange() }
         rememberManualModelRoute(accountID: activeAccount?.id, model: model)
         if isBusy {
             pendingProviderSwitch = (activeAccount?.id, model)
@@ -197,6 +198,7 @@ extension AppModel {
     /// agent's client, which it refuses to do mid-turn — so a switch requested
     /// during a run is held and applied when the turn finishes.
     func selectModel(account: ProviderAccount?, model: String) {
+        if account?.id != activeAccount?.id || model != selectedModel { pauseGoalForRouteChange() }
         rememberManualModelRoute(accountID: account?.id, model: model)
         let sameSource = account?.id.uuidString == settings.activeAccountID
         guard !sameSource else {

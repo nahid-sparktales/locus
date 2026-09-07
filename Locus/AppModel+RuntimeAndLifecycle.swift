@@ -18,6 +18,7 @@ extension AppModel {
         await recovery?.value
         await restoreAfterUncleanExitIfNeeded()
         await activity.refreshActivityRuns(announceFailure: false)
+        await goals.refresh()
         restorePersistedQueuedRuns()
         await schedule.refreshScheduledTasks(announceFailure: false)
         await schedule.processDueSchedules()
@@ -356,6 +357,7 @@ extension AppModel {
     }
 
     func shutdown() {
+        goals.shutdown()
         isShuttingDown = true
         identityVault.suspend()
         Task { await companionGateway.setEnabled(false) }

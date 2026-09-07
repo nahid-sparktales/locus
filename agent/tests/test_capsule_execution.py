@@ -510,13 +510,20 @@ def test_generic_recovery_cannot_drop_stored_capsule_identity(monkeypatch, actio
     assert "Open Task Capsules" in error.value.detail
 
 
-def test_generic_team_resume_keeps_existing_checkpoint_path(monkeypatch):
+def test_generic_team_resume_keeps_existing_checkpoint_path(monkeypatch, tmp_path):
+    from ollama_code.runstore import RunStore
+
     record = {
         "id": "ordinary-run", "state": "paused", "recoverable": True, "request": "Ordinary team work",
         "manifest": {"team": {"id": "team-one"}}, "team_id": "team-one", "checkpoint": {"state": {"plan": {"jobs": []}}},
     }
+    store = RunStore(tmp_path / "ordinary-run.sqlite3")
+    store.start_run(record["id"], state="paused", request=record["request"],
+                    manifest=record["manifest"], team_id=record["team_id"])
+    store.checkpoint(record["id"], "stable", record["checkpoint"]["state"])
+    store.set_state(record["id"], "paused", recoverable=True)
     starts = []
-    service = SimpleNamespace(run_store=SimpleNamespace(run=lambda _id: record), busy=False,
+    service = SimpleNamespace(run_store=store, busy=False,
                               start_turn=lambda _loop, runner, *args: starts.append((runner, args)) or True)
     monkeypatch.setattr(runs_api, "_require_capability", lambda _name: None)
     response = asyncio.run(runs_api._resume_orchestration(service, _no_model, record["id"], {"manifest": {"team": {"id": "team-one"}}}, action="resume"))

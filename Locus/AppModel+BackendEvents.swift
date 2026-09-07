@@ -11,6 +11,9 @@ import UserNotifications
 extension AppModel {
     func handle(_ event: [String: Any], source: BackendService? = nil) {
         guard let type = event["type"] as? String else { return }
+        if source == nil || source === backend {
+            goals.handleEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID)
+        }
         if handleOptionalQuestionEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID) { return }
         if ["identity_action_request", "identity_context_request", "identity_cancelled"].contains(type) {
             let owner = event["session_id"] as? String ?? currentSessionID
@@ -687,7 +690,7 @@ extension AppModel {
             let completedRunID = event["run_id"] as? String
             let dispatchedMode = turnDispatchedMode
                 ?? (turnDispatchedInPlanMode ? .plan : nil)
-            if reason == "complete", dispatchedMode == .work {
+            if reason == "complete", dispatchedMode == .work, event["goal_id"] == nil {
                 // Plan execution rides Work since GSD retired. For any Work
                 // turn, a todo still in progress after a *complete* turn is
                 // one the model forgot to close, so the tidy stays safe.
@@ -703,7 +706,8 @@ extension AppModel {
             }
             finishSessionOverview(
                 reason: reason,
-                durationMilliseconds: event["duration_ms"] as? Int
+                durationMilliseconds: event["duration_ms"] as? Int,
+                goal: event["goal_id"] == nil ? nil : goals.goal(for: currentSessionID)
             )
             isBusy = false
             var completedWorker: ChatWorkerRuntime?
@@ -770,7 +774,7 @@ extension AppModel {
             turnDispatchedMode = nil
             turnDispatchedTeamRunID = nil
             turnStartedAt = nil
-            notifyTurnCompleteIfInactive()
+            if event["goal_id"] == nil { notifyTurnCompleteIfInactive() }
             if persistenceEnabled {
                 Task { await refreshMetadata() }
             }
@@ -792,6 +796,7 @@ extension AppModel {
             }
             Task { @MainActor [weak self] in
                 self?.drainQueuedMessages()
+                self?.goals.wake()
                 self?.applyPendingProxyRouteRestartIfPossible()
             }
 

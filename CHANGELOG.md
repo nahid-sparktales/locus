@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Persistent goals.** Give an ordinary chat an objective and optional usage
+  allowances. Solo agents and teams continue across turns, retain progress on
+  reopening, and report verified completion. Pause, Resume, Edit, and End keep
+  control beside the composer; queued instructions take priority.
 - **Task Capsules.** Save a detailed plan with separate planning,
   implementation, and optional review models. ChatGPT and Kimi Code membership
   routes keep their exact accounts, alongside API and local model support.

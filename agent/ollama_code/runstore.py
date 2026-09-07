@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -726,6 +726,9 @@ class RunStore(AgentInspectorStore):
                         )
                 connection.execute("UPDATE schema_meta SET version=12 WHERE singleton=1")
                 connection.commit()
+            if version < 13:
+                from .goals import initialize_schema
+                initialize_schema(connection)
             # A model turn that died with the previous app process is never
             # silently replayed. Keep the session lease and make the exact
             # step explicitly retryable in Attention.
@@ -956,7 +959,12 @@ class RunStore(AgentInspectorStore):
                     execution_path=COALESCE(NULLIF(excluded.execution_path, ''), runs.execution_path),
                     task_id=COALESCE(NULLIF(excluded.task_id, ''), runs.task_id),
                     request=COALESCE(NULLIF(excluded.request, ''), runs.request),
-                    manifest_json=CASE WHEN excluded.manifest_json='{}'
+                    manifest_json=CASE WHEN EXISTS(SELECT 1 FROM goal_runs WHERE run_id=runs.id)
+                        THEN json_patch(CASE WHEN excluded.manifest_json='{}' THEN runs.manifest_json
+                            ELSE excluded.manifest_json END,
+                            (SELECT json_object('goal_id',goal_id,'goal_revision',revision,'goal_ordinal',ordinal)
+                             FROM goal_runs WHERE run_id=runs.id))
+                        WHEN excluded.manifest_json='{}'
                         THEN runs.manifest_json ELSE excluded.manifest_json END,
                     state=excluded.state, updated_at=excluded.updated_at,
                     run_kind=excluded.run_kind,
@@ -3596,10 +3604,27 @@ class RunStore(AgentInspectorStore):
         if self.read_only:
             return
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            goal = connection.execute(
+                "SELECT goals.id,goals.status,goals.revision,goals.execution_revision,goals.current_run_id,"
+                "goal_runs.revision AS run_revision,goal_runs.automatic FROM goal_runs"
+                " JOIN goals ON goals.id=goal_runs.goal_id WHERE goal_runs.run_id=?", (run_id,),
+            ).fetchone()
+            if goal is not None:
+                from .capabilities import enabled
+                if not enabled("persistent_goals_v1"):
+                    raise RunStoreError("persistent goals are disabled")
+                pending = connection.execute(
+                    "SELECT 1 FROM goal_inputs WHERE goal_id=? AND consumed=0 LIMIT 1", (goal["id"],)
+                ).fetchone()
+                if (goal["status"] != "active" or goal["run_revision"] < goal["execution_revision"]
+                        or (goal["automatic"] and goal["revision"] != goal["run_revision"])
+                        or goal["current_run_id"] != run_id or (goal["automatic"] and pending)):
+                    raise RunStoreError("the saved goal changed before this run was admitted")
             cursor = connection.execute(
-                "UPDATE runs SET state='dispatching', admitted_at=?, queue_position=NULL,"
+                "UPDATE runs SET state='dispatching', admitted_at=?, owner_pid=?, queue_position=NULL,"
                 " updated_at=? WHERE id=? AND state='queued'",
-                (time.time(), time.time(), run_id),
+                (time.time(), os.getpid(), time.time(), run_id),
             )
             if cursor.rowcount != 1:
                 raise RunStoreError("queued run not found")
@@ -3913,7 +3938,8 @@ class RunStore(AgentInspectorStore):
         cutoff = time.time() - max(retention_days, 1) * 86_400
         with self._connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM runs WHERE pinned=0 AND updated_at<? AND state IN ('completed','failed','interrupted','cancelled','discarded')",
+                "DELETE FROM runs WHERE pinned=0 AND updated_at<? AND state IN ('completed','failed','interrupted','cancelled','discarded')"
+                " AND id NOT IN (SELECT current_run_id FROM goals WHERE current_run_id IS NOT NULL AND status NOT IN ('completed','cancelled'))",
                 (cutoff,),
             )
             removed = max(cursor.rowcount, 0)
@@ -3925,6 +3951,8 @@ class RunStore(AgentInspectorStore):
                 rows = connection.execute(
                     """SELECT id FROM runs WHERE pinned=0 AND state IN
                        ('completed','failed','interrupted','cancelled','discarded')
+                       AND id NOT IN (SELECT current_run_id FROM goals WHERE current_run_id IS NOT NULL
+                           AND status NOT IN ('completed','cancelled'))
                        ORDER BY updated_at ASC"""
                 ).fetchall()
                 for row in rows:

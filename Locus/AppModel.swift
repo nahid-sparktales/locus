@@ -93,6 +93,7 @@ final class AppModel: ObservableObject {
     let landingFlow = LandingFlowModel()
     let runs = OrchestrationRunsModel()
     let taskCapsules = TaskCapsuleModel()
+    let goals = GoalModel()
     let optionalQuestions = OptionalQuestionModel()
     let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
@@ -288,6 +289,7 @@ final class AppModel: ObservableObject {
             // pending "implement this plan?" prompt — or an unanswered
             // question — would only contradict it.
             if selectedMode != oldValue {
+                if selectedMode != .work { pauseGoalForModeChange() }
                 planApprovalPending = false
                 clearPendingQuestion()
             }
@@ -1028,6 +1030,7 @@ final class AppModel: ObservableObject {
                     #endif
                     self.sendConnectorCapability(to: self.backend)
                     self.syncPreferredPermissionMode(to: self.backend)
+                    if self.persistenceEnabled, !self.isUITesting { await self.goals.refresh() }
                     if let runID = self.orchestrationRunID {
                         Task { @MainActor [weak self] in
                             await self?.backfillOrchestrationEvents(runID)
@@ -1227,9 +1230,11 @@ final class AppModel: ObservableObject {
             localModelsProvider: { [weak self] in self?.localModels ?? [] },
             accountsProvider: { [weak self] in self?.providerAccounts ?? [] },
             accountModelsProvider: { [weak self] id in self?.accountModels[id] },
-            toastHandler: { [weak self] message in self?.showToast(message) }
+            toastHandler: { [weak self] message in self?.showToast(message) },
+            executionRouteWillChange: { [weak self] in self?.pauseGoalForRouteChange() }
         )
         configureTaskCapsules()
+        configureGoals()
         configureOptionalQuestions()
         runs.configure(
             backend: backend,
