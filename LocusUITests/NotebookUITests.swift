@@ -75,11 +75,11 @@ final class NotebookUITests: XCTestCase {
         XCTAssertTrue(deleted.waitForExistence(timeout: 5))
         deleted.click()
         app.typeKey(.delete, modifierFlags: [])
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
-        app.alerts.buttons["Cancel"].click()
+        XCTAssertTrue(waitUntil { self.confirmation.exists })
+        confirmation.buttons["Cancel"].click()
         XCTAssertTrue(deleted.exists)
         chooseAction("deletePermanently", title: "Delete Permanently…")
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil { self.confirmation.exists })
         confirmButton("notebook.confirmPermanentDelete", title: "Delete Permanently").click()
         XCTAssertTrue(waitUntil { !self.row(named: "Notebook keyboard deletion").exists })
         XCTAssertTrue(element("notebook.trashEmpty").exists)
@@ -102,8 +102,8 @@ final class NotebookUITests: XCTestCase {
         element("notebook.recentlyDeleted").click()
         XCTAssertTrue(row(named: "Narrow notebook note").waitForExistence(timeout: 5))
         element("notebook.emptyTrash").click()
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
-        app.alerts.buttons["Cancel"].click()
+        XCTAssertTrue(waitUntil { self.confirmation.exists })
+        confirmation.buttons["Cancel"].click()
         XCTAssertTrue(row(named: "Narrow notebook note").exists)
         element("notebook.emptyTrash").click()
         confirmButton("notebook.confirmEmptyTrash", title: "Delete All Permanently").click()
@@ -183,8 +183,15 @@ final class NotebookUITests: XCTestCase {
     }
 
     private func confirmButton(_ id: String, title: String) -> XCUIElement {
-        let identified = app.alerts.buttons[id].firstMatch
-        return identified.exists ? identified : app.alerts.buttons[title].firstMatch
+        XCTAssertTrue(waitUntil { self.confirmation.exists })
+        let identified = confirmation.buttons[id].firstMatch
+        return identified.exists ? identified : confirmation.buttons[title].firstMatch
+    }
+
+    private var confirmation: XCUIElement {
+        let alert = app.alerts.firstMatch
+        // macOS 15 exposes SwiftUI alerts as sheets with the alert label.
+        return alert.exists ? alert : app.sheets.matching(NSPredicate(format: "label == %@", "alert")).firstMatch
     }
 
     private func waitUntil(timeout: TimeInterval = 5, _ predicate: @escaping () -> Bool) -> Bool {

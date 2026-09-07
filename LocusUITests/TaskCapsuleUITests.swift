@@ -33,7 +33,7 @@ final class TaskCapsuleUITests: XCTestCase {
         shot.name = "Task Capsule model choices"
         shot.lifetime = .keepAlways
         add(shot)
-        element("capsules.done").click()
+        doneButton.click()
         openCapsules()
         XCTAssertEqual(element("capsules.title").value as? String, "A reusable plan")
         XCTAssertTrue((element("capsules.request").value as? String ?? "").contains("selected worker"))
@@ -41,7 +41,15 @@ final class TaskCapsuleUITests: XCTestCase {
 
     private func openCapsules() {
         app.typeKey("k", modifierFlags: [.command, .option])
-        XCTAssertTrue(element("capsules.done").waitForExistence(timeout: 5))
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5))
+    }
+
+    private var doneButton: XCUIElement {
+        // macOS 15 can propagate the capsule container's identifier to Done.
+        app.sheets.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR (identifier == %@ AND label == %@)",
+            "capsules.done", "capsules.sheet", "Done"
+        )).firstMatch
     }
 
     private func element(_ id: String) -> XCUIElement {
