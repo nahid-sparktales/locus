@@ -179,6 +179,11 @@ def session_new(
             if raw_environment is not None and raw_environment not in {"local", "worktree"}:
                 raise HTTPException(422, "environment must be local or worktree")
             environment = str(raw_environment or "local")
+            identity_mode = body.get("identity_mode", False)
+            if not isinstance(identity_mode, bool):
+                raise HTTPException(422, "identity_mode must be true or false")
+            if identity_mode and environment != "local":
+                raise HTTPException(422, "Identity tasks require a local private session")
             base_ref = body.get("base_ref", "HEAD")
             if not isinstance(base_ref, str) or len(base_ref) > 240:
                 raise HTTPException(422, "base_ref must be a Git ref")
@@ -192,6 +197,9 @@ def session_new(
                     pass
                 service.current_task = None
             info = service.core.new_session(reason=reason, cwd=str(cwd_value or "") or None)
+            if identity_mode:
+                service.core.enable_identity_mode()
+                info = service.core.session_info()
             session_id = str(info.get("session_id") or "")
             workspace_root = service.core.workspace_root
             if environment == "worktree":

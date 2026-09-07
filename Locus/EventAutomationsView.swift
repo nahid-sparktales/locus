@@ -1350,6 +1350,10 @@ private struct EventTriggerEditorView: View {
                                 .font(.locus(size: 9, weight: .semibold))
                                 .foregroundStyle(LocusTheme.textSecondary)
                             TextEditor(text: $draft.instruction)
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .tint(LocusTheme.accentAction)
+                                .scrollContentBackground(.hidden)
+                                .background(LocusTheme.surfaceCard)
                                 .font(.locus(size: 10))
                                 .frame(minHeight: 110)
                                 .overlay(alignment: .topLeading) {
@@ -1410,6 +1414,8 @@ private struct EventTriggerEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
             .padding(.horizontal, 12)
         }
         .frame(width: 680, height: 700)

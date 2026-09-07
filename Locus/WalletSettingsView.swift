@@ -2959,7 +2959,12 @@ private struct WalletContractRegistrySheet: View {
             TextField("Sepolia contract address (0x…)", text: $address).textFieldStyle(.roundedBorder)
             TextField("Permitted signatures, comma-separated", text: $functions).textFieldStyle(.roundedBorder)
             Text("Normalized ABI source").font(.callout.weight(.semibold))
-            TextEditor(text: $abiJSON).font(.system(.caption, design: .monospaced))
+            TextEditor(text: $abiJSON)
+                .foregroundStyle(LocusTheme.inkSoft)
+                .tint(LocusTheme.accentAction)
+                .scrollContentBackground(.hidden)
+                .background(LocusTheme.surfaceCard)
+                .font(.system(.caption, design: .monospaced))
                 .frame(height: 150).overlay(RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.separator))
             HStack {
                 Button("Cancel") { dismiss() }

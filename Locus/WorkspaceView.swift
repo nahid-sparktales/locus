@@ -687,6 +687,8 @@ private struct BackgroundChatPane: View {
                 get: { paneState.draft },
                 set: { model.setPaneDraft($0, for: session.id) }
             ))
+            .foregroundStyle(LocusTheme.inkSoft)
+            .tint(LocusTheme.accentAction)
             .font(.locus(size: 12))
             .scrollContentBackground(.hidden)
             .frame(minHeight: 44, maxHeight: 92)
@@ -883,6 +885,8 @@ struct ReviewAndLandView: View {
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                         TextEditor(text: $commandsText)
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .tint(LocusTheme.accentAction)
                             .font(.locus(size: 10, design: .monospaced))
                             .scrollContentBackground(.hidden)
                             .padding(6)
@@ -1803,6 +1807,9 @@ struct ScheduleEditorView: View {
                                 .font(.locus(size: 9, weight: .semibold))
                                 .foregroundStyle(LocusTheme.muted)
                             TextEditor(text: $draft.prompt)
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .tint(LocusTheme.accentAction)
+                                .scrollContentBackground(.hidden)
                                 .font(.locus(size: 11))
                                 .frame(minHeight: 100)
                                 .padding(5)
@@ -1888,6 +1895,7 @@ struct ScheduleEditorView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
         }
         .frame(width: 620, height: 690)
         .background(LocusTheme.paper)

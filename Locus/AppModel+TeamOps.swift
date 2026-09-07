@@ -333,6 +333,7 @@ extension AppModel {
     }
 
     func resumeOrchestration(_ run: OrchestrationRun) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard teamRunPresentation(for: run.id, durable: run).canRecover else {
             showToast("That team run is not paused or interrupted")
             return
@@ -367,6 +368,7 @@ extension AppModel {
     }
 
     func retryOrchestrationJob(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard teamRunPresentation(for: run.id, durable: run).canRecover else {
             showToast("Pause the team run before retrying a job")
             return
@@ -402,6 +404,7 @@ extension AppModel {
     }
 
     func retryOrchestrationBranch(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard teamRunPresentation(for: run.id, durable: run).canRecover else {
             showToast("Pause the team run before retrying a branch")
             return
@@ -421,6 +424,7 @@ extension AppModel {
     }
 
     func runOrchestrationWithLocus(_ run: OrchestrationRun) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
               let manifest = teamManifest(for: run.request, teamID: teamID)
         else {
@@ -445,6 +449,7 @@ extension AppModel {
         in run: OrchestrationRun,
         to profile: AgentProfile
     ) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard teamRunPresentation(for: run.id, durable: run).canRecover else {
             showToast("Pause the team run before reassigning a job")
             return
@@ -497,6 +502,7 @@ extension AppModel {
     }
 
     private func startOrchestrationCopy(_ run: OrchestrationRun, action: String) {
+        guard !redirectCapsuleRecovery(run) else { return }
         guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
               let manifest = teamManifest(for: run.request, teamID: teamID)
         else {

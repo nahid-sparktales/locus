@@ -157,9 +157,9 @@ private struct VoicePushToTalkButton: View {
     var body: some View {
         Image(systemName: voice.isListening ? "stop.fill" : "mic.fill")
             .font(.locus(size: 11, weight: .bold))
-            .foregroundStyle(Color.white)
+            .foregroundStyle(voice.isListening ? LocusTheme.coral : LocusTheme.surfaceCanvas)
             .frame(width: 32, height: 28)
-            .background(voice.isListening ? LocusTheme.coral : LocusTheme.ink)
+            .background(voice.isListening ? LocusTheme.coral.opacity(0.12) : LocusTheme.ink)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
             .gesture(pointerGesture)

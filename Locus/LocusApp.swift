@@ -87,6 +87,7 @@ struct LocusApp: App {
                 #endif
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
+                .foregroundStyle(LocusTheme.textPrimary)
                 .tint(model.accentActionColor)
                 .environment(\.locusAccent, model.effectiveAccent)
                 .frame(
@@ -127,10 +128,9 @@ struct LocusApp: App {
             CommandGroup(replacing: .newItem) {
                 // The active destination decides whether this is a workspace
                 // chat or an agent chat; the user-facing action stays the same.
-                Button("New Chat") {
+                NotebookNewNoteCommand {
                     model.newChatForSidebarDestination()
                 }
-                    .keyboardShortcut("n", modifiers: .command)
                 Button("New Chat Folder…") {
                     model.globalNewFolderName = ""
                     model.globalNewFolderPresented = true
@@ -139,6 +139,9 @@ struct LocusApp: App {
             }
 
             CommandMenu("Locus") {
+                Button("Task Capsules…") { model.taskCapsules.open() }
+                    .keyboardShortcut("k", modifiers: [.command, .option])
+                    .accessibilityIdentifier("menu.taskCapsules")
                 Button("Command Palette") { model.commandPalettePresented = true }
                     .keyboardShortcut("k", modifiers: .command)
                 FindInConversationCommand(
@@ -238,6 +241,7 @@ struct LocusApp: App {
                 .environmentObject(updates)
                 .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .accentColor(model.accentActionColor)
+                .foregroundStyle(LocusTheme.textPrimary)
                 .tint(model.accentActionColor)
                 .environment(\.locusAccent, model.effectiveAccent)
         }
@@ -726,6 +730,7 @@ private struct CompactSidebarHost: NSViewRepresentable {
                 .environment(\.locusIsLiveResizing, environment.locusIsLiveResizing)
                 .tint(model.accentActionColor)
                 .accentColor(model.accentActionColor)
+                .foregroundStyle(LocusTheme.textPrimary)
         )
     }
 }
@@ -1007,6 +1012,8 @@ struct RootView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(AppEdition.current.displayName) workspace")
+        .modifier(IdentityVaultPresentation(vault: model.identityVault))
+        .modifier(TaskCapsulePresentation(capsules: model.taskCapsules))
         .sheet(isPresented: $library.isPresented) {
             if model.isUITesting, locusEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
                 LibraryUITestFixtureView().appFeatureEnvironment(from: model)
@@ -1180,6 +1187,8 @@ private struct RememberConfirmationView: View {
             TextField("Title", text: $title)
                 .accessibilityIdentifier("remember.title")
             TextEditor(text: $content)
+                .foregroundStyle(LocusTheme.inkSoft)
+                .tint(LocusTheme.accentAction)
                 .font(.locus(size: 10))
                 .scrollContentBackground(.hidden)
                 .padding(6)

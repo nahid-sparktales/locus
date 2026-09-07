@@ -295,6 +295,89 @@ extension AppModel {
               let decision = CompanionPayload.string("decision", in: payload) else {
             throw CompanionProtocolError(code: "invalid_approval", message: "Choose an approval response.")
         }
+        if kind == "blocking_question" {
+            guard let sessionID = CompanionPayload.string("chat_id", in: payload),
+                  let requestID = CompanionPayload.string("request_id", in: payload),
+                  let question = sessionID == currentSessionID ? pendingBlockingQuestion : taskWorkers[sessionID]?.pendingBlockingQuestion,
+                  question.id == requestID else {
+                throw CompanionProtocolError(code: "approval_expired", message: "That required question is no longer waiting.")
+            }
+            let answers: [AgentQuestionAnswer]
+            if decision == "skip" {
+                answers = []
+            } else if decision == "answer", let raw = payload["answers"],
+                      let data = try? JSONEncoder().encode(raw),
+                      let values = try? JSONDecoder().decode([AgentQuestionAnswer].self, from: data),
+                      !values.isEmpty {
+                answers = values
+            } else {
+                throw CompanionProtocolError(code: "invalid_approval", message: "Answer the required questions or skip without answering.")
+            }
+            if sessionID == currentSessionID {
+                resolveBlockingQuestion(answers, action: decision == "skip" ? "cancel" : "answer")
+                guard pendingBlockingQuestion == nil else {
+                    throw CompanionProtocolError(code: "runtime_offline", message: "Reconnect the chat before answering.", retryable: true)
+                }
+            } else {
+                guard let runtime = taskWorkers[sessionID], runtime.service.send([
+                    "type": "question_response", "request_id": requestID,
+                    "action": decision == "skip" ? "cancel" : "answer",
+                    "answers": answers.compactMap(encodedJSONObject),
+                ]) else {
+                    throw CompanionProtocolError(code: "runtime_offline", message: "Reconnect the chat before answering.", retryable: true)
+                }
+                runtime.pendingBlockingQuestion = nil
+                runtime.pendingForegroundEvent = nil
+                runtime.executionState = .running
+                updateBackgroundChatState(runtime)
+            }
+            return .object(["resolved": .bool(true)])
+        }
+        if kind == "optional_question" {
+            guard let sessionID = CompanionPayload.string("chat_id", in: payload),
+                  let requestID = CompanionPayload.string("request_id", in: payload),
+                  let request = optionalQuestions.request(sessionID: sessionID, requestID: requestID) else {
+                throw CompanionProtocolError(code: "approval_expired", message: "That optional question has finished. Keep your answer for a follow-up.")
+            }
+            if decision == "resume", request.status == "suspended" || request.deliveryStatus == "accepted" {
+                let isRunning = sessionID == currentSessionID ? isBusy : visibleActivityRuns.contains { $0.sessionID == sessionID && $0.state == "running" }
+                guard isRunning, optionalQuestions.resume(sessionID: sessionID, requestID: requestID) else {
+                    throw CompanionProtocolError(code: "question_paused", message: "Resume the task before restarting this question.")
+                }
+                return .object(["submitted": .bool(true), "resolved": .bool(false)])
+            }
+            guard request.isPending else {
+                throw CompanionProtocolError(code: "approval_expired", message: "That optional question has finished. Keep your answer for a follow-up.")
+            }
+            if decision == "editing" {
+                // Mobile owns a separate lease so closing its editor cannot
+                // release a Mac editor's pause (or another paired phone's).
+                guard let editorID = CompanionPayload.string("editor_id", in: payload), !editorID.isEmpty else {
+                    throw CompanionProtocolError(code: "invalid_approval", message: "The question editor is missing its identity.")
+                }
+                let sent = sendConversationControl([
+                    "type": "question_editing", "request_id": requestID,
+                    "editor_id": "mobile:" + String(editorID.prefix(160)),
+                    "active": CompanionPayload.bool("active", in: payload) ?? false,
+                ], sessionID: sessionID)
+                return .object(["submitted": .bool(sent)])
+            }
+            guard ["answer", "skip"].contains(decision) else {
+                throw CompanionProtocolError(code: "invalid_approval", message: "Choose Answer or Skip for this optional question.")
+            }
+            let answers: [AgentQuestionAnswer]
+            if let raw = payload["answers"], let data = try? JSONEncoder().encode(raw),
+               let values = try? JSONDecoder().decode([AgentQuestionAnswer].self, from: data) {
+                answers = values
+            } else { answers = [] }
+            guard optionalQuestions.respond(sessionID: sessionID, requestID: requestID,
+                                            action: decision, answers: decision == "skip" ? nil : answers) else {
+                throw CompanionProtocolError(code: "answer_not_sent", message: "The answer was not sent. Keep your draft and try again.", retryable: true)
+            }
+            // Transport delivery is not server acceptance. The following
+            // snapshot carries accepted/applied state after acknowledgement.
+            return .object(["submitted": .bool(true), "resolved": .bool(false), "request_id": .string(requestID)])
+        }
         if kind == "plan" {
             guard let sessionID = CompanionPayload.string("chat_id", in: payload),
                   sessionID == currentSessionID, planApprovalPending else {
@@ -337,7 +420,8 @@ extension AppModel {
             throw CompanionProtocolError(code: "approval_expired", message: "That approval is no longer waiting.")
         }
         if kind == "permission" {
-            guard ["allow_once", "deny"].contains(decision),
+            guard event["type"] as? String == "permission_request",
+                  ["allow_once", "deny"].contains(decision),
                   let requestID = event["request_id"] as? String else {
                 throw CompanionProtocolError(code: "invalid_approval", message: "Choose Allow Once or Deny.")
             }
@@ -421,6 +505,7 @@ extension AppModel {
         var approvals: [JSONValue] = visibleActivityRuns.compactMap { run in
             guard ["waiting_permission", "waiting_dispatch_approval"].contains(run.state)
             else { return nil }
+            if let sessionID = run.sessionID, taskWorkers[sessionID]?.pendingBlockingQuestion != nil { return nil }
             let kind = run.state == "waiting_permission" ? "permission" : "dispatch"
             let tool = run.sessionID.flatMap { taskWorkers[$0]?.pendingForegroundEvent?["tool"] as? String }
             return .object([
@@ -458,6 +543,33 @@ extension AppModel {
                         + [.string("answer"), .string("dismiss")]
                 ),
             ]))
+        }
+        var requiredQuestions = taskWorkers.compactMapValues(\.pendingBlockingQuestion)
+        if let question = pendingBlockingQuestion { requiredQuestions[currentSessionID] = question }
+        for (sessionID, question) in requiredQuestions {
+            guard let data = try? JSONEncoder().encode(question),
+                  case .object(var object) = try? JSONDecoder().decode(JSONValue.self, from: data) else { continue }
+            object["kind"] = .string("blocking_question")
+            object["chat_id"] = .string(sessionID)
+            object["title"] = .string("Required question")
+            object["detail"] = .string("The agent is waiting for an answer. Skip returns no answer.")
+            object["decisions"] = .array([.string("answer"), .string("skip")])
+            approvals.append(.object(object))
+        }
+        for (sessionID, requests) in optionalQuestions.requests {
+            for request in requests where request.isOpen || request.deliveryStatus == "accepted" {
+                guard let data = try? JSONEncoder().encode(request),
+                      case .object(var object) = try? JSONDecoder().decode(JSONValue.self, from: data) else { continue }
+                object["kind"] = .string("optional_question")
+                object["chat_id"] = .string(sessionID)
+                object["title"] = .string("Optional question")
+                object["can_resume"] = .bool(sessionID == currentSessionID ? isBusy : visibleActivityRuns.contains { $0.sessionID == sessionID && $0.state == "running" })
+                let key = OptionalQuestionModel.key(sessionID: sessionID, requestID: request.id)
+                object["response_error"] = optionalQuestions.errors[key].map(JSONValue.string) ?? .null
+                object["detail"] = .string("Work continues while you answer. Skip uses the displayed recommendations for unanswered questions.")
+                object["decisions"] = .array([.string("answer"), .string("skip")])
+                approvals.append(.object(object))
+            }
         }
         return approvals
     }

@@ -398,7 +398,7 @@ class OllamaClient:
             # the UI a second time, so it is no longer this fallback's case —
             # error text is server-controlled and can mention "think" for
             # entirely different reasons.
-            if "think" in str(e).lower() and not emitted:
+            if "think" in str(e).lower() and not emitted and not getattr(self, "identity_private_request", False):
                 payload.pop("think", None)
                 return self._stream(payload, on_token, should_stop, on_thinking)
             raise

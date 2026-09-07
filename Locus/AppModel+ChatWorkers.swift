@@ -65,6 +65,7 @@ extension AppModel {
             process: process,
             endpoint: endpoint
         )
+        let capturedIdentityProvider = identityProviderIdentity(accountID: routedAccountID, model: model)
         taskWorkers[requestedSessionID] = runtime
         runtime.process.onUnexpectedExit = { [weak self, weak runtime] _, output in
             Task { @MainActor in
@@ -132,7 +133,9 @@ extension AppModel {
         runtime.service.onConnectionChange = { [weak self, weak runtime] connected in
             runtime?.isConnected = connected
             guard let self, let runtime else { return }
+            self.optionalQuestions.setConnection(connected, sessionID: runtime.sessionID)
             if !connected {
+                self.soloCollaboration.disconnected(sessionID: runtime.sessionID)
                 self.cancelSimulatorActions(sessionID: runtime.sessionID)
                 return
             }
@@ -204,6 +207,7 @@ extension AppModel {
             return nil
         }
         runtime.service.connect()
+        runtime.identityProvider = capturedIdentityProvider
         for _ in 0..<40 where !runtime.isConnected {
             if Task.isCancelled { break }
             try? await Task.sleep(for: .milliseconds(100))
@@ -327,6 +331,48 @@ extension AppModel {
         }
     }
 
+    /// Install a capsule's explicit route, or restore the regular picker route
+    /// before the first ordinary message on a worker used by a capsule. The
+    /// caller owns the idle worker's admission slot throughout these requests.
+    /// Return whether a capsule override remains active after successful setup.
+    func prepareChatWorkerCapsuleRoute(
+        using service: BackendService,
+        capsuleDispatch: TaskCapsuleDispatch?,
+        restoringOverride: Bool,
+        ordinaryProviderBody: [String: Any]
+    ) async throws -> Bool {
+        let body: [String: Any]
+        var localModel: String?
+        if let capsuleDispatch {
+            body = capsuleDispatch.providerBody
+            if capsuleDispatch.provider == "ollama" { localModel = capsuleDispatch.profile.model }
+        } else {
+            guard restoringOverride else { return false }
+            body = ordinaryProviderBody
+            if body["provider"] as? String == "ollama" {
+                // The displayed worker info may still name the capsule's
+                // premium model. The control service retains the user's solo
+                // local selection, including changes made during a capsule.
+                let state = try await backend.get("/api/provider", as: ProviderStateResponse.self)
+                guard state.provider == "ollama", !state.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "Locus.TaskCapsules", code: 1, userInfo: [
+                        NSLocalizedDescriptionKey: "The regular local model is not ready. Select a model before continuing."
+                    ])
+                }
+                localModel = state.model
+            }
+        }
+        let _: ProviderStateResponse = try await service.post(
+            "/api/provider", body: body, as: ProviderStateResponse.self
+        )
+        if let localModel {
+            let _: ConfigStateResponse = try await service.post(
+                "/api/config", body: ["model": localModel], as: ConfigStateResponse.self
+            )
+        }
+        return capsuleDispatch != nil
+    }
+
     private func scheduledProviderRequestBody(
         provider: String, accountID: String?, model: String
     ) -> [String: Any]? {
@@ -428,6 +474,13 @@ extension AppModel {
     }
 
     private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
+        if handleOptionalQuestionEvent(event, sessionID: runtime.sessionID) { return }
+        taskCapsules.handleEvent(event, sessionID: runtime.sessionID)
+        if let type = event["type"] as? String,
+           ["identity_action_request", "identity_context_request", "identity_cancelled"].contains(type) {
+            handleIdentityEvent(event, runtime: runtime, transport: runtime.service)
+            return
+        }
         if let type = event["type"] as? String {
             if type == "turn_accepted",
                let requestID = event["request_id"] as? String {

@@ -11,6 +11,13 @@ extension AppModel {
         settings.automaticInspectorPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.soloPlanPresentationRaw = AutomaticInspectorPresentation.never.rawValue
         settings.teamRunsPresentationRaw = AutomaticInspectorPresentation.never.rawValue
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_CAPSULES"] == "1" {
+            agentProfiles = [
+                AgentProfile(name: "Planning model", model: "qwen3:8b", role: .dispatcher),
+                AgentProfile(name: "Implementation model", model: "qwen3:8b",
+                             role: .implementer, accessCeiling: .workspaceWrite),
+            ]
+        }
         if let rawMode = ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_TOOL_ACTIVITY_MODE"
         ], ToolActivityVisibility(rawValue: rawMode) != nil {
@@ -615,6 +622,9 @@ extension AppModel {
                 recommended: "Exponential with jitter"
             )
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_OPTIONAL_QUESTION"] == "1" {
+            seedOptionalQuestionFixture()
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BLOCKING_QUESTION"] == "1" {
             selectedMode = .grill
             pendingBlockingQuestion = AgentQuestionRequest(
@@ -645,6 +655,9 @@ extension AppModel {
             )
         }
         seedUITestRunFixtureIfNeeded(runFixture: runFixture)
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SOLO_COLLABORATION"] == "1" {
+            seedSoloHelperFixture()
+        }
 
         if let simulatorFixture = ProcessInfo.processInfo.environment[
             "LOCUS_UI_TESTING_SIMULATOR"

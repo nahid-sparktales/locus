@@ -294,6 +294,7 @@ def orchestration_pause(service: ServiceDependency, run_id: str) -> dict[str, An
     svc.cancel_all_computer_actions()
     svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
+    svc.cancel_all_identity()
     svc.cancel_all_notes_actions()
     svc.core.tool_registry.product_features.cancel_pending()
     svc.cancel_dispatch_decisions()
@@ -331,6 +332,7 @@ def orchestration_cancel(service: ServiceDependency, run_id: str) -> dict[str, A
     svc.cancel_all_computer_actions()
     svc.cancel_all_simulator_actions()
     svc.cancel_all_browser_actions()
+    svc.cancel_all_identity()
     svc.cancel_all_notes_actions()
     svc.core.tool_registry.product_features.cancel_pending()
     svc.cancel_dispatch_decisions()
@@ -416,6 +418,18 @@ async def _resume_orchestration(
     record = svc.run_store.run(run_id)
     if record is None:
         raise HTTPException(404, f"orchestration not found: {run_id}")
+    saved_manifest = record.get("manifest")
+    if (
+        str(record.get("team_id") or "").startswith("capsule-")
+        or isinstance(saved_manifest, dict) and saved_manifest.get("capsule")
+    ):
+        # Generic team recovery rebuilds a user team and cannot preserve the
+        # capsule's reviewed source baseline, selected roles and repair chain.
+        # Inspect durable identity before trusting any caller-supplied manifest.
+        raise HTTPException(
+            409,
+            "Open Task Capsules to review the partial work and ask the planner for an updated plan.",
+        )
     if not record.get("recoverable") or str(record.get("state") or "") not in {
         "paused",
         "interrupted",

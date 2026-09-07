@@ -1104,6 +1104,7 @@ class SessionStore:
         header: dict[str, Any] = {}
         preview = ""
         has_messages = False
+        identity_mode = False
         try:
             if path.stat().st_size > MAX_SESSION_BYTES:
                 return None
@@ -1126,6 +1127,7 @@ class SessionStore:
                         continue
                     has_messages = True
                     message = record["message"]
+                    identity_mode = identity_mode or message.get("identity_mode") is True
                     if message.get("role") == "user" and not preview:
                         content = str(message.get("content", ""))
                         content = strip_prompt_decoration(content).replace("\n", " ").strip()
@@ -1142,6 +1144,7 @@ class SessionStore:
         return {
             "preview": preview or "(no user messages)",
             "cwd": str(header.get("cwd") or "") or None,
+            "identity_mode": identity_mode,
         }
 
     @staticmethod
@@ -1205,6 +1208,7 @@ class SessionStore:
                 "size": stat.st_size,
                 "title": entry.get("title"),
                 "pinned": bool(entry.get("pinned", False)),
+                "identity_mode": entry.get("identity_mode") is True or summary.get("identity_mode") is True,
                 "archived": bool(entry.get("archived", False)),
                 "task": entry.get("task"),
                 "team": entry.get("team"),

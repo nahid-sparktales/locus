@@ -409,6 +409,8 @@ extension AppModel {
     }
 
     func sendBrowserCapability(to transport: BackendService) {
+        sendOptionalQuestionCapability(to: transport)
+        _ = transport.send(["type": "set_identity_control", "enabled": true])
         let delivered = transport.send(browserCapabilityPayload)
         // The agent refuses capability changes mid-turn and Swift historically
         // dropped the answer, so a toggle during a long turn was lost until the

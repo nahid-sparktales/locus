@@ -365,7 +365,7 @@ extension AppModel {
         })
     }
 
-    private func detachForegroundWorkerUIIfNeeded() {
+    func detachForegroundWorkerUIIfNeeded() {
         guard let runtime = taskWorkers[currentSessionID] else { return }
         runtime.queuedMessages = queuedMessages
         // A question belongs to its chat: park it on the runtime so it comes

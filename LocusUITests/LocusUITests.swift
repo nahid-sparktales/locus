@@ -4525,11 +4525,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("runs.soloSwarm.overview").waitForExistence(timeout: Self.launchContentTimeout))
         let empty = anyElement("runs.soloSwarm.noWorkers")
         XCTAssertTrue(empty.exists)
-        // Not a whole card any more: no workers is one line, and it has to say
-        // the agent chose this rather than that delegation was unavailable.
+        // An absence of helpers is a fact; it does not establish why the
+        // agent worked alone.
         XCTAssertTrue(
             (empty.label + " " + ((empty.value as? String) ?? ""))
-                .localizedCaseInsensitiveContains("did not delegate any workers")
+                .localizedCaseInsensitiveContains("No helpers were used")
         )
     }
 

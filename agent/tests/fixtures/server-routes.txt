@@ -1,4 +1,9 @@
 GET /api/health
+GET /api/capsules
+POST /api/capsules
+GET /api/capsules/{capsule_id}
+PATCH /api/capsules/{capsule_id}
+POST /api/capsules/{capsule_id}/validate
 GET /api/provider
 GET /api/attention
 POST /api/attention/clear-unavailable

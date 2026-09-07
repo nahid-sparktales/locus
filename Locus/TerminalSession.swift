@@ -28,6 +28,7 @@ final class TerminalSession: NSObject, ObservableObject {
     private var pendingConfiguration: Configuration?
     private var directoryTimer: Timer?
     private var usesDarkAppearance = false
+    private var appliedANSIColorsForDarkAppearance: Bool?
 
     static var isSandboxedBuild: Bool {
         #if LOCUS_APP_STORE
@@ -119,8 +120,8 @@ final class TerminalSession: NSObject, ObservableObject {
 
     /// SwiftTerm resolves its native colors when they are assigned, so a
     /// terminal created under Light would otherwise stay white after the app
-    /// switches to Dark. Keep its default foreground/background synchronized
-    /// with SwiftUI while leaving explicit ANSI colors untouched.
+    /// switches to Dark. Keep defaults, selection, and the standard ANSI palette
+    /// synchronized with SwiftUI. Programs' explicit RGB colors stay intact.
     func updateAppearance(isDark: Bool) {
         usesDarkAppearance = isDark
         guard let terminalView else { return }
@@ -214,8 +215,47 @@ final class TerminalSession: NSObject, ObservableObject {
         let palette = usesDarkAppearance ? LocusTheme.darkPalette : LocusTheme.lightPalette
         view.nativeBackgroundColor = palette.paper
         view.nativeForegroundColor = palette.ink
+        view.caretColor = palette.contentLink
+        view.caretTextColor = palette.paper
+        view.selectedTextForegroundColor = palette.ink
+        let appearance = NSAppearance(named: usesDarkAppearance ? .darkAqua : .aqua)
+        appearance?.performAsCurrentDrawingAppearance {
+            let wash = LocusTheme.selectionWash(forKeyWindow: true)
+            view.selectedTextBackgroundColor = wash.usingColorSpace(.sRGB) ?? wash
+        }
+        // Reinstall only when the appearance changes: ordinary SwiftUI updates
+        // must not overwrite a running program's OSC palette customizations.
+        if appliedANSIColorsForDarkAppearance != usesDarkAppearance {
+            view.installColors(Self.ansiColors(palette: palette))
+            appliedANSIColorsForDarkAppearance = usesDarkAppearance
+        }
         view.needsDisplay = true
         view.layer?.setNeedsDisplay()
+    }
+
+    /// Theme the standard sixteen colors using the same semantic hues as code
+    /// and diffs. Black/white keep their terminal meaning in both appearances,
+    /// including when a program uses them as backgrounds or inverse pairs.
+    /// Bright chromatic variants gain contrast instead of neon saturation.
+    static func ansiColors(palette: LocusTheme.Palette) -> [SwiftTerm.Color] {
+        let normal = [
+            LocusTheme.lightPalette.ink, palette.diffRemoved, palette.diffAdded,
+            palette.codeNumber, palette.codeFunction, palette.codeKeyword,
+            palette.codeType, LocusTheme.darkPalette.inkSoft
+        ]
+        let bright = normal.enumerated().map { index, color in
+            if index == 0 { return LocusTheme.lightPalette.muted }
+            if index == 7 { return LocusTheme.darkPalette.ink }
+            return color.blended(withFraction: 0.16, of: palette.ink) ?? color
+        }
+        return (normal + bright).map { color in
+            let rgb = color.usingColorSpace(.sRGB) ?? color
+            return SwiftTerm.Color(
+                red: UInt16((min(max(rgb.redComponent, 0), 1) * 65_535).rounded()),
+                green: UInt16((min(max(rgb.greenComponent, 0), 1) * 65_535).rounded()),
+                blue: UInt16((min(max(rgb.blueComponent, 0), 1) * 65_535).rounded())
+            )
+        }
     }
 
     private func startConfiguredShell() {

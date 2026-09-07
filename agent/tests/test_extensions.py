@@ -421,6 +421,9 @@ def test_oauth_metadata_discovery_validates_issuer_and_does_not_follow_redirects
 
 
 class _FakeMCP:
+    def __init__(self):
+        self.inputs_cancelled = False
+
     def available_tools(self):
         return [{
             "server_id": "remote-1",
@@ -468,6 +471,9 @@ class _FakeMCP:
 
     def close(self):
         return None
+
+    def cancel_pending_inputs(self):
+        self.inputs_cancelled = True
 
 
 def test_deferred_tool_discovery_and_annotation_policy(tmp_path):
@@ -670,6 +676,8 @@ def test_extension_rest_contract_and_busy_conflict(tmp_path):
         assert conflict.status_code == 409
         assert client.get("/api/extensions/catalog").status_code == 200
         service.turn_future.set_result(None)
+
+    assert core.mcp.inputs_cancelled, "Service shutdown must cancel outstanding MCP input"
 
 
 def _free_port() -> int:

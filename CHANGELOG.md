@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Task Capsules.** Save a detailed plan with separate planning,
+  implementation, and optional review models. ChatGPT and Kimi Code membership
+  routes keep their exact accounts, alongside API and local model support.
+  Saved revisions, source-change checks, bounded repairs, and explicit planner
+  help keep the handoff reviewable without repeatedly calling the plan author.
 - **Workspace Library.** Documents and Outputs share one home without replacing
   the open chat or its draft. Opt-in document knowledge supports PDF, Word,
   spreadsheets, and delimited tables, including local PDF text recognition.

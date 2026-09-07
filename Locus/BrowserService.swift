@@ -142,6 +142,9 @@ final class BrowserService: NSObject, ObservableObject {
         fileprivate var navigationSource: BrowserVisitSource = .user
         fileprivate var agentInteractionUntil = Date.distantPast
         fileprivate var pendingUserDownload = false
+        /// A separate private delegate owns the entire page from construction.
+        /// Ordinary browser plumbing must never inspect this context.
+        var identityPage: IdentityApplicationPage?
         #if LOCUS_WALLET
         fileprivate var walletOrigin: String?
         fileprivate var walletNetworkID = WalletGateway.sepoliaNetworkID
@@ -232,6 +235,7 @@ final class BrowserService: NSObject, ObservableObject {
     static let maximumLiveTabs = 12
 
     private var openTabs: [Tab] = []
+    private var identityApplications: [String: IdentityApplicationSession] = [:]
     private var activeTabBySession: [String: String] = [:]
     private struct ClosedTab {
         var url: URL
@@ -348,7 +352,7 @@ final class BrowserService: NSObject, ObservableObject {
     /// must rebuild the script set and reload live pages. Native revocation is
     /// performed by WalletGateway before this method is called.
     func applyWalletProviderAccess(reloadTabs: Bool) {
-        for tab in openTabs {
+        for tab in openTabs where tab.identityPage == nil {
             let controller = tab.webView.configuration.userContentController
             controller.removeScriptMessageHandler(forName: BrowserBridge.walletHandlerName)
             if walletGateway?.browserProviderEnabled == true {
@@ -493,6 +497,7 @@ final class BrowserService: NSObject, ObservableObject {
     /// "cancelled".
     func cancelPendingActions(ownedBy sessionID: String? = nil) {
         for tab in openTabs where sessionID == nil || tab.ownerSessionID == sessionID {
+            tab.identityPage?.cancelPendingActions()
             tab.webView.stopLoading()
             tab.gate?.settle(.cancelled)
             tab.gate = nil
@@ -516,6 +521,9 @@ final class BrowserService: NSObject, ObservableObject {
         }
         openTabs.removeAll { $0.ownerSessionID == sessionID }
         activeTabBySession.removeValue(forKey: sessionID)
+        identityApplications.removeValue(forKey: sessionID)
+        IdentityPrivacyGuard.shared.applicationSessions.remove(sessionID)
+        recentlyClosedTabs.removeValue(forKey: sessionID)
         publishTabs()
     }
 
@@ -538,6 +546,10 @@ final class BrowserService: NSObject, ObservableObject {
         timeoutMilliseconds: Int
     ) async -> [String: Any] {
         await acquire()
+        guard !isIdentityApplication(sessionID: sessionID) else {
+            release()
+            return ["error": "Identity applications require native review. Ordinary browser tools cannot access this private context."]
+        }
         isExecuting = true
         if let tab = existingTab(for: sessionID) {
             tab.agentInteractionUntil = Date().addingTimeInterval(3)
@@ -558,10 +570,21 @@ final class BrowserService: NSObject, ObservableObject {
                 hostedProvider: hostedProvider,
                 budget: budget
             )
+            // Opening a private application can retire an ordinary action
+            // while it is awaiting WebKit. Drop that in-flight result too.
+            guard !isIdentityApplication(sessionID: sessionID) else {
+                return ["error": "Identity application opened; ordinary browser action cancelled."]
+            }
             return annotatingDialogNotices(result, sessionID: sessionID)
         } catch let error as BrowserToolError {
+            guard !isIdentityApplication(sessionID: sessionID) else {
+                return ["error": "The private application requires native review."]
+            }
             return ["error": error.message]
         } catch {
+            guard !isIdentityApplication(sessionID: sessionID) else {
+                return ["error": "The private application requires native review."]
+            }
             guard generation == cancellationGenerations[sessionID, default: 0] else {
                 return ["error": "cancelled by the user"]
             }
@@ -1864,11 +1887,15 @@ final class BrowserService: NSObject, ObservableObject {
             // capture handler, so re-registering any of them would crash on
             // the duplicate handler name.
             configuration = adopted
+        } else if let identity = identityApplications[ownerSessionID] {
+            configuration = identity.configuration()
         } else {
             configuration = makeConfiguration()
         }
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView: WKWebView = identityApplications[ownerSessionID] == nil
+            ? WKWebView(frame: .zero, configuration: configuration)
+            : IdentityApplicationWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = .clear
         switch pageAppearance {
         case .automatic: webView.appearance = nil
@@ -1883,8 +1910,12 @@ final class BrowserService: NSObject, ObservableObject {
         #else
         webView.isInspectable = webInspectorEnabled
         #endif
+        if identityApplications[ownerSessionID] != nil { webView.isInspectable = false }
 
-        let host = OffscreenWebHost(webView: webView, viewport: defaultViewport)
+        let host = OffscreenWebHost(
+            webView: webView, viewport: defaultViewport,
+            identityProtected: identityApplications[ownerSessionID] != nil
+        )
         let tab = Tab(
             id: "tab_\(tabCounter)",
             host: host,
@@ -1894,6 +1925,21 @@ final class BrowserService: NSObject, ObservableObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         objc_setAssociatedObject(webView, &Self.tabKey, tab, .OBJC_ASSOCIATION_RETAIN)
+        if identityApplications[ownerSessionID] != nil {
+            let privatePage = IdentityApplicationPage(webView: webView, sessionID: ownerSessionID, tabID: tab.id)
+            tab.identityPage = privatePage
+            webView.navigationDelegate = privatePage
+            webView.uiDelegate = privatePage
+            privatePage.onChange = { [weak self] in self?.schedulePublish() }
+            privatePage.onPopup = { [weak self] configuration in
+                guard let self, self.isIdentityApplication(sessionID: ownerSessionID) else { return nil }
+                return self.makeTab(ownerSessionID: ownerSessionID, adopting: configuration).webView
+            }
+            privatePage.onClose = { [weak self, weak tab] in
+                guard let tab else { return }
+                self?.userCloseTab(tab.id, sessionID: ownerSessionID)
+            }
+        }
 
         // The delegate callbacks catch page loads; these catch everything else
         // the chrome shows live — progress, title changes from the page's own
@@ -2000,6 +2046,7 @@ final class BrowserService: NSObject, ObservableObject {
     /// is why the caller tells the model to reload.
     @discardableResult
     func setDeviceEmulation(_ emulate: Bool, on tab: Tab) -> Bool {
+        guard tab.identityPage == nil else { return false }
         guard tab.emulatesDevice != emulate else { return false }
         tab.emulatesDevice = emulate
         installUserScripts(
@@ -2045,6 +2092,13 @@ final class BrowserService: NSObject, ObservableObject {
     /// there. Delegate callbacks that race the teardown find `tab(owning:)`
     /// nil and stand down.
     private func retire(_ tab: Tab) {
+        if tab.identityPage != nil {
+            // A SwiftUI borrower can retain the host for another render turn.
+            // Hide and detach it synchronously before dropping protection.
+            tab.webView.isHidden = true
+            tab.host.park()
+        }
+        tab.identityPage?.close()
         tab.invalidateObservations()
         tab.gate?.settle(.cancelled)
         tab.gate = nil
@@ -2079,8 +2133,8 @@ final class BrowserService: NSObject, ObservableObject {
         let fresh = openTabs.map { tab in
             TabSnapshot(
                 id: tab.id,
-                title: tab.webView.title ?? "",
-                url: tab.webView.url?.absoluteString ?? "",
+                title: tab.identityPage == nil ? (tab.webView.title ?? "") : "Identity application",
+                url: tab.identityPage == nil ? (tab.webView.url?.absoluteString ?? "") : "",
                 isLoading: tab.webView.isLoading,
                 isActive: active.contains(tab.id),
                 // Quantized so the snapshot diff below caps progress-driven
@@ -2108,6 +2162,7 @@ final class BrowserService: NSObject, ObservableObject {
         guard let url = BrowserScheme.normalize(raw), BrowserScheme.permits(url) else {
             return false
         }
+        if isIdentityApplication(sessionID: sessionID), !IdentityApplicationSession.permits(url) { return false }
         applyProxyIfNeeded()
         let tab = tab(for: sessionID)
         tab.navigationSource = .user
@@ -2162,7 +2217,7 @@ final class BrowserService: NSObject, ObservableObject {
             $0.id == tabID && $0.ownerSessionID == sessionID
         }) else { return }
         let closed = openTabs.remove(at: index)
-        if let url = closed.webView.url {
+        if closed.identityPage == nil, let url = closed.webView.url {
             recentlyClosedTabs[sessionID, default: []].insert(
                 .init(
                     url: url,
@@ -2176,6 +2231,10 @@ final class BrowserService: NSObject, ObservableObject {
             )
         }
         retire(closed)
+        if !openTabs.contains(where: { $0.ownerSessionID == sessionID }) {
+            identityApplications.removeValue(forKey: sessionID)
+            IdentityPrivacyGuard.shared.applicationSessions.remove(sessionID)
+        }
         if activeTabBySession[sessionID] == closed.id {
             activeTabBySession[sessionID] = openTabs
                 .first { $0.ownerSessionID == sessionID }?.id
@@ -2227,6 +2286,7 @@ final class BrowserService: NSObject, ObservableObject {
     /// The live page in the default browser — the current URL, not a settings
     /// field that may never have been visited.
     func openCurrentTabExternally(sessionID: String) {
+        guard !isIdentityApplication(sessionID: sessionID) else { return }
         guard let url = existingTab(for: sessionID)?.webView.url else { return }
         NSWorkspace.shared.open(url)
     }
@@ -2261,6 +2321,7 @@ final class BrowserService: NSObject, ObservableObject {
     /// Any of the session's tabs in the default browser, not just the active
     /// one — the chip context menu addresses tabs directly.
     func userOpenTabExternally(_ tabID: String, sessionID: String) {
+        guard !isIdentityApplication(sessionID: sessionID) else { return }
         guard let tab = openTabs.first(where: {
             $0.id == tabID && $0.ownerSessionID == sessionID
         }), let url = tab.webView.url else { return }
@@ -2351,7 +2412,8 @@ final class BrowserService: NSObject, ObservableObject {
 
     /// The live capture log behind the drawer, or nil before any page opens.
     func activeLog(for sessionID: String) -> BrowserCaptureLog? {
-        existingTab(for: sessionID)?.log
+        guard !isIdentityApplication(sessionID: sessionID) else { return nil }
+        return existingTab(for: sessionID)?.log
     }
 
     /// The host whose web view a visible container may borrow.
@@ -2361,6 +2423,78 @@ final class BrowserService: NSObject, ObservableObject {
 
     func snapshots(for sessionID: String) -> [TabSnapshot] {
         tabs.filter { $0.ownerSessionID == sessionID }
+    }
+
+    // MARK: - Native Identity applications
+
+    func isIdentityApplication(sessionID: String) -> Bool {
+        identityApplications[sessionID] != nil
+    }
+
+    var hasIdentityApplications: Bool { !identityApplications.isEmpty }
+
+    /// Starts protection before constructing or navigating any page. Replacing
+    /// an application always gets a fresh cookie/storage jar.
+    func openIdentityApplication(sessionID: String, url: URL) async throws -> IdentityBrowserSnapshot {
+        guard !sessionID.isEmpty, IdentityApplicationSession.permits(url) else {
+            throw IdentityBrowserError.invalidURL
+        }
+        closeTabs(ownedBy: sessionID)
+        applyProxyIfNeeded()
+        let application = IdentityApplicationSession()
+        application.dataStore.proxyConfigurations = dataStore.proxyConfigurations
+        identityApplications[sessionID] = application
+        IdentityPrivacyGuard.shared.applicationSessions.insert(sessionID)
+        let tab = makeTab(ownerSessionID: sessionID)
+        tab.webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        for _ in 0..<200 {
+            guard !Task.isCancelled, isIdentityApplication(sessionID: sessionID),
+                  existingTab(for: sessionID)?.id == tab.id else { throw IdentityBrowserError.cancelled }
+            try await Task.sleep(for: .milliseconds(50))
+            if !tab.webView.isLoading, let snapshot = try? await tab.identityPage?.snapshot() {
+                return snapshot
+            }
+        }
+        throw IdentityBrowserError.unavailable
+    }
+
+    func snapshotIdentityApplication(sessionID: String) async throws -> IdentityBrowserSnapshot {
+        guard isIdentityApplication(sessionID: sessionID),
+              let page = existingTab(for: sessionID)?.identityPage else {
+            throw IdentityBrowserError.unavailable
+        }
+        return try await page.snapshot()
+    }
+
+    func fillIdentityApplication(snapshot: IdentityBrowserSnapshot, bindings: [IdentityBrowserBinding]) async throws -> String {
+        let page = try identityPage(for: snapshot)
+        return try await page.fill(snapshot: snapshot, bindings: bindings)
+    }
+
+    func uploadIdentityApplication(snapshot: IdentityBrowserSnapshot, fieldID: String, data: Data, filename: String) async throws -> String {
+        let page = try identityPage(for: snapshot)
+        return try await page.attach(snapshot: snapshot, fieldID: fieldID, data: data, filename: filename)
+    }
+
+    func clickIdentityApplication(snapshot: IdentityBrowserSnapshot, actionID: String) async throws -> String {
+        let page = try identityPage(for: snapshot)
+        return try await page.click(snapshot: snapshot, actionID: actionID)
+    }
+
+    func closeIdentityApplication(sessionID: String) {
+        guard isIdentityApplication(sessionID: sessionID) else { return }
+        closeTabs(ownedBy: sessionID)
+    }
+
+    func closeAllIdentityApplications() {
+        for sessionID in Array(identityApplications.keys) { closeIdentityApplication(sessionID: sessionID) }
+    }
+
+    private func identityPage(for snapshot: IdentityBrowserSnapshot) throws -> IdentityApplicationPage {
+        guard isIdentityApplication(sessionID: snapshot.sessionID),
+              let tab = existingTab(for: snapshot.sessionID), tab.id == snapshot.tabID,
+              let page = tab.identityPage else { throw IdentityBrowserError.changed }
+        return page
     }
 
     // MARK: - Plumbing
@@ -2399,10 +2533,11 @@ final class BrowserService: NSObject, ObservableObject {
         _ body: String,
         _ arguments: [String: Any]
     ) async throws -> Any? {
+        guard tab.identityPage == nil else { throw IdentityBrowserError.unsupported }
         // `callAsyncJavaScript` passes values as real arguments rather than
         // interpolating them into source, which keeps page-derived strings from
         // becoming an injection vector.
-        try await tab.webView.callAsyncJavaScript(
+        return try await tab.webView.callAsyncJavaScript(
             body,
             arguments: arguments,
             in: nil,
@@ -2423,6 +2558,9 @@ final class BrowserService: NSObject, ObservableObject {
             ]
         } else {
             dataStore.proxyConfigurations = []
+        }
+        for application in identityApplications.values {
+            application.dataStore.proxyConfigurations = dataStore.proxyConfigurations
         }
     }
 }
@@ -3143,6 +3281,7 @@ extension BrowserService {
     }
 
     func fillPassword(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
+        guard !isIdentityApplication(sessionID: sessionID) else { return false }
         guard await prepareVaultForFill(),
               let record = autofillVault.passwords.first(where: { $0.id == id })
         else { return false }
@@ -3160,6 +3299,7 @@ extension BrowserService {
     }
 
     func fillContact(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
+        guard !isIdentityApplication(sessionID: sessionID) else { return false }
         guard await prepareVaultForFill(),
               let record = autofillVault.contacts.first(where: { $0.id == id })
         else { return false }
@@ -3179,6 +3319,7 @@ extension BrowserService {
     }
 
     func fillCard(_ id: UUID, sessionID: String, tabID: String? = nil) async -> Bool {
+        guard !isIdentityApplication(sessionID: sessionID) else { return false }
         guard await prepareVaultForFill(),
               let record = autofillVault.cards.first(where: { $0.id == id })
         else { return false }
@@ -3256,7 +3397,7 @@ extension BrowserService: WKScriptMessageHandler {
     ) {
         guard let payload = message.body as? [String: Any],
               let webView = message.webView,
-              let tab = tab(owning: webView)
+              let tab = tab(owning: webView), tab.identityPage == nil
         else { return }
         #if LOCUS_WALLET
         if message.name == BrowserBridge.walletHandlerName {

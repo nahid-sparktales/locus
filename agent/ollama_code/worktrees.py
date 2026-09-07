@@ -7,6 +7,7 @@ later rounds expose only their new delta.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -411,6 +412,7 @@ class TaskCheckoutStore:
         task_dir.mkdir(parents=True, exist_ok=False)
         try:
             _git(root, "worktree", "add", "--detach", str(checkout), baseline_commit)
+            _copy_worktree_includes(Path(source.execution_path), checkout)
             observed_tree = _git(checkout, "rev-parse", "HEAD^{tree}").strip()
             if observed_tree != baseline_tree:
                 raise WorktreeError("parallel writer baseline could not be reproduced")
@@ -651,6 +653,116 @@ class TaskCheckoutStore:
             pass
         shutil.rmtree(task_dir)
         return {"ok": True, "task_id": task_id, "removed": True}
+
+
+def execution_snapshot(execution_path: str) -> dict[str, str]:
+    """Snapshot the actual checkout without touching its real index or HEAD."""
+    cwd = Path(execution_path).resolve()
+    root = Path(_git(cwd, "rev-parse", "--show-toplevel").strip()).resolve()
+    if _dirty_submodules(root):
+        raise WorktreeError("isolated helpers cannot snapshot dirty submodules")
+    head = _git(root, "rev-parse", "HEAD").strip()
+    descriptor, index_path = tempfile.mkstemp(prefix="locus-helper-index-")
+    os.close(descriptor)
+    os.unlink(index_path)
+    try:
+        env = {**sanitized_child_environment(), "GIT_INDEX_FILE": index_path}
+        # Copy the current index so even explicitly staged ignored files remain
+        # tracked in this private snapshot. Subsequent add includes disk edits.
+        real_index = Path(_git(root, "rev-parse", "--git-path", "index").strip())
+        if not real_index.is_absolute():
+            real_index = root / real_index
+        if real_index.is_file():
+            shutil.copyfile(real_index, index_path)
+        else:
+            _git(root, "read-tree", head, env=env)
+        _git(root, "add", "-A", "--", ".", env=env)
+        tree = _git(root, "write-tree", env=env).strip()
+        commit = _git(root, "-c", "user.name=Locus Helper Baseline", "-c",
+                      "user.email=locus@localhost", "commit-tree", tree, "-p", head,
+                      "-m", "Locus helper execution snapshot").strip()
+    finally:
+        Path(index_path).unlink(missing_ok=True)
+    common = Path(_git(root, "rev-parse", "--git-common-dir").strip())
+    if not common.is_absolute():
+        common = root / common
+    return {"execution_root": str(root), "cwd_relative": str(cwd.relative_to(root)),
+            "repository_identity": str(common.resolve()), "tree": tree, "commit": commit}
+
+
+def fork_execution(execution_path: str, task_id: str) -> tuple[TaskCheckout, dict[str, str]]:
+    """Create an isolated helper from Local or an already managed worktree."""
+    source = execution_snapshot(execution_path)
+    child = TaskCheckoutStore.create(source["execution_root"], task_id,
+                                     base_ref=source["commit"])
+    return child, source
+
+
+def freeze_helper_result(task: TaskCheckout, result_id: str) -> dict[str, Any]:
+    """Store an immutable patch; later helper edits cannot change this result."""
+    if not _TASK_ID.fullmatch(result_id):
+        raise WorktreeError("helper result id is invalid")
+    patch, tree = task.patch()
+    commit, captured = task.snapshot_commit()
+    if tree != captured:
+        raise WorktreeError("helper files changed while preparing the result")
+    directory = task.directory / "results"
+    directory.mkdir(exist_ok=True)
+    path = directory / f"{result_id}.patch"
+    with path.open("xb") as handle:
+        handle.write(patch.encode("utf-8", errors="surrogateescape"))
+    _git(Path(task.execution_path), "update-ref",
+         f"refs/locus/helper-results/{task.id}/{result_id}", commit)
+    return {"result_id": result_id, "task_id": task.id,
+            "base_tree": task.applied_tree or task.baseline_tree,
+            "result_tree": tree, "result_commit": commit, "patch_path": str(path),
+            "patch_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "paths": _changed_paths(Path(task.execution_path),
+                                     task.applied_tree or task.baseline_tree, tree)}
+
+
+def prepare_helper_integration(result: dict[str, Any], execution_path: str) -> dict[str, Any]:
+    """Compute exact expected trees before changing any parent working files."""
+    before = execution_snapshot(execution_path)
+    root = Path(before["execution_root"])
+    patch = Path(result["patch_path"]).read_bytes()
+    if hashlib.sha256(patch).hexdigest() != result["patch_sha256"]:
+        raise WorktreeError("frozen helper patch changed; review a newly captured result")
+    if len(patch) > MAX_PATCH_BYTES:
+        raise WorktreeError("helper patch exceeds the safety limit")
+    check = _git_input(root, patch, "apply", "--check", "--binary", "--whitespace=nowarn") if patch else None
+    if check is not None and check.returncode:
+        raise WorktreeError(check.stderr.decode("utf-8", errors="replace").strip())
+    descriptor, index_path = tempfile.mkstemp(prefix="locus-integration-index-")
+    os.close(descriptor)
+    os.unlink(index_path)
+    try:
+        env = {**sanitized_child_environment(), "GIT_INDEX_FILE": index_path}
+        _git(root, "read-tree", before["tree"], env=env)
+        if patch:
+            process = subprocess.run(["git", "apply", "--cached", "--binary", "--whitespace=nowarn"],
+                                     cwd=root, input=patch, env=env, capture_output=True, timeout=30)
+            if process.returncode:
+                raise WorktreeError(process.stderr.decode("utf-8", errors="replace").strip())
+        after_tree = _git(root, "write-tree", env=env).strip()
+    finally:
+        Path(index_path).unlink(missing_ok=True)
+    return {**before, "before_tree": before["tree"], "after_tree": after_tree}
+
+
+def apply_helper_integration(result: dict[str, Any], receipt: dict[str, Any]) -> None:
+    """Apply only to the recorded parent checkout, refusing a stale preflight."""
+    current = execution_snapshot(receipt["execution_root"])
+    if (current["repository_identity"] != receipt["repository_identity"]
+            or current["tree"] != receipt["before_tree"]):
+        raise WorktreeError("parent checkout changed after helper integration was prepared")
+    patch = Path(result["patch_path"]).read_bytes()
+    if hashlib.sha256(patch).hexdigest() != result["patch_sha256"]:
+        raise WorktreeError("frozen helper patch changed after integration was prepared")
+    if patch:
+        applied = _git_input(Path(receipt["execution_root"]), patch, "apply", "--binary", "--whitespace=nowarn")
+        if applied.returncode:
+            raise WorktreeError(applied.stderr.decode("utf-8", errors="replace").strip())
 
 
 def _copy_source_state(source: Path, checkout: Path) -> None:

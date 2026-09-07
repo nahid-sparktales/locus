@@ -115,12 +115,16 @@ struct LocusAccentSelection: Hashable, Sendable {
 
     func actionNSColor(for appearance: NSAppearance) -> NSColor {
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let background = dark ? Self.color(hex: 0x171713) : Self.color(hex: 0xF3F1EA)
+        let palette = LocusTheme.palette(for: appearance)
+        // Keep the chosen hue in controls, with less saturation than the logo
+        // and filled selections. Check the least forgiving workspace surface.
+        let source = Self.mix(fillNSColor, palette.inkSoft, fraction: 0.4)
         let destination = dark ? NSColor.white : NSColor.black
+        let backgrounds = [palette.paper, palette.paperDeep, palette.panel, palette.white]
         return Self.firstReadableMix(
-            from: fillNSColor,
+            from: source,
             toward: destination,
-            over: background
+            over: backgrounds
         )
     }
 
@@ -170,17 +174,17 @@ struct LocusAccentSelection: Hashable, Sendable {
     private static func firstReadableMix(
         from source: NSColor,
         toward destination: NSColor,
-        over background: NSColor
+        over backgrounds: [NSColor]
     ) -> NSColor {
-        for step in 0...20 {
-            let fraction = CGFloat(step) / 20
+        for step in 0...40 {
+            let fraction = CGFloat(step) / 40
             let candidate = mix(source, destination, fraction: fraction)
-            if contrast(candidate, over: background) >= 4.5 { return candidate }
+            if backgrounds.allSatisfy({ contrast(candidate, over: $0) >= 4.5 }) { return candidate }
         }
         return destination
     }
 
-    private static func mix(_ lhs: NSColor, _ rhs: NSColor, fraction: CGFloat) -> NSColor {
+    fileprivate static func mix(_ lhs: NSColor, _ rhs: NSColor, fraction: CGFloat) -> NSColor {
         let lhs = lhs.usingColorSpace(.sRGB) ?? lhs
         let rhs = rhs.usingColorSpace(.sRGB) ?? rhs
         return NSColor(
@@ -191,7 +195,7 @@ struct LocusAccentSelection: Hashable, Sendable {
         )
     }
 
-    private static func contrast(_ foreground: NSColor, over background: NSColor) -> CGFloat {
+    fileprivate static func contrast(_ foreground: NSColor, over background: NSColor) -> CGFloat {
         let lighter = max(luminance(foreground), luminance(background))
         let darker = min(luminance(foreground), luminance(background))
         return (lighter + 0.05) / (darker + 0.05)
@@ -219,12 +223,28 @@ final class LocusAccentRuntime: @unchecked Sendable {
         customHex: LocusAccentSelection.defaultCustomHex
     )
 
+    private var selectionColors: [Int: NSColor] = [:]
+
     private init() {}
 
     func configure(_ selection: LocusAccentSelection) {
         lock.lock()
+        if self.selection != selection { selectionColors.removeAll() }
         self.selection = selection
         lock.unlock()
+    }
+
+    /// TextKit resolves selection colours during layout and drawing. Cache the
+    /// four appearance/focus combinations so contrast checks never repeat per glyph.
+    func selectionColor(for appearance: NSAppearance, isKey: Bool) -> NSColor {
+        lock.lock()
+        defer { lock.unlock() }
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let key = (dark ? 2 : 0) + (isKey ? 1 : 0)
+        if let cached = selectionColors[key] { return cached }
+        let color = LocusTheme.selectionBackground(for: appearance, accent: selection.fillNSColor, isKey: isKey)
+        selectionColors[key] = color
+        return color
     }
 
     func currentSelection() -> LocusAccentSelection {
@@ -306,17 +326,22 @@ enum LocusTheme {
         let permissionInk: NSColor
         let permissionMuted: NSColor
         let successSoft: NSColor
-        /// Code-token hues. Deliberately fixed rather than accent-derived: a
-        /// keyword colour that follows the accent would collide with links
-        /// (`signalDeep`) and would mint a fresh dynamic `NSColor` on every body
-        /// evaluation, defeating the attributed-string equality check that keeps
-        /// code blocks from resetting their text storage each pass.
+        // Content hues stay stable when the user changes the brand accent.
         let codeKeyword: NSColor
         let codeType: NSColor
+
+        var contentLink: NSColor { success }
+        var codeFunction: NSColor { blue }
+        var codeString: NSColor { success }
+        var codeNumber: NSColor { warning }
+        var codeProperty: NSColor { inkSoft }
+        var codePunctuation: NSColor { muted }
+        var diffAdded: NSColor { success }
+        var diffRemoved: NSColor { danger }
     }
 
-    /// Keep the established light appearance byte-for-byte equivalent to the
-    /// original SwiftUI colors. Only the backing type is now dynamic.
+    /// Warm paper and charcoal anchor the interface; restrained content and
+    /// status hues share the same contrast floor on every workspace surface.
     static let lightPalette = Palette(
         ink: rgb(red: 0.086, green: 0.094, blue: 0.078),
         inkSoft: rgb(red: 0.145, green: 0.157, blue: 0.125),
@@ -329,21 +354,21 @@ enum LocusTheme {
         // Secondary copy used to sit between 3.6:1 and 4.4:1 on the paper
         // surfaces. Keep the warm gray character, but make it readable at the
         // compact sizes a desktop workspace needs.
-        muted: rgb(0x5F6258),
+        muted: rgb(0x56594F),
         signal: rgb(red: 0.788, green: 0.961, blue: 0.29),
         // `signal` remains the bright brand fill. This deeper olive is the
         // accessible foreground/link partner for light surfaces.
         signalDeep: rgb(0x526800),
-        coral: rgb(0xA33A24),
-        danger: rgb(0xB42318),
-        blue: rgb(red: 0.322, green: 0.455, blue: 0.843),
-        success: rgb(0x2F6D3F),
-        warning: rgb(0x7D5106),
-        permissionInk: rgb(red: 0.42, green: 0.31, blue: 0.25),
-        permissionMuted: rgb(red: 0.52, green: 0.42, blue: 0.36),
-        successSoft: rgb(red: 0.906, green: 0.949, blue: 0.792),
-        codeKeyword: rgb(0x7C3F6E),
-        codeType: rgb(0x1F6F76)
+        coral: rgb(0x834B37),
+        danger: rgb(0x963D36),
+        blue: rgb(0x3F5B75),
+        success: rgb(0x46613E),
+        warning: rgb(0x735627),
+        permissionInk: rgb(0x795B46),
+        permissionMuted: rgb(0x756457),
+        successSoft: rgb(0xE2E9DB),
+        codeKeyword: rgb(0x785570),
+        codeType: rgb(0x396B69)
     )
 
     static let darkPalette = Palette(
@@ -355,19 +380,19 @@ enum LocusTheme {
         white: rgb(0x292820),
         line: rgb(0x3D3B32),
         lineStrong: rgb(0x858074),
-        muted: rgb(0x9C988A),
+        muted: rgb(0xADA89A),
         signal: rgb(0xC9F54A),
         signalDeep: rgb(0xB6E33B),
-        coral: rgb(0xF18364),
-        danger: rgb(0xFF5A52),
-        blue: rgb(0x7998FF),
-        success: rgb(0x6DBB7B),
-        warning: rgb(0xE1A54B),
-        permissionInk: rgb(0xD7A77E),
-        permissionMuted: rgb(0xB9927B),
-        successSoft: rgb(0x2A3320),
-        codeKeyword: rgb(0xE0A0CE),
-        codeType: rgb(0x6BC8D0)
+        coral: rgb(0xD39F87),
+        danger: rgb(0xE69890),
+        blue: rgb(0x9AAEC4),
+        success: rgb(0xA6BB96),
+        warning: rgb(0xCDB382),
+        permissionInk: rgb(0xD3BAA3),
+        permissionMuted: rgb(0xB7A899),
+        successSoft: rgb(0x2A3226),
+        codeKeyword: rgb(0xC1A4BD),
+        codeType: rgb(0x92B9B5)
     )
 
     static let ink = adaptive(\.ink)
@@ -396,13 +421,33 @@ enum LocusTheme {
     static let coral = adaptive(\.coral)
     static let danger = adaptive(\.danger)
     static let blue = adaptive(\.blue)
-    static var success: Color { signalDeep }
+    static let success = adaptive(\.success)
     static let warning = adaptive(\.warning)
     static let permissionInk = adaptive(\.permissionInk)
     static let permissionMuted = adaptive(\.permissionMuted)
     static let codeKeyword = adaptive(\.codeKeyword)
     static let codeType = adaptive(\.codeType)
-    static var successSoft: Color { signal.opacity(0.18) }
+    static let successSoft = adaptive(\.successSoft)
+
+    static let contentLink = adaptive(\.contentLink)
+    static let codeFunction = adaptive(\.codeFunction)
+    static let codeString = adaptive(\.codeString)
+    static let codeNumber = adaptive(\.codeNumber)
+    static let codeProperty = adaptive(\.codeProperty)
+    static let codePunctuation = adaptive(\.codePunctuation)
+    static let diffAdded = adaptive(\.diffAdded)
+    static let diffRemoved = adaptive(\.diffRemoved)
+    static let diffAddedFill = diffAdded.opacity(0.08)
+    static let diffRemovedFill = diffRemoved.opacity(0.08)
+
+    // Built-in note colours share the output palette. Editors apply these only
+    // while displaying text, preserving portable, archivable colour identities.
+    static let noteCoral = coral
+    static let noteAmber = warning
+    static let noteGreen = success
+    static let noteBlue = blue
+    static let notePurple = codeKeyword
+    static let noteGray = muted
 
     // Semantic roles. The legacy names above remain source-compatible while
     // screens migrate; new UI should describe the purpose of a color rather
@@ -422,20 +467,34 @@ enum LocusTheme {
     static let warningForeground = warning
     static let dangerForeground = danger
     static var selectionFill: Color { signal }
-    /// Transcript selection. A soft accent wash rather than the system
-    /// highlight, and applied as a background only so selected prose keeps its
-    /// own colour instead of being inverted to white.
+    /// A soft, opaque accent tint keeps selection readable on every surface.
+    /// Applied as a background only so selected text retains its syntax hues.
     static func selectionWash(forKeyWindow isKey: Bool) -> NSColor {
         // Read at resolve time for the same reason the accent colours are: a
         // text view holds this for as long as it lives, and the accent can
         // change underneath it.
         NSColor(name: nil) { appearance in
-            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let base: CGFloat = dark ? 0.26 : 0.34
-            return LocusAccentRuntime.shared.currentSelection()
-                .fillNSColor
-                .withAlphaComponent(isKey ? base : base * 0.5)
+            LocusAccentRuntime.shared.selectionColor(for: appearance, isKey: isKey)
         }
+    }
+
+    fileprivate static func selectionBackground(for appearance: NSAppearance, accent: NSColor, isKey: Bool) -> NSColor {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let palette = Self.palette(for: appearance)
+        let base = dark ? palette.paper : palette.white
+        let foregrounds = [
+            palette.ink, palette.inkSoft, palette.muted, palette.contentLink,
+            palette.coral, palette.danger, palette.blue, palette.success, palette.warning,
+            palette.permissionInk, palette.permissionMuted, palette.codeKeyword, palette.codeType,
+        ]
+        let strength: CGFloat = isKey ? 0.22 : 0.10
+        for step in stride(from: 20, through: 0, by: -1) {
+            let candidate = LocusAccentSelection.mix(base, accent, fraction: strength * CGFloat(step) / 20)
+            if foregrounds.allSatisfy({ LocusAccentSelection.contrast($0, over: candidate) >= 4.5 }) {
+                return candidate
+            }
+        }
+        return base
     }
 
     /// Backing fill for the inline-code pill.
@@ -491,20 +550,20 @@ enum LocusTheme {
 }
 
 /// One table both render paths read, so the AppKit and SwiftUI code views can
-/// no longer drift apart. Every hue is drawn from the Locus palette: keyword and
-/// type are the only additions, and both are fixed rather than accent-derived.
+/// no longer drift apart. Muted sage, blue, mauve, teal, and amber separate
+/// syntax without competing with prose or borrowing the brand accent.
 enum LocusCodeTheme {
     static func color(for kind: CodeTokenKind) -> Color {
         switch kind {
         case .plain: LocusTheme.inkSoft
-        case .punctuation: LocusTheme.muted.opacity(0.75)
+        case .punctuation: LocusTheme.codePunctuation
         case .comment: LocusTheme.muted
         case .keyword: LocusTheme.codeKeyword
         case .type: LocusTheme.codeType
-        case .function: LocusTheme.blue
-        case .string: LocusTheme.coral
-        case .number, .constant: LocusTheme.warning
-        case .property: LocusTheme.ink
+        case .function: LocusTheme.codeFunction
+        case .string: LocusTheme.codeString
+        case .number, .constant: LocusTheme.codeNumber
+        case .property: LocusTheme.codeProperty
         }
     }
 
@@ -1106,7 +1165,7 @@ struct SettingsAdvancedLabel: View {
                     .fontWeight(.semibold)
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LocusTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         } icon: {
@@ -1133,7 +1192,7 @@ struct SettingsAdvancedDisclosureRow: View {
                 Spacer(minLength: 12)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LocusTheme.textTertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .accessibilityHidden(true)
             }

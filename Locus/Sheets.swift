@@ -1147,6 +1147,10 @@ private struct MCPServerEditorView: View {
                 if transport == "stdio" {
                     TextField("Command", text: $command)
                     TextEditor(text: $arguments)
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .tint(LocusTheme.accentAction)
+                        .scrollContentBackground(.hidden)
+                        .background(LocusTheme.surfaceCard)
                         .frame(height: 55)
                         .overlay(alignment: .topLeading) {
                             if arguments.isEmpty { Text("One argument per line").foregroundStyle(LocusTheme.muted).padding(5) }
@@ -1182,6 +1186,8 @@ private struct MCPServerEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
@@ -2500,6 +2506,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .accessibilityIdentifier("settings.\(model.settingsPage.accessibilityKey).content")
     }
 
@@ -2710,6 +2718,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
     }
 
     private var updatesPage: some View {
@@ -2776,6 +2786,8 @@ struct SettingsView: View {
             componentsSection
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
     }
 
 #if LOCUS_APP_STORE
@@ -3110,6 +3122,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
     }
 
     /// Permission mode applies the moment it changes — the agent may already be
@@ -3313,6 +3327,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .onAppear {
             computerControl.refreshPermissionStatus()
             applicationContext.refreshRunningApplications()

@@ -183,9 +183,10 @@ enum ChatExportRenderer {
         let body = NSFont.systemFont(ofSize: 11)
         let detail = NSFont.systemFont(ofSize: 9.5)
         let mono = NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular)
-        let secondary = NSColor.secondaryLabelColor
+        // Exported pages are light paper even when the workspace is dark.
+        let secondary = LocusTheme.lightPalette.muted
 
-        func append(_ value: String, font: NSFont, color: NSColor = .labelColor, spacing: CGFloat = 5) {
+        func append(_ value: String, font: NSFont, color: NSColor = LocusTheme.lightPalette.inkSoft, spacing: CGFloat = 5) {
             let paragraph = NSMutableParagraphStyle()
             paragraph.paragraphSpacing = spacing
             paragraph.lineSpacing = 2

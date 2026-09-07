@@ -29,11 +29,34 @@ extension AppModel {
         automaticRoutingPrepared: Bool = false,
         preparedModelRoute: ModelRoutingPreparedTurn? = nil,
         consumeMatchingDraft: Bool = true,
-        allowLocalCommands: Bool = true
+        allowLocalCommands: Bool = true,
+        capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil
     ) {
         guard admitTranscriptInput() else { return }
+        let pendingCapsule = taskCapsules.pendingPlanningRequest(for: currentSessionID)
+        let capsuleDispatch = explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
+        if pendingCapsule != nil, capsuleDispatch == nil { return }
+        if capsuleDispatch != nil, isBusy || hasPendingPermission {
+            taskCapsules.error = "Finish the active task before starting this capsule stage."
+            return
+        }
+        // A normal message following a capsule must use the user's regular
+        // route, even if its worker still carries the temporary planning model.
+        // Capture before any awaited work so sidebar/account changes cannot
+        // retarget this already submitted message.
+        let ordinaryProviderBody = capsuleDispatch == nil ? providerRequestBody(verify: false) : [:]
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let availableAttachments = includeAttachments ? availableChatAttachments : []
+        let privateIdentity = isIdentityTask
+        let capturedIdentityProvider = privateIdentity ? identityProviderIdentity() : nil
+        if privateIdentity, text.hasPrefix("/") {
+            showToast("Slash commands are unavailable in private Identity tasks.")
+            return
+        }
+        if privateIdentity, capturedIdentityProvider?.provider == "chatgpt" {
+            showToast("Choose Local Ollama or an API provider for a private Identity task.")
+            return
+        }
+        let availableAttachments = includeAttachments && !privateIdentity ? availableChatAttachments : []
         let hasChatAttachments = !availableAttachments.isEmpty
         guard !text.isEmpty || hasChatAttachments else { return }
 
@@ -78,22 +101,22 @@ extension AppModel {
         // Capture the mode before any asynchronous context work. A user can
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
-        let dispatchedMode = selectedMode
+        let dispatchedMode: WorkMode = privateIdentity ? .work : capsuleDispatch?.mode ?? selectedMode
         let teamMention = TeamMentionResolver.selection(
             in: text,
             profiles: agentProfiles,
             teams: agentTeams
         )
-        let wantsTeam = dispatchedMode != .ask
+        let wantsTeam = capsuleDispatch == nil && !privateIdentity && dispatchedMode != .ask
             && !isSlashPassthrough
             && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil)
         let dispatchedTeam = wantsTeam ? teamManifest(for: text) : nil
         if wantsTeam, dispatchedTeam == nil { return }
-        let dispatchedSoloSwarm = dispatchedTeam == nil
+        let dispatchedSoloSwarm = capsuleDispatch == nil && !privateIdentity && dispatchedTeam == nil
             && selectedAgentTeamID == nil
             && dispatchedMode != .ask
             && !isSlashPassthrough
-        if settings.automaticModelRoutingEnabled,
+        if settings.automaticModelRoutingEnabled, capsuleDispatch == nil, !privateIdentity,
            !automaticRoutingPrepared,
            !isSlashPassthrough,
            dispatchedTeam == nil
@@ -137,14 +160,14 @@ extension AppModel {
         let dispatchedWorkspaceRoot = workspacePath
         let dispatchedExecutionPath = activeTaskRecord?.executionPath ?? dispatchedWorkspaceRoot
         let dispatchedEnvironment = currentExecutionEnvironment
-        let dispatchedContextFiles = contextFiles
-        let dispatchedLiveApplication = dispatchedMode == .ask ? nil
+        let dispatchedContextFiles = privateIdentity ? [] : contextFiles
+        let dispatchedLiveApplication = dispatchedMode == .ask || privateIdentity ? nil
             : liveApplicationTargets[dispatchedSessionID].flatMap {
                 applicationContext.isConnected($0) ? $0 : nil
             }
-        let dispatchedSimulator = dispatchedMode == .ask
+        let dispatchedSimulator = dispatchedMode == .ask || privateIdentity
             ? nil : simulatorControl.target(for: dispatchedSessionID)
-        let dispatchedRestoredContext = isSlashPassthrough ? nil : restoredTranscriptContext
+        let dispatchedRestoredContext = isSlashPassthrough || privateIdentity ? nil : restoredTranscriptContext
         if !isSlashPassthrough { restoredTranscriptContext = nil }
 
         isBusy = true
@@ -231,7 +254,11 @@ extension AppModel {
         let pendingTurnToken = UUID()
         let pendingTurn = Task { [weak self] in
             guard let self else { return }
+            var capsuleRequestAccepted = false
             defer {
+                if capsuleDispatch != nil, !capsuleRequestAccepted {
+                    self.taskCapsules.handleEvent(["type": "turn_done", "reason": "error"], sessionID: dispatchedSessionID)
+                }
                 if self.pendingChatTurnTokens[dispatchedSessionID] == pendingTurnToken {
                     self.pendingChatTurns.removeValue(forKey: dispatchedSessionID)
                     self.pendingChatTurnTokens.removeValue(forKey: dispatchedSessionID)
@@ -320,7 +347,9 @@ extension AppModel {
                 "mode": dispatchedMode.rawValue,
                 "request_id": reservedRunID,
             ]
-            if let agentConfig = encodedJSONObject(self.primaryAgentBehavior) {
+            if privateIdentity { request["identity_mode"] = true }
+            if let capsuleDispatch { request["capsule_context"] = capsuleDispatch.context }
+            if let agentConfig = encodedJSONObject(capsuleDispatch?.profile.resolvedBehavior ?? self.primaryAgentBehavior) {
                 request["agent_config"] = agentConfig
             }
             if let dispatchedTeam { request["team"] = dispatchedTeam }
@@ -343,7 +372,10 @@ extension AppModel {
             if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
             guard let worker = await self.ensureChatWorker(
                 for: dispatchedSessionID,
-                workspaceRoot: dispatchedWorkspaceRoot
+                workspaceRoot: dispatchedWorkspaceRoot,
+                provider: capsuleDispatch?.provider ?? capturedIdentityProvider?.provider,
+                providerAccountID: capsuleDispatch?.accountID ?? capturedIdentityProvider?.accountID,
+                model: capsuleDispatch?.profile.model ?? capturedIdentityProvider?.model
             ) else {
                 self.discardAutomaticModelRoutingTurn(
                     for: dispatchedSessionID,
@@ -373,6 +405,11 @@ extension AppModel {
                 return
             }
             worker.dispatchedMode = isSlashPassthrough ? nil : dispatchedMode
+            if privateIdentity, worker.identityProvider != capturedIdentityProvider {
+                self.identityVault.cancelReviews(sessionID: dispatchedSessionID)
+                self.finishChatRuntime(worker, state: .failed, error: "This private task is pinned to its original provider. Open a new Identity task to use another provider.")
+                return
+            }
             worker.dispatchedTeamRunID = teamRunID
             worker.reservedRunID = reservedRunID
             worker.dispatchedInPlanMode = dispatchedMode == .plan && !isSlashPassthrough
@@ -384,6 +421,14 @@ extension AppModel {
                 return
             }
             do {
+                // Set before the first request: a partial provider/config
+                // failure must still require restoration on the next message.
+                if capsuleDispatch != nil { worker.hasCapsuleProviderOverride = true }
+                worker.hasCapsuleProviderOverride = try await self.prepareChatWorkerCapsuleRoute(
+                    using: worker.service, capsuleDispatch: capsuleDispatch,
+                    restoringOverride: worker.hasCapsuleProviderOverride,
+                    ordinaryProviderBody: ordinaryProviderBody
+                )
                 let _: OrchestrationRun = try await self.backend.patch(
                     "/api/runs/\(reservedRunID)/queue",
                     body: ["action": "admit"],
@@ -456,6 +501,7 @@ extension AppModel {
             }
             // Appshots are explicit one-message captures. Retain them through
             // queue and transport failures; clear only after accepted delivery.
+            capsuleRequestAccepted = true
             if self.currentSessionID == dispatchedSessionID, !oneMessageSnapshotIDs.isEmpty {
                 self.chatAttachments.removeAll { oneMessageSnapshotIDs.contains($0.id) }
                 if self.chatAttachments.isEmpty { self.chatAttachmentNotice = nil }
@@ -874,6 +920,7 @@ extension AppModel {
 
     func stop() {
         guard admitTranscriptInput() else { return }
+        identityVault.cancelReviews(sessionID: currentSessionID)
         if let pendingTurn = pendingChatTurns[currentSessionID] {
             let queuedRunID = taskConversationStates[currentSessionID]?.runID
             pendingTurn.cancel()

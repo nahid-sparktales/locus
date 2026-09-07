@@ -90,6 +90,11 @@ final class ComputerControlService: ObservableObject {
         scope: ApplicationTarget? = nil,
         timeoutMilliseconds: Int = 60_000
     ) async -> [String: Any] {
+        guard !IdentityPrivacyGuard.shared.blocksCapture else {
+            snapshots.removeAll()
+            latestScreenshot = nil
+            return ["error": "Computer Control is paused while Identity Vault or a private application is open."]
+        }
         guard !isExecuting else {
             return ["error": "Computer Control is already in use by another foreground task."]
         }
@@ -497,7 +502,7 @@ final class ComputerControlService: ObservableObject {
     }
 
     private func actionIsCurrent(_ generation: Int, deadline: Date) -> Bool {
-        generation == cancellationGeneration && Date() < deadline
+        generation == cancellationGeneration && Date() < deadline && !IdentityPrivacyGuard.shared.blocksCapture
     }
 
     private func staleActionResult(_ generation: Int) -> [String: Any] {

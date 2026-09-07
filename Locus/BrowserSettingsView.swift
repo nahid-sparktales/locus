@@ -46,7 +46,7 @@ struct BrowserSettingsView: View {
                         .accessibilityIdentifier("settings.browser.modelCards")
                     Text("Enabled records can be returned as raw values to the active model, including hosted providers. Passwords are limited to the open site's exact origin. Enabling payment cards also lets the model complete checkout; security codes are never stored.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LocusTheme.textTertiary)
                 }
 
                 Section("Your browser data") {
@@ -85,7 +85,7 @@ struct BrowserSettingsView: View {
                         ? "History, downloads, cookies, and site data are kept only for this workspace."
                         : "History and download activity stay in memory and disappear when Locus quits.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LocusTheme.textTertiary)
                 }
 
                 Section {
@@ -104,6 +104,8 @@ struct BrowserSettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
             .accessibilityIdentifier("settings.browser.root")
             .navigationDestination(for: BrowserSettingsRoute.self) { route in
                 destination(route)
@@ -175,7 +177,7 @@ struct BrowserSettingsView: View {
                     Text(route.title)
                     Text(summary)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LocusTheme.textTertiary)
                 }
             } icon: {
                 Image(systemName: symbol)
@@ -223,7 +225,7 @@ struct BrowserSettingsView: View {
             }
             Text("The selected viewport stays exact while the canvas scales to fit, keeping page layout and agent coordinates stable.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LocusTheme.textTertiary)
             HStack(spacing: 10) {
                 ProviderLogo(name: "Google", size: 24)
                 Picker("Search in Google opens in", selection: $draft.webSearchDestinationRaw) {
@@ -236,7 +238,7 @@ struct BrowserSettingsView: View {
                 .accessibilityIdentifier("settings.browser.webInspector")
             Text("Web Inspector can read the current page's cookies and storage. Leave it off unless you are debugging.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LocusTheme.textTertiary)
         }
     }
 }
@@ -291,10 +293,10 @@ private struct BrowserPasswordManager: View {
                                     VStack(alignment: .leading) {
                                         Text(password.displayOrigin).fontWeight(.medium)
                                         Text(password.username.isEmpty ? "No username" : password.username)
-                                            .font(.caption).foregroundStyle(.secondary)
+                                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
                                     }
                                     Spacer()
-                                    Text("••••••••").foregroundStyle(.secondary)
+                                    Text("••••••••").foregroundStyle(LocusTheme.textTertiary)
                                     Button("Edit") { editor = password }.buttonStyle(.borderless)
                                     Button("Delete", role: .destructive) {
                                         do { try vault.removePassword(password.id) }
@@ -312,7 +314,7 @@ private struct BrowserPasswordManager: View {
                         }
                         Section {
                             Text("Suggestions appear after an eligible field is focused. Model access follows the saved Browser setting and is limited to this website's exact origin.")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(LocusTheme.textTertiary)
                         }
                     }
                 }
@@ -346,6 +348,8 @@ private struct BrowserPasswordEditor: View {
             TextField("Label", text: $record.label)
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .frame(width: 440, height: 250)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent).disabled(record.origin.isEmpty || record.password.isEmpty) }
@@ -379,7 +383,7 @@ private struct BrowserContactManager: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(contact.fullName.isEmpty ? contact.label : contact.fullName).fontWeight(.medium)
-                                        Text(contact.summary).font(.caption).foregroundStyle(.secondary)
+                                        Text(contact.summary).font(.caption).foregroundStyle(LocusTheme.textTertiary)
                                     }
                                     Spacer()
                                     Button("Edit") { editor = contact }.buttonStyle(.borderless)
@@ -434,6 +438,8 @@ private struct BrowserContactEditor: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .frame(width: 500, height: 520)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent) }
@@ -464,11 +470,11 @@ private struct BrowserCardManager: View {
                         Section {
                             ForEach(vault.cards) { card in
                                 HStack {
-                                    Image(systemName: "creditcard.fill").foregroundStyle(.secondary)
+                                    Image(systemName: "creditcard.fill").foregroundStyle(LocusTheme.textTertiary)
                                     VStack(alignment: .leading) {
                                         Text(card.nickname).fontWeight(.medium)
                                         Text("\(card.maskedNumber) · \(String(format: "%02d", card.expirationMonth))/\(card.expirationYear)")
-                                            .font(.caption).foregroundStyle(.secondary)
+                                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
                                     }
                                     Spacer()
                                     Button("Edit") { editor = card }.buttonStyle(.borderless)
@@ -483,7 +489,7 @@ private struct BrowserCardManager: View {
                         }
                         Section {
                             Label("Locus never asks for or stores CVC, CVV, or CID security codes.", systemImage: "lock.shield")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(LocusTheme.textTertiary)
                         }
                     }
                 }
@@ -530,9 +536,11 @@ private struct BrowserCardEditor: View {
                 }
             }
             Label("Security codes are intentionally never accepted or stored.", systemImage: "checkmark.shield")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .frame(width: 480, height: 360)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent).disabled(!record.isValid) }
@@ -588,10 +596,10 @@ private struct BrowserHistoryManager: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
-                        Text(entry.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(entry.url).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
                     }
                     Spacer()
-                    Text(entry.visitedAt, style: .relative).font(.caption).foregroundStyle(.secondary)
+                    Text(entry.visitedAt, style: .relative).font(.caption).foregroundStyle(LocusTheme.textTertiary)
                     Button("Open") {
                         _ = browser.userNavigate(entry.url, sessionID: sessionID)
                     }.buttonStyle(.borderless)
@@ -636,7 +644,11 @@ private struct BrowserDownloadManager: View {
                         Button(draft.browserCustomDownloadBookmark == nil ? "Choose Folder…" : "Choose a Different Folder…") { chooseFolder() }
                     }
                 }
-            }.formStyle(.grouped).frame(height: draft.resolvedBrowserDownloadDestination == .custom ? 190 : 150)
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
+            .frame(height: draft.resolvedBrowserDownloadDestination == .custom ? 190 : 150)
             List {
                 ForEach(store.downloads) { download in
                     VStack(alignment: .leading, spacing: 6) {
@@ -644,7 +656,7 @@ private struct BrowserDownloadManager: View {
                             Image(systemName: icon(for: download.state))
                             Text(download.fileName).lineLimit(1)
                             Spacer()
-                            Text(download.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                            Text(download.state.rawValue.capitalized).font(.caption).foregroundStyle(LocusTheme.textTertiary)
                         }
                         if download.state == .running { ProgressView(value: download.progress) }
                         HStack {
@@ -730,13 +742,13 @@ private struct BrowserSiteDataManager: View {
             }
             Section("Stored by site") {
                 if loading { ProgressView() }
-                else if records.isEmpty { Text("No website data in this profile.").foregroundStyle(.secondary) }
+                else if records.isEmpty { Text("No website data in this profile.").foregroundStyle(LocusTheme.textTertiary) }
                 ForEach(records) { record in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(record.displayName)
                             Text("\(record.dataTypes.count) data type\(record.dataTypes.count == 1 ? "" : "s")")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
                         }
                         Spacer()
                         Button("Remove", role: .destructive) {
@@ -747,6 +759,8 @@ private struct BrowserSiteDataManager: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .task { await reload() }
         .alert("Clear selected browser data?", isPresented: $confirmClear) {
             Button("Cancel", role: .cancel) {}
@@ -779,7 +793,7 @@ private struct BrowserPermissionManager: View {
                     }
                 }
                 Text("File selection is always user-only. Camera and microphone still require the macOS system prompt when allowed here.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
             }
             Section("Add site override") {
                 TextField("Site origin", text: $origin, prompt: Text("https://example.com"))
@@ -791,20 +805,23 @@ private struct BrowserPermissionManager: View {
                 }.disabled(URL(string: origin)?.host == nil)
             }
             Section("Site overrides") {
-                if browser.permissionStore.overrides.isEmpty { Text("No site-specific overrides.").foregroundStyle(.secondary) }
+                if browser.permissionStore.overrides.isEmpty { Text("No site-specific overrides.").foregroundStyle(LocusTheme.textTertiary) }
                 ForEach(browser.permissionStore.overrides) { rule in
                     HStack {
                         Image(systemName: rule.kind.symbol).frame(width: 22)
                         VStack(alignment: .leading) {
                             Text(rule.origin)
-                            Text("\(rule.kind.title): \(rule.decision.title)").font(.caption).foregroundStyle(.secondary)
+                            Text("\(rule.kind.title): \(rule.decision.title)").font(.caption).foregroundStyle(LocusTheme.textTertiary)
                         }
                         Spacer()
                         Button("Remove", role: .destructive) { browser.permissionStore.remove(rule) }
                     }
                 }
             }
-        }.formStyle(.grouped)
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
     }
 
     private func permissionBinding(_ kind: BrowserPermissionKind) -> Binding<String> {
@@ -852,7 +869,7 @@ private struct BrowserImportManager: View {
                 Picker("Data type", selection: $kind) { ForEach(BrowserImportKind.allCases) { Text($0.title).tag($0) } }
                 Button("Choose File…") { choosingFile = true }
                 Text("Locus validates and previews user-selected CSV, vCard, or JSON files. It does not inspect installed browser profiles and never imports payment cards.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
             }
             if let preview {
                 Section("Preview — \(fileName)") {
@@ -866,9 +883,11 @@ private struct BrowserImportManager: View {
                         .disabled(preview.count == 0)
                 }
             }
-            if !error.isEmpty { Section { Text(error).foregroundStyle(.red) } }
+            if !error.isEmpty { Section { Text(error).foregroundStyle(LocusTheme.dangerForeground) } }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCanvas)
         .fileImporter(
             isPresented: $choosingFile,
             allowedContentTypes: [.commaSeparatedText, .json, .vCard, .plainText],

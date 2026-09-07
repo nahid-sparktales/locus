@@ -770,6 +770,10 @@ final class ResponseSelectableTextView: LocusSelectionTextView {
         let stack = LocusSelectionTextView.makeTextKit1Stack()
         let view = ResponseSelectableTextView(frame: .zero, textContainer: stack.container)
         view.adoptTextKit1(storage: stack.storage)
+        // The attributed Markdown already owns each link's colour and underline.
+        // AppKit's default link attributes otherwise repaint both remote links
+        // and neutral workspace references in system blue at draw time.
+        view.linkTextAttributes = [:]
         // SwiftUI owns the leaf's frame. If TextKit resizes it during a
         // measurement, width tracking restores the old frame width and can
         // invalidate the layout whose height is about to be cached.

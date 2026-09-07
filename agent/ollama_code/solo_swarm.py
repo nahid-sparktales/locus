@@ -113,7 +113,7 @@ def snapshot_route(core: Any, manager: Any) -> SoloSwarmRoute:
         provider_label=label,
         client=client,
         behavior=core.agent_configuration.structured(),
-        workspace=str(core.workspace_root or core.cwd),
+        workspace=str(core.cwd),
         mode=str(getattr(core, "agent_mode", "work") or "work"),
         hosted_openai_eligible=eligible,
         native_web_search=(

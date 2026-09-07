@@ -1,0 +1,513 @@
+{
+  "date": "2026-09-06",
+  "scope": "Controlled disposable fixtures, not a population spawning-frequency measurement.",
+  "collaboration": [
+    {
+      "model": "gpt-5.6-terra",
+      "provider": "chatgpt",
+      "policy_version": "balanced-v2",
+      "cases": [
+        {
+          "case": "simple",
+          "mode": "work",
+          "exposed_tools": [
+            "record_skill_observation",
+            "capture_context_snapshot",
+            "search_memory",
+            "propose_memory",
+            "search_workspace_knowledge",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "multi_edit",
+            "bash",
+            "background_service",
+            "glob",
+            "grep",
+            "list_dir",
+            "todo_write",
+            "submit_plan",
+            "ask_user_question",
+            "web_fetch",
+            "git_status",
+            "git_diff",
+            "search_extension_tools",
+            "search_extension_resources",
+            "read_extension_resource",
+            "search_extension_prompts",
+            "load_extension_prompt",
+            "load_skill",
+            "read_skill_file",
+            "delegate_read_only",
+            "spawn_agent",
+            "list_agents",
+            "read_agent",
+            "send_agent_message",
+            "followup_agent",
+            "interrupt_agent",
+            "resume_agent",
+            "wait_agents",
+            "integrate_agent"
+          ],
+          "launches": 0,
+          "helpers_created": 0,
+          "helper_reads": 0,
+          "integrations": 0,
+          "expected_helper": false,
+          "reason": "complete",
+          "parent_usage": {
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 2883,
+            "model_calls": 1,
+            "tool_steps": 0,
+            "iteration_limit": 24,
+            "model_call_limit": 20,
+            "prompt_tokens": 9309,
+            "completion_tokens": 5,
+            "provider": "chatgpt",
+            "model": "gpt-5.6-terra"
+          },
+          "helper_usage": {
+            "model_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "delegated_tokens": 0
+          },
+          "validation": true,
+          "seconds": 2.9,
+          "passed": true,
+          "errors": []
+        },
+        {
+          "case": "explicit_one",
+          "mode": "plan",
+          "exposed_tools": [
+            "shell",
+            "apply_patch",
+            "update_plan",
+            "delegate_read_only",
+            "submit_plan",
+            "ask_user_question",
+            "spawn_agent",
+            "list_agents",
+            "read_agent",
+            "send_agent_message",
+            "followup_agent",
+            "interrupt_agent",
+            "resume_agent",
+            "wait_agents",
+            "integrate_agent"
+          ],
+          "launches": 1,
+          "helpers_created": 1,
+          "helper_reads": 1,
+          "integrations": 0,
+          "expected_helper": true,
+          "reason": "complete",
+          "parent_usage": {
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 21504,
+            "model_calls": 6,
+            "tool_steps": 5,
+            "iteration_limit": 24,
+            "model_call_limit": 20,
+            "prompt_tokens": 51975,
+            "completion_tokens": 716,
+            "provider": "chatgpt",
+            "model": "gpt-5.6-terra"
+          },
+          "helper_usage": {
+            "model_calls": 2,
+            "prompt_tokens": 11901,
+            "completion_tokens": 108,
+            "delegated_tokens": 12009
+          },
+          "validation": true,
+          "seconds": 21.54,
+          "passed": true,
+          "errors": []
+        },
+        {
+          "case": "independent_edit",
+          "mode": "work",
+          "exposed_tools": [
+            "record_skill_observation",
+            "capture_context_snapshot",
+            "search_memory",
+            "propose_memory",
+            "search_workspace_knowledge",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "multi_edit",
+            "bash",
+            "background_service",
+            "glob",
+            "grep",
+            "list_dir",
+            "todo_write",
+            "submit_plan",
+            "ask_user_question",
+            "web_fetch",
+            "git_status",
+            "git_diff",
+            "search_extension_tools",
+            "search_extension_resources",
+            "read_extension_resource",
+            "search_extension_prompts",
+            "load_extension_prompt",
+            "load_skill",
+            "read_skill_file",
+            "delegate_read_only",
+            "spawn_agent",
+            "list_agents",
+            "read_agent",
+            "send_agent_message",
+            "followup_agent",
+            "interrupt_agent",
+            "resume_agent",
+            "wait_agents",
+            "integrate_agent"
+          ],
+          "launches": 1,
+          "helpers_created": 1,
+          "helper_reads": 0,
+          "integrations": 1,
+          "expected_helper": true,
+          "reason": "complete",
+          "parent_usage": {
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 53649,
+            "model_calls": 13,
+            "tool_steps": 11,
+            "iteration_limit": 24,
+            "model_call_limit": 20,
+            "prompt_tokens": 178511,
+            "completion_tokens": 968,
+            "provider": "chatgpt",
+            "model": "gpt-5.6-terra"
+          },
+          "helper_usage": {
+            "model_calls": 8,
+            "prompt_tokens": 53035,
+            "completion_tokens": 669,
+            "delegated_tokens": 53704
+          },
+          "validation": true,
+          "seconds": 53.72,
+          "passed": true,
+          "errors": []
+        },
+        {
+          "case": "parallel_review",
+          "mode": "work",
+          "exposed_tools": [
+            "record_skill_observation",
+            "capture_context_snapshot",
+            "search_memory",
+            "propose_memory",
+            "search_workspace_knowledge",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "multi_edit",
+            "bash",
+            "background_service",
+            "glob",
+            "grep",
+            "list_dir",
+            "todo_write",
+            "submit_plan",
+            "ask_user_question",
+            "web_fetch",
+            "git_status",
+            "git_diff",
+            "search_extension_tools",
+            "search_extension_resources",
+            "read_extension_resource",
+            "search_extension_prompts",
+            "load_extension_prompt",
+            "load_skill",
+            "read_skill_file",
+            "delegate_read_only",
+            "spawn_agent",
+            "list_agents",
+            "read_agent",
+            "send_agent_message",
+            "followup_agent",
+            "interrupt_agent",
+            "resume_agent",
+            "wait_agents",
+            "integrate_agent"
+          ],
+          "launches": 3,
+          "helpers_created": 3,
+          "helper_reads": 19,
+          "integrations": 0,
+          "expected_helper": true,
+          "reason": "complete",
+          "parent_usage": {
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 73154,
+            "model_calls": 9,
+            "tool_steps": 10,
+            "iteration_limit": 24,
+            "model_call_limit": 20,
+            "prompt_tokens": 100939,
+            "completion_tokens": 2154,
+            "provider": "chatgpt",
+            "model": "gpt-5.6-terra"
+          },
+          "helper_usage": {
+            "model_calls": 11,
+            "prompt_tokens": 68645,
+            "completion_tokens": 1895,
+            "delegated_tokens": 70540
+          },
+          "validation": null,
+          "seconds": 73.18,
+          "passed": true,
+          "errors": []
+        }
+      ]
+    },
+    {
+      "model": "qwen3.6:27b",
+      "provider": "ollama",
+      "policy_version": "balanced-v2",
+      "cases": [
+        {
+          "case": "explicit_one",
+          "mode": "plan",
+          "exposed_tools": [
+            "record_skill_observation",
+            "capture_context_snapshot",
+            "search_memory",
+            "propose_memory",
+            "search_workspace_knowledge",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "multi_edit",
+            "bash",
+            "background_service",
+            "glob",
+            "grep",
+            "list_dir",
+            "todo_write",
+            "submit_plan",
+            "ask_user_question",
+            "web_fetch",
+            "git_status",
+            "git_diff",
+            "search_extension_tools",
+            "search_extension_resources",
+            "read_extension_resource",
+            "search_extension_prompts",
+            "load_extension_prompt",
+            "load_skill",
+            "read_skill_file",
+            "delegate_read_only",
+            "spawn_agent",
+            "list_agents",
+            "read_agent",
+            "send_agent_message",
+            "followup_agent",
+            "interrupt_agent",
+            "resume_agent",
+            "wait_agents",
+            "integrate_agent"
+          ],
+          "launches": 1,
+          "helpers_created": 1,
+          "helper_reads": 1,
+          "integrations": 0,
+          "expected_helper": true,
+          "reason": "complete",
+          "parent_usage": {
+            "type": "turn_done",
+            "reason": "complete",
+            "duration_ms": 218481,
+            "model_calls": 3,
+            "tool_steps": 3,
+            "iteration_limit": 24,
+            "model_call_limit": 20,
+            "prompt_tokens": 22991,
+            "completion_tokens": 325,
+            "provider": "ollama",
+            "model": "qwen3.6:27b"
+          },
+          "helper_usage": {
+            "model_calls": 2,
+            "prompt_tokens": 7157,
+            "completion_tokens": 84,
+            "delegated_tokens": 7241
+          },
+          "validation": true,
+          "seconds": 218.53,
+          "passed": true,
+          "errors": []
+        }
+      ]
+    }
+  ],
+  "async_question": {
+    "provider": "chatgpt",
+    "model": "gpt-5.6-terra",
+    "seconds": 16.86,
+    "reason": "complete",
+    "question_count": 1,
+    "accepted_count": 1,
+    "applied_count": 1,
+    "question_states": [
+      {
+        "status": "answered",
+        "delivery_status": "applied",
+        "remaining_ms": 58495.497
+      }
+    ],
+    "ask_timings": [
+      {
+        "ask_seconds": 0.0009341249242424965,
+        "status": "pending"
+      }
+    ],
+    "native_steer_attempts": [
+      {
+        "accepted": true
+      }
+    ],
+    "independent_reads": 2,
+    "usage": {
+      "type": "turn_done",
+      "reason": "complete",
+      "duration_ms": 16823,
+      "model_calls": 3,
+      "tool_steps": 3,
+      "iteration_limit": 8,
+      "model_call_limit": 8,
+      "prompt_tokens": 17451,
+      "completion_tokens": 670,
+      "provider": "chatgpt",
+      "model": "gpt-5.6-terra"
+    },
+    "errors": [],
+    "wire_passed": true,
+    "read_identifiers_reported": true,
+    "passed": true
+  },
+  "async_question_finalization": {
+    "provider": "chatgpt",
+    "model": "gpt-5.6-terra",
+    "seconds": 11.59,
+    "reason": "complete",
+    "question_count": 1,
+    "accepted_count": 1,
+    "applied_count": 1,
+    "question_states": [
+      {
+        "status": "answered",
+        "delivery_status": "applied",
+        "remaining_ms": 56877.115
+      }
+    ],
+    "ask_timings": [
+      {
+        "ask_seconds": 0.0008782499935477972,
+        "status": "pending"
+      }
+    ],
+    "native_steer_attempts": [
+      {
+        "accepted": false
+      }
+    ],
+    "independent_reads": 2,
+    "answer_at_finalization": true,
+    "reads_before_answer": [
+      2
+    ],
+    "native_continuation_attempts": [
+      {
+        "accepted": true,
+        "delivery_status_before_write": [
+          "accepted"
+        ]
+      }
+    ],
+    "usage": {
+      "type": "turn_done",
+      "reason": "complete",
+      "duration_ms": 11563,
+      "model_calls": 4,
+      "tool_steps": 3,
+      "iteration_limit": 8,
+      "model_call_limit": 8,
+      "prompt_tokens": 23607,
+      "completion_tokens": 298,
+      "provider": "chatgpt",
+      "model": "gpt-5.6-terra"
+    },
+    "errors": [],
+    "wire_passed": true,
+    "read_identifiers_reported": true,
+    "passed": true
+  },
+  "automated_checks": {
+    "backend": {
+      "passed": 672,
+      "failed": 0,
+      "seconds": 49.68,
+      "log": "/tmp/locus-collaboration-final-backend.log"
+    },
+    "desktop_models": {
+      "passed": 12,
+      "failed": 0,
+      "result_bundle": "/tmp/locus-collaboration-build/Logs/Test/Test-Locus-2026.09.06_20-06-15--0400.xcresult"
+    },
+    "mobile": {
+      "passed": 8,
+      "failed": 0,
+      "analyzer": "No issues found",
+      "flutter": "3.47.1",
+      "dart": "3.13.1"
+    },
+    "seeded_ui": {
+      "scenarios_passed_in_individual_runs": 4,
+      "latest_combined_rerun": "macOS XCTest timed out enabling automation mode; no product assertions ran",
+      "evidence_logs": [
+        "/tmp/locus-optional-ui-tests.log",
+        "/tmp/locus-optional-lease-tests.log",
+        "/tmp/locus-helper-ui-tests.log"
+      ]
+    },
+    "static": {
+      "ruff": "passed",
+      "git_diff_check": "passed"
+    }
+  },
+  "packaged_app": {
+    "capability_negotiated": true,
+    "reconnect_passed": true,
+    "events": [
+      "session_info",
+      "question_capability",
+      "question_async_snapshot",
+      "solo_collaboration_snapshot",
+      "solo_agent_action_result",
+      "question_async_response_ack",
+      "session_info",
+      "question_capability",
+      "question_async_snapshot"
+    ],
+    "passed": true,
+    "health_ok": true,
+    "authentication_enforced": true,
+    "seconds": 1.33,
+    "bundled_source_files_matching_tested_source": 13
+  }
+}

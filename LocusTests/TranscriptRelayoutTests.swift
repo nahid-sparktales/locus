@@ -228,6 +228,54 @@ final class TranscriptRelayoutTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    func testDividerResizeCleanupIsIdempotentAcrossCancelAndDisappear() {
+        let layout = WorkspaceLayoutModel()
+        let coordinator = layout.liveResizeCoordinator
+        let source = LiveResizeCoordinator.Source.divider(UUID())
+        var publications = 0
+        let subscription = layout.objectWillChange.sink { publications += 1 }
+
+        coordinator.beginLiveResize(source: source)
+        coordinator.beginLiveResize(source: source)
+        XCTAssertTrue(layout.isLiveResizing)
+        for width in stride(from: CGFloat(900), through: 920, by: 0.25) {
+            coordinator.update(width: width)
+        }
+        coordinator.endLiveResize(finalWidth: 920, source: source)
+        coordinator.endLiveResize(finalWidth: 920, source: source)
+
+        XCTAssertFalse(layout.isLiveResizing)
+        XCTAssertEqual(publications, 2, "Duplicate callbacks must not publish or leave resize mode active")
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testDividerAndWindowResizeOwnershipDoesNotEndAnotherGesture() {
+        let layout = WorkspaceLayoutModel()
+        let coordinator = layout.liveResizeCoordinator
+        let divider = LiveResizeCoordinator.Source.divider(UUID())
+        let otherDivider = LiveResizeCoordinator.Source.divider(UUID())
+        var publications = 0
+        let subscription = layout.objectWillChange.sink { publications += 1 }
+
+        coordinator.beginLiveResize()
+        coordinator.beginLiveResize(source: divider)
+        coordinator.endLiveResize(finalWidth: 900, source: divider)
+        XCTAssertTrue(layout.isLiveResizing, "Ending the divider must preserve native live resize")
+        coordinator.endLiveResize(finalWidth: 900, source: otherDivider)
+        XCTAssertTrue(layout.isLiveResizing, "An inactive source owns no resize to end")
+        coordinator.endLiveResize(finalWidth: 900)
+        XCTAssertFalse(layout.isLiveResizing)
+
+        coordinator.beginLiveResize(source: divider)
+        coordinator.beginLiveResize()
+        coordinator.endLiveResize(finalWidth: 900)
+        XCTAssertTrue(layout.isLiveResizing, "Ending native resize must preserve an active divider")
+        coordinator.endLiveResize(finalWidth: 900, source: divider)
+        XCTAssertFalse(layout.isLiveResizing)
+        XCTAssertEqual(publications, 4, "Only the first begin and final end of each overlap publish")
+        withExtendedLifetime(subscription) {}
+    }
+
     func testSharedWorkspaceHeightExcludesTheToolbarWithoutGoingNegative() {
         XCTAssertEqual(
             WorkspaceLayoutMetrics.contentHeight(forWindowHeight: 760),

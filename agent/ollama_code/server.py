@@ -43,6 +43,7 @@ from .api.dependencies import current_service, request_service_context
 from .capabilities import enabled as capability_enabled
 from .chat_service import AgentBusyError, ChatService
 from .chat_transport_runtime import command_error as _command_error
+from .collaboration_bridge import POLICY_VERSION, CollaborationBridge
 from .config import (
     remote_api_key_from_env,
     save_config,
@@ -206,7 +207,21 @@ async def lifespan(app: FastAPI):
                     pass
             # Dev servers deliberately have no deadline; shutdown is the one
             # guaranteed reaper.
+            svc.core.interrupt()
+            svc.interrupt_parallel_writers()
+            svc.deny_all_pending()
+            svc.cancel_required_questions()
+            svc.cancel_all_computer_actions()
+            svc.cancel_all_simulator_actions()
+            svc.cancel_all_browser_actions()
+            svc.cancel_all_notes_actions()
+            svc.cancel_all_connector_actions()
+            svc.cancel_all_mcp_inputs()
             svc.dev_servers.stop_all()
+            svc.close_question_timer()
+            bridge = getattr(svc, "active_collaboration", None)
+            if bridge:
+                await asyncio.to_thread(bridge.close)
             svc.close_codex()
             svc.core.close()
 
@@ -428,8 +443,23 @@ def _run_user_turn(
     reserved_run_id: str = "",
     solo_swarm_enabled: bool = True,
     workflow_outputs: list[dict[str, Any]] | None = None,
+    model_call_limit: int | None = None,
+    capsule_context: dict[str, Any] | None = None,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
+    if capsule_context is not None:
+        from .capsule_execution import run_capsule_request
+        run_capsule_request(svc, text, capsule_context, attachments, agent_config,
+                            reserved_run_id, run_user=_run_user_turn, run_team=_run_team_turn)
+        return
+    private_identity = svc.core.identity_mode
+    if private_identity:
+        solo_swarm_enabled = False
+        workflow_outputs = None
+        agent_config = None
+        attachments = []
+        just_chat = False
+        mode = "work"
     run_id = reserved_run_id if re.fullmatch(r"[A-Za-z0-9_-]{1,160}", reserved_run_id) else uuid.uuid4().hex
     existing_run = svc.run_store.run(run_id) if reserved_run_id else None
     existing_manifest = (
@@ -440,6 +470,7 @@ def _run_user_turn(
     run_manifest = {
         **existing_manifest,
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
+        **({"identity_mode": True} if private_identity else {}),
     }
     environment = "worktree" if svc.current_task is not None else "local"
     svc.run_store.start_run(
@@ -481,10 +512,10 @@ def _run_user_turn(
         and bool(svc.core.config.get("chatgpt_native_mode", True))
         and getattr(svc.core.codex_manager, "supports_parity", False)
     )
-    memory_context = "" if parity_turn else _automatic_memory_context(
+    memory_context = "" if parity_turn or private_identity else _automatic_memory_context(
         svc.core, text, configuration, just_chat=just_chat,
     )
-    continuity_context = "" if parity_turn else _automatic_continuity_context(
+    continuity_context = "" if parity_turn or private_identity else _automatic_continuity_context(
         svc.core, text, configuration, just_chat=just_chat,
     )
     svc.core.configure_agent(
@@ -493,8 +524,15 @@ def _run_user_turn(
         memory_context=memory_context,
         continuity_context=continuity_context,
     )
-    swarm: SoloSwarmExecutor | None = None
-    if solo_swarm_enabled and not just_chat:
+    swarm: Any = None
+    bridge: CollaborationBridge | None = None
+    if solo_swarm_enabled and not just_chat and getattr(svc, "collaboration_enabled", False):
+        try:
+            bridge = CollaborationBridge(svc, run_id, attachments)
+            swarm = bridge
+        except (RuntimeError, ValueError, OSError) as exc:
+            svc.emit({"type": "note", "text": f"Delegation unavailable: {exc}", "solo_swarm_unavailable": True})
+    elif solo_swarm_enabled and not just_chat:
         knowledge_search = None
         if (
             capability_enabled("workspace_knowledge")
@@ -538,7 +576,36 @@ def _run_user_turn(
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)
+    svc.active_collaboration = bridge
+    svc.core.tool_registry.set_collaboration_enabled(bridge is not None)
+    svc.core.tool_ctx.collaboration = bridge.call if bridge else None
+    svc.core.context_delivery_native_sent = svc.mark_question_native_delivery_sent
+    svc.core.context_delivery_native_unsent = svc.clear_question_native_delivery_attempt
+    if bridge:
+        svc.core.tool_action_lock = bridge.lock
+        svc.core.context_delivery_source = bridge.deliveries
+        svc.core.context_delivery_applied = bridge.applied
+        svc.core.before_finalize = bridge.before_finalize
+        bridge.publish()
+    elif getattr(svc, "async_questions_enabled", False):
+        svc.core.context_delivery_source = svc.pending_context_deliveries
+        svc.core.context_delivery_applied = svc.mark_question_delivery_applied
+        def wait_for_question():
+            while not svc.core._interrupt.is_set() and svc.question_before_finalize():
+                svc.core._interrupt.wait(0.25)
+            return None
+        svc.core.before_finalize = wait_for_question
+    advertised = (svc.core.tool_registry.parity_schemas(plan_mode=mode == "plan")
+                  if svc.core.chatgpt_parity_active(not just_chat) else svc.core.tool_registry.schemas())
+    svc.emit({"type": "delegation_availability", "available": swarm is not None,
+              "policy_version": POLICY_VERSION if bridge else "legacy-v1",
+              "provider": svc.core.provider, "model": svc.core.model,
+              "tool_names": [s["function"]["name"] for s in advertised] if not just_chat else [],
+              "reason": "ready" if swarm else "unavailable" if solo_swarm_enabled else "disabled_for_turn"})
     svc.core.reset_system_message()
+    previous_suppress = svc.core._suppress_turn_done
+    if bridge:
+        svc.core._suppress_turn_done = True
     completed = False
     try:
         persisted_metadata: dict[str, Any] = {
@@ -565,7 +632,12 @@ def _run_user_turn(
             allow_tools=not just_chat or workflow_result_only,
             attachments=attachments,
             persisted_user_metadata=persisted_metadata,
+            **({"model_call_limit": model_call_limit} if model_call_limit is not None else {}),
         )
+        if bridge:
+            bridge.close()
+            if not previous_suppress:
+                svc.emit(dict(svc.core.last_turn_result))
         completed = True
     except Exception:
         # Preserve a durable terminal boundary while the run identity is still
@@ -577,7 +649,10 @@ def _run_user_turn(
         svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
         raise
     finally:
-        if completed and not just_chat:
+        if bridge:
+            bridge.close()
+        svc.core._suppress_turn_done = previous_suppress
+        if completed and not just_chat and not private_identity:
             _capture_continuity_snapshot(
                 svc,
                 goal=text,
@@ -588,6 +663,15 @@ def _run_user_turn(
         # ``turn_done`` persists the terminal boundary before this identity is
         # released. A process crash leaves the running record recoverable.
         svc.core.tool_registry.set_solo_swarm_enabled(False)
+        svc.core.tool_registry.set_collaboration_enabled(False)
+        svc.core.tool_ctx.collaboration = None
+        svc.core.tool_action_lock = None
+        svc.core.context_delivery_source = None
+        svc.core.context_delivery_applied = None
+        svc.core.context_delivery_native_sent = None
+        svc.core.context_delivery_native_unsent = None
+        svc.core.before_finalize = None
+        svc.active_collaboration = None
         svc.core.tool_registry.set_workflow_outputs(None)
         svc.core.tool_registry.set_workflow_result_only(False)
         svc.core.tool_ctx.workflow_outputs = []
@@ -607,6 +691,10 @@ def _run_team_turn(
 ) -> None:
     """Run specialists, ordered permission-controlled writers, review, and synthesis."""
     core = svc.core
+    if core.identity_mode:
+        svc.emit({"type": "error", "message": "Private Identity tasks cannot run teams or alternate routes."})
+        svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+        return
     core.tool_ctx.workflow_result = None
     core.tool_ctx.workflow_outputs = core.tool_registry.set_workflow_outputs(
         workflow_outputs
@@ -809,7 +897,57 @@ def _run_team_turn(
                     reviews=reviews, usage=orchestrator.usage(),
                 ),
             )
-            revision = _revision_request(reviews)
+            if manifest.get("capsule"):
+                from .capsule_execution import review_request
+                from .capsules import CapsuleError, CapsuleStore
+                capsule_store = CapsuleStore(core.workspace_root)
+                capsule_record = capsule_store.get(manifest["capsule"]["id"])
+                while True:
+                    if core._interrupt.is_set():
+                        raise InterruptedError("interrupted")
+                    try:
+                        revision = review_request(reviews)
+                    except ValueError as exc:
+                        raise TeamWriterBudgetPause("capsule-review", "review_required", str(exc)) from None
+                    if not revision:
+                        break
+                    if orchestrator.remaining_model_calls(prepared.team.budget) <= 1:
+                        raise TeamWriterBudgetPause("capsule-review", "model_call_budget", "The review found issues. Increase the execution allowance or ask the planner for help.")
+                    repair_id = f"{run_id}-repair-{uuid.uuid4().hex[:8]}"
+                    try:
+                        capsule_store.record_run(capsule_record["id"], repair_id, "repair", "running")
+                    except CapsuleError as exc:
+                        raise TeamWriterBudgetPause("capsule-review", "review_required", str(exc)) from None
+                    try:
+                        snapshot = _install_writer_route(core, prepared.writer)
+                        try:
+                            repair = _run_team_writer(
+                                svc, orchestrator, prepared, prepared.writer,
+                                "Resolve the verified capsule review findings and run the specified checks.\n\n" + revision,
+                                persisted_user_text="[Capsule review repair]", job_id=repair_id,
+                                goal="Resolve capsule review findings",
+                                model_call_limit=orchestrator.remaining_model_calls(prepared.team.budget) - 1,
+                            )
+                        finally:
+                            _restore_writer_route(core, snapshot)
+                    except Exception as exc:
+                        try:
+                            capsule_store.record_run(capsule_record["id"], repair_id, "repair",
+                                                     "interrupted" if isinstance(exc, InterruptedError) else "failed")
+                        except (CapsuleError, OSError, sqlite3.DatabaseError):
+                            pass
+                        raise
+                    repair_reason = str(core.last_turn_result.get("reason") or "complete")
+                    capsule_store.record_run(capsule_record["id"], repair_id, "repair", "completed" if repair_reason == "complete" else "paused")
+                    if repair_reason != "complete":
+                        raise TeamWriterBudgetPause(repair_id, repair_reason, "Capsule repair stopped before verification finished. The existing changes are preserved.")
+                    prepared.writer_results.append(repair)
+                    diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+                    reviews = orchestrator.review(prepared, diff_text, test_evidence=_latest_assistant_output(core))
+                    svc.checkpoint("capsule_repair_complete", _team_checkpoint_state(prepared, "reviewing", svc.current_task, reviews=reviews, usage=orchestrator.usage()))
+                revision = ""
+            else:
+                revision = _revision_request(reviews)
             if (
                 revision
                 and prepared.team.budget.max_rounds > 1
@@ -1221,6 +1359,8 @@ def _run_prepared_writers(
     non_writer_reserve = _review_call_count(prepared) + 1
     if prepared.team.budget.max_rounds > 1:
         non_writer_reserve += 1
+    if str(getattr(prepared.team, "id", "")).startswith("capsule-"):
+        non_writer_reserve = _review_call_count(prepared)
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
     required = len(pending) + non_writer_reserve
     if remaining < required:
@@ -1771,6 +1911,11 @@ def _latest_assistant_output(core: AgentCore) -> str:
 
 def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, Any]:
     """Temporarily route AgentCore through the selected writer without persistence."""
+    if core.identity_mode:
+        raise ValueError("Private Identity tasks cannot change routes through delegation.")
+    # Resolve the selected identity before mutating the running core. A missing
+    # or invalid ChatGPT home must leave the previous route intact.
+    writer_client = client_for_profile(writer)
     snapshot = {
         "client": core.client,
         "provider": core.provider,
@@ -1783,6 +1928,7 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         "context_for": core._context_limit_for,
         "chatgpt_thread_id": getattr(core, "_chatgpt_thread_id", ""),
         "chatgpt_thread_fingerprint": getattr(core, "_chatgpt_thread_fingerprint", ""),
+        "codex_manager": getattr(core, "codex_manager", None),
         "mcp_policy": core.tool_registry.mcp_agent_policy_snapshot(),
         "agent_configuration": getattr(
             core, "agent_configuration", AgentConfiguration.parse({})
@@ -1796,6 +1942,7 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
     }
     core.model = writer.model
     if writer.route.get("provider") == "chatgpt":
+        core.codex_manager = writer_client.broker
         core.provider = "chatgpt"
         core.host = "chatgpt://managed"
         core.config["chatgpt_account_id"] = str(writer.route.get("account_id") or "")
@@ -1803,10 +1950,17 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
             writer.route.get("account_label") or writer.name
         )
         core.config["chatgpt_model"] = writer.model
+        for field, key in (
+            ("native_mode", "chatgpt_native_mode"),
+            ("web_search", "chatgpt_web_search"),
+            ("reasoning_effort", "chatgpt_reasoning_effort"),
+        ):
+            if field in writer.route:
+                core.config[key] = writer.route[field]
         core._chatgpt_thread_id = ""
         core._chatgpt_thread_fingerprint = ""
     else:
-        client = client_for_profile(writer)
+        client = writer_client
         core.client = client
         core.host = client.host
         core.provider = "ollama" if writer.route.get("provider") == "ollama" else "remote"
@@ -1856,6 +2010,7 @@ def _restore_writer_route(core: AgentCore, snapshot: dict[str, Any]) -> None:
     core._context_limit_for = snapshot["context_for"]
     core._chatgpt_thread_id = snapshot.get("chatgpt_thread_id", "")
     core._chatgpt_thread_fingerprint = snapshot.get("chatgpt_thread_fingerprint", "")
+    core.codex_manager = snapshot.get("codex_manager")
     policy, access_ceiling, role = snapshot["mcp_policy"]
     core.tool_registry.set_mcp_agent_policy(
         policy, access_ceiling=access_ceiling, role=role,
@@ -1934,13 +2089,73 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     mtype = msg.get("type")
     core = svc.core
     loop = asyncio.get_running_loop()
-    if mtype == "user_message":
+    if mtype == "set_question_capability":
+        svc.configure_async_questions(msg.get("async_questions_v1") is True or msg.get("enabled") is True)
+        svc.collaboration_enabled = msg.get("collaboration_v1") is True
+        bridge = getattr(svc, "active_collaboration", None)
+        if bridge:
+            bridge.publish()
+        elif svc.collaboration_enabled:
+            from .collaboration import CollaborationStore, SoloCollaborationManager
+
+            store = CollaborationStore()
+            helpers = store.helpers(core.session.session_id, limit=100)
+            total = store.helper_count(core.session.session_id)
+            svc.queue_event({
+                "type": "solo_collaboration_snapshot",
+                "session_id": core.session.session_id,
+                "agents": [SoloCollaborationManager._public(helper) for helper in helpers],
+                "total": total,
+                "truncated": total > len(helpers),
+            })
+        core.reset_system_message()
+    elif mtype == "question_async_response":
+        svc.handle_async_question_response(msg)
+    elif mtype == "question_editing":
+        svc.update_question_editing(msg)
+    elif mtype == "resume_async_questions":
+        svc.resume_async_questions()
+    elif mtype == "solo_agent_action":
+        bridge = getattr(svc, "active_collaboration", None)
+        action = str(msg.get("action") or "")
+        names = {"read": "read_agent", "list": "list_agents", "message": "send_agent_message",
+                 "followup": "followup_agent", "interrupt": "interrupt_agent", "resume": "resume_agent"}
+        if not bridge or action not in names:
+            result = {"ok": False, "error": "Helper controls require an active parent task."}
+        else:
+            import json
+            result = json.loads(await asyncio.to_thread(bridge.call, names[action], msg))
+        svc.queue_event({"type": "solo_agent_action_result", "request_id": str(msg.get("request_id") or ""), "result": result})
+    elif mtype == "user_message":
         text = str(msg.get("text", "")).strip()
         if not text:
             return
         if len(text) > MAX_USER_MESSAGE_CHARS \
                 or len(text.encode("utf-8")) > MAX_USER_MESSAGE_BYTES:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
+            return
+        requested_identity = msg.get("identity_mode")
+        if requested_identity is not None and not isinstance(requested_identity, bool):
+            _command_error(svc, str(mtype), "Identity task mode must be true or false.")
+            return
+        if requested_identity is True:
+            if svc.busy:
+                _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
+                return
+            if not core.tool_registry.identity_enabled:
+                _command_error(svc, str(mtype), "The native Identity Vault is unavailable.")
+                return
+            try:
+                core.enable_identity_mode()
+            except ValueError as exc:
+                _command_error(svc, str(mtype), str(exc))
+                return
+        if core.identity_mode and (
+            msg.get("team") is not None or msg.get("workflow_outputs") is not None
+            or msg.get("attachments") or text.startswith("/")
+            or isinstance(msg.get("solo_swarm"), dict) and msg["solo_swarm"].get("enabled") is True
+        ):
+            _command_error(svc, str(mtype), "Private Identity tasks use only the native vault and cannot route, delegate, attach raw chat sources, or run commands.")
             return
         mode = str(msg.get("mode") or "").strip().lower()
         # "build" is the retired GSD raw value. It stays accepted so an older
@@ -1960,6 +2175,13 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), str(exc))
             return
         team_manifest = msg.get("team")
+        capsule_context = msg.get("capsule_context")
+        if capsule_context is not None and (
+            not isinstance(capsule_context, dict) or team_manifest is not None
+            or core.identity_mode or text.startswith("/")
+        ):
+            _command_error(svc, str(mtype), "A capsule requires a regular task and an explicit stage.")
+            return
         workflow_outputs = msg.get("workflow_outputs")
         if workflow_outputs is not None and (
             not isinstance(workflow_outputs, list)
@@ -1989,7 +2211,11 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if team_manifest is not None and not isinstance(team_manifest, dict):
             _command_error(svc, str(mtype), "The team manifest is malformed.")
             return
-        if text.startswith("/") and not just_chat:
+        if capsule_context is not None:
+            call = _run_user_turn
+            args = (svc, text, False, attachments, agent_config, mode or "plan",
+                    str(msg.get("run_id") or uuid.uuid4().hex), False, None, None, capsule_context)
+        elif text.startswith("/") and not just_chat:
             call, args = _run_slash, (svc, text)
         elif team_manifest is not None:
             call = _run_team_turn
@@ -1998,7 +2224,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                 args = (*args, workflow_outputs)
         else:
             reserved_run_id = str(msg.get("run_id") or "")
-            adaptive_solo = not just_chat and not text.startswith("/")
+            adaptive_solo = not core.identity_mode and not just_chat and not text.startswith("/")
             args = (svc, text, just_chat, attachments, agent_config, mode or "work")
             if reserved_run_id or adaptive_solo or workflow_outputs is not None:
                 args = (*args, reserved_run_id)
@@ -2021,6 +2247,24 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                     "request_id": request_id,
                     "run_id": str(msg.get("run_id") or "")[:160],
                 })
+    elif mtype == "set_identity_control":
+        if svc.busy:
+            _command_error(svc, str(mtype), "Wait for the active turn to finish.")
+            return
+        enabled = msg.get("enabled") is True
+        core.tool_registry.identity_enabled = enabled
+        core.identity_executor = svc.execute_identity if enabled else None
+        core.identity_context_executor = svc.resolve_identity_context if enabled else None
+        if not enabled:
+            svc.cancel_all_identity()
+        svc.queue_event({"type": "identity_control_status", "enabled": enabled, "identity_mode": core.identity_mode})
+    elif mtype in {"identity_action_result", "identity_context_result"}:
+        raw = msg.get("result")
+        # This reply bypasses event recording entirely. Raw context is handed
+        # straight to its one pending provider-request future.
+        svc.answer_identity(str(msg.get("request_id") or ""),
+                            raw if isinstance(raw, dict) else {"error": "invalid native result"},
+                            context=mtype == "identity_context_result")
     elif mtype == "permission_decision":
         svc.answer_permission(
             str(msg.get("request_id", "")),
@@ -2068,6 +2312,9 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, "steer", "The active turn is already stopping.")
             return
         svc.queue_event({"type": "steer_ack", "text": text, "state": state})
+        bridge = getattr(svc, "active_collaboration", None)
+        if bridge:
+            bridge.broadcast_guidance(text)
     elif mtype == "set_computer_control":
         if svc.busy:
             _command_error(svc, "set_computer_control", "Wait for the active turn to finish.")
@@ -2186,6 +2433,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_all_computer_actions()
         svc.cancel_all_simulator_actions()
         svc.cancel_all_browser_actions()
+        svc.cancel_all_identity()
         svc.cancel_all_notes_actions()
         svc.core.tool_registry.product_features.cancel_pending()
         svc.cancel_all_connector_actions()
@@ -2197,6 +2445,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     elif mtype == "new_session":
         try:
             with svc.state_mutation():
+                svc.cancel_all_identity()
                 reason = str(msg.get("reason") or "new_session")
                 core.new_session(reason=reason)
         except AgentBusyError:

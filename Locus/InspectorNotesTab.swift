@@ -52,7 +52,7 @@ final class NotesEditorProxy: ObservableObject {
     /// Insert text at the cursor with the current typing attributes, as if it
     /// had been typed — so undo, selection, and styling all behave normally.
     func insert(_ string: String) {
-        guard let textView else { return }
+        guard let textView, textView.isEditable else { return }
         if textView.shouldChangeText(in: textView.selectedRange(), replacementString: string) {
             textView.insertText(string, replacementRange: textView.selectedRange())
             textView.didChangeText()
@@ -64,7 +64,7 @@ final class NotesEditorProxy: ObservableObject {
     /// when those lines already are that kind of list. Markers are plain text
     /// so the `.txt` mirror the agent reads stays meaningful.
     func toggleList(_ kind: NotesListKind) {
-        guard let textView, let storage = textView.textStorage else { return }
+        guard let textView, textView.isEditable, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
         let lineRange = (storage.string as NSString).lineRange(
             for: NSRange(location: min(selection.location, storage.length), length: selection.length)
@@ -98,7 +98,7 @@ final class NotesEditorProxy: ObservableObject {
     /// A checklist line cycles unchecked → checked → plain, which is the
     /// behaviour people expect from a single button.
     func toggleChecklist() {
-        guard let textView, let storage = textView.textStorage else { return }
+        guard let textView, textView.isEditable, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
         let lineRange = (storage.string as NSString).lineRange(
             for: NSRange(location: min(selection.location, storage.length), length: selection.length)
@@ -228,7 +228,7 @@ final class NotesEditorProxy: ObservableObject {
         _ body: (NSTextStorage, NSRange) -> Void,
         typing: (inout [NSAttributedString.Key: Any]) -> Void
     ) {
-        guard let textView, let storage = textView.textStorage else { return }
+        guard let textView, textView.isEditable, let storage = textView.textStorage else { return }
         let ranges = textView.selectedRanges
             .map(\.rangeValue)
             .filter { $0.length > 0 && NSMaxRange($0) <= storage.length }
@@ -249,14 +249,49 @@ final class NotesEditorProxy: ObservableObject {
 
 /// No menu item owns ⌘B/⌘I/⌘U in this app, so the notes editor claims them
 /// itself while it is first responder; every other key path stays stock.
-private final class NotesTextView: NSTextView {
+private final class NotesTextView: LocusSelectionTextView {
     var toggleBoldCommand: (() -> Void)?
     var toggleItalicCommand: (() -> Void)?
     var toggleUnderlineCommand: (() -> Void)?
 
+    func refreshEditorColors() {
+        refreshSelectionWash()
+        insertionPointColor = NSColor(LocusTheme.accentAction)
+        linkTextAttributes = [
+            .foregroundColor: NSColor(LocusTheme.contentLink),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        needsDisplay = true
+    }
+
+    /// Temporary attributes affect rendering only. The text storage continues
+    /// to carry archivable color identities, so appearance changes never dirty
+    /// a note, change its undo history, or rewrite custom formatting.
+    func refreshTextColors() {
+        guard let storage = textStorage, let layoutManager else { return }
+        let wholeText = NSRange(location: 0, length: storage.length)
+        layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: wholeText)
+        storage.enumerateAttributes(in: wholeText) { attributes, range, _ in
+            let storedColor = attributes[.foregroundColor] as? NSColor ?? NotesTextStyle.defaultColor
+            let displayedColor = attributes[.link] == nil
+                ? NotesTextStyle.displayColor(for: storedColor)
+                : NSColor(LocusTheme.contentLink)
+            layoutManager.addTemporaryAttribute(
+                .foregroundColor,
+                value: displayedColor,
+                forCharacterRange: range
+            )
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshEditorColors()
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if window?.firstResponder === self, flags == .command {
+        if isEditable, window?.firstResponder === self, flags == .command {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "b": toggleBoldCommand?(); return true
             case "i": toggleItalicCommand?(); return true
@@ -276,9 +311,10 @@ struct RichNotesEditor: NSViewRepresentable {
     let proxy: NotesEditorProxy
     let accessibilityLabel: String
     let identifierPrefix: String
+    var readOnly = false
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, proxy: proxy)
+        Coordinator(store: store, proxy: proxy, readOnly: readOnly)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -286,6 +322,8 @@ struct RichNotesEditor: NSViewRepresentable {
         scrollView.drawsBackground = false
         guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
         textView.isRichText = true
+        textView.isEditable = !readOnly && store.isEditable
+        textView.isSelectable = true
         textView.allowsUndo = true
         textView.usesFontPanel = true
         textView.usesFindBar = true
@@ -301,6 +339,8 @@ struct RichNotesEditor: NSViewRepresentable {
             notesTextView.toggleBoldCommand = { [weak proxy] in proxy?.toggleBold() }
             notesTextView.toggleItalicCommand = { [weak proxy] in proxy?.toggleItalic() }
             notesTextView.toggleUnderlineCommand = { [weak proxy] in proxy?.toggleUnderline() }
+            notesTextView.refreshEditorColors()
+            notesTextView.refreshTextColors()
         }
         context.coordinator.textView = textView
         proxy.textView = textView
@@ -313,8 +353,11 @@ struct RichNotesEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.store = store
+        context.coordinator.readOnly = readOnly
+        textView.isEditable = context.coordinator.canEdit
         proxy.textView = textView
         textView.setAccessibilityLabel(accessibilityLabel)
+        (textView as? NotesTextView)?.refreshEditorColors()
         // Only external updates (agent tools) can differ from the text view;
         // the editor's own edits already match the store. Applying them here
         // would mutate state and publish toolbar changes inside the current
@@ -326,13 +369,19 @@ struct RichNotesEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var store: NotesStore
         let proxy: NotesEditorProxy
+        var readOnly: Bool
+        private var revision: UUID
         weak var textView: NSTextView?
         private var reconciliationScheduled = false
 
-        init(store: NotesStore, proxy: NotesEditorProxy) {
+        init(store: NotesStore, proxy: NotesEditorProxy, readOnly: Bool = false) {
             self.store = store
             self.proxy = proxy
+            self.readOnly = readOnly
+            revision = store.revision
         }
+
+        var canEdit: Bool { !readOnly && store.isEditable && revision == store.revision }
 
         func scheduleExternalReconciliation() {
             guard !reconciliationScheduled else { return }
@@ -346,9 +395,13 @@ struct RichNotesEditor: NSViewRepresentable {
         private func applyExternalContentIfNeeded() {
             guard let textView, let storage = textView.textStorage else { return }
             let target = store.attributedText
-            guard !storage.isEqual(to: target) else { return }
+            let changedRevision = revision != store.revision
+            revision = store.revision
+            textView.isEditable = canEdit
+            guard changedRevision || !storage.isEqual(to: target) else { return }
             let selection = textView.selectedRange()
             storage.setAttributedString(target)
+            (textView as? NotesTextView)?.refreshTextColors()
             let location = min(selection.location, storage.length)
             let length = min(selection.length, storage.length - location)
             textView.setSelectedRange(NSRange(location: location, length: length))
@@ -363,8 +416,23 @@ struct RichNotesEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView, let storage = textView.textStorage else { return }
-            store.updateAttributed(storage)
+            guard canEdit else {
+                scheduleExternalReconciliation()
+                return
+            }
+            (textView as? NotesTextView)?.refreshTextColors()
+            store.updateAttributed(storage, expectedRevision: revision)
             proxy.refreshState()
+        }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard canEdit else { return false }
+            guard let replacementString else { return true }
+            let current = textView.string as NSString
+            guard affectedCharRange.location <= current.length,
+                  affectedCharRange.length <= current.length - affectedCharRange.location else { return false }
+            return current.replacingCharacters(in: affectedCharRange, with: replacementString).count
+                <= NotesStore.maximumCharacters
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -431,7 +499,7 @@ private struct NotesColorMenuButton: NSViewRepresentable {
             guard let item = button.item(at: index) else { continue }
             item.representedObject = option.color
             item.image = Self.swatchImage(
-                color: option.color,
+                color: NotesTextStyle.displayColor(for: option.color),
                 appearance: button.effectiveAppearance
             )
         }
@@ -482,42 +550,46 @@ struct NotesFormatToolbar: View {
     /// `fileExists` guard, so a document with no known workspace passes "".
     let workspacePath: String
     let identifierPrefix: String
+    var readOnly = false
 
     var body: some View {
         HStack(spacing: 2) {
-            traitButton(
-                symbol: "bold",
-                active: proxy.isBold,
-                help: "Bold (⌘B)",
-                identifier: "\(identifierPrefix).toolbar.bold"
-            ) { proxy.toggleBold() }
-            traitButton(
-                symbol: "italic",
-                active: proxy.isItalic,
-                help: "Italic (⌘I)",
-                identifier: "\(identifierPrefix).toolbar.italic"
-            ) { proxy.toggleItalic() }
-            traitButton(
-                symbol: "underline",
-                active: proxy.isUnderlined,
-                help: "Underline (⌘U)",
-                identifier: "\(identifierPrefix).toolbar.underline"
-            ) { proxy.toggleUnderline() }
-            traitButton(
-                symbol: "strikethrough",
-                active: proxy.isStruckThrough,
-                help: "Strikethrough",
-                identifier: "\(identifierPrefix).toolbar.strikethrough"
-            ) { proxy.toggleStrikethrough() }
+            Group {
+                traitButton(
+                    symbol: "bold",
+                    active: proxy.isBold,
+                    help: "Bold (⌘B)",
+                    identifier: "\(identifierPrefix).toolbar.bold"
+                ) { proxy.toggleBold() }
+                traitButton(
+                    symbol: "italic",
+                    active: proxy.isItalic,
+                    help: "Italic (⌘I)",
+                    identifier: "\(identifierPrefix).toolbar.italic"
+                ) { proxy.toggleItalic() }
+                traitButton(
+                    symbol: "underline",
+                    active: proxy.isUnderlined,
+                    help: "Underline (⌘U)",
+                    identifier: "\(identifierPrefix).toolbar.underline"
+                ) { proxy.toggleUnderline() }
+                traitButton(
+                    symbol: "strikethrough",
+                    active: proxy.isStruckThrough,
+                    help: "Strikethrough",
+                    identifier: "\(identifierPrefix).toolbar.strikethrough"
+                ) { proxy.toggleStrikethrough() }
 
-            toolbarDivider
+                toolbarDivider
 
-            sizeMenu
-            colorMenu
+                sizeMenu
+                colorMenu
 
-            toolbarDivider
+                toolbarDivider
 
-            insertMenu
+                insertMenu
+            }
+            .disabled(readOnly || !store.isEditable)
 
             Spacer(minLength: 2)
 
@@ -648,6 +720,7 @@ struct NotesFormatToolbar: View {
     private var overflowMenu: some View {
         Menu {
             Button("Clear Formatting", systemImage: "eraser") { proxy.clearFormatting() }
+                .disabled(readOnly || !store.isEditable)
                 .accessibilityIdentifier("\(identifierPrefix).toolbar.clearFormatting")
             Button("Find in Notes…", systemImage: "magnifyingglass") { proxy.showFindBar() }
                 .accessibilityIdentifier("\(identifierPrefix).find")
@@ -758,7 +831,8 @@ struct NotesHeaderBar: View {
     }
 
     private var subtitle: String {
-        switch store.scope {
+        if store.documentID.isStandalone { return "Only in your notebook" }
+        return switch store.scope {
         case .workspace: workspaceName
         case .chat: "This chat only"
         case .global: "Every chat, every workspace"
@@ -769,10 +843,10 @@ struct NotesHeaderBar: View {
     /// down to its first row.
     private var identityLabel: some View {
         HStack(spacing: 6) {
-            Image(systemName: store.scope.symbol)
+            Image(systemName: store.documentID.isStandalone ? "note.text" : store.scope.symbol)
                 .font(.locus(size: 10, weight: .medium))
                 .foregroundStyle(LocusTheme.muted)
-            Text(store.scope.documentTitle)
+            Text(store.documentID.isStandalone ? "Note" : store.scope.documentTitle)
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
         }
@@ -812,7 +886,7 @@ struct NotesHeaderBar: View {
             .fixedSize()
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Notes scope")
-            .accessibilityValue(store.scope.accessibilityLabel)
+            .accessibilityValue(store.documentID.isStandalone ? "Standalone note" : store.scope.accessibilityLabel)
             .accessibilityIdentifier("\(identifierPrefix).scopeBadge")
     }
 
@@ -860,11 +934,13 @@ struct NotesHeaderBar: View {
                     .accessibilityIdentifier("\(identifierPrefix).wordCount")
             }
 
-            Image(systemName: store.hasUnsavedChanges ? "arrow.triangle.2.circlepath" : "checkmark.circle")
+            Image(systemName: store.saveError != nil ? "exclamationmark.circle"
+                : store.hasUnsavedChanges ? "arrow.triangle.2.circlepath" : "checkmark.circle")
                 .font(.locus(size: 9, weight: .medium))
-                .foregroundStyle(store.hasUnsavedChanges ? LocusTheme.muted : LocusTheme.success)
-                .help(store.hasUnsavedChanges ? "Saving…" : "Saved")
-                .accessibilityLabel(store.hasUnsavedChanges ? "Saving" : "Saved")
+                .foregroundStyle(store.saveError != nil ? LocusTheme.warning
+                    : store.hasUnsavedChanges ? LocusTheme.muted : LocusTheme.success)
+                .help(store.saveError != nil ? "Could not save" : store.hasUnsavedChanges ? "Saving…" : "Saved")
+                .accessibilityLabel(store.saveError != nil ? "Could not save" : store.hasUnsavedChanges ? "Saving" : "Saved")
                 .accessibilityIdentifier("\(identifierPrefix).saveState")
         }
         .padding(.horizontal, 10)
@@ -893,7 +969,9 @@ struct NotesDocumentEditor: View {
     /// Seeds the export panel only. Empty when the owning workspace is unknown.
     let workspacePath: String
     var identifierPrefix: String = "notes"
+    var readOnly = false
     var onSelectScope: ((NotesScope) -> Void)?
+    @State private var operationError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -903,27 +981,61 @@ struct NotesDocumentEditor: View {
                 identifierPrefix: identifierPrefix,
                 onSelectScope: onSelectScope
             )
+            if let message = operationError ?? store.saveError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text(message)
+                        .font(.locus(size: 10))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Retry") {
+                        if operationError != nil { recoverNote() }
+                        else { store.retrySave() }
+                    }
+                    .buttonStyle(.locus())
+                    .accessibilityIdentifier("\(identifierPrefix).retrySave")
+                }
+                .foregroundStyle(LocusTheme.textSecondary)
+                .padding(10)
+                .background(LocusTheme.warning.opacity(0.10))
+                .accessibilityIdentifier("\(identifierPrefix).saveError")
+            }
+            if store.lifecycle != .active && !readOnly {
+                deletedPlaceholder
+            } else {
+                documentBody
+            }
+        }
+        .background(LocusTheme.paper)
+    }
+
+    private var documentBody: some View {
+        VStack(spacing: 0) {
             NotesFormatToolbar(
                 store: store,
                 proxy: proxy,
                 workspacePath: workspacePath,
-                identifierPrefix: identifierPrefix
+                identifierPrefix: identifierPrefix,
+                readOnly: readOnly
             )
             RichNotesEditor(
                 store: store,
                 proxy: proxy,
-                accessibilityLabel: store.scope.accessibilityLabel,
-                identifierPrefix: identifierPrefix
+                accessibilityLabel: store.documentID.isStandalone ? "Notebook note" : store.scope.accessibilityLabel,
+                identifierPrefix: identifierPrefix,
+                readOnly: readOnly
             )
             .overlay(alignment: .topLeading) {
-                if store.text.isEmpty {
+                if store.text.isEmpty && !readOnly {
                     // A hint rather than a placeholder string in the document:
                     // the editor stays genuinely empty underneath it.
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Nothing here yet")
                             .font(.locus(size: 11, weight: .semibold))
                             .foregroundStyle(LocusTheme.inkSoft)
-                        Text("Jot down anything worth keeping. The agent can read and append to these notes when you ask it to.")
+                        Text(store.documentID.isStandalone
+                            ? "Jot down anything worth keeping. This note stays in your notebook."
+                            : "Jot down anything worth keeping. The agent can read and append to these notes when you ask it to.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -937,7 +1049,41 @@ struct NotesDocumentEditor: View {
                 }
             }
         }
-        .background(LocusTheme.paper)
+    }
+
+    private var deletedPlaceholder: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "trash")
+                .font(.locus(size: 25))
+                .foregroundStyle(LocusTheme.muted)
+                .accessibilityHidden(true)
+            Text(store.lifecycle == .trashed ? "This note is in Recently Deleted" : "This note was permanently deleted")
+                .font(.locus(size: 12, weight: .semibold))
+            Text(store.lifecycle == .trashed
+                ? "Restore it to continue writing. It will stay there until you remove it."
+                : "You can start a new blank note here.")
+                .font(.locus(size: 10))
+                .foregroundStyle(LocusTheme.textSecondary)
+                .multilineTextAlignment(.center)
+            Button(store.lifecycle == .trashed ? "Restore Note" : "Start a New Note") {
+                recoverNote()
+            }
+            .buttonStyle(.locus())
+            .accessibilityIdentifier("\(identifierPrefix).recover")
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("\(identifierPrefix).deleted")
+    }
+
+    private func recoverNote() {
+        do {
+            if store.lifecycle == .trashed { try store.restore() }
+            else { try store.startFresh() }
+            operationError = nil
+        } catch {
+            operationError = error.localizedDescription
+        }
     }
 }
 

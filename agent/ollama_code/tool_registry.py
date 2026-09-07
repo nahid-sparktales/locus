@@ -10,7 +10,13 @@ from typing import Any
 
 from . import product_build
 from .capabilities import enabled as capability_enabled
+from .collaboration_tools import (
+    ASK_QUESTION_ASYNC_SCHEMA,
+    COLLABORATION_NAMES,
+    COLLABORATION_SCHEMAS,
+)
 from .extensions import ExtensionError, ExtensionManager
+from .identity import IDENTITY_ACTIONS
 from .solo_swarm import DELEGATE_READ_ONLY_SCHEMA
 from .tools import ASK_QUESTION_SCHEMA, SAFE_TOOLS, TOOL_SCHEMAS, ToolContext, execute_tool
 
@@ -437,6 +443,38 @@ def _browser_schema(
     return _schema(name, description, {**properties, **_TAB_ID}, required)
 
 
+IDENTITY_TOOL_SCHEMA = _schema(
+    "identity_vault",
+    "Use the native local Identity Vault. In an ordinary task only select is available; "
+    "it opens a dedicated private Identity task. In a private task all disclosure and "
+    "browser actions require native review. Source contents never appear in tool results. "
+    "Use opaque refs from native metadata, never pass secret field values.",
+    {
+        "action": {"type": "string", "enum": IDENTITY_ACTIONS},
+        "profile_kind": {"type": "string"},
+        "profile_ref": {"type": "string"},
+        "document_ref": {"type": "string"},
+        "field_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 100},
+        "snapshot_ref": {"type": "string"},
+        "mappings": {"type": "array", "maxItems": 100, "items": {
+            "type": "object", "properties": {
+                "field_id": {"type": "string"}, "ref": {"type": "string"},
+            }, "required": ["field_id", "ref"], "additionalProperties": False,
+        }},
+        "url": {"type": "string"},
+        "action_ref": {"type": "string"},
+        "purpose": {"type": "string", "maxLength": 2000},
+        "title": {"type": "string", "maxLength": 1000},
+        "draft_kind": {"type": "string", "enum": ["resume", "cover_letter"]},
+        "sections": {"type": "array", "maxItems": 100, "items": {
+            "type": "object", "properties": {
+                "heading": {"type": "string"}, "text": {"type": "string"},
+            }, "required": ["heading", "text"], "additionalProperties": False,
+        }},
+    },
+    ["action"],
+)
+
 BROWSER_TOOL_SCHEMAS = [
     _schema(
         "browser_history",
@@ -834,6 +872,8 @@ class ToolRegistry:
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
         self._ask_question_enabled = False
+        self._collaboration_enabled = False
+        self._ask_question_async_enabled = False
         self._workflow_outputs: list[dict[str, str]] = []
         self._workflow_result_only = False
         self.computer_enabled = False
@@ -843,6 +883,8 @@ class ToolRegistry:
         #: settings*, but defaulting it on here would make the headless CLI and
         #: every evaluation core advertise tools whose executor is ``None``.
         self.browser_enabled = False
+        self.identity_enabled = False
+        self.identity_mode = False
         # History is a separate opt-in inside Browser Settings. Keeping this
         # false removes the schema and also rejects guessed calls.
         self.browser_history_enabled = False
@@ -887,6 +929,8 @@ class ToolRegistry:
             self._mcp_by_qualified[name] = {**tool, "qualified_name": name}
 
     def begin_turn(self, user_text: str, workspace: str) -> None:
+        if self.identity_mode:
+            return
         self._workspace = workspace
         self.extensions.set_cwd(workspace)
         self.refresh()
@@ -963,6 +1007,18 @@ class ToolRegistry:
     def set_ask_question_enabled(self, enabled: bool) -> None:
         """Advertise the question tool only where a user can actually answer."""
         self._ask_question_enabled = bool(enabled)
+
+    def set_collaboration_enabled(self, enabled: bool) -> None:
+        self._collaboration_enabled = bool(enabled)
+
+    def set_ask_question_async_enabled(self, enabled: bool) -> None:
+        self._ask_question_async_enabled = bool(enabled)
+
+    def collaboration_schemas(self) -> list[dict[str, Any]]:
+        schemas = list(COLLABORATION_SCHEMAS) if self._collaboration_enabled else []
+        if self._ask_question_async_enabled and self._agent_access_ceiling != "read_only":
+            schemas.append(ASK_QUESTION_ASYNC_SCHEMA)
+        return [s for s in schemas if self._user_allows(s["function"]["name"])]
 
     def set_workflow_outputs(self, outputs: Any) -> list[dict[str, str]]:
         """Expose a result tool narrowed to the active workflow step."""
@@ -1057,6 +1113,8 @@ class ToolRegistry:
         return self.extensions.skill_index(context_window, self._workspace)
 
     def schemas(self) -> list[dict[str, Any]]:
+        if self.identity_mode:
+            return self.identity_schemas()
         if self._workflow_result_only:
             workflow_schema = self._workflow_result_schema()
             return [workflow_schema] if workflow_schema is not None else []
@@ -1080,6 +1138,7 @@ class ToolRegistry:
             schema for schema in self.browser_schemas()
             if self._user_allows(schema["function"]["name"])
         )
+        schemas.extend(self.identity_schemas())
         schemas.extend(
             schema for schema in self.notes_schemas()
             if self._user_allows(schema["function"]["name"])
@@ -1100,6 +1159,7 @@ class ToolRegistry:
             schemas.append(DELEGATE_READ_ONLY_SCHEMA)
         if self._offers_ask_question():
             schemas.append(ASK_QUESTION_SCHEMA)
+        schemas.extend(self.collaboration_schemas())
         for name in sorted(self._active_mcp):
             tool = self._mcp_by_qualified.get(name)
             if not tool or not self._allows_mcp_item(tool, "tools", qualified=name):
@@ -1131,6 +1191,8 @@ class ToolRegistry:
         depends on it; `ask_user_question` joins every parity turn, so the
         question popup works in Work and Grill as well.
         """
+        if self.identity_mode:
+            return self.identity_schemas()
         if self._workflow_result_only:
             workflow_schema = self._workflow_result_schema()
             return [workflow_schema] if workflow_schema is not None else []
@@ -1155,6 +1217,8 @@ class ToolRegistry:
         # clarifying question belongs in every non-Ask mode.
         if self._offers_ask_question():
             schemas.append(ASK_QUESTION_SCHEMA)
+        schemas.extend(self.collaboration_schemas())
+        schemas.extend(self.identity_schemas())
         schemas.extend(
             schema for schema in self.simulator_schemas()
             if self._user_allows(schema["function"]["name"])
@@ -1202,6 +1266,14 @@ class ToolRegistry:
                 )
             schemas.append(schema)
         return schemas
+
+    def identity_schemas(self) -> list[dict[str, Any]]:
+        if not self.identity_enabled:
+            return []
+        schema = copy.deepcopy(IDENTITY_TOOL_SCHEMA)
+        if not self.identity_mode:
+            schema["function"]["parameters"]["properties"]["action"]["enum"] = ["select"]
+        return [schema]
 
     def browser_tool_allowed(self, name: str) -> bool:
         """Whether this agent may actually run ``name``.
@@ -1493,6 +1565,10 @@ class ToolRegistry:
         return "\n".join(lines)
 
     def is_safe(self, name: str) -> bool:
+        if name in COLLABORATION_NAMES:
+            return self._collaboration_enabled and name != "integrate_agent" and self._user_allows(name)
+        if name == "ask_question_async":
+            return self._ask_question_async_enabled and self._agent_access_ceiling != "read_only"
         if name == "delegate_read_only":
             return self._solo_swarm_enabled and self._user_allows(name)
         if self.computer_enabled and name in _READ_ONLY_COMPUTER_TOOLS:
@@ -1601,6 +1677,8 @@ class ToolRegistry:
         return True
 
     def tool_info(self, name: str) -> dict[str, Any] | None:
+        if name == "identity_vault" and self.identity_enabled:
+            return {"origin": "identity", "annotations": {"readOnlyHint": False}}
         if name == "submit_workflow_result" and self._workflow_outputs:
             return {"origin": "builtin", "annotations": {"readOnlyHint": True}}
         if self.computer_enabled and name in _COMPUTER_TOOL_NAMES:
@@ -1660,11 +1738,17 @@ class ToolRegistry:
     def metadata(self) -> list[dict[str, Any]]:
         active = self._active_mcp
         out: list[dict[str, Any]] = []
+        if self.identity_mode:
+            return [{"name": "identity_vault", "description": schema["function"]["description"],
+                     "parameters": schema["function"]["parameters"], "origin": "identity",
+                     "active": True, "deferred": False, "annotations": {"readOnlyHint": False}}
+                    for schema in self.identity_schemas()]
         base_schemas = _base_schemas(self._agent_access_ceiling)
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
             base_schemas.extend(COMPUTER_TOOL_SCHEMAS)
         base_schemas.extend(self.simulator_schemas())
         base_schemas.extend(self.browser_schemas())
+        base_schemas.extend(self.identity_schemas())
         base_schemas.extend(self.notes_schemas())
         base_schemas.extend(self.connector_schemas())
         for schema in base_schemas:
@@ -1681,6 +1765,7 @@ class ToolRegistry:
                     else "native" if schema in COMPUTER_TOOL_SCHEMAS
                     else "simulator" if schema in SIMULATOR_TOOL_SCHEMAS
                     else "browser" if schema in BROWSER_TOOL_SCHEMAS
+                    else "identity" if fn["name"] == "identity_vault"
                     else "notes" if schema in NOTES_TOOL_SCHEMAS
                     else "connector" if fn["name"] in _CONNECTOR_TOOL_NAMES
                     else "extension"

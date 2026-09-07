@@ -26,7 +26,7 @@ from typing import Any
 
 from .agent_config import AgentConfiguration, compose_system_prompt
 from .capabilities import enabled as capability_enabled
-from .codex_app_server import CodexBrokerClient
+from .codex_app_server import CodexBrokerClient, codex_home_for_account
 from .ollama import ChatResponse, OllamaClient, OllamaError, looks_like_image_rejection
 from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
@@ -233,6 +233,15 @@ class AgentProfile:
         if profile.metering not in {"self_hosted", "metered"}:
             raise OrchestrationError(f"unknown metering class for {profile.name}")
         _validate_route(profile.route, profile.name)
+        account_kind = str(profile.route.get("account_kind") or "").lower().replace("_", "")
+        if profile.route.get("provider") == "chatgpt" or account_kind == "kimicode":
+            # Subscription quota is not per-token API spending. Older/custom
+            # manifests may carry metered rates; never charge those estimates
+            # against the API-dollar budget for a known subscription route.
+            profile = replace(
+                profile, metering="self_hosted",
+                input_cost_per_million=0, output_cost_per_million=0,
+            )
         return profile
 
     @property
@@ -938,6 +947,8 @@ class TeamOrchestrator:
             resume_state.get("validated_plan")
             if isinstance(resume_state, dict) else None
         )
+        if not isinstance(reusable_plan, dict) and isinstance(manifest.get("_capsule_plan"), dict):
+            reusable_plan = manifest["_capsule_plan"]
         reused_approved_plan = isinstance(reusable_plan, dict)
         if reused_approved_plan:
             plan = validate_dispatch_plan(reusable_plan, team, profiles, forced_agent)
@@ -1427,6 +1438,13 @@ class TeamOrchestrator:
             f"Original request:\n{prepared.original_request}\n\n"
             f"Diff:\n{diff_text[:MAX_EVIDENCE_CHARS]}\n\nTests:\n{test_evidence[:20_000]}"
         )
+        if prepared.team.id.startswith("capsule-"):
+            goal += (
+                "\n\nSaved capsule specification (check every step and completion check):\n"
+                + json.dumps(prepared.plan.structured(), ensure_ascii=False)
+                + "\n\nImplementation reports (claims require supporting evidence):\n"
+                + json.dumps([result.structured() for result in prepared.writer_results], ensure_ascii=False)[-MAX_EVIDENCE_CHARS:]
+            )
         return self._parallel_results(
             prepared.run_id,
             [AgentJob(f"review-{p.id[:8]}", p.id, goal, (), "reviewer") for p in reviewers],
@@ -1436,6 +1454,9 @@ class TeamOrchestrator:
         )
 
     def synthesize(self, prepared: TeamPreparation, reviews: list[AgentResult], diff_text: str) -> str:
+        if prepared.team.id.startswith("capsule-"):
+            reports = [result.output.strip() for result in prepared.writer_results if result.output.strip()]
+            return "Saved capsule execution finished.\n\n" + "\n\n".join(reports)[-40_000:]
         if self.remaining_model_calls(prepared.team.budget) <= 0:
             message = (
                 "Team work completed within the configured model-call budget. "
@@ -2592,8 +2613,18 @@ def validate_dispatch_plan(
                 "top-level read-only jobs exceed the swarm total-agent ceiling"
             )
     minimum_model_calls = len(jobs) + 2 + (1 if team.budget.max_rounds > 1 else 0)
+    if team.id.startswith("capsule-"):
+        review_calls = sum(job.kind == "reviewer" for job in jobs)
+        if not review_calls:
+            review_calls = int(any(profile.role == "reviewer" and not profile.can_write
+                                   for profile in profiles.values()))
+        # The saved graph bypasses dispatch and synthesis; reserve only calls
+        # that actually happen. Repair rounds are optional within what remains.
+        minimum_model_calls = len(jobs) + review_calls
     if team.budget.max_model_calls < minimum_model_calls:
         raise OrchestrationError(
+            f"saved execution plan needs at least {minimum_model_calls} model calls"
+            if team.id.startswith("capsule-") else
             f"dispatcher plan needs at least {minimum_model_calls} model calls"
         )
     if forced_agent and not any(job.agent_id == forced_agent for job in jobs):
@@ -2836,16 +2867,19 @@ _TEAM_CODEX_BROKER = (
     CodexBrokerClient(_TEAM_CODEX_BROKER_URL, _TEAM_CODEX_BROKER_TOKEN)
     if _TEAM_CODEX_BROKER_URL and _TEAM_CODEX_BROKER_TOKEN else None
 )
+_TEAM_CODEX_ACCOUNT_RESOLVER: Any = None
 
 
-def configure_chatgpt_manager(manager: Any) -> None:
+def configure_chatgpt_manager(manager: Any, *, account_resolver: Any = None) -> None:
     """Install the primary manager when orchestration runs in that process."""
-    global _TEAM_CODEX_BROKER
+    global _TEAM_CODEX_BROKER, _TEAM_CODEX_ACCOUNT_RESOLVER
     if _TEAM_CODEX_BROKER is None:
         _TEAM_CODEX_BROKER = manager
+    if account_resolver is not None:
+        _TEAM_CODEX_ACCOUNT_RESOLVER = account_resolver
 
 
-def set_chatgpt_manager(manager: Any) -> None:
+def set_chatgpt_manager(manager: Any, *, account_resolver: Any = None) -> None:
     """Rebind team routing after the active ChatGPT account changes.
 
     Unlike ``configure_chatgpt_manager`` this always replaces the manager: with
@@ -2853,8 +2887,10 @@ def set_chatgpt_manager(manager: Any) -> None:
     account the user actually selected, not whichever one happened to be
     installed first.
     """
-    global _TEAM_CODEX_BROKER
+    global _TEAM_CODEX_BROKER, _TEAM_CODEX_ACCOUNT_RESOLVER
     _TEAM_CODEX_BROKER = manager
+    if account_resolver is not None:
+        _TEAM_CODEX_ACCOUNT_RESOLVER = account_resolver
 
 
 def _client(profile: AgentProfile):
@@ -2867,6 +2903,17 @@ def _client(profile: AgentProfile):
         broker = _TEAM_CODEX_BROKER
         if broker is None:
             raise OrchestrationError("the primary ChatGPT broker is unavailable")
+        if "codex_home_id" in route:
+            home_id = route["codex_home_id"]
+            if not isinstance(home_id, str):
+                raise OrchestrationError("ChatGPT account home id must be a string")
+            codex_home_for_account(home_id)
+            if isinstance(broker, CodexBrokerClient):
+                broker = broker.for_account(home_id)
+            elif _TEAM_CODEX_ACCOUNT_RESOLVER is not None:
+                broker = _TEAM_CODEX_ACCOUNT_RESOLVER(home_id)
+            else:
+                raise OrchestrationError("account-scoped ChatGPT routing is unavailable")
         return ChatGPTTeamClient(broker, profile.timeout_seconds)
     return RemoteClient(
         base_url=str(route.get("base_url") or ""),

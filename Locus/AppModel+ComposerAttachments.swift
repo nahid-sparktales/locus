@@ -103,7 +103,7 @@ extension AppModel {
     }
 
     var hasComposerContextChips: Bool {
-        !chatAttachments.isEmpty
+        isIdentityTask || !chatAttachments.isEmpty
             || currentLiveApplicationTarget != nil
             || currentSimulatorTarget != nil
     }

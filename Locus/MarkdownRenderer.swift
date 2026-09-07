@@ -490,7 +490,7 @@ struct MarkdownInlineStyleSpec {
         // only an underline. The accent treatment is reserved for remote URLs.
         if let link {
             if link.scheme != "locus-workspace" {
-                spec.foreground = LocusTheme.signalDeep
+                spec.foreground = LocusTheme.contentLink
                 spec.isUnderlined = true
             } else if !run.style.contains(.code) {
                 spec.isUnderlined = true

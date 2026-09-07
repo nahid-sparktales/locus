@@ -104,6 +104,10 @@ class ToolContext:
     #: Per-turn adaptive Solo executor. It is installed only for eligible Solo
     #: turns and removed before the turn identity is released.
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None
+    collaboration: Callable[[str, dict[str, Any]], str] | None = None
+    #: Helper-only mailbox to its owning root. Never installed on the root.
+    send_parent_message: Callable[[str], dict[str, Any]] | None = None
+    ask_question_async: Callable[[dict[str, Any]], str] | None = None
     #: App-owned blocking bridge to the user's question panel. It parks the
     #: worker thread until the user answers, exactly like the permission
     #: decider. Installed only for the visible root chat; sub-agents,
@@ -901,6 +905,14 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     )
     if not steps:
         return "Error: submit_plan requires at least one non-empty step."
+    details = {}
+    if any(key in args for key in ("step_details", "constraints", "decisions")):
+        from .capsules import CapsuleError, normalize_plan
+        try:
+            normalized = normalize_plan({**args, "steps": steps, "tests": tests})
+            details = {key: normalized[key] for key in ("step_details", "constraints", "decisions")}
+        except (CapsuleError, ValueError) as exc:
+            return f"Error: {exc}"
     plan_id = secrets.token_hex(8)
     ctx.plan_document = {
         "id": plan_id,
@@ -908,6 +920,7 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
         "summary": summary,
         "steps": steps,
         "tests": tests,
+        **details,
     }
     ctx.todos = [{"content": step, "status": "pending"} for step in steps]
     return f"Plan submitted for approval ({len(steps)} steps)."
@@ -1268,6 +1281,28 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
 
 def execute_tool(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
     """Run a tool by name. Never raises; errors are returned as text."""
+    from .collaboration_tools import COLLABORATION_NAMES
+    if name == "send_parent_message":
+        if ctx.send_parent_message is None:
+            return "Error: parent messaging is available only to a helper."
+        if not isinstance(arguments, dict) or set(arguments) != {"text"}:
+            return "Error: send_parent_message accepts only text; its target is always the owning root."
+        value = arguments["text"]
+        if not isinstance(value, str) or not value.strip() or len(value) > 12_000:
+            return "Error: text must be a nonempty string of at most 12000 characters."
+        try:
+            return json.dumps(ctx.send_parent_message(value), ensure_ascii=False)
+        except (RuntimeError, ValueError, TypeError) as error:
+            return f"Error: {error}"
+    if name in COLLABORATION_NAMES or name == "ask_question_async":
+        if not isinstance(arguments, dict):
+            return "Error: tool arguments must be an object."
+        try:
+            if name == "ask_question_async":
+                return ctx.ask_question_async(arguments) if ctx.ask_question_async else "Error: optional questions unavailable."
+            return ctx.collaboration(name, arguments) if ctx.collaboration else "Error: collaboration unavailable."
+        except (RuntimeError, ValueError, TypeError) as error:
+            return f"Error: {error}"
     impl = _IMPLS.get(name)
     if impl is None:
         known = ", ".join(sorted(_IMPLS))
@@ -1501,6 +1536,20 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "array",
                 "description": "Verification scenarios.",
                 "items": {"type": "string"},
+            },
+            "constraints": {"type": "array", "items": {"type": "string"},
+                            "description": "Requirements the implementation must preserve."},
+            "decisions": {"type": "array", "items": {"type": "string"},
+                          "description": "Design decisions already resolved by the planner."},
+            "step_details": {
+                "type": "array", "description": "For task capsules, detailed steps in dependency order (maximum 16).",
+                "items": {"type": "object", "properties": {
+                    "id": {"type": "string"}, "title": {"type": "string"},
+                    "instructions": {"type": "string"},
+                    "dependencies": {"type": "array", "items": {"type": "string"}},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative source and destination files. Include missing files to be created."},
+                    "checks": {"type": "array", "items": {"type": "string"}},
+                }, "required": ["id", "title", "instructions", "dependencies", "files", "checks"]},
             },
         },
         ["title", "summary", "steps", "tests"],

@@ -309,15 +309,13 @@ struct BlockingQuestionPromptView: View {
         }
     }
 
-    /// Sends whatever has been collected so far, so a partial run still reaches
-    /// the model rather than being thrown away.
+    /// Skipping a required question supplies no answer or permission.
     private func skip() {
-        let partialAnswers = answers
         Task { @MainActor in
             if let onResolve {
-                onResolve(partialAnswers, "cancel")
+                onResolve([], "cancel")
             } else {
-                model.resolveBlockingQuestion(partialAnswers, action: "cancel")
+                model.resolveBlockingQuestion([], action: "cancel")
             }
         }
     }

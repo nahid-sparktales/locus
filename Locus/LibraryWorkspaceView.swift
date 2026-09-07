@@ -131,7 +131,7 @@ struct LibraryWorkspaceView: View {
             Label(message, systemImage: "exclamationmark.triangle").font(.subheadline)
             Spacer()
             Button("Retry") { Task { await library.refresh() } }
-        }.padding().background(.yellow.opacity(0.10))
+        }.padding().background(LocusTheme.warningForeground.opacity(0.10))
     }
 }
 
@@ -183,7 +183,7 @@ struct OutputsLibraryView: View {
                                 Text(output.target).font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(1)
                                 Text(output.isWebsite ? "Live website" : "\(output.versions.filter { $0.hash != nil }.count) saved versions")
                                     .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
-                                if let reason = output.latest?.unavailableReason { Text(reason).font(.subheadline).foregroundStyle(.orange).lineLimit(2) }
+                                if let reason = output.latest?.unavailableReason { Text(reason).font(.subheadline).foregroundStyle(LocusTheme.warningForeground).lineLimit(2) }
                             }.padding(.vertical, 6).tag(output.id)
                                 .accessibilityIdentifier("library.output.item.\(output.target)")
                         }
@@ -289,7 +289,7 @@ struct OutputComparisonView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(differences.enumerated()), id: \.offset) { _, line in
                             Text(line).font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                                .foregroundStyle(line.hasPrefix("+ ") ? LocusTheme.success : line.hasPrefix("− ") ? LocusTheme.dangerForeground : LocusTheme.ink)
+                                .foregroundStyle(line.hasPrefix("+ ") ? LocusTheme.diffAdded : line.hasPrefix("− ") ? LocusTheme.diffRemoved : LocusTheme.inkSoft)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }.padding()

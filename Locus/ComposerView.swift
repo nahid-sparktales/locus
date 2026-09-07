@@ -195,26 +195,64 @@ enum ComposerActionMetrics {
     }
 }
 
-private struct ComposerActionLayout: Layout {
+struct ComposerActionLayout: Layout {
     let rightToLeft: Bool
 
-    private func arrangement(subviews: Subviews, width: CGFloat?) -> ComposerActionMetrics.Arrangement {
-        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
-        let minimumWidth = subviews.map { $0.sizeThatFits(.zero).width }.max() ?? 0
-        return ComposerActionMetrics.measure(
-            idealSizes: ideal, minimumWidth: minimumWidth, proposedWidth: width,
+    enum ProposalKey: Hashable {
+        case ideal
+        case width(CGFloat)
+    }
+
+    struct Cache {
+        var idealSizes: [CGSize]
+        var minimumWidth: CGFloat
+        var rightToLeft: Bool
+        var arrangements: [ProposalKey: ComposerActionMetrics.Arrangement] = [:]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(
+            idealSizes: subviews.map { $0.sizeThatFits(.unspecified) },
+            minimumWidth: subviews.map { $0.sizeThatFits(.zero).width }.max() ?? 0,
+            rightToLeft: rightToLeft
+        )
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        // SwiftUI invalidates this cache when controls, labels or their
+        // environment change. A drag only adds the newly proposed width.
+        cache = makeCache(subviews: subviews)
+    }
+
+    private func arrangement(subviews: Subviews, width: CGFloat?, cache: inout Cache) -> ComposerActionMetrics.Arrangement {
+        if cache.idealSizes.count != subviews.count {
+            updateCache(&cache, subviews: subviews)
+        } else if cache.rightToLeft != rightToLeft {
+            cache.rightToLeft = rightToLeft
+            cache.arrangements.removeAll(keepingCapacity: true)
+        }
+        let finiteWidth = width.flatMap { $0.isFinite ? max($0, 0) : nil }
+        let key = finiteWidth.map(ProposalKey.width) ?? .ideal
+        if let measured = cache.arrangements[key] { return measured }
+        let measured = ComposerActionMetrics.measure(
+            idealSizes: cache.idealSizes, minimumWidth: cache.minimumWidth, proposedWidth: finiteWidth,
             rightToLeft: rightToLeft
         ) { index, availableWidth in
             subviews[index].sizeThatFits(ProposedViewSize(width: availableWidth, height: nil))
         }
+        // Animation and drag proposals must not accumulate for the lifetime
+        // of an unchanged toolbar. Keep only a small working set.
+        if cache.arrangements.count >= 12 { cache.arrangements.removeAll(keepingCapacity: true) }
+        cache.arrangements[key] = measured
+        return measured
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrangement(subviews: subviews, width: proposal.width).size
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        arrangement(subviews: subviews, width: proposal.width, cache: &cache).size
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let layout = arrangement(subviews: subviews, width: bounds.width)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let layout = arrangement(subviews: subviews, width: bounds.width, cache: &cache)
         for (index, frame) in layout.frames.enumerated() {
             subviews[index].place(
                 at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
@@ -223,6 +261,12 @@ private struct ComposerActionLayout: Layout {
             )
         }
     }
+
+    // This row owns its control positions and does not export child alignment
+    // guides. The defaults perform placement just to answer each ancestor's
+    // alignment query, repeatedly measuring nested toolbar controls.
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGFloat? { nil }
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGFloat? { nil }
 }
 
 struct ComposerView: View {
@@ -266,6 +310,12 @@ struct ComposerView: View {
             if !composerState.queuedMessages.isEmpty {
                 queueRow
                     .disabled(!model.canAcceptTranscriptInput)
+            }
+
+            if model.canAcceptTranscriptInput, model.activePermissionRequest == nil,
+               model.pendingBlockingQuestion == nil, !model.planApprovalPending {
+                OptionalQuestionPanel(questions: model.optionalQuestions, sessionID: model.currentSessionID)
+                    .frame(maxWidth: 740)
             }
 
             // While a permission request is pending the prompt replaces the
@@ -324,8 +374,9 @@ struct ComposerView: View {
                         }
 
                         TextEditor(text: $composerState.draftText)
+                            .foregroundStyle(LocusTheme.inkSoft)
+                            .tint(LocusTheme.accentAction)
                             .font(.locus(size: 13))
-                            .foregroundStyle(LocusTheme.ink)
                             .lineSpacing(5)
                             .scrollContentBackground(.hidden)
                             .padding(.horizontal, 7)
@@ -919,7 +970,7 @@ struct ComposerView: View {
                         } else {
                             Text("\(model.includedContextCount)")
                             Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
-                                .foregroundStyle(LocusTheme.muted.opacity(0.68))
+                                .foregroundStyle(LocusTheme.muted)
                         }
                     }
                     .font(.locus(size: 9, weight: .semibold))
@@ -1015,14 +1066,15 @@ struct ComposerView: View {
                             if isStopping {
                                 ProgressView()
                                     .controlSize(.small)
+                                    .tint(LocusTheme.coral)
                             } else {
                                 Image(systemName: "stop.fill")
                                     .font(.locus(size: 12, weight: .bold))
-                                    .foregroundStyle(Color.white)
+                                    .foregroundStyle(LocusTheme.coral)
                             }
                         }
                         .frame(width: 32, height: 32)
-                        .background(LocusTheme.coral)
+                        .background(LocusTheme.coral.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.locus())
@@ -1203,6 +1255,14 @@ struct ComposerView: View {
     private var attachmentChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                if model.isIdentityTask {
+                    Button { model.identityVault.open() } label: {
+                        Label("Identity Vault · Private task", systemImage: "lock.shield")
+                            .font(.locus(size: 11, weight: .medium))
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .background(LocusTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+                    }.buttonStyle(.locus(.card)).accessibilityIdentifier("composer.identityChip")
+                }
                 ForEach(composerState.attachments) { attachment in
                     HStack(spacing: 6) {
                         if attachment.kind == .image || attachment.kind == .applicationSnapshot,
@@ -1743,6 +1803,11 @@ private struct ComposerAttachmentSourceMenu: View {
                 model.addChatAttachments()
             }
             .disabled(composerState.isLoadingAttachments)
+
+            Button("Use Identity Vault…", systemImage: "person.text.rectangle") {
+                model.identityVault.open()
+            }
+            .accessibilityIdentifier("composer.identityVault")
 
             if ApplicationContextService.isAvailable {
                 if let current = applicationContext.lastExternalApplication {

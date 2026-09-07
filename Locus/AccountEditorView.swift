@@ -211,6 +211,8 @@ struct AccountEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(LocusTheme.surfaceCanvas)
 
             HStack(spacing: 12) {
                 if let saveBlocker {
@@ -579,6 +581,7 @@ struct AccountEditorView: View {
 /// editor directly so the caret, typing, and pasted text always originate on
 /// the left and advance toward the right.
 private struct LeadingAccountTextField: NSViewRepresentable {
+    @Environment(\.locusAccent) private var accent
     @Binding var text: String
     let prompt: String
     let secure: Bool
@@ -587,9 +590,29 @@ private struct LeadingAccountTextField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: LeadingAccountTextField
+        weak var field: NSTextField?
 
         init(parent: LeadingAccountTextField) {
             self.parent = parent
+            super.init()
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(windowKeyStateChanged(_:)),
+                    name: name,
+                    object: nil
+                )
+            }
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        @objc private func windowKeyStateChanged(_ notification: Notification) {
+            guard let field, let window = notification.object as? NSWindow,
+                  field.window === window else { return }
+            Self.configure(field: field)
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
@@ -612,6 +635,24 @@ private struct LeadingAccountTextField: NSViewRepresentable {
         static func configure(editor: NSTextView) {
             editor.alignment = .left
             editor.baseWritingDirection = .leftToRight
+            editor.textColor = LocusTheme.palette(for: editor.effectiveAppearance).inkSoft
+            editor.insertionPointColor = LocusAccentRuntime.shared.currentSelection()
+                .actionNSColor(for: editor.effectiveAppearance)
+            editor.selectedTextAttributes = [
+                .backgroundColor: LocusTheme.selectionWash(forKeyWindow: editor.window?.isKeyWindow ?? true),
+            ]
+        }
+
+        static func configure(field: NSTextField) {
+            let palette = LocusTheme.palette(for: field.effectiveAppearance)
+            field.textColor = palette.inkSoft
+            field.placeholderAttributedString = NSAttributedString(
+                string: field.placeholderString ?? "",
+                attributes: [.foregroundColor: palette.muted]
+            )
+            if let editor = field.currentEditor() as? NSTextView {
+                configure(editor: editor)
+            }
         }
     }
 
@@ -620,8 +661,9 @@ private struct LeadingAccountTextField: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field: NSTextField = secure ? NSSecureTextField() : NSTextField()
+        let field: NSTextField = secure ? ThemedSecureAccountTextField() : ThemedAccountTextField()
         field.delegate = context.coordinator
+        context.coordinator.field = field
         field.isBezeled = false
         field.isBordered = false
         field.drawsBackground = false
@@ -637,6 +679,9 @@ private struct LeadingAccountTextField: NSViewRepresentable {
     }
 
     func updateNSView(_ field: NSTextField, context: Context) {
+        // Reading the accent makes the native caret update when the saved
+        // colour changes, including while this shared field editor is active.
+        _ = accent
         context.coordinator.parent = self
         field.placeholderString = prompt
         field.setAccessibilityLabel(prompt)
@@ -644,6 +689,7 @@ private struct LeadingAccountTextField: NSViewRepresentable {
         field.alignment = .left
         field.baseWritingDirection = .leftToRight
         field.userInterfaceLayoutDirection = .leftToRight
+        Coordinator.configure(field: field)
 
         if field.stringValue != text {
             field.stringValue = text
@@ -659,5 +705,19 @@ private struct LeadingAccountTextField: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+private final class ThemedAccountTextField: NSTextField {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        LeadingAccountTextField.Coordinator.configure(field: self)
+    }
+}
+
+private final class ThemedSecureAccountTextField: NSSecureTextField {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        LeadingAccountTextField.Coordinator.configure(field: self)
     }
 }

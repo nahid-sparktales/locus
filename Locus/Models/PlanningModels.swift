@@ -18,23 +18,34 @@ struct PlanDocument: Codable, Hashable, Identifiable {
     var summary: String
     var steps: [String]
     var tests: [String]
+    var stepDetails: [CapsulePlanStep]
+    var constraints: [String]
+    var decisions: [String]
 
     init(
         id: String = UUID().uuidString,
         title: String = "Implementation plan",
         summary: String = "",
         steps: [String] = [],
-        tests: [String] = []
+        tests: [String] = [],
+        stepDetails: [CapsulePlanStep] = [],
+        constraints: [String] = [],
+        decisions: [String] = []
     ) {
         self.id = id
         self.title = title
         self.summary = summary
         self.steps = steps
         self.tests = tests
+        self.stepDetails = stepDetails
+        self.constraints = constraints
+        self.decisions = decisions
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, steps, tests
+        case stepDetails = "step_details"
+        case constraints, decisions
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +55,9 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
         steps = try container.decodeIfPresent([String].self, forKey: .steps) ?? []
         tests = try container.decodeIfPresent([String].self, forKey: .tests) ?? []
+        stepDetails = try container.decodeIfPresent([CapsulePlanStep].self, forKey: .stepDetails) ?? []
+        constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
+        decisions = try container.decodeIfPresent([String].self, forKey: .decisions) ?? []
     }
 }
 

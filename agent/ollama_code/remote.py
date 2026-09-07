@@ -571,7 +571,7 @@ class RemoteClient:
             message = str(e).lower()
             # Not every hosted model exposes tool calling. Retry once without
             # tools so the user still gets an answer, and say what happened.
-            if tools and ("tool" in message or "function" in message):
+            if tools and not getattr(self, "identity_private_request", False) and ("tool" in message or "function" in message):
                 payload.pop("tools", None)
                 payload.pop("tool_choice", None)
                 payload.pop("parallel_tool_calls", None)

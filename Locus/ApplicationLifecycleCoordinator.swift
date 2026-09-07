@@ -22,6 +22,7 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
         completion()
     }
     private var prepareOpenSettings: () -> Bool = { true }
+    private var prepareNotesForShutdown: () -> Bool = { true }
     private var lockSensitiveServices: () -> Void = {}
     private weak var pendingTerminationApplication: NSApplication?
     private var updateContinuation: (@MainActor () -> Void)?
@@ -41,6 +42,21 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
         }
         prepareOpenSettings = { [weak model] in
             model?.prepareOpenSettingsForUpdate() ?? true
+        }
+        prepareNotesForShutdown = { [weak model] in
+            do {
+                try NotesStore.flushPendingChanges()
+                return true
+            } catch {
+                model?.notebookPresented = true
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "A note could not be saved"
+                alert.informativeText = "Your latest changes are still in memory. Retry saving in Notebook before quitting.\n\n\(error.localizedDescription)"
+                alert.addButton(withTitle: "Back to Notes")
+                alert.runModal()
+                return false
+            }
         }
         lockSensitiveServices = { [weak model] in model?.lockSensitiveServicesForShutdown() }
     }
@@ -72,7 +88,7 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
     /// continuation.
     func shouldAllowUpdateRelaunch() -> Bool {
         guard state == .idle else { return false }
-        return prepareOpenSettings()
+        return prepareOpenSettings() && prepareNotesForShutdown()
     }
 
     func updaterWillRelaunch() {
@@ -92,6 +108,8 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
         case .idle:
             break
         }
+
+        guard prepareNotesForShutdown() else { return .terminateCancel }
 
         guard hasRunningWork() else {
             lockSensitiveServices()

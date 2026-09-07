@@ -246,6 +246,10 @@ private struct WorkflowStepCard: View {
             get: { step.instructionTemplate ?? "" },
             set: { step.instructionTemplate = $0 }
         ))
+        .foregroundStyle(LocusTheme.inkSoft)
+        .tint(LocusTheme.accentAction)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCard)
         .font(.locus(size: 10))
         .frame(minHeight: 88)
         .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
@@ -349,6 +353,10 @@ private struct WorkflowStepCard: View {
             get: { step.explanationTemplate ?? "" },
             set: { step.explanationTemplate = $0 }
         ))
+        .foregroundStyle(LocusTheme.inkSoft)
+        .tint(LocusTheme.accentAction)
+        .scrollContentBackground(.hidden)
+        .background(LocusTheme.surfaceCard)
         .font(.locus(size: 10))
         .frame(minHeight: 64)
         .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
@@ -463,6 +471,10 @@ private struct WorkflowSimulationSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.locus(size: 9, weight: .semibold))
             TextEditor(text: text)
+                .foregroundStyle(LocusTheme.inkSoft)
+                .tint(LocusTheme.accentAction)
+                .scrollContentBackground(.hidden)
+                .background(LocusTheme.surfaceCard)
                 .font(.locus(size: 12, design: .monospaced))
                 .frame(minHeight: 160)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }

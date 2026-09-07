@@ -57,6 +57,7 @@ final class OffscreenWebHost {
     private static let parkingOrigin = CGPoint(x: -32_000, y: -32_000)
 
     let webView: WKWebView
+    let identityProtected: Bool
     private let panel: UnconstrainedPanel
     private(set) var viewport: CGSize
 
@@ -82,8 +83,9 @@ final class OffscreenWebHost {
         }
     }
 
-    init(webView: WKWebView, viewport: CGSize = BrowserViewport.desktop.size) {
+    init(webView: WKWebView, viewport: CGSize = BrowserViewport.desktop.size, identityProtected: Bool = false) {
         self.webView = webView
+        self.identityProtected = identityProtected
         self.viewport = viewport
         panel = UnconstrainedPanel(
             contentRect: NSRect(origin: Self.parkingOrigin, size: viewport),
@@ -97,6 +99,7 @@ final class OffscreenWebHost {
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenNone]
         panel.backgroundColor = .white
+        if identityProtected { panel.sharingType = .none }
         panel.contentView?.addSubview(webView)
         webView.frame = NSRect(origin: .zero, size: viewport)
         webView.autoresizingMask = [.width, .height]
@@ -238,6 +241,7 @@ final class OffscreenWebHost {
         region: CGRect?,
         maximumWidth: CGFloat = 1_600
     ) async throws -> (data: Data, pixels: CGSize) {
+        guard !identityProtected else { throw IdentityBrowserError.unsupported }
         // A backgrounded panel is ordered out and has no drawing area; bring
         // it back for the capture and restore the throttled state after. The
         // defer re-reads `isKeptLive` rather than trusting the entry value:

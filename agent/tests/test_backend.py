@@ -6556,6 +6556,7 @@ def test_each_coding_job_installs_its_own_tool_ceiling(monkeypatch):
             policy_calls.append((policy, access_ceiling, role))
 
     core = SimpleNamespace(
+        identity_mode=False,
         client=object(),
         provider="remote",
         host="https://solo.example",

@@ -61,10 +61,10 @@ struct WorkspaceFileViewerSheet: View {
                                 ?? "Line \(location.line)"
                         )
                         .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(LocusTheme.contentLink)
                         .padding(.horizontal, 6)
                         .frame(height: 20)
-                        .background(LocusTheme.signalDeep.opacity(0.12))
+                        .background(LocusTheme.contentLink.opacity(0.12))
                         .clipShape(Capsule())
                     }
                 }
@@ -183,7 +183,7 @@ private struct WorkspaceSourceTextRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Text(String(number))
                 .font(.locus(size: numberSize, design: .monospaced))
-                .foregroundStyle(isHighlighted ? LocusTheme.signalDeep : LocusTheme.muted)
+                .foregroundStyle(isHighlighted ? LocusTheme.contentLink : LocusTheme.muted)
                 .frame(width: numberColumnWidth, alignment: .trailing)
                 .textSelection(.disabled)
             Text(line.isEmpty ? " " : line)
@@ -198,7 +198,7 @@ private struct WorkspaceSourceTextRow: View {
         .padding(.horizontal, 8)
         .frame(minHeight: textSize * 2.2, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isHighlighted ? LocusTheme.signalDeep.opacity(0.11) : Color.clear)
+        .background(isHighlighted ? LocusTheme.contentLink.opacity(0.11) : Color.clear)
         .accessibilityLabel(
             isHighlighted
                 ? "Highlighted line \(number): \(line)"

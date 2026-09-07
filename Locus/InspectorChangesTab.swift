@@ -606,8 +606,8 @@ private struct GitChangeRow: View {
 
     private var markerColor: Color {
         switch change.status {
-        case .added, .untracked: LocusTheme.success
-        case .deleted: LocusTheme.coral
+        case .added, .untracked: LocusTheme.diffAdded
+        case .deleted: LocusTheme.diffRemoved
         case .unmerged: LocusTheme.warning
         default: LocusTheme.blue
         }

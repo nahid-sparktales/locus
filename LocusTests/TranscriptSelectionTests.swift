@@ -9,6 +9,9 @@ import XCTest
 final class TranscriptSelectionTests: XCTestCase {
     @MainActor
     func testSelectionWashSkipsUnchangedUpdatesAndRetainsDynamicAppearance() throws {
+        let previousAccent = LocusAccentRuntime.shared.currentSelection()
+        defer { LocusAccentRuntime.shared.configure(previousAccent) }
+        LocusAccentRuntime.shared.configure(LocusAccentSelection(rawValue: "lime", customHex: "FFFFFF"))
         let view = ResponseSelectableTextView.make()
         let light = try XCTUnwrap(NSAppearance(named: .aqua))
         let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
@@ -20,16 +23,24 @@ final class TranscriptSelectionTests: XCTestCase {
         XCTAssertTrue((view.selectedTextAttributes[.backgroundColor] as? NSColor) === color,
             "An unchanged update must retain the installed color instead of invalidating text layout")
 
-        var lightAlpha: CGFloat = 0
-        var darkAlpha: CGFloat = 0
-        light.performAsCurrentDrawingAppearance { lightAlpha = color.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0 }
-        dark.performAsCurrentDrawingAppearance { darkAlpha = color.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0 }
-        XCTAssertNotEqual(lightAlpha, darkAlpha, "The installed color must remain appearance-aware")
+        var lightColor: NSColor?
+        var darkColor: NSColor?
+        light.performAsCurrentDrawingAppearance { lightColor = color.usingColorSpace(.sRGB) }
+        dark.performAsCurrentDrawingAppearance { darkColor = color.usingColorSpace(.sRGB) }
+        XCTAssertNotEqual(lightColor, darkColor, "The installed color must remain appearance-aware")
+        XCTAssertEqual(lightColor?.alphaComponent, 1, "Opaque selection preserves contrast on every surface")
+        XCTAssertEqual(darkColor?.alphaComponent, 1)
 
         view.appearance = dark
         view.viewDidChangeEffectiveAppearance()
         let changed = try XCTUnwrap(view.selectedTextAttributes[.backgroundColor] as? NSColor)
         XCTAssertFalse(changed === color, "An appearance change must refresh the resolved signature")
+        var beforeAccentChange: NSColor?
+        var afterAccentChange: NSColor?
+        dark.performAsCurrentDrawingAppearance { beforeAccentChange = color.usingColorSpace(.sRGB) }
+        LocusAccentRuntime.shared.configure(LocusAccentSelection(rawValue: "pink", customHex: "FFFFFF"))
+        dark.performAsCurrentDrawingAppearance { afterAccentChange = color.usingColorSpace(.sRGB) }
+        XCTAssertNotEqual(beforeAccentChange, afterAccentChange, "A held selection colour must invalidate its cache when the accent changes")
     }
 
     @MainActor

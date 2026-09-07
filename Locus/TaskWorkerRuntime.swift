@@ -60,6 +60,12 @@ final class ChatWorkerRuntime {
     var isPreparingForDispatch = false
     var dispatchPreparationID: UUID?
     var sessionInfo: SessionInfo?
+    var identityProvider: IdentityProviderIdentity?
+    var identityContextEpoch: String?
+    /// Capsule stages temporarily route this worker independently of the
+    /// regular model picker. Keep the marker through failures and planner
+    /// questions until an ordinary dispatch has restored its provider.
+    var hasCapsuleProviderOverride = false
     var pendingForegroundEvent: [String: Any]?
     var executionState: TeamRunState = .queued
     var startedAt: Date?

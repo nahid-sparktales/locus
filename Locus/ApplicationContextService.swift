@@ -36,9 +36,12 @@ enum ApplicationContextError: LocalizedError {
     case windowUnavailable
     case screenshotFailed
     case screenshotTooLarge
+    case privateIdentitySurface
 
     var errorDescription: String? {
         switch self {
+        case .privateIdentitySurface:
+            "Application capture is paused while Identity Vault or a private application is open."
         case .unavailable:
             "Application context is unavailable in the Mac App Store build."
         case .applicationClosed:
@@ -160,6 +163,7 @@ final class ApplicationContextService: ObservableObject {
     }
 
     func captureSnapshot(of target: ApplicationTarget) async throws -> ChatAttachment {
+        guard !IdentityPrivacyGuard.shared.blocksCapture else { throw ApplicationContextError.privateIdentitySurface }
         guard Self.isAvailable else { throw ApplicationContextError.unavailable }
         guard let app = exactApplication(for: target) else {
             throw ApplicationContextError.applicationClosed
@@ -187,6 +191,7 @@ final class ApplicationContextService: ObservableObject {
         guard png.count <= Self.maximumScreenshotBytes else {
             throw ApplicationContextError.screenshotTooLarge
         }
+        guard !IdentityPrivacyGuard.shared.blocksCapture else { throw ApplicationContextError.privateIdentitySurface }
         let identity = UUID()
         let metadata = ApplicationSnapshotContext(
             bundleIdentifier: target.bundleIdentifier,

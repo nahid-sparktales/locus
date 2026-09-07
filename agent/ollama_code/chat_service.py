@@ -17,10 +17,11 @@ from typing import Any
 from fastapi import WebSocket
 
 from . import __version__
-from .codex_app_server import CodexBrokerClient, CodexManagerRegistry
+from .codex_app_server import CodexBrokerClient, CodexManagerRegistry, codex_home_for_account
 from .core import AgentCore
 from .devserver import DevServerError, DevServerManager
 from .evaluations import EvaluationStore
+from .identity import context_sources, source_references
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
     OrchestrationError,
@@ -31,6 +32,7 @@ from .orchestration import (
     parse_manifest,
     set_chatgpt_manager,
 )
+from .question_service import QUESTION_VERSION, QuestionError, QuestionService
 from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStore, RunStoreError
 from .solo_swarm import SoloSwarmExecutor
 from .telemetry import traceparent_for_run
@@ -95,8 +97,10 @@ def _format_question_answers(
         lines.append("")
     if action != "answer":
         lines.append(
-            "The user dismissed the question box. Do not ask the same question "
-            "again — continue with your best judgment and state the assumption you made."
+            "The user dismissed the question box without answering every question. "
+            "Dismissal is not an answer, a selected recommendation, or approval. "
+            "Continue independent work only; keep any required dependent decision "
+            "unresolved until the user explicitly answers."
         )
     return "\n".join(lines).strip() or "The user did not answer."
 
@@ -127,7 +131,7 @@ class ChatService:
             self._codex_registry.add_listener(self._on_codex_event)
         else:
             self._codex_pinned.add_listener(self._on_codex_event)
-        configure_chatgpt_manager(self.codex)
+        configure_chatgpt_manager(self.codex, account_resolver=self.codex_for)
         self.core.codex_manager = self.codex
         self.worker_id = uuid.uuid4().hex
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -139,10 +143,19 @@ class ChatService:
         self.pending_computer_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_simulator_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_browser_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_identity_actions: dict[str, Future[dict[str, Any]]] = {}
+        self.pending_identity_context: dict[str, Future[dict[str, Any]]] = {}
+        self._pending_identity_guard = RLock()
         self.pending_notes_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_connector_actions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_questions: dict[str, Future[dict[str, Any]]] = {}
         self._pending_questions_guard = RLock()
+        self.async_questions_enabled = False
+        self.collaboration_enabled = False
+        self.active_collaboration: Any = None
+        self.optional_questions = QuestionService(owner_id=self.worker_id)
+        self._question_timer: asyncio.Task[Any] | None = None
+        self._question_timer_closed = False
         self.pending_dispatch_decisions: dict[str, Future[dict[str, Any]]] = {}
         self.pending_dispatch_plans: dict[str, dict[str, Any]] = {}
         self._parallel_writer_cores: dict[str, AgentCore] = {}
@@ -189,6 +202,7 @@ class ChatService:
         # has one, so the tool is installed and advertised here rather than in
         # `AgentCore`, which the CLI and every evaluation core also build.
         self.core.tool_ctx.ask_question = self.ask_user_question
+        self.core.tool_ctx.ask_question_async = self.ask_user_question_async
         self.core.tool_registry.set_ask_question_enabled(True)
         self.core.tool_registry.product_features.bind(self)
 
@@ -215,6 +229,11 @@ class ChatService:
         Reading or signing into an account must not disturb the account the
         agent may be mid-turn against, so this deliberately does not switch.
         """
+        if not isinstance(home_id, str):
+            raise ValueError("ChatGPT account home id must be a string")
+        codex_home_for_account(home_id)
+        if isinstance(self._codex_pinned, CodexBrokerClient):
+            return self._codex_pinned.for_account(home_id)
         if self._codex_pinned is not None:
             return self._codex_pinned
         assert self._codex_registry is not None
@@ -222,6 +241,13 @@ class ChatService:
 
     def use_chatgpt_home(self, home_id: str) -> Any:
         """Point the agent, its teams, and its workers at one account's helper."""
+        if isinstance(self._codex_pinned, CodexBrokerClient):
+            manager = self._codex_pinned.for_account(home_id)
+            self._codex_pinned = manager
+            self._codex_home_id = home_id.strip()
+            self.core.codex_manager = manager
+            set_chatgpt_manager(manager, account_resolver=self.codex_for)
+            return manager
         if self._codex_pinned is not None:
             return self._codex_pinned
         assert self._codex_registry is not None
@@ -229,7 +255,7 @@ class ChatService:
         manager = self._codex_registry.manager(home_id)
         self._codex_home_id = (home_id or "").strip()
         self.core.codex_manager = manager
-        set_chatgpt_manager(manager)
+        set_chatgpt_manager(manager, account_resolver=self.codex_for)
         return manager
 
     def close_codex(self) -> None:
@@ -541,12 +567,196 @@ class ChatService:
             future.set_result(response)
             return True
 
-    def cancel_all_questions(self) -> None:
-        """Unblock every waiting question so an interrupted turn can end."""
+    def cancel_required_questions(self) -> None:
+        """Dismiss legacy blocking cards without treating dismissal as an answer."""
         with self._pending_questions_guard:
             for future in self.pending_questions.values():
                 if not future.done():
                     future.set_result({"action": "cancel", "answers": []})
+
+    def cancel_all_questions(self, *, suspend_async: bool = False) -> None:
+        """Unblock every waiting question so an interrupted turn can end."""
+        self.cancel_required_questions()
+        self.optional_questions.stop(self.core.session.session_id, suspend=suspend_async)
+        self.publish_question_snapshot(tick=False)
+
+    def disconnect_questions(self) -> None:
+        self.cancel_required_questions()
+        self.optional_questions.release_editing(self.core.session.session_id)
+        self.ensure_question_timer()
+
+    def ensure_question_timer(self) -> None:
+        """Keep deadlines independent of a socket or a long running model/tool."""
+        loop = self.loop
+        if self._question_timer_closed or loop is None or not loop.is_running():
+            return
+
+        def start() -> None:
+            if self._question_timer_closed:
+                return
+            if self._question_timer is None or self._question_timer.done():
+                self._question_timer = loop.create_task(self._tick_questions())
+
+        loop.call_soon_threadsafe(start)
+
+    async def _tick_questions(self) -> None:
+        while not self._question_timer_closed:
+            session_ids = self.optional_questions.pending_session_ids()
+            if not session_ids:
+                return
+            for session_id in session_ids:
+                requests = self.optional_questions.tick(session_id)
+                # Reconnect gets an authoritative snapshot. Avoid accumulating
+                # obsolete countdown snapshots in the disconnected event queue.
+                if self.ws is not None and session_id == self.core.session.session_id:
+                    self.emit({"type": "question_async_snapshot", "version": QUESTION_VERSION,
+                               "session_id": session_id, "requests": requests})
+            await asyncio.sleep(0.25)
+
+    def close_question_timer(self) -> None:
+        self._question_timer_closed = True
+        if self._question_timer is not None and not self._question_timer.done():
+            loop = self._question_timer.get_loop()
+            if loop.is_running():
+                loop.call_soon_threadsafe(self._question_timer.cancel)
+        for session_id in self.optional_questions.pending_session_ids():
+            self.optional_questions.stop(session_id, suspend=True)
+
+    # Optional questions return immediately; only later context deliveries carry answers.
+    def configure_async_questions(self, enabled: bool) -> dict[str, Any]:
+        self.async_questions_enabled = enabled
+        setter = getattr(self.core.tool_registry, "set_ask_question_async_enabled", None)
+        if callable(setter):
+            setter(enabled)
+        if not enabled:
+            self.optional_questions.release_editing(self.core.session.session_id)
+        result = {"type": "question_capability", "enabled": enabled, "version": QUESTION_VERSION}
+        self.emit(result)
+        self.publish_question_snapshot(tick=False)
+        return result
+
+    def ask_user_question_async(self, payload: dict[str, Any]) -> str:
+        if self.ws is None or not self.async_questions_enabled:
+            return "Error: optional question cards are unavailable. Continue with an explicit assumption, or use the required question tool if a decision must wait."
+        try:
+            action = payload.get("action", "ask")
+            if action == "supersede":
+                request = self.optional_questions.supersede(
+                    self.core.session.session_id, str(payload.get("request_id") or ""),
+                    payload.get("reason"),
+                )
+                self.publish_question_snapshot(tick=False)
+                return json.dumps({"status": "superseded", "request_id": request["request_id"],
+                                   "reason": request["superseded_reason"],
+                                   "instruction": "The question is no longer needed. No unanswered choices were defaulted or approved."},
+                                  ensure_ascii=False)
+            if action != "ask":
+                raise QuestionError("Choose ask or supersede for an optional question.")
+            request = self.optional_questions.create(
+                self.core.session.session_id, self.active_run_id or "",
+                self.core.active_tool_call_id or "", payload,
+            )
+        except QuestionError as error:
+            return f"Error: {error}"
+        self.ensure_question_timer()
+        self.publish_question_snapshot(tick=False)
+        return json.dumps({
+            "status": "pending", "request_id": request["request_id"],
+            "questions": request["questions"], "remaining_ms": request["remaining_ms"],
+            "deadline_at": request["deadline_at"],
+            "instruction": "Continue independent work now. Defer decisions covered by these questions until their answer or displayed recommendation is delivered as later context. Do not ask the same questions again.",
+        }, ensure_ascii=False)
+
+    def question_snapshot(self, *, tick: bool = True) -> dict[str, Any]:
+        session_id = self.core.session.session_id
+        requests = (self.optional_questions.tick(session_id) if tick
+                    else self.optional_questions.snapshot(session_id))
+        return {"type": "question_async_snapshot", "version": QUESTION_VERSION,
+                "session_id": session_id, "requests": requests}
+
+    def publish_question_snapshot(self, *, tick: bool = True) -> dict[str, Any]:
+        snapshot = self.question_snapshot(tick=tick)
+        if snapshot["requests"] or self.async_questions_enabled:
+            self.emit(snapshot)
+        return snapshot
+
+    def restore_question_session(self) -> dict[str, Any]:
+        self.optional_questions.recover_session(self.core.session.session_id)
+        self.ensure_question_timer()
+        return self.question_snapshot()
+
+    def handle_async_question_response(self, message: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(message.get("request_id") or "")[:160]
+        response_id = str(message.get("response_id") or "")[:160]
+        revision = message.get("revision")
+        try:
+            if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
+                raise QuestionError("Question revision must be an integer.")
+            result = self.optional_questions.respond(
+                self.core.session.session_id, request_id, str(message.get("action") or ""),
+                message.get("answers"), response_id=response_id, revision=revision,
+            )
+        except QuestionError as error:
+            result = {"request_id": request_id, "response_id": response_id,
+                      "accepted": False, "error": str(error)}
+        event = {"type": "question_async_response_ack", **result}
+        self.emit(event)
+        self.publish_question_snapshot()
+        return event
+
+    def update_question_editing(self, message: dict[str, Any], *, editor_id: str = "desktop") -> dict[str, Any]:
+        request_id = str(message.get("request_id") or "")[:160]
+        try:
+            if not isinstance(message.get("active"), bool):
+                raise QuestionError("Editing state must be true or false.")
+            # The native client supplies a mobile device suffix only after its
+            # own pinned-TLS authentication. Web pages cannot reach this socket.
+            suffix = str(message.get("editor_id") or "")[:80]
+            self.optional_questions.editing(
+                self.core.session.session_id, request_id,
+                f"{editor_id}:{suffix}" if suffix else editor_id, message["active"],
+            )
+        except QuestionError as error:
+            return {"type": "question_editing_ack", "request_id": request_id,
+                    "accepted": False, "error": str(error)}
+        return self.publish_question_snapshot(tick=False)
+
+    def resume_async_questions(self) -> dict[str, Any]:
+        if not self.active_run_id or self.core._interrupt.is_set():
+            event = {"type": "error", "text": "Resume the task before restarting this question."}
+            self.emit(event)
+            return event
+        self.optional_questions.resume(self.core.session.session_id, self.active_run_id)
+        self.ensure_question_timer()
+        return self.publish_question_snapshot(tick=False)
+
+    def pending_context_deliveries(self) -> list[dict[str, Any]]:
+        self.optional_questions.tick(self.core.session.session_id)
+        return self.optional_questions.pending_deliveries(
+            self.core.session.session_id, self.active_run_id or "",
+        )
+
+    def mark_question_delivery_applied(self, delivery_id: str) -> bool:
+        applied = self.optional_questions.mark_applied(self.core.session.session_id, delivery_id)
+        if applied:
+            self.publish_question_snapshot(tick=False)
+        return applied
+
+    def mark_question_native_delivery_sent(self, delivery_id: str, thread_id: str, client_id: str) -> bool:
+        return self.optional_questions.mark_native_delivery_sent(
+            self.core.session.session_id, delivery_id, thread_id, client_id,
+        )
+
+    def clear_question_native_delivery_attempt(self, delivery_id: str) -> bool:
+        return self.optional_questions.clear_native_delivery_attempt(
+            self.core.session.session_id, delivery_id,
+        )
+
+    def question_before_finalize(self) -> bool:
+        """True while an optional batch still needs an answer/default boundary."""
+        snapshot = self.publish_question_snapshot()
+        return any(request["status"] == "pending" and request["run_id"] == (self.active_run_id or "")
+                   for request in snapshot["requests"])
 
     def register_parallel_writer_core(self, job_id: str, core: AgentCore) -> None:
         with self._parallel_writer_guard:
@@ -668,6 +878,89 @@ class ChatService:
             )
             text = f"{text}\n\n{suffix}".strip()
         return text or "Simulator action completed."
+
+    def _identity_request_identity(self) -> dict[str, Any]:
+        return {
+            "session_id": self.core.session.session_id,
+            "provider": self.core.provider,
+            "model": self.core.model,
+            "account_id": self.core.account_id,
+            "endpoint": (str(getattr(self.core.client, "base_url", self.core.host))
+                         if self.core.provider == "remote" else str(getattr(self.core.client, "host", self.core.host))),
+            "identity_mode": self.core.identity_mode,
+            "context_epoch": self.core.identity_context_epoch,
+        }
+
+    def _wait_identity(self, pending: dict[str, Future[dict[str, Any]]], request_id: str,
+                       event: dict[str, Any]) -> dict[str, Any]:
+        """A review has no browser deadline. Stop/disconnect explicitly cancels it."""
+        future: Future[dict[str, Any]] = Future()
+        with self._pending_identity_guard:
+            pending[request_id] = future
+        self.emit({**event, "request_id": request_id, **self._identity_request_identity()})
+        try:
+            while not self.core._interrupt.is_set():
+                try:
+                    return future.result(timeout=.25)
+                except FutureTimeout:
+                    continue
+            return {"error": "cancelled"}
+        finally:
+            with self._pending_identity_guard:
+                pending.pop(request_id, None)
+
+    def execute_identity(self, tool: str, arguments: dict[str, Any], request_id: str) -> str:
+        if not self.core.tool_registry.identity_enabled:
+            return "Error: Identity Vault is disabled."
+        result = self._wait_identity(self.pending_identity_actions, request_id, {
+            "type": "identity_action_request", "tool": "identity_vault", "arguments": arguments,
+        })
+        if result.get("error"):
+            # Native exception text must not accidentally include private data.
+            return "Error: the Identity Vault action was declined or could not be completed."
+        try:
+            refs = source_references(result.get("source_refs", result.get("context_refs", [])))
+            if refs and not self.core.identity_mode:
+                return "Error: source access requires a dedicated Identity task."
+            self.core.identity_source_refs = source_references(
+                list(dict.fromkeys([*self.core.identity_source_refs, *refs]))
+            )
+        except ValueError:
+            return "Error: the Identity Vault source references are invalid."
+        # This string is a safe native status/metadata contract. The separate
+        # source_refs field never becomes model-facing content or a tool result.
+        return str(result.get("text") or "Identity Vault action completed.")[:32_000]
+
+    def resolve_identity_context(self, references: list[str]) -> list[dict[str, str]]:
+        if not self.core.identity_mode or not self.core.tool_registry.identity_enabled or self.core.provider == "chatgpt":
+            raise ValueError("Identity Vault context is unavailable.")
+        references = source_references(references)
+        request_id = uuid.uuid4().hex
+        result = self._wait_identity(self.pending_identity_context, request_id, {
+            "type": "identity_context_request", "source_refs": references,
+        })
+        # Raw sources travel directly from this future to a copied provider
+        # request. No event, tool result, transcript, or ledger receives them.
+        return context_sources(result, references)
+
+    def answer_identity(self, request_id: str, result: dict[str, Any], *, context: bool = False) -> bool:
+        with self._pending_identity_guard:
+            pending = self.pending_identity_context if context else self.pending_identity_actions
+            future = pending.get(request_id)
+            if future is None or future.done():
+                return False
+            future.set_result(result)
+            return True
+
+    def cancel_all_identity(self) -> None:
+        with self._pending_identity_guard:
+            had_pending = bool(self.pending_identity_actions or self.pending_identity_context)
+            for pending in (self.pending_identity_actions, self.pending_identity_context):
+                for future in pending.values():
+                    if not future.done():
+                        future.set_result({"error": "cancelled"})
+        if had_pending or self.core.identity_mode:
+            self.emit({"type": "identity_cancelled", "session_id": self.core.session.session_id})
 
     def execute_browser(
         self,

@@ -14,6 +14,7 @@ from ..codex_app_server import (
     CodexAppServerError,
     CodexBrokerClient,
     CodexProtocolMismatch,
+    codex_home_for_account,
 )
 from .dependencies import service_from_app
 
@@ -51,28 +52,50 @@ async def ws_codex_broker(ws: WebSocket) -> None:
     try:
         request = await ws.receive_json()
         operation = str(request.get("op") or "")
+        # Resolve once per connection so an active-account switch cannot move
+        # a worker's thread or tool replies to another account mid-turn.
+        if "codex_home_id" in request:
+            home_id = request["codex_home_id"]
+            if not isinstance(home_id, str):
+                raise ValueError("ChatGPT account home id must be a string")
+            codex_home_for_account(home_id)
+            manager = svc.codex_for(home_id)
+        else:
+            manager = svc.codex
         if operation == "account":
             result = await asyncio.to_thread(
-                svc.codex.account, refresh=bool(request.get("refresh"))
+                manager.account, refresh=bool(request.get("refresh"))
             )
             await ws.send_json({"type": "result", "result": result})
         elif operation == "models":
             await ws.send_json(
                 {
                     "type": "result",
-                    "result": await asyncio.to_thread(svc.codex.models),
+                    "result": await asyncio.to_thread(manager.models),
                 }
             )
         elif operation == "usage":
             await ws.send_json(
                 {
                     "type": "result",
-                    "result": await asyncio.to_thread(svc.codex.usage),
+                    "result": await asyncio.to_thread(manager.usage),
                 }
             )
+        elif operation == "turn_steer":
+            result = await asyncio.to_thread(
+                manager.steer_turn,
+                str(request.get("thread_id") or ""),
+                str(request.get("text") or ""),
+                str(request.get("client_message_id") or ""),
+                str(request.get("expected_turn_id") or ""),
+            )
+            await ws.send_json({"type": "result", "result": result})
+        elif operation == "thread_read":
+            result = await asyncio.to_thread(manager.read_thread, str(request.get("thread_id") or ""))
+            await ws.send_json({"type": "result", "result": result})
         elif operation == "thread_start":
             result = await asyncio.to_thread(
-                svc.codex.start_thread,
+                manager.start_thread,
                 model=str(request.get("model") or ""),
                 cwd=str(request.get("cwd") or svc.core.cwd),
                 base_instructions=str(request.get("base_instructions") or ""),
@@ -82,7 +105,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
             await ws.send_json({"type": "result", "result": result})
         elif operation == "thread_resume":
             result = await asyncio.to_thread(
-                svc.codex.resume_thread,
+                manager.resume_thread,
                 str(request.get("thread_id") or ""),
                 model=str(request.get("model") or ""),
                 cwd=str(request.get("cwd") or svc.core.cwd),
@@ -90,7 +113,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
             await ws.send_json({"type": "result", "result": result})
         elif operation == "complete":
             result = await asyncio.to_thread(
-                svc.codex.complete,
+                manager.complete,
                 model=str(request.get("model") or ""),
                 cwd=str(request.get("cwd") or svc.core.cwd),
                 base_instructions=str(request.get("base_instructions") or ""),
@@ -142,7 +165,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
 
             try:
                 turn = await asyncio.to_thread(
-                    svc.codex.run_turn,
+                    manager.run_turn,
                     thread_id=str(request.get("thread_id") or ""),
                     text=str(request.get("text") or ""),
                     input_items=(
@@ -161,6 +184,8 @@ async def ws_codex_broker(ws: WebSocket) -> None:
                     event_handler=forward_event,
                     should_interrupt=interrupted.is_set,
                     timeout=float(request.get("timeout") or 1_800),
+                    **({"client_message_id": str(request["client_message_id"])}
+                       if request.get("client_message_id") else {}),
                 )
                 await ws.send_json({"type": "completed", "turn": turn})
             finally:
@@ -197,6 +222,13 @@ async def ws_chat(ws: WebSocket) -> None:
     # can now tell it is stale and cannot interrupt the replacement's turn.
     svc.ws = ws
     svc.event_pump = None
+    # Rendering support belongs to this connection. A legacy replacement must
+    # not inherit tools whose question cards or helper controls it cannot show.
+    # Existing work and durable outcomes retain their own lifecycle.
+    svc.async_questions_enabled = False
+    svc.collaboration_enabled = False
+    svc.core.tool_registry.set_ask_question_async_enabled(False)
+    svc.optional_questions.release_editing(svc.core.session.session_id)
     if previous_pump is not None:
         previous_pump.cancel()
     if previous_ws is not None and previous_ws is not ws:  # single-client app: replace
@@ -230,11 +262,19 @@ async def ws_chat(ws: WebSocket) -> None:
                 "plan": plan,
             }
         )
+    # Questions are durable records, unlike the legacy in-memory waiters.
+    # A replacement socket must replay the card before receiving later ticks.
+    question_snapshot = svc.restore_question_session()
+    if question_snapshot["requests"] or svc.async_questions_enabled:
+        await ws.send_json(question_snapshot)
+
     pump = asyncio.create_task(event_pump(svc, ws))
     svc.event_pump = pump
     try:
         while True:
             msg = await ws.receive_json()
+            if svc.ws is not ws:
+                break  # A replaced client cannot restore its old capabilities.
             if isinstance(msg, dict):
                 await message_handler(svc, msg)
             else:
@@ -249,13 +289,12 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.event_pump = None
         if svc.ws is ws:  # a newer connection may already have replaced us
             svc.ws = None
-            svc.core.interrupt()
-            svc.interrupt_parallel_writers()
             svc.deny_all_pending()
-            svc.cancel_all_questions()
+            svc.disconnect_questions()
             svc.cancel_all_computer_actions()
             svc.cancel_all_simulator_actions()
             svc.cancel_all_browser_actions()
+            svc.cancel_all_identity()
             svc.cancel_all_notes_actions()
             svc.core.tool_registry.product_features.cancel_pending()
             svc.cancel_dispatch_decisions()

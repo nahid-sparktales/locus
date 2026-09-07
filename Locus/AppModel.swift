@@ -92,6 +92,9 @@ final class AppModel: ObservableObject {
     var pendingProviderSwitch: (accountID: UUID?, model: String)?  // internal(for: AppModel extension files)
     let landingFlow = LandingFlowModel()
     let runs = OrchestrationRunsModel()
+    let taskCapsules = TaskCapsuleModel()
+    let optionalQuestions = OptionalQuestionModel()
+    let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
     let evaluations = EvaluationsModel()
     let knowledge = WorkspaceKnowledgeModel()
@@ -368,6 +371,7 @@ final class AppModel: ObservableObject {
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
     let library = WorkspaceLibraryModel()
+    let identityVault: IdentityVaultModel
     let outputsLibrary = OutputsLibraryModel()
     let onboarding = OnboardingModel()
     let agentInspector = AgentInspectorModel()
@@ -746,6 +750,10 @@ final class AppModel: ObservableObject {
         self.isUITesting = isUITesting
         let persistenceEnabled = startImmediately && !isUITesting
         self.persistenceEnabled = persistenceEnabled
+        identityVault = IdentityVaultModel(
+            store: persistenceEnabled ? IdentityVaultStore() : IdentityVaultStore(inMemory: ()),
+            defaults: persistenceEnabled ? .standard : nil
+        )
         let credentials: any CredentialStoring = credentialStore ?? (persistenceEnabled
             ? CredentialStore.shared : InMemoryCredentialStore())
         self.credentialStore = credentials
@@ -861,6 +869,7 @@ final class AppModel: ObservableObject {
             persistenceEnabled: !isUITesting && persistenceEnabled,
             defaults: defaults
         )
+        optionalQuestions.restore(defaults: persistenceEnabled && !isUITesting ? defaults : nil)
         let restoredOpenInspectorTabs = loadedSettings.resolvedInspectorOpenTabs
         loadedSettings.inspectorOpenTabs = restoredOpenInspectorTabs.map(\.rawValue)
         if !loadedSettings.inspectorCollapsed, restoredOpenInspectorTabs.isEmpty {
@@ -1001,6 +1010,10 @@ final class AppModel: ObservableObject {
         backend.onConnectionChange = { [weak self] connected in
             Task { @MainActor in
                 guard let self else { return }
+                if self.taskWorkers[self.currentSessionID] == nil {
+                    self.optionalQuestions.setConnection(connected, sessionID: self.currentSessionID)
+                    if !connected { self.soloCollaboration.disconnected(sessionID: self.currentSessionID) }
+                }
                 if connected {
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
@@ -1216,6 +1229,8 @@ final class AppModel: ObservableObject {
             accountModelsProvider: { [weak self] id in self?.accountModels[id] },
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
+        configureTaskCapsules()
+        configureOptionalQuestions()
         runs.configure(
             backend: backend,
             sessionIDProvider: { [weak self] in self?.currentSessionID ?? "" },
@@ -1265,6 +1280,7 @@ final class AppModel: ObservableObject {
         }
 
         configureLibraryFeatures()
+        configureIdentityVault()
         configureOnboarding(
             defaults: persistenceEnabled ? defaults : nil,
             existingInstallation: existingInstallation

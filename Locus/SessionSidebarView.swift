@@ -381,6 +381,17 @@ struct SessionSidebarView: View {
             .buttonStyle(.locus())
             .accessibilityIdentifier("sidebar.library")
 
+            Button { model.identityVault.open() } label: {
+                Label("Identity Vault", systemImage: "person.text.rectangle")
+                    .font(.locus(size: 12, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityIdentifier("sidebar.identityVault")
+
             ScrollView {
                 LazyVStack(spacing: 2) {
                     sectionHeader(snapshot: snapshot)
@@ -753,7 +764,7 @@ struct SessionSidebarView: View {
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.paper.opacity(0.45))
+                    .foregroundStyle(LocusTheme.paper.opacity(0.75))
             }
             .font(.locus(size: 11, weight: .semibold))
             .foregroundStyle(LocusTheme.paper)
@@ -781,10 +792,10 @@ struct SessionSidebarView: View {
             Image(systemName: activityCenter.activityCenterPresented ? "bell.fill" : "bell")
                 .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(activityCenter.activityCenterPresented
-                    ? LocusTheme.ink : LocusTheme.inkSoft)
+                    ? LocusTheme.accentAction : LocusTheme.inkSoft)
                 .frame(width: 36, height: 36)
                 .background(activityCenter.activityCenterPresented
-                    ? LocusTheme.signal.opacity(0.9)
+                    ? LocusTheme.signal.opacity(0.12)
                     : LocusTheme.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay {
@@ -795,9 +806,12 @@ struct SessionSidebarView: View {
                     if activityCenter.activityNeedsAttentionCount > 0 {
                         Text("\(activityCenter.activityNeedsAttentionCount)")
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(LocusTheme.dangerForeground)
                             .frame(minWidth: 14, minHeight: 14)
-                            .background(LocusTheme.danger)
+                            .background(LocusTheme.surfaceCard)
+                            .overlay {
+                                Capsule().stroke(LocusTheme.dangerForeground.opacity(0.35), lineWidth: 1)
+                            }
                             .clipShape(Capsule())
                             .offset(x: 4, y: -4)
                             .accessibilityIdentifier("sidebar.activity.badge")
@@ -2247,7 +2261,7 @@ private struct SessionRow: View {
                 }
                 if isActive {
                     Circle()
-                        .fill(LocusTheme.success)
+                        .fill(LocusTheme.accentAction)
                         .frame(width: 5, height: 5)
                 }
             }

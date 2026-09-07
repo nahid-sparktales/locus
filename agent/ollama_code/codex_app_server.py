@@ -173,6 +173,7 @@ class CodexAppServerManager:
         self._next_id = 1
         self._pending: dict[int | str, queue.Queue[dict[str, Any]]] = {}
         self._thread_queues: dict[str, list[queue.Queue[dict[str, Any]]]] = {}
+        self._active_turns: dict[str, str] = {}
         self._global_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._stderr_tail = ""
         self._reader: threading.Thread | None = None
@@ -644,18 +645,39 @@ class CodexAppServerManager:
             raise CodexProtocolMismatch("ChatGPT helper could not resume the thread")
         return resumed
 
+    def read_thread(self, thread_id: str) -> dict[str, Any]:
+        result = self.request("thread/read", {"threadId": thread_id, "includeTurns": True}, timeout=30)
+        return result.get("thread", {}) if isinstance(result, dict) else {}
+
+    def steer_turn(
+        self, thread_id: str, text: str, client_message_id: str,
+        expected_turn_id: str = "",
+    ) -> dict[str, Any]:
+        with self._state_lock:
+            turn_id = expected_turn_id or self._active_turns.get(thread_id, "")
+        if not turn_id:
+            raise CodexAppServerError("No active ChatGPT turn to steer")
+        result = self.request("turn/steer", {
+            "threadId": thread_id, "expectedTurnId": turn_id,
+            "clientUserMessageId": client_message_id,
+            "input": [{"type": "text", "text": text, "text_elements": []}],
+        }, timeout=30)
+        return result if isinstance(result, dict) else {}
+
     def run_turn(
         self,
         *,
         thread_id: str,
         text: str,
         input_items: list[dict[str, Any]] | None = None,
+        client_message_id: str = "",
         model: str = "",
         effort: str = "",
         output_schema: dict[str, Any] | None = None,
         tool_handler: Callable[[str, dict[str, Any], str], str | dict[str, Any]] | None = None,
         event_handler: Callable[[dict[str, Any]], None] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        on_tick: Callable[[], None] | None = None,
         timeout: float = 1_800,
     ) -> dict[str, Any]:
         target = self._subscribe(thread_id)
@@ -667,6 +689,8 @@ class CodexAppServerManager:
                 "threadId": thread_id,
                 "input": input_items or [{"type": "text", "text": text}],
             }
+            if client_message_id:
+                params["clientUserMessageId"] = client_message_id
             if model:
                 params["model"] = model
             if effort:
@@ -680,7 +704,11 @@ class CodexAppServerManager:
             turn = response.get("turn")
             if isinstance(turn, dict):
                 turn_id = str(turn.get("id") or "")
+            with self._state_lock:
+                self._active_turns[thread_id] = turn_id
             while True:
+                if on_tick is not None:
+                    on_tick()
                 if time.monotonic() - started > timeout:
                     if turn_id:
                         try:
@@ -695,11 +723,17 @@ class CodexAppServerManager:
                 if should_interrupt is not None and should_interrupt() and not interrupted:
                     interrupted = True
                     if turn_id:
-                        self.request(
-                            "turn/interrupt",
-                            {"threadId": thread_id, "turnId": turn_id},
-                            timeout=10,
-                        )
+                        try:
+                            self.request(
+                                "turn/interrupt",
+                                {"threadId": thread_id, "turnId": turn_id},
+                                timeout=10,
+                            )
+                        except CodexAppServerError as error:
+                            if "no active turn" not in str(error).lower():
+                                raise
+                            # Completion can race an interrupt; consume its
+                            # queued terminal event instead of reporting a failure.
                 try:
                     event = target.get(timeout=0.1)
                 except queue.Empty:
@@ -756,8 +790,14 @@ class CodexAppServerManager:
                 if method == "turn/completed":
                     params_value = event.get("params")
                     completed = params_value.get("turn") if isinstance(params_value, dict) else None
+                    if isinstance(completed, dict) and completed.get("status") == "failed":
+                        failure = completed.get("error") or {}
+                        raise CodexAppServerError(str(failure.get("message") or "ChatGPT turn failed") if isinstance(failure, dict) else str(failure))
                     return completed if isinstance(completed, dict) else {}
         finally:
+            with self._state_lock:
+                if self._active_turns.get(thread_id) == turn_id:
+                    self._active_turns.pop(thread_id, None)
             self._unsubscribe(thread_id, target)
 
     def complete(
@@ -846,9 +886,28 @@ class CodexBrokerClient:
     # parity threads exist only on the primary's in-process manager.
     supports_parity = False
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, *, home_id: str | None = None) -> None:
         self.url = url.strip()
         self.token = token.strip()
+        if home_id is not None:
+            if not isinstance(home_id, str):
+                raise ValueError("ChatGPT account home id must be a string")
+            codex_home_for_account(home_id)
+        # None preserves legacy primary-account routing. An explicit empty
+        # string instead selects the original, pre-multi-account home.
+        self._home_id = home_id.strip() if home_id is not None else None
+
+    def for_account(self, home_id: str) -> CodexBrokerClient:
+        """Bind a separate proxy without changing any other worker's route."""
+        if not isinstance(home_id, str):
+            raise ValueError("ChatGPT account home id must be a string")
+        return CodexBrokerClient(self.url, self.token, home_id=home_id)
+
+    def _request(self, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = {"op": operation, **(payload or {})}
+        if self._home_id is not None:
+            request["codex_home_id"] = self._home_id
+        return request
 
     @property
     def available(self) -> bool:
@@ -877,7 +936,7 @@ class CodexBrokerClient:
 
     def _call(self, operation: str, payload: dict[str, Any] | None = None) -> Any:
         with self._connect() as socket:
-            socket.send(json.dumps({"op": operation, **(payload or {})}))
+            socket.send(json.dumps(self._request(operation, payload)))
             raw = socket.recv(timeout=1_800)
         try:
             response = json.loads(raw)
@@ -899,6 +958,20 @@ class CodexBrokerClient:
 
     def usage(self) -> dict[str, Any]:
         result = self._call("usage")
+        return result if isinstance(result, dict) else {}
+
+    def read_thread(self, thread_id: str) -> dict[str, Any]:
+        result = self._call("thread_read", {"thread_id": thread_id})
+        return result if isinstance(result, dict) else {}
+
+    def steer_turn(
+        self, thread_id: str, text: str, client_message_id: str,
+        expected_turn_id: str = "",
+    ) -> dict[str, Any]:
+        result = self._call("turn_steer", {
+            "thread_id": thread_id, "text": text,
+            "client_message_id": client_message_id, "expected_turn_id": expected_turn_id,
+        })
         return result if isinstance(result, dict) else {}
 
     def start_thread(
@@ -949,30 +1022,34 @@ class CodexBrokerClient:
         thread_id: str,
         text: str,
         input_items: list[dict[str, Any]] | None = None,
+        client_message_id: str = "",
         model: str = "",
         effort: str = "",
         output_schema: dict[str, Any] | None = None,
         tool_handler: Callable[[str, dict[str, Any], str], str | dict[str, Any]] | None = None,
         event_handler: Callable[[dict[str, Any]], None] | None = None,
         should_interrupt: Callable[[], bool] | None = None,
+        on_tick: Callable[[], None] | None = None,
         timeout: float = 1_800,
     ) -> dict[str, Any]:
         with self._connect() as socket:
-            socket.send(json.dumps({
-                "op": "turn_run",
+            socket.send(json.dumps(self._request("turn_run", {
                 "thread_id": thread_id,
                 "text": text,
                 "input_items": input_items,
+                "client_message_id": client_message_id,
                 "model": model,
                 "effort": effort,
                 "output_schema": output_schema,
                 "timeout": timeout,
-            }))
+            })))
             while True:
+                if on_tick is not None:
+                    on_tick()
                 if should_interrupt is not None and should_interrupt():
                     socket.send(json.dumps({"type": "interrupt"}))
                 try:
-                    raw = socket.recv(timeout=min(timeout, 30))
+                    raw = socket.recv(timeout=min(timeout, 0.1 if on_tick else 30))
                 except TimeoutError:
                     continue
                 message = json.loads(raw)

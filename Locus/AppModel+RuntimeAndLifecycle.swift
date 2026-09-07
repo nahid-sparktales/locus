@@ -357,6 +357,7 @@ extension AppModel {
 
     func shutdown() {
         isShuttingDown = true
+        identityVault.suspend()
         Task { await companionGateway.setEnabled(false) }
         terminal.terminate()
         lifecycleJournal?.markCleanExit()

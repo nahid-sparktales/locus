@@ -2465,7 +2465,8 @@ final class AppModelTests: XCTestCase {
                 for: model.settings.resolvedAccent.actionNSColor(for: appearance)
             )
             XCTAssertEqual(actionHex, expectedHex)
-            XCTAssertEqual(successHex, expectedHex)
+            XCTAssertEqual(successHex, LocusAccentSelection.hexString(for: LocusTheme.palette(for: appearance).success))
+            XCTAssertNotEqual(successHex, actionHex, "Success retains its meaning when the brand accent changes")
         }
     }
 

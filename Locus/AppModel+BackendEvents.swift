@@ -11,6 +11,12 @@ import UserNotifications
 extension AppModel {
     func handle(_ event: [String: Any], source: BackendService? = nil) {
         guard let type = event["type"] as? String else { return }
+        if handleOptionalQuestionEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID) { return }
+        if ["identity_action_request", "identity_context_request", "identity_cancelled"].contains(type) {
+            let owner = event["session_id"] as? String ?? currentSessionID
+            handleIdentityEvent(event, runtime: taskWorkers[owner], transport: source ?? conversationBackend)
+            return
+        }
         if type == "run_started" || type == "orchestration_started",
            let runID = event["run_id"] as? String,
            (event["session_id"] as? String ?? currentSessionID) == currentSessionID {
@@ -737,7 +743,9 @@ extension AppModel {
                     pendingUserQuestion = detected
                 }
             }
-            if reason == "complete", turnDispatchedInPlanMode, selectedMode == .plan {
+            if reason == "complete", turnDispatchedInPlanMode, selectedMode == .plan,
+               taskCapsules.pendingPlanningRequest(for: currentSessionID) == nil,
+               taskCapsules.activeStageSessions[currentSessionID] == nil {
                 if !planReadyThisTurn,
                    let fallback = PlanSignalDetector.document(
                     from: assistantText,

@@ -308,6 +308,8 @@ struct InspectorAgentsTab: View {
                 get: { agentInstructions.agentInstructionsDraft },
                 set: { agentInstructions.agentInstructionsDraft = $0 }
             ))
+                .foregroundStyle(LocusTheme.inkSoft)
+                .tint(LocusTheme.accentAction)
                 .font(.locus(size: 10, design: .monospaced))
                 .lineSpacing(2)
                 .scrollContentBackground(.hidden)

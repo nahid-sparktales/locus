@@ -20,8 +20,8 @@ struct DocumentPreviewSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(request.title).font(.headline).lineLimit(1)
-                    if pageCount == 0, let location = request.reference?.location { Text(location.label).font(.subheadline).foregroundStyle(.secondary) }
+                    Text(request.title).font(.headline).foregroundStyle(LocusTheme.ink).lineLimit(1)
+                    if pageCount == 0, let location = request.reference?.location { Text(location.label).font(.subheadline).foregroundStyle(LocusTheme.muted) }
                 }
                 Spacer()
                 Button("Open in App") { NSWorkspace.shared.open(request.url) }
@@ -39,12 +39,15 @@ struct DocumentPreviewSheet: View {
             }
             if let warning = request.warning {
                 Label(warning, systemImage: "exclamationmark.triangle").font(.body)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding().background(.yellow.opacity(0.12))
+                    .foregroundStyle(LocusTheme.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding().background(LocusTheme.warning.opacity(0.12))
             }
             Divider()
             DocumentPreviewView(request: displayedRequest)
         }
         .frame(minWidth: 620, idealWidth: 860, minHeight: 500, idealHeight: 680)
+        .foregroundStyle(LocusTheme.inkSoft)
+        .background(LocusTheme.panel)
         .onAppear {
             if request.url.pathExtension.lowercased() == "pdf", let document = PDFDocument(url: request.url) {
                 pageCount = document.pageCount
@@ -74,12 +77,12 @@ struct DocumentPreviewView: View {
                         LazyVStack(alignment: .leading, spacing: 3) {
                             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
                                 HStack(alignment: .top, spacing: 12) {
-                                    Text("\(index + 1)").foregroundStyle(.secondary).frame(width: 46, alignment: .trailing)
-                                    Text(line.isEmpty ? " " : line).frame(maxWidth: .infinity, alignment: .leading)
+                                    Text("\(index + 1)").foregroundStyle(LocusTheme.muted).frame(width: 46, alignment: .trailing)
+                                    Text(line.isEmpty ? " " : line).foregroundStyle(LocusTheme.inkSoft).frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                                 .padding(.horizontal).id(index + 1)
-                                .background(index + 1 == request.reference?.location?.lineStart ? Color.accentColor.opacity(0.12) : .clear)
+                                .background(index + 1 == request.reference?.location?.lineStart ? LocusTheme.contentLink.opacity(0.12) : .clear)
                             }
                         }.padding(.vertical)
                     }.onAppear { if let line = request.reference?.location?.lineStart { proxy.scrollTo(line, anchor: .center) } }
@@ -89,7 +92,7 @@ struct DocumentPreviewView: View {
             } else {
                 VStack(spacing: 0) {
                     if extracting { HStack { ProgressView().controlSize(.small); Text("Preparing searchable text…") }.padding() }
-                    if let extractionError { Text(extractionError).font(.subheadline).foregroundStyle(.secondary).padding() }
+                    if let extractionError { Text(extractionError).font(.subheadline).foregroundStyle(LocusTheme.muted).padding() }
                     LibraryQuickLookPreview(url: request.url)
                 }
             }
@@ -125,13 +128,13 @@ struct DocumentPreviewView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
-                    if result.truncated { Label("Partial extraction — some content could not be included", systemImage: "exclamationmark.triangle") }
+                    if result.truncated { Label("Partial extraction — some content could not be included", systemImage: "exclamationmark.triangle").foregroundStyle(LocusTheme.warning) }
                     ForEach(Array(result.segments.enumerated()), id: \.offset) { index, segment in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(segment.locator.label).font(.headline).foregroundStyle(.secondary)
-                            Text(segment.text).font(segment.locator.kind == "sheet" ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
+                            Text(segment.locator.label).font(.headline).foregroundStyle(LocusTheme.muted)
+                            Text(segment.text).font(segment.locator.kind == "sheet" ? .system(.body, design: .monospaced) : .body).foregroundStyle(LocusTheme.inkSoft).textSelection(.enabled)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12).background(matches(segment.locator) ? Color.accentColor.opacity(0.10) : .clear)
+                            .padding(12).background(matches(segment.locator) ? LocusTheme.contentLink.opacity(0.10) : .clear)
                             .clipShape(RoundedRectangle(cornerRadius: 8)).id(index)
                     }
                 }.padding(20)
@@ -170,7 +173,7 @@ struct LibraryPDFPreview: NSViewRepresentable {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
-        view.backgroundColor = .windowBackgroundColor
+        view.backgroundColor = NSColor(LocusTheme.paperDeep)
         return view
     }
     func updateNSView(_ view: PDFView, context: Context) {

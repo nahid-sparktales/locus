@@ -25,6 +25,11 @@ struct InspectorBrowserTab: View {
                 withAnimation(LocusMotion.spatial) {
                     model?.toggleInspectorZoom()
                 }
+            },
+            onPrivateFill: { model.useIdentityApplicationLocally(upload: false) },
+            onPrivateUpload: { model.useIdentityApplicationLocally(upload: true) },
+            onPrivateContinue: {
+                model.send("Continue with AI for this private application. Request a fresh page snapshot through Identity Vault for my review before reading the page.", preservingDraftOnFailure: true, includeAttachments: false)
             }
         )
     }
@@ -43,6 +48,9 @@ struct BrowserPanel: View {
     /// size is the zoomed panel — there is no separate browser window.
     var isExpanded = false
     var onToggleExpand: (() -> Void)? = nil
+    var onPrivateFill: (() -> Void)? = nil
+    var onPrivateUpload: (() -> Void)? = nil
+    var onPrivateContinue: (() -> Void)? = nil
 
     @State private var draft = ""
     @State private var drawerOpen = false
@@ -80,6 +88,25 @@ struct BrowserPanel: View {
                 if addressFocused, !addressSuggestions.isEmpty { addressSuggestionBar }
                 if findOpen { findBar }
                 progressLine
+                if browser.isIdentityApplication(sessionID: sessionID) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Private application", systemImage: "lock.shield").font(.caption.bold())
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                Button("Fill from Profile…") { onPrivateFill?() }
+                                Button("Attach Document…") { onPrivateUpload?() }
+                                Button("Continue with AI…") { onPrivateContinue?() }
+                            }
+                            Menu("Use Identity Vault…") {
+                                Button("Fill from Profile…") { onPrivateFill?() }
+                                Button("Attach Document…") { onPrivateUpload?() }
+                                Button("Continue with AI…") { onPrivateContinue?() }
+                            }
+                        }
+                        Text("Fill and attach locally. AI reads page text only after your review.")
+                            .font(.caption2).foregroundStyle(LocusTheme.textTertiary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                }
                 if let prompt = browser.autofillPrompt,
                    prompt.sessionID == sessionID
                 {
@@ -120,6 +147,7 @@ struct BrowserPanel: View {
     /// while this is the user capturing, seeing, editing, and explicitly
     /// attaching — the composer's own attachment caps still apply.
     private func captureForAnnotation() {
+        guard !browser.isIdentityApplication(sessionID: sessionID) else { return }
         guard let host = browser.activeHost(for: sessionID), !isCapturing else { return }
         isCapturing = true
         let title = snapshot?.title ?? ""
@@ -386,7 +414,7 @@ struct BrowserPanel: View {
             }
             .disabled(tab.url.isEmpty)
         }
-        .help(tab.url.isEmpty ? "New Tab" : tab.url)
+        .help(browser.isIdentityApplication(sessionID: sessionID) ? "Private Identity application" : (tab.url.isEmpty ? "New Tab" : tab.url))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title) tab")
         .accessibilityIdentifier("browser.tab.\(tab.id)")
@@ -485,7 +513,8 @@ struct BrowserPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        if let host = browser.activeHost(for: sessionID), snapshot?.url.isEmpty == false {
+        if let host = browser.activeHost(for: sessionID),
+           snapshot?.url.isEmpty == false || browser.isIdentityApplication(sessionID: sessionID) {
             BorrowedWebView(host: host)
                 .accessibilityLabel("Web page")
                 .background(Color(nsColor: .windowBackgroundColor))
@@ -617,9 +646,9 @@ struct BrowserPanel: View {
     private var pageActionsMenu: some View {
         Menu {
             Button("Find on Page…", systemImage: "magnifyingglass") { openFind() }
-                .disabled(snapshot?.url.isEmpty != false)
+                .disabled(snapshot?.url.isEmpty != false && !browser.isIdentityApplication(sessionID: sessionID))
             Button("Capture and Attach…", systemImage: "camera") { captureForAnnotation() }
-                .disabled(isCapturing || snapshot?.url.isEmpty != false)
+                .disabled(isCapturing || snapshot?.url.isEmpty != false || browser.isIdentityApplication(sessionID: sessionID))
 
             Divider()
 
@@ -639,10 +668,11 @@ struct BrowserPanel: View {
             Button(drawerOpen ? "Hide Console and Network" : "Show Console and Network", systemImage: "terminal") {
                 drawerOpen.toggle()
             }
+            .disabled(browser.isIdentityApplication(sessionID: sessionID))
             Button("Open in Default Browser", systemImage: "arrow.up.right.square") {
                 browser.openCurrentTabExternally(sessionID: sessionID)
             }
-            .disabled(snapshot == nil)
+            .disabled(snapshot == nil || browser.isIdentityApplication(sessionID: sessionID))
 
             Divider()
 
@@ -665,15 +695,18 @@ struct BrowserPanel: View {
                 set: { browser.userSetDeviceEmulation($0, sessionID: sessionID) }
             ))
             .accessibilityIdentifier("browser.device")
+            .disabled(browser.isIdentityApplication(sessionID: sessionID))
             if let zoom = snapshot?.pageZoom, abs(zoom - 1) > 0.001 {
                 Button("Reset Page Zoom (\(Int((zoom * 100).rounded()))%)", systemImage: "1.magnifyingglass") {
                     browser.userSetPageZoom(1, sessionID: sessionID)
                 }
             }
             Button(browser.webInspectorEnabled ? "Disable Web Inspector" : "Allow Web Inspector", systemImage: "hammer") {
+                guard !browser.isIdentityApplication(sessionID: sessionID) else { return }
                 browser.webInspectorEnabled.toggle()
                 browser.activeHost(for: sessionID)?.webView.isInspectable = browser.webInspectorEnabled
             }
+            .disabled(browser.isIdentityApplication(sessionID: sessionID))
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.locus(size: 11, weight: .semibold))
@@ -730,7 +763,7 @@ struct BrowserPanel: View {
                         Image(systemName: "clock").frame(width: 18)
                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
                         Spacer()
-                        Text(entry.host).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(entry.host).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
                     }
                     .padding(.horizontal, 10)
                     .frame(height: 30)
@@ -755,7 +788,7 @@ struct BrowserPanel: View {
                 Text("Save password for \(URL(string: prompt.origin)?.host ?? prompt.origin)?")
                     .font(.locus(size: 10, weight: .semibold))
                 if !prompt.username.isEmpty {
-                    Text(prompt.username).font(.caption).foregroundStyle(.secondary)
+                    Text(prompt.username).font(.caption).foregroundStyle(LocusTheme.textTertiary)
                 }
             }
             Spacer()
@@ -844,10 +877,10 @@ private struct BrowserQuickHistory: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
-                                        Text(entry.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(entry.url).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
                                     }
                                     Spacer()
-                                    Text(entry.visitedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                                    Text(entry.visitedAt, style: .relative).font(.caption2).foregroundStyle(LocusTheme.textTertiary)
                                 }.padding(.horizontal, 12).frame(height: 46)
                             }.buttonStyle(.plain)
                         }
@@ -874,7 +907,7 @@ private struct BrowserQuickDownloads: View {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(store.downloads.prefix(20)) { item in
                             VStack(alignment: .leading, spacing: 5) {
-                                HStack { Text(item.fileName).lineLimit(1); Spacer(); Text(item.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary) }
+                                HStack { Text(item.fileName).lineLimit(1); Spacer(); Text(item.state.rawValue.capitalized).font(.caption).foregroundStyle(LocusTheme.textTertiary) }
                                 if item.state == .running { ProgressView(value: item.progress) }
                                 HStack {
                                     if item.state == .running { Button("Pause") { browser.pauseDownload(item.id) }; Button("Cancel") { browser.cancelDownload(item.id) } }

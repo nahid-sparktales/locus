@@ -55,8 +55,14 @@ final class WorkspaceLayoutModel: ObservableObject {
 
 @MainActor
 final class LiveResizeCoordinator {
+    enum Source: Hashable {
+        case window
+        case divider(UUID)
+    }
+
     private weak var layout: WorkspaceLayoutModel?
     private let performanceMonitor: LiveResizePerformanceMonitor
+    private var activeSources: Set<Source> = []
 
     init(
         layout: WorkspaceLayoutModel,
@@ -68,7 +74,8 @@ final class LiveResizeCoordinator {
         )
     }
 
-    func beginLiveResize() {
+    func beginLiveResize(source: Source = .window) {
+        guard activeSources.insert(source).inserted, activeSources.count == 1 else { return }
         locusPerformanceSignposter.emitEvent("Begin Live Resize")
         performanceMonitor.begin()
         layout?.setLiveResizing(true)
@@ -83,7 +90,10 @@ final class LiveResizeCoordinator {
         )
     }
 
-    func endLiveResize(finalWidth: CGFloat) {
+    func endLiveResize(finalWidth: CGFloat, source: Source = .window) {
+        // Gesture cancellation and disappearance can both report the same end.
+        // One divider must also never end a native window resize still in flight.
+        guard activeSources.remove(source) != nil, activeSources.isEmpty else { return }
         locusPerformanceSignposter.emitEvent(
             "End Live Resize",
             "width=\(finalWidth, format: .fixed(precision: 1))"
@@ -347,6 +357,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.gitWorkspace)
             .environmentObject(model.workspaceFiles)
             .environmentObject(model.library)
+            .environmentObject(model.identityVault)
             .environmentObject(model.outputsLibrary)
             .environmentObject(model.onboarding)
             .environmentObject(model.agentInspector)

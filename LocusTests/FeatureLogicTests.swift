@@ -1389,10 +1389,7 @@ final class FeatureLogicTests: XCTestCase {
             inlineCodeSize: 12,
             link: URL(string: "https://example.com")
         )
-        // `signalDeep` mints a fresh accent-dynamic Color per access, so the
-        // link treatment is asserted structurally: underlined, and no longer
-        // the base color.
-        XCTAssertNotEqual(remote.foreground, LocusTheme.inkSoft)
+        XCTAssertEqual(remote.foreground, LocusTheme.contentLink)
         XCTAssertTrue(remote.isUnderlined)
     }
 
@@ -1770,8 +1767,8 @@ final class FeatureLogicTests: XCTestCase {
     func testAccentForegroundsStayReadableAndLogoRendererKeepsItsGeometry() throws {
         let light = try XCTUnwrap(NSAppearance(named: .aqua))
         let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
-        let lightBackground = NSColor(srgbRed: 0.953, green: 0.945, blue: 0.918, alpha: 1)
-        let darkBackground = NSColor(srgbRed: 0.090, green: 0.090, blue: 0.075, alpha: 1)
+        let lightPalette = LocusTheme.lightPalette
+        let darkPalette = LocusTheme.darkPalette
         var renderedLogoAccents: Set<String> = []
 
         for preset in LocusAccentPreset.allCases {
@@ -1781,11 +1778,11 @@ final class FeatureLogicTests: XCTestCase {
             )
             assertTextContrast(
                 foregrounds: [accent.actionNSColor(for: light)],
-                backgrounds: [lightBackground]
+                backgrounds: [lightPalette.paper, lightPalette.paperDeep, lightPalette.panel, lightPalette.white]
             )
             assertTextContrast(
                 foregrounds: [accent.actionNSColor(for: dark)],
-                backgrounds: [darkBackground]
+                backgrounds: [darkPalette.paper, darkPalette.paperDeep, darkPalette.panel, darkPalette.white]
             )
             XCTAssertEqual(
                 LocusBrandIcon.image(accent: accent.logoNSColor, size: 128).size,
@@ -2022,8 +2019,8 @@ final class FeatureLogicTests: XCTestCase {
         assertColor(dark.paper, hex: 0x171713)
         assertColor(dark.white, hex: 0x292820)
         assertColor(dark.signalDeep, hex: 0xB6E33B)
-        assertColor(dark.coral, hex: 0xF18364)
-        assertColor(dark.permissionInk, hex: 0xD7A77E)
+        assertColor(dark.coral, hex: 0xD39F87)
+        assertColor(dark.permissionInk, hex: 0xD3BAA3)
     }
 
     func testComposerScheduleSymbolExistsOnSupportedMacOS() {
@@ -2043,6 +2040,9 @@ final class FeatureLogicTests: XCTestCase {
             foregrounds: [
                 light.ink, light.inkSoft, light.muted, light.signalDeep,
                 light.coral, light.danger, light.success, light.warning,
+                light.blue, light.permissionInk, light.permissionMuted,
+                light.codeKeyword, light.codeType, light.codeFunction, light.codeString,
+                light.codeNumber, light.codeProperty, light.codePunctuation, light.contentLink,
             ],
             backgrounds: [light.paper, light.paperDeep, light.panel, light.white]
         )
@@ -2050,9 +2050,54 @@ final class FeatureLogicTests: XCTestCase {
             foregrounds: [
                 dark.ink, dark.inkSoft, dark.muted, dark.signalDeep,
                 dark.coral, dark.danger, dark.success, dark.warning,
+                dark.blue, dark.permissionInk, dark.permissionMuted,
+                dark.codeKeyword, dark.codeType, dark.codeFunction, dark.codeString,
+                dark.codeNumber, dark.codeProperty, dark.codePunctuation, dark.contentLink,
             ],
             backgrounds: [dark.paper, dark.paperDeep, dark.panel, dark.white]
         )
+    }
+
+    func testSelectedTextRetainsContrastForEveryAccentAndAppearance() throws {
+        let previous = LocusAccentRuntime.shared.currentSelection()
+        defer { LocusAccentRuntime.shared.configure(previous) }
+        let accents = LocusAccentPreset.allCases.map {
+            LocusAccentSelection(rawValue: $0.rawValue, customHex: "FFFFFF")
+        } + ["000000", "FFFFFF", "FFFF00", "0000FF", "FF0000", "00FFFF"].map {
+            LocusAccentSelection(rawValue: "custom", customHex: $0)
+        }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            let palette = LocusTheme.palette(for: appearance)
+            for accent in accents {
+                LocusAccentRuntime.shared.configure(accent)
+                for isKey in [false, true] {
+                    appearance.performAsCurrentDrawingAppearance {
+                        let selection = LocusTheme.selectionWash(forKeyWindow: isKey)
+                        assertTextContrast(
+                            foregrounds: [
+                                palette.ink, palette.inkSoft, palette.muted, palette.contentLink,
+                                palette.coral, palette.danger, palette.blue, palette.success,
+                                palette.warning, palette.permissionInk, palette.permissionMuted,
+                                palette.codeKeyword, palette.codeType,
+                            ],
+                            backgrounds: [selection]
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func testStatusTextRetainsContrastOnSoftBadges() {
+        for palette in [LocusTheme.lightPalette, LocusTheme.darkPalette] {
+            for foreground in [palette.muted, palette.coral, palette.danger, palette.success, palette.warning, palette.blue] {
+                for surface in [palette.paper, palette.paperDeep, palette.panel, palette.white] {
+                    let fill = surface.blended(withFraction: 0.14, of: foreground)!
+                    assertTextContrast(foregrounds: [foreground], backgrounds: [fill])
+                }
+            }
+        }
     }
 
     func testIncreasedContrastBoundariesMeetNonTextContrast() throws {
@@ -2162,17 +2207,15 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(first.allSatisfy { !$0.title.isEmpty && !$0.rationale.isEmpty })
     }
 
-    func testEveryInspectorTabTitleIsWhiteInDarkAppearance() {
-        for selected in [false, true] {
-            assertColor(
-                InspectorTabAppearance.titleColor(
-                    colorScheme: .dark,
-                    selected: selected
-                ),
-                red: 1,
-                green: 1,
-                blue: 1
-            )
+    func testInspectorTabTitlesUseTheThemeHierarchyInBothAppearances() {
+        for scheme in [ColorScheme.light, .dark] {
+            let palette = scheme == .dark ? LocusTheme.darkPalette : LocusTheme.lightPalette
+            for selected in [false, true] {
+                XCTAssertEqual(
+                    InspectorTabAppearance.titleColor(colorScheme: scheme, selected: selected),
+                    selected ? palette.ink : palette.muted
+                )
+            }
         }
     }
 

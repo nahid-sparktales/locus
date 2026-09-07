@@ -1063,6 +1063,25 @@ enum CodeSyntaxHighlighter {
     }
 }
 
+/// Shared by transcript fences, selectable native text, and tool/Changes output.
+/// Diff meaning stays green/red even when the workspace uses a custom accent.
+enum DiffLineTheme {
+    static func foreground(for line: String) -> Color {
+        if line.hasPrefix("@@") { return LocusTheme.codeFunction }
+        if line.hasPrefix("+++") || line.hasPrefix("---") { return LocusTheme.muted }
+        if line.hasPrefix("+") { return LocusTheme.diffAdded }
+        if line.hasPrefix("-") { return LocusTheme.diffRemoved }
+        return LocusTheme.inkSoft
+    }
+
+    static func background(for line: String) -> Color {
+        if line.hasPrefix("+"), !line.hasPrefix("+++") { return LocusTheme.diffAddedFill }
+        if line.hasPrefix("-"), !line.hasPrefix("---") { return LocusTheme.diffRemovedFill }
+        if line.hasPrefix("@@") { return LocusTheme.codeFunction.opacity(0.07) }
+        return .clear
+    }
+}
+
 enum NativeCodeTextRenderer {
     static func attributed(
         _ code: String,
@@ -1092,21 +1111,8 @@ enum NativeCodeTextRenderer {
         let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         for (index, line) in lines.enumerated() {
             let value = line + (index < lines.count - 1 ? "\n" : "")
-            let foreground: NSColor
-            let background: NSColor
-            if line.hasPrefix("@@") {
-                foreground = NSColor(LocusTheme.blue)
-                background = NSColor(LocusTheme.blue).withAlphaComponent(0.07)
-            } else if line.hasPrefix("+"), !line.hasPrefix("+++") {
-                foreground = NSColor(LocusTheme.success)
-                background = NSColor(LocusTheme.success).withAlphaComponent(0.1)
-            } else if line.hasPrefix("-"), !line.hasPrefix("---") {
-                foreground = NSColor(LocusTheme.coral)
-                background = NSColor(LocusTheme.coral).withAlphaComponent(0.1)
-            } else {
-                foreground = NSColor(LocusTheme.inkSoft)
-                background = .clear
-            }
+            let foreground = NSColor(DiffLineTheme.foreground(for: line))
+            let background = NSColor(DiffLineTheme.background(for: line))
             let paragraph = NSMutableParagraphStyle()
             let lineHeight = (fontSize * 1.62).rounded()
             paragraph.minimumLineHeight = lineHeight
@@ -1358,34 +1364,17 @@ private struct CodeDiffLines: View {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.isEmpty ? " " : line)
                     .font(.locusExact(size: fontSize, design: .monospaced))
-                    .foregroundStyle(foreground(for: line))
+                    .foregroundStyle(DiffLineTheme.foreground(for: line))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 12)
                     .frame(minHeight: (fontSize * 1.62).rounded(), alignment: .leading)
-                    .background(background(for: line))
+                    .background(DiffLineTheme.background(for: line))
             }
         }
         .padding(.vertical, 8)
     }
 
-    private func foreground(for line: String) -> Color {
-        if line.hasPrefix("@@") { return LocusTheme.blue }
-        if line.hasPrefix("+") && !line.hasPrefix("+++") { return LocusTheme.success }
-        if line.hasPrefix("-") && !line.hasPrefix("---") { return LocusTheme.coral }
-        return LocusTheme.inkSoft
-    }
-
-    private func background(for line: String) -> Color {
-        if line.hasPrefix("+") && !line.hasPrefix("+++") {
-            return LocusTheme.success.opacity(0.1)
-        }
-        if line.hasPrefix("-") && !line.hasPrefix("---") {
-            return LocusTheme.coral.opacity(0.1)
-        }
-        if line.hasPrefix("@@") { return LocusTheme.blue.opacity(0.07) }
-        return Color.clear
-    }
 }
 
 /// Unified-diff text with per-line add/remove coloring.
@@ -1433,7 +1422,7 @@ struct DiffTextView: View {
         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
             Text(line.isEmpty ? " " : line)
                 .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(color(for: line))
+                .foregroundStyle(DiffLineTheme.foreground(for: line))
                 // One source line stays one row: wrapping a long diff line
                 // costs a text-layout pass per row and buys little in a panel
                 // this narrow.
@@ -1442,23 +1431,10 @@ struct DiffTextView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 1)
-                .background(background(for: line))
+                .background(DiffLineTheme.background(for: line))
         }
     }
 
-    private func color(for line: String) -> Color {
-        if line.hasPrefix("@@") { return LocusTheme.blue }
-        if line.hasPrefix("+++") || line.hasPrefix("---") { return LocusTheme.muted }
-        if line.hasPrefix("+") { return LocusTheme.success }
-        if line.hasPrefix("-") { return LocusTheme.coral }
-        return LocusTheme.inkSoft
-    }
-
-    private func background(for line: String) -> Color {
-        if line.hasPrefix("+"), !line.hasPrefix("+++") { return LocusTheme.success.opacity(0.09) }
-        if line.hasPrefix("-"), !line.hasPrefix("---") { return LocusTheme.coral.opacity(0.09) }
-        return .clear
-    }
 }
 
 /// Chooses between diff-aware and plain monospaced rendering for tool output.
@@ -1471,7 +1447,7 @@ struct ToolOutputText: View {
         } else {
             Text(text)
                 .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(LocusTheme.inkSoft)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

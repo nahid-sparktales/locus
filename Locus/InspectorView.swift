@@ -1163,8 +1163,8 @@ private struct InspectorTabActivationButton: NSViewRepresentable {
             selected: selected
         )
         // contentTintColor does not reliably color an NSButton title in the
-        // dark title-bar material. An attributed title keeps every open tab
-        // white instead of only the selected or hovered one.
+        // title-bar material. Attributed titles preserve the theme's selected
+        // and secondary text hierarchy in both appearances.
         button.attributedTitle = NSAttributedString(
             string: title,
             attributes: [.font: font, .foregroundColor: titleColor]
@@ -1179,8 +1179,8 @@ private struct InspectorTabActivationButton: NSViewRepresentable {
 
 enum InspectorTabAppearance {
     static func titleColor(colorScheme: ColorScheme, selected: Bool) -> NSColor {
-        if colorScheme == .dark { return .white }
-        return selected ? .labelColor : .secondaryLabelColor.withAlphaComponent(0.86)
+        let palette = colorScheme == .dark ? LocusTheme.darkPalette : LocusTheme.lightPalette
+        return selected ? palette.ink : palette.muted
     }
 }
 
@@ -1196,10 +1196,10 @@ private struct InspectorTextTabBadge: View {
         if tab == .changes, gitWorkspace.changedFileCount > 0 {
             Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background(gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
+                .background((gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted).opacity(0.12))
                 .clipShape(Capsule())
                 .accessibilityHidden(true)
         } else if tab == .plan, model.planHasUnseenUpdate {
@@ -1251,10 +1251,10 @@ struct InspectorTabBadge: View {
             let unseen = gitWorkspace.changesHaveUnseenUpdate
             Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(unseen ? LocusTheme.coral : LocusTheme.muted)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background(unseen ? LocusTheme.coral : LocusTheme.muted)
+                .background((unseen ? LocusTheme.coral : LocusTheme.muted).opacity(0.12))
                 .clipShape(Capsule())
                 .offset(x: 9, y: -5)
                 .accessibilityElement()
@@ -1282,6 +1282,9 @@ private struct InspectorResizeHandle: View {
     @EnvironmentObject private var model: AppModel
     @State private var drag = InspectorResizeDrag()
     @State private var isHovering = false
+    @State private var resizeSourceID = UUID()
+    @State private var ownsLiveResize = false
+    @GestureState private var gestureActive = false
 
     var body: some View {
         Rectangle()
@@ -1310,7 +1313,14 @@ private struct InspectorResizeHandle: View {
                     }
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .updating($gestureActive) { _, active, _ in active = true }
                             .onChanged { value in
+                                if !ownsLiveResize {
+                                    ownsLiveResize = true
+                                    model.workspaceLayout.liveResizeCoordinator.beginLiveResize(
+                                        source: .divider(resizeSourceID)
+                                    )
+                                }
                                 // Accumulate from a captured start width so the
                                 // panel cannot drift over a long drag. Zoomed,
                                 // the panel fills the remainder, so the same
@@ -1320,14 +1330,17 @@ private struct InspectorResizeHandle: View {
                                     translation: value.translation.width, zoomed: model.inspectorZoomed)
                                 if model.inspectorZoomed { model.setZoomedChatWidth(width) }
                                 else { model.setInspectorWidth(width) }
+                                model.workspaceLayout.liveResizeCoordinator.update(
+                                    width: model.workspaceLayout.geometry.windowSize.width
+                                )
                             }
                             .onEnded { _ in
-                                drag.end()
                                 if model.inspectorZoomed {
                                     model.commitZoomedChatWidth()
                                 } else {
                                     model.commitInspectorWidth()
                                 }
+                                finishLiveResize()
                             }
                     )
                     .onTapGesture(count: 2) {
@@ -1366,8 +1379,25 @@ private struct InspectorResizeHandle: View {
                         .accessibilityHint("Adjust the panel width. Double-click the divider to reset it.")
                         .accessibilityIdentifier("inspector.resizeHandle")
                     }
-                    .onDisappear { drag.end() }
+                    // GestureState resets on cancellation too, when onEnded is
+                    // not called. Disappearance covers closing the panel mid-drag.
+                    .onChange(of: gestureActive) { _, active in
+                        if !active { finishLiveResize() }
+                    }
+                    .onDisappear { finishLiveResize() }
             }
+    }
+
+    private func finishLiveResize() {
+        drag.end()
+        if ownsLiveResize {
+            ownsLiveResize = false
+            model.workspaceLayout.liveResizeCoordinator.endLiveResize(
+                finalWidth: model.workspaceLayout.geometry.windowSize.width,
+                source: .divider(resizeSourceID)
+            )
+        }
+        NSCursor.arrow.set()
     }
 }
 
@@ -1625,9 +1655,9 @@ struct InspectorRunsTab: View {
 
     private var adaptiveSoloInfo: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Solo delegates automatically", systemImage: "person.2")
+            Label("Solo helpers", systemImage: "person.2")
                 .font(.locus(size: 9, weight: .semibold))
-            Text("When parallel work would help, temporary workers share the selected model and inherit the current tools and permission mode.")
+            Text("Solo can delegate independent work to helpers. Send instructions, interrupt, or resume a helper while the parent task is running.")
                 .font(.locus(size: 8))
                 // `muted` measures ~4.3:1 against this tinted card once the
                 // text is actually drawn, and fails outright on a 1x display
@@ -2331,12 +2361,13 @@ struct InspectorRunsTab: View {
         return { model.openSessionFile(path) }
     }
 
-    /// Workers earn a card when there were any. When there were none, the fact
-    /// belongs in one line — and it has to say *which* kind of none it was: the
-    /// agent seeing no reason to split the work reads nothing like delegation
-    /// having been unavailable, and the two used to be indistinguishable.
+    /// Availability has explicit evidence. When no helper ran, report that
+    /// fact without inventing the agent's reason for working alone.
     @ViewBuilder
     private func workersCard(_ run: OrchestrationRun, work: RunWork) -> some View {
+        SoloHelperControlsView(helpers: model.soloCollaboration,
+                               sessionID: run.sessionID ?? model.currentSessionID,
+                               runID: run.id, isParentRunning: run.state == "running")
         if usesLiveSwarmWorkers(run) {
             overviewCard("WORKERS", symbol: "person.fill") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2379,8 +2410,7 @@ struct InspectorRunsTab: View {
             return "Delegation was unavailable for this run, so the agent worked alone."
         }
         if run.state == "running" { return "No workers delegated yet." }
-        return "This run did not delegate any workers — the primary agent can finish "
-            + "a Solo request itself when parallel investigation would not help."
+        return "No helpers were used in this run."
     }
 
     /// Tool steps: what the run did, rather than how many times a provider was
