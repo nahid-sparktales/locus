@@ -1570,7 +1570,17 @@ final class LocusUITests: XCTestCase {
         revealSettingsControl(advanced, in: scroll)
         advanced.click()
         XCTAssertTrue(anyElement("agent.capabilityTags").waitForExistence(timeout: 3))
-        revealSettingsControl(anyElement("agent.advanced.timeout"), in: scroll)
+        let timeout = anyElement("agent.advanced.timeout")
+        // NSStepper's center is the gap between its two arrows on macOS 15.
+        // Exercise the actionable children, not the aggregate's hit point.
+        let increaseTimeout = timeout.descendants(matching: .incrementArrow).firstMatch
+        let decreaseTimeout = timeout.descendants(matching: .decrementArrow).firstMatch
+        revealSettingsControl(increaseTimeout, in: scroll)
+        XCTAssertEqual(timeout.value as? String, "600")
+        increaseTimeout.click()
+        XCTAssertTrue(waitUntil { timeout.value as? String == "630" })
+        decreaseTimeout.click()
+        XCTAssertTrue(waitUntil { timeout.value as? String == "600" })
         XCTAssertTrue(anyElement("agent.advanced.tokenLimit").exists)
         XCTAssertTrue(cancel.isHittable)
         XCTAssertTrue(save.isHittable)
