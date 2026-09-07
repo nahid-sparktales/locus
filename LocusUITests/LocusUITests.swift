@@ -1038,7 +1038,9 @@ final class LocusUITests: XCTestCase {
 
 
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
-        let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101")
+        // The message row spans the column for selection and its action bar;
+        // the decorated bubble is the element whose reading width is capped.
+        let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101.bubble")
         let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
         let readingColumn = app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "Conversation transcript")
@@ -1521,7 +1523,7 @@ final class LocusUITests: XCTestCase {
         anyElement("workspace.modelPicker.manageAgentsTeams").click()
         let addAgent = app.buttons["Add Agent"]
         XCTAssertTrue(addAgent.waitForExistence(timeout: 3))
-        revealSettingsControl(addAgent, in: anyElement("settings.agents.root"))
+        revealSettingsControl(addAgent, in: anyElement("settings.content.agents"))
         addAgent.click()
 
         let instructions = anyElement("agent.instructions")
@@ -2293,9 +2295,14 @@ final class LocusUITests: XCTestCase {
         // The parent row is independently selectable from its disclosure
         // control. It changes the complete Agent inspector without replacing
         // the conversation in the centre.
-        anyElement("agent.seed-schedule").click()
+        let scheduledAgent = anyElement("agent.seed-schedule")
+        // A compact window can leave the fourth Agent below the sidebar's
+        // viewport. AX still publishes that row; reveal it before clicking.
+        revealSettingsControl(scheduledAgent, in: anyElement("sidebar.scroll"))
+        scheduledAgent.click()
         XCTAssertTrue(waitUntil {
             let selectedName = self.anyElement("agentOverview.name")
+            guard selectedName.exists else { return false }
             return (selectedName.label + " " + (selectedName.value as? String ?? ""))
                 .contains("Morning Review")
         })
@@ -2340,16 +2347,25 @@ final class LocusUITests: XCTestCase {
         // The schedule's dedicated chat groups under the schedule like any agent.
         let group = anyElement("agent.seed-schedule")
         XCTAssertTrue(group.waitForExistence(timeout: Self.launchContentTimeout))
+        let sidebarScroll = anyElement("sidebar.scroll")
+        revealSettingsControl(group, in: sidebarScroll)
         XCTAssertTrue((group.label + " " + (group.value as? String ?? "")).contains("Ready"))
-        XCTAssertTrue(anyElement("session.seed-schedule-chat").exists)
+        // Fleets with more than three Agents start collapsed. Expanding the
+        // branch reveals its chats without leaving the fleet overview.
+        let disclosure = anyElement("agent.seed-schedule.disclosure")
+        if disclosure.label.hasPrefix("Expand") { disclosure.click() }
+        let scheduledChat = anyElement("session.seed-schedule-chat")
+        revealSettingsControl(scheduledChat, in: sidebarScroll)
+        XCTAssertTrue(scheduledChat.exists)
 
         // The fleet lists it with its cadence, not a connector.
         let row = anyElement("agentOverview.fleet.seed-schedule")
         XCTAssertTrue(row.waitForExistence(timeout: 3))
         XCTAssertTrue(row.label.contains("Morning Review"))
-        XCTAssertTrue(row.label.contains("Active"))
+        XCTAssertTrue(row.label.contains("Ready"))
 
         // Schedules gain the one action triggers cannot have.
+        revealSettingsControl(group, in: sidebarScroll)
         group.rightClick()
         XCTAssertTrue(
             app.menuItems["agent.seed-schedule.runNow"].waitForExistence(timeout: 3)
@@ -4008,6 +4024,7 @@ final class LocusUITests: XCTestCase {
         app.buttons["Cancel"].firstMatch.click()
 
         anyElement("configureAgent.tab.run_history").click()
+        XCTAssertEqual(anyElement("configureAgent.tab.run_history").value as? String, "Selected")
         XCTAssertTrue(anyElement("configureAgent.history.configuration").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("configureAgent.history.status").exists)
         XCTAssertTrue(app.staticTexts["No activity yet"].waitForExistence(timeout: 5))
@@ -4042,6 +4059,7 @@ final class LocusUITests: XCTestCase {
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         anyElement("configureAgent.tab.configurations").click()
+        XCTAssertEqual(anyElement("configureAgent.tab.configurations").value as? String, "Selected")
         XCTAssertTrue(anyElement("configureAgent.eventProcessing").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("configureAgent.maximumActiveChats").exists)
 
@@ -4443,8 +4461,20 @@ final class LocusUITests: XCTestCase {
             let row = anyElement("message.\(id)")
             let progress = row.descendants(matching: .any).matching(identifier: "message.progressUpdate").firstMatch
             XCTAssertTrue(progress.exists)
-            progress.click()
+            XCTAssertEqual(progress.value as? String, "Collapsed")
+            // Progress can begin above the viewport in compact windows. The
+            // whole row remains clickable after scrolling it into view.
+            clickInTranscript(progress)
+            XCTAssertTrue(waitUntil { progress.value as? String == "Expanded" })
             XCTAssertTrue(transcriptText(text).waitForExistence(timeout: 3))
+            if id == "00000000-0000-0000-0000-000000000303" {
+                clickInTranscript(progress)
+                XCTAssertTrue(waitUntil {
+                    progress.value as? String == "Collapsed" && !self.transcriptText(text).exists
+                })
+                clickInTranscript(progress)
+                XCTAssertTrue(transcriptText(text).waitForExistence(timeout: 3))
+            }
         }
         XCTAssertTrue(transcriptText("I’ll check both locations now.").exists)
         XCTAssertTrue(transcriptText("The source data is ready.").exists)

@@ -1642,6 +1642,7 @@ struct AgentProfileEditor: View {
         }
         .frame(width: 640, height: 580)
         .background(LocusTheme.surfaceCanvas)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.editor")
         .task {
             nameFocused = isNew
@@ -2015,6 +2016,7 @@ struct AgentProfileEditor: View {
             )
         }
         .padding(.vertical, 5)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.standardToolAccess")
     }
 

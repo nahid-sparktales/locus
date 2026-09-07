@@ -73,6 +73,8 @@ Manual native inspection checked the sidebar, right Agent inspector, manager col
 
 Local native UI automation requires Developer Mode, which is disabled on this host. The full hosted UI suites for both app editions, plus all other required checks, are tracked in [release PR #75](https://github.com/nahid-sparktales/locus/pull/75). Release publication is gated on successful CI for the merged main revision; manual checks are not counted as an automated UI-suite pass.
 
+The first hosted run exposed nine shared UI failures across both editions. Follow-up fixes preserve nested control accessibility in the manager and specialist editor, make progress rows clickable across their full width, prioritize live helper controls in the Runs inspector, and update navigation checks to reveal compact-window controls and intentionally collapsed Agent branches. The focused native regression run passed all 135 tests after these fixes. Hosted UI verification must pass again on the updated revision.
+
 The activity page describes recent loaded records. Durable pagination and execution outputs remain in the contextual inspector. Duration and tool/command/output details are shown only when the stored execution provides them; receipt timestamps are not presented as fabricated run durations.
 
 Existing model wire values, persisted navigation IDs, and backend routing are retained. Changes were made around the in-progress response/output work already present in the checkout.

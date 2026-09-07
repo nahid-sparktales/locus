@@ -2148,8 +2148,13 @@ struct InspectorRunsTab: View {
             VStack(alignment: .leading, spacing: 12) {
                 runSummaryStrip(run, work: work)
                 requestCard(run)
+                if run.state == "running" {
+                    workersCard(run, work: work)
+                }
                 whatHappenedCard(run, work: work)
-                workersCard(run, work: work)
+                if run.state != "running" {
+                    workersCard(run, work: work)
+                }
                 if swarmHasUsageBreakdown(run) {
                     // A breakdown of numbers the strip already reports, so it
                     // opens on demand rather than competing with them.

@@ -5371,9 +5371,29 @@ private struct MessageBlockView: View, Equatable {
                         ThinkingDots()
                     } else {
                         if block.assistantPhase == .commentary && !block.isStreaming {
-                            DisclosureGroup("Progress update", isExpanded: $progressExpanded) { assistantResponse }
-                                .font(.locus(size: 12)).foregroundStyle(LocusTheme.muted)
-                                .accessibilityIdentifier("message.progressUpdate")
+                            Button {
+                                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                                    progressExpanded.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.locus(size: 9, weight: .semibold))
+                                        .rotationEffect(.degrees(progressExpanded ? 90 : 0))
+                                        .accessibilityHidden(true)
+                                    Text("Progress update")
+                                    Spacer(minLength: 0)
+                                }
+                                .font(.locus(size: 12))
+                                .foregroundStyle(LocusTheme.muted)
+                                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.locus())
+                            .accessibilityLabel("Progress update")
+                            .accessibilityValue(progressExpanded ? "Expanded" : "Collapsed")
+                            .accessibilityIdentifier("message.progressUpdate")
+                            if progressExpanded { assistantResponse }
                         } else { assistantResponse }
                         if block.isStreaming {
                             StreamingCaret()

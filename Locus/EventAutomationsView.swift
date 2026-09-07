@@ -427,7 +427,9 @@ struct ConfigureAgentView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: symbol).font(.locus(size: 11, weight: .semibold))
             content()
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 
     private var runHistoryTab: some View {
@@ -468,7 +470,10 @@ struct ConfigureAgentView: View {
                 Text("Showing recent loaded activity. Open a record to inspect its execution and retained Agent history.")
                     .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
             }
-        }.padding(20).accessibilityIdentifier("configureAgent.runHistory")
+        }
+        .padding(20)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("configureAgent.runHistory")
     }
 
     private func activityRow(_ record: AgentActivityRecord) -> some View {

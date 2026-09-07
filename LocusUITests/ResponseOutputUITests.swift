@@ -31,7 +31,13 @@ final class ResponseOutputUITests: XCTestCase {
         clickInTranscript(element("message.fileCollection.showFiles"))
         let search = element("files.search")
         XCTAssertTrue(search.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntil { self.element("files.count").label.contains("10 items") })
+        let count = element("files.count")
+        // SwiftUI Text is exposed through AXValue on macOS 15. Match the
+        // complete visible count on either supported accessibility surface.
+        XCTAssertTrue(waitUntil {
+            count.label == "10 items in workspace root"
+                || count.value as? String == "10 items in workspace root"
+        })
         for filename in ["AGENTS.md", "audit_findings_report.pdf", "code_audit_report.pdf", "storyboobible-influencer-intro-email.pdf", "reddit_latest.py"] {
             XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "files.row.", filename)).firstMatch.exists, filename)
         }
