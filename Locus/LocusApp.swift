@@ -970,10 +970,11 @@ struct RootView: View {
                 transaction.disablesAnimations = true
             }
         }
-        // Manual sidebar toggles animate; inspector zoom commits its final
-        // geometry without interpolating expensive transcript/WebKit layout.
-        // Divider widths stay outside animation so they follow the cursor.
+        // Animate panel expansion and its borrowed sidebar space together,
+        // including browser, rail, and keyboard actions. Divider widths stay
+        // outside animation so they follow the cursor during a resize drag.
         .animation(LocusMotion.spatial, value: model.sidebarCollapsed)
+        .animation(LocusMotion.spatial, value: model.inspectorZoomed)
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = toastCenter.toast {

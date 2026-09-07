@@ -220,18 +220,6 @@ extension AppModel {
     /// without the window growing.
     func setInspectorZoomed(_ zoomed: Bool) {
         guard zoomed != inspectorZoomed else { return }
-        // Commit the destination geometry once. Animating this width reflows
-        // every visible Markdown leaf and the live web page on every frame.
-        // Disable implicit sidebar animations too: zoom borrows its space in
-        // the same transaction, and restoring it must be just as immediate.
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            applyInspectorZoomed(zoomed)
-        }
-    }
-
-    private func applyInspectorZoomed(_ zoomed: Bool) {
         if zoomed {
             guard !justChatEnabled else { return }
             if openInspectorTabs.isEmpty {

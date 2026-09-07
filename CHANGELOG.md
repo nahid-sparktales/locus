@@ -9,8 +9,8 @@
 
 ### Fixed
 
-- Expanding the browser avoids repeated transcript layout and file lookups,
-  improving responsiveness in conversations with many file links.
+- Browser resizing avoids redundant native layout and repeated file lookups;
+  panel expansion and restoration keep their smooth transition.
 
 ## 2.5.0 — 2026-09-06
 
