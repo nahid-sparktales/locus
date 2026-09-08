@@ -62,15 +62,7 @@ enum ChatExportRenderer {
         var assetDirectoryName: String?
         let attachments = document.messages.flatMap { $0.attachments ?? [] }
         if !attachments.isEmpty {
-            let base = url.deletingPathExtension().lastPathComponent + "-assets"
-            let parent = url.deletingLastPathComponent()
-            var candidate = parent.appendingPathComponent(base, isDirectory: true)
-            var suffix = 2
-            while fileManager.fileExists(atPath: candidate.path) {
-                candidate = parent.appendingPathComponent("\(base)-\(suffix)", isDirectory: true)
-                suffix += 1
-            }
-            try fileManager.createDirectory(at: candidate, withIntermediateDirectories: false)
+            let candidate = try makeAssetDirectory(for: url)
             assetDirectory = candidate
             assetDirectoryName = candidate.lastPathComponent
         }
@@ -119,6 +111,22 @@ enum ChatExportRenderer {
             }
             throw error
         }
+    }
+
+    /// The sidecar folder beside an export that carries its binary assets.
+    /// Never reuses an existing folder, so a repeated export cannot mix files.
+    private static func makeAssetDirectory(for url: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let base = url.deletingPathExtension().lastPathComponent + "-assets"
+        let parent = url.deletingLastPathComponent()
+        var candidate = parent.appendingPathComponent(base, isDirectory: true)
+        var suffix = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = parent.appendingPathComponent("\(base)-\(suffix)", isDirectory: true)
+            suffix += 1
+        }
+        try fileManager.createDirectory(at: candidate, withIntermediateDirectories: false)
+        return candidate
     }
 
     private static func plainText(_ document: ChatExportDocument) -> String {
@@ -197,6 +205,17 @@ enum ChatExportRenderer {
             ]))
         }
 
+        func appendImage(_ image: NSImage, name: String, width: CGFloat) {
+            let attachmentCell = NSTextAttachmentCell(imageCell: image)
+            let original = image.size
+            let scale = min(1, width / max(original.width, 1), 320 / max(original.height, 1))
+            attachmentCell.image?.size = NSSize(width: original.width * scale, height: original.height * scale)
+            let textAttachment = NSTextAttachment()
+            textAttachment.attachmentCell = attachmentCell
+            result.append(NSAttributedString(attachment: textAttachment))
+            append("\n\(name)\n", font: detail, color: secondary, spacing: 9)
+        }
+
         append(document.title + "\n", font: title, spacing: 10)
         let metadata = metadataLines(document, markdown: false).dropFirst(2).joined(separator: "\n")
         append(metadata + "\n\n", font: detail, color: secondary, spacing: 9)
@@ -214,14 +233,7 @@ enum ChatExportRenderer {
                     append("[Attachment: \(attachment.name)]\n", font: detail, color: secondary)
                     continue
                 }
-                let attachmentCell = NSTextAttachmentCell(imageCell: image)
-                let original = image.size
-                let scale = min(1, width / max(original.width, 1), 320 / max(original.height, 1))
-                attachmentCell.image?.size = NSSize(width: original.width * scale, height: original.height * scale)
-                let textAttachment = NSTextAttachment()
-                textAttachment.attachmentCell = attachmentCell
-                result.append(NSAttributedString(attachment: textAttachment))
-                append("\n\(attachment.name)\n", font: detail, color: secondary, spacing: 9)
+                appendImage(image, name: attachment.name, width: width)
             }
             append("\n", font: body, spacing: 4)
         }
