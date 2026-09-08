@@ -511,6 +511,87 @@ def test_interrupt_closes_the_response_and_writes_nothing(tmp_path, monkeypatch)
     assert calls.calls == []
 
 
+def test_stop_during_the_provider_header_wait_returns_at_once_and_closes_the_late_response(tmp_path, monkeypatch):
+    """The Images API sends no headers until the picture is done; Stop must not wait for it."""
+    import threading
+    import time
+
+    class Late(FakeResponse):
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    release = threading.Event()
+    arrived = threading.Event()
+    late = Late(200, text=json.dumps({"data": [{"b64_json": PNG_B64}]}))
+
+    def blocking_post(url, **kwargs):
+        release.wait(5)
+        arrived.set()
+        return late
+
+    monkeypatch.setattr(image_generation.requests, "post", blocking_post)
+    ctx = ToolContext(cwd=str(tmp_path))
+    stop = threading.Event()
+    ctx.should_stop = stop.is_set
+    service = ImageGenerationService()
+    service.configure(_provider_config())
+    threading.Timer(0.1, stop.set).start()
+    started = time.monotonic()
+    assert service.execute("generate_image", {"prompt": "x"}, ctx) == INTERRUPTED
+    assert time.monotonic() - started < 1.0
+    assert _images(tmp_path) == [] and ctx.image_generations_this_turn == 0
+    assert not arrived.is_set() and late.closed is False
+
+    release.set()
+    assert arrived.wait(2)
+    deadline = time.monotonic() + 2
+    while not late.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert late.closed is True, "the abandoned late response must be closed by the helper thread"
+
+
+def test_keys_with_control_characters_are_rejected_and_redacted_in_escaped_form(client, tmp_path):
+    body = {"enabled": True, "base_url": "https://images.example.com", "model": "gpt-image-1"}
+    for key in ("sk-abc\ndef-SECRET", "sk-abc\tdef-SECRET", "sk-abc\x00def-SECRET", "sk-abc def-SECRET"):
+        rejected = client.post("/api/images/provider", json={**body, "api_key": key})
+        assert rejected.status_code == 422, repr(key)
+        assert "control characters" in rejected.text
+        assert "SECRET" not in rejected.text and "sk-abc" not in rejected.text
+    assert client.get("/api/images/provider").json()["configured"] is False
+
+    # Belt and braces: a key that bypassed parse still never reaches the model
+    # in the repr-escaped form ``requests`` puts into ``InvalidHeader``.
+    key = "sk-abc\ndef-SECRET"
+    ctx = ToolContext(cwd=str(tmp_path))
+    service = ImageGenerationService()
+    service.configure(_provider_config(api_key=key))
+    result = service.execute("generate_image", {"prompt": "x"}, ctx)
+    assert result.startswith("Error: the provider request failed: InvalidHeader")
+    assert "[redacted]" in result
+    for leak in (key, repr(key)[1:-1], "sk-abc\\ndef", "SECRET"):
+        assert leak not in result, leak
+    assert _images(tmp_path) == []
+
+
+def test_oversize_error_bodies_report_the_real_limit_in_kilobytes(tmp_path, monkeypatch):
+    ProviderStub(monkeypatch, [FakeResponse(503, text="<html>" + "x" * 70_000)])
+    ctx = ToolContext(cwd=str(tmp_path))
+    service = ImageGenerationService()
+    service.configure(_provider_config())
+    result = service.execute("generate_image", {"prompt": "x"}, ctx)
+    assert result == "Error: the provider response exceeds the 66 KB safety limit."
+    assert "0 MB" not in result and "<html>" not in result
+
+    monkeypatch.setattr(image_generation, "MAX_RESPONSE_BYTES", 3_000_000)
+    ProviderStub(monkeypatch, [FakeResponse(200, text="x" * 3_000_001)])
+    assert service.execute("generate_image", {"prompt": "x"}, ctx) == (
+        "Error: the provider response exceeds the 3.0 MB safety limit."
+    )
+    assert _images(tmp_path) == []
+
+
 # ------------------------------------------------------------------- limits
 
 

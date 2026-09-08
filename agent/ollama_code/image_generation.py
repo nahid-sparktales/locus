@@ -23,6 +23,7 @@ import os
 import re
 import secrets
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,11 @@ class ImageProviderConfig:
         api_key = "" if api_key is None else str(api_key).strip()
         if len(api_key) > MAX_API_KEY_CHARS:
             raise ValueError("api_key is too long")
+        if any(ch.isspace() or not ch.isprintable() for ch in api_key):
+            # A key that is not a clean header token would make ``requests``
+            # raise with the key repr-escaped inside the message, which the
+            # raw-key redaction cannot match. The message itself names no key.
+            raise ValueError("api_key must not contain whitespace or control characters")
         validate_remote_url(base_url, api_key)
         parsed = urlsplit(base_url)
         host = (parsed.hostname or "").lower()
@@ -145,6 +151,61 @@ UNCONFIGURED_STATE: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------- outbound
+
+
+class _PendingPost:
+    """One outbound request on a daemon thread, so the caller can keep polling Stop.
+
+    Whichever side sees the response last closes it: the caller after
+    ``abandon()`` if the answer already arrived, otherwise the helper thread when
+    the late answer finally lands. Either way the connection is released.
+    """
+
+    def __init__(self, send: Callable[[], Any]) -> None:
+        self._send = send
+        self.done = threading.Event()
+        self._lock = threading.Lock()
+        self._response: Any = None
+        self._error: BaseException | None = None
+        self._abandoned = False
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            response = self._send()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+            self._error = exc
+        else:
+            with self._lock:
+                self._response = response
+                late = self._abandoned
+            if late:
+                _close_quietly(response)
+        finally:
+            self.done.set()
+
+    def abandon(self) -> None:
+        with self._lock:
+            self._abandoned = True
+            response = self._response
+        if response is not None:
+            _close_quietly(response)
+
+    def result(self) -> Any:
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+def _close_quietly(response: Any) -> None:
+    close = getattr(response, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - releasing a socket must never mask the outcome
+            pass
 
 
 class ImageProviderClient:
@@ -190,8 +251,12 @@ class ImageProviderClient:
         return headers
 
     def _redact(self, text: str) -> str:
-        if self.config.api_key:
-            text = text.replace(self.config.api_key, "[redacted]")
+        key = self.config.api_key
+        if key:
+            # Exceptions ``repr`` the offending value, so the escaped forms of
+            # the key must go too, not only the key itself.
+            for variant in (key, repr(key)[1:-1], key.encode("unicode_escape").decode("ascii")):
+                text = text.replace(variant, "[redacted]")
         return proxy.redact(text)
 
     def _request(
@@ -210,16 +275,27 @@ class ImageProviderClient:
         watcher: threading.Thread | None = None
         response: Any = None
         try:
-            response = requests.post(
-                url,
-                headers=self._headers(),
-                json=json_body,
-                files=files,
-                data=data,
-                timeout=REQUEST_TIMEOUT,
-                stream=True,
-                allow_redirects=False,
+            # The provider sends no headers until the picture is finished, so
+            # the post itself runs on a helper thread and this thread polls
+            # Stop meanwhile; a late answer is closed by whoever sees it last.
+            post = _PendingPost(
+                lambda: requests.post(
+                    url,
+                    headers=self._headers(),
+                    json=json_body,
+                    files=files,
+                    data=data,
+                    timeout=REQUEST_TIMEOUT,
+                    stream=True,
+                    allow_redirects=False,
+                )
             )
+            post.start()
+            while not post.done.wait(0.05):
+                if ctx.stopped():
+                    post.abandon()
+                    raise ImageProviderError("interrupted")
+            response = post.result()
             if ctx.should_stop is not None:
                 watcher = threading.Thread(
                     target=_close_response_when_stopped,
@@ -267,7 +343,7 @@ class ImageProviderClient:
                 continue
             if len(raw) + len(chunk) > limit:
                 raise ImageProviderError(
-                    f"the provider response exceeds the {limit // 1_000_000} MB safety limit."
+                    f"the provider response exceeds the {_size_label(limit)} safety limit."
                 )
             raw.extend(chunk)
         return bytes(raw)
