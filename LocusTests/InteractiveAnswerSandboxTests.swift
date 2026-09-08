@@ -336,12 +336,103 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
         XCTAssertEqual(host.state, .idle)
     }
 
+    // MARK: - Phase 4
+
+    func testHostBudgetTearsDownTheOldestHost() async throws {
+        let registry = InteractiveAnswerRegistry(budget: 2)
+        let first = try await loadHost("<p>1</p>", registry: registry)
+        let second = try await loadHost("<p>2</p>", registry: registry)
+        XCTAssertEqual(registry.liveHostCount, 2)
+        let third = try await loadHost("<p>3</p>", registry: registry)
+
+        XCTAssertEqual(first.state, .stopped(.budgetExceeded))
+        XCTAssertNil(first.webView)
+        XCTAssertEqual(second.state, .ready)
+        XCTAssertEqual(third.state, .ready)
+        XCTAssertEqual(registry.liveHostCount, 2)
+        XCTAssertFalse(registry.contains(first))
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: true, state: first.state), .budgetExceeded)
+
+        // "Show interactive content" brings the oldest back and evicts the next
+        // oldest. WebKit may still be closing the evicted view's process; a
+        // reload racing that is the person's problem to retry, not this test's.
+        try await Task.sleep(for: .milliseconds(400))
+        first.reload()
+        try await poll("the evicted host did not come back: \(first.state), web view \(first.webView == nil ? "absent" : "present")") { first.state == .ready }
+        XCTAssertEqual(second.state, .stopped(.budgetExceeded))
+        XCTAssertEqual(third.state, .ready)
+        XCTAssertEqual(InteractiveAnswerRegistry.shared.budget, 4)
+    }
+
+    func testProcessTerminationShowsStoppedStateAndNeverAutoReloads() async throws {
+        let host = try await loadHost("<p>alive</p>")
+        let webView = try XCTUnwrap(host.webView)
+        host.webViewWebContentProcessDidTerminate(webView)
+        XCTAssertEqual(host.state, .stopped(.terminated))
+        XCTAssertNil(host.webView)
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: true, state: host.state), .stopped)
+
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(host.state, .stopped(.terminated), "the host reloaded on its own")
+        XCTAssertNil(host.webView)
+        host.start()
+        XCTAssertEqual(host.state, .stopped(.terminated), "start() must not revive a stopped host")
+        host.detach()
+        XCTAssertEqual(host.state, .stopped(.terminated), "a dismantled view must not revive a stopped host")
+
+        host.reload()
+        try await poll("reload did not bring the page back") { host.state == .ready }
+        XCTAssertNotNil(host.webView)
+    }
+
+    func testKillSwitchRendersSummaryOnly() async throws {
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: false, state: .ready), .summaryOnly)
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: false, state: .idle), .summaryOnly)
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: true, state: .idle), .loading)
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: true, state: .ready), .web)
+
+        let before = InteractiveAnswerRegistry.shared.liveHostCount
+        let disabled = mountCard(isEnabled: false)
+        defer { disabled.window.orderOut(nil); disabled.window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertNil(Self.firstWebView(in: disabled.window.contentView), "the kill switch still mounted a web view")
+        XCTAssertEqual(InteractiveAnswerRegistry.shared.liveHostCount, before)
+
+        let enabled = mountCard(isEnabled: true)
+        defer { enabled.window.orderOut(nil); enabled.window.contentView = nil }
+        try await poll("the enabled card never mounted its web view") {
+            Self.firstWebView(in: enabled.window.contentView) != nil
+        }
+        XCTAssertEqual(InteractiveAnswerRegistry.shared.liveHostCount, before + 1)
+    }
+
+    func testWatchdogTearsDownAHungScript() async throws {
+        XCTAssertEqual(InteractiveAnswerWatchdogPolicy.default, InteractiveAnswerWatchdogPolicy(pingInterval: 2, deadline: 3))
+
+        let host = makeHost(
+            "<p>hung</p><script>while (true) {}</script>",
+            watchdog: InteractiveAnswerWatchdogPolicy(pingInterval: 0.3, deadline: 0.6)
+        )
+        host.start()
+        try await poll("the watchdog never fired", timeout: .seconds(8)) {
+            host.state == .stopped(.unresponsive)
+        }
+        XCTAssertNil(host.webView)
+        XCTAssertEqual(InteractiveAnswerPresentation.mode(isEnabled: true, state: host.state), .stopped)
+
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(host.state, .stopped(.unresponsive), "a hung page must not be reloaded automatically")
+        XCTAssertNil(host.webView)
+    }
+
     // MARK: - Helpers
 
     private func makeHost(
         _ html: String,
         height: CGFloat = 360,
         ruleListStore: InteractiveAnswerRuleListStore = .shared,
+        registry: InteractiveAnswerRegistry? = nil,
+        watchdog: InteractiveAnswerWatchdogPolicy = .default,
         appearance: @escaping () -> NSAppearance = { NSAppearance(named: .aqua)! },
         includeCSP: Bool = true
     ) -> InteractiveAnswerHost {
@@ -349,6 +440,8 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
             html: html,
             height: height,
             ruleListStore: ruleListStore,
+            registry: registry ?? InteractiveAnswerRegistry(budget: 8),
+            watchdog: watchdog,
             appearance: appearance,
             includeContentSecurityPolicy: includeCSP
         )
@@ -358,12 +451,13 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
 
     private func loadHost(
         _ html: String,
+        registry: InteractiveAnswerRegistry? = nil,
         appearance: @escaping () -> NSAppearance = { NSAppearance(named: .aqua)! },
         includeCSP: Bool = true,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async throws -> InteractiveAnswerHost {
-        let host = makeHost(html, appearance: appearance, includeCSP: includeCSP)
+        let host = makeHost(html, registry: registry, appearance: appearance, includeCSP: includeCSP)
         host.start()
         try await poll("the host never became ready: \(host.state)", file: file, line: line) {
             host.state == .ready
@@ -444,6 +538,38 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
         }
         XCTFail(failure(), file: file, line: line)
         throw LoadWaiterError.timedOut
+    }
+
+    private func mountCard(isEnabled: Bool) -> (window: NSWindow, hosting: NSHostingView<AnyView>) {
+        let card = InteractiveAnswerView(
+            title: "Binary search",
+            summary: "Seven elements, three steps.",
+            html: "<p>widget</p><script>document.body.dataset.inline = 'ran';</script>",
+            height: 200,
+            isEnabled: isEnabled,
+            identity: "test-\(isEnabled)"
+        ) {
+            Text("Binary search — seven elements, three steps.")
+        }
+        let hosting = NSHostingView(rootView: AnyView(card.frame(width: 480)))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        hosting.layoutSubtreeIfNeeded()
+        return (window, hosting)
+    }
+
+    private static func firstWebView(in view: NSView?) -> WKWebView? {
+        guard let view else { return nil }
+        if let webView = view as? WKWebView { return webView }
+        for child in view.subviews {
+            if let found = firstWebView(in: child) { return found }
+        }
+        return nil
     }
 
     /// A 1×1 opaque PNG.

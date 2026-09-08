@@ -131,6 +131,58 @@ enum InteractiveAnswerHostError: LocalizedError {
     }
 }
 
+// MARK: - Watchdog policy
+
+/// How often a live host pings its page and how long a ping may take before
+/// the page is judged hung. A `while (true) {}` widget never answers the
+/// first ping, so it is torn down after `pingInterval + deadline` seconds.
+struct InteractiveAnswerWatchdogPolicy: Equatable {
+    var pingInterval: TimeInterval
+    var deadline: TimeInterval
+
+    static let `default` = InteractiveAnswerWatchdogPolicy(pingInterval: 2, deadline: 3)
+}
+
+// MARK: - Registry
+
+/// Keeps at most `budget` web content hosts alive at once. The transcript can
+/// hold any number of interactive answers; each live one is a web content
+/// process, so the oldest is torn down when a newer one starts and offers a
+/// button to come back.
+@MainActor
+final class InteractiveAnswerRegistry {
+    static let shared = InteractiveAnswerRegistry(budget: 4)
+
+    let budget: Int
+    private var live: [InteractiveAnswerHost] = []
+
+    init(budget: Int) {
+        self.budget = max(1, budget)
+    }
+
+    var liveHostCount: Int { live.count }
+
+    func contains(_ host: InteractiveAnswerHost) -> Bool {
+        live.contains { $0 === host }
+    }
+
+    /// Admit a host that is about to create a web view, evicting the oldest
+    /// live hosts beyond the budget.
+    func admit(_ host: InteractiveAnswerHost) {
+        release(host)
+        live.append(host)
+        while live.count > budget, let oldest = live.first {
+            oldest.stop(reason: .budgetExceeded)
+            // `stop` releases the host; guard against a host that did not.
+            if live.first === oldest { live.removeFirst() }
+        }
+    }
+
+    func release(_ host: InteractiveAnswerHost) {
+        live.removeAll { $0 === host }
+    }
+}
+
 // MARK: - Host
 
 /// One sealed web view for one interactive answer.
@@ -141,7 +193,9 @@ enum InteractiveAnswerHostError: LocalizedError {
 @MainActor
 final class InteractiveAnswerHost: NSObject, ObservableObject {
     enum StopReason: Equatable {
+        case unresponsive
         case terminated
+        case budgetExceeded
     }
 
     enum State: Equatable {
@@ -156,7 +210,7 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
     /// per-host pool buys no isolation the opaque origin does not already give.
     static let processPool = WKProcessPool()
 
-    /// The world theme updates run in. Isolated from the
+    /// The world theme updates and watchdog pings run in. Isolated from the
     /// page's own scripts: they see neither the functions nor the results.
     static let themeWorld = WKContentWorld.world(name: "locus.interactive.theme")
 
@@ -174,22 +228,30 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
     private(set) var appliedAppearance: NSAppearance?
 
     private let ruleListStore: InteractiveAnswerRuleListStore
+    private let registry: InteractiveAnswerRegistry
+    private let watchdogPolicy: InteractiveAnswerWatchdogPolicy
     private let currentAppearance: () -> NSAppearance
     private let includeContentSecurityPolicy: Bool
     private var initialLoadAllowed = false
     private var generation = 0
+    private var watchdogTask: Task<Void, Never>?
+    private var pendingPing: UUID?
     private var appearanceObservation: NSKeyValueObservation?
 
     init(
         html: String,
         height: CGFloat,
         ruleListStore: InteractiveAnswerRuleListStore = .shared,
+        registry: InteractiveAnswerRegistry = .shared,
+        watchdog: InteractiveAnswerWatchdogPolicy = .default,
         appearance: @escaping () -> NSAppearance = { InteractiveAnswerHost.applicationAppearance() },
         includeContentSecurityPolicy: Bool = true
     ) {
         self.html = html
         self.height = height
         self.ruleListStore = ruleListStore
+        self.registry = registry
+        self.watchdogPolicy = watchdog
         self.currentAppearance = appearance
         // Tests turn the meta policy off to prove the rule list holds alone;
         // the app never does.
@@ -201,6 +263,10 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
                 self.applyTheme(for: self.currentAppearance())
             }
         }
+    }
+
+    deinit {
+        watchdogTask?.cancel()
     }
 
     nonisolated static func applicationAppearance() -> NSAppearance {
@@ -223,9 +289,12 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
             case .failed(let reason):
                 self.state = .unavailable(reason)
             case .ready(let ruleList, _):
+                self.registry.admit(self)
+                guard self.generation == attempt, self.state == .loading else { return }
                 let webView = self.makeWebView(ruleList: ruleList)
                 self.webView = webView
                 self.initialLoadAllowed = false
+                self.startWatchdog()
                 webView.loadHTMLString(
                     InteractiveAnswerDocument.wrap(
                         html: self.html,
@@ -274,6 +343,10 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
     /// published state.
     func tearDown() {
         generation += 1
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        pendingPing = nil
+        registry.release(self)
         guard let webView else { return }
         webView.stopLoading()
         webView.navigationDelegate = nil
@@ -346,6 +419,45 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
         let data = (try? JSONSerialization.data(withJSONObject: [value])) ?? Data("[\"\"]".utf8)
         let array = String(decoding: data, as: UTF8.self)
         return String(array.dropFirst().dropLast())
+    }
+
+    // MARK: Watchdog
+
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        let policy = watchdogPolicy
+        let attempt = generation
+        watchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(policy.pingInterval))
+                guard !Task.isCancelled, let self, self.generation == attempt, self.webView != nil else { return }
+                let alive = await self.ping(deadline: policy.deadline)
+                guard !Task.isCancelled, self.generation == attempt else { return }
+                if !alive {
+                    self.stop(reason: .unresponsive)
+                    return
+                }
+            }
+        }
+    }
+
+    /// True when the page answered within `deadline`. A hung web content
+    /// process never completes the evaluation; the completion is left to
+    /// arrive (or not) and is ignored once its token is stale.
+    private func ping(deadline: TimeInterval) async -> Bool {
+        guard let webView else { return false }
+        let token = UUID()
+        pendingPing = token
+        webView.evaluateJavaScript("1", in: nil, in: Self.themeWorld) { [weak self] _ in
+            guard let self, self.pendingPing == token else { return }
+            self.pendingPing = nil
+        }
+        let start = ContinuousClock.now
+        while pendingPing == token, !Task.isCancelled,
+              ContinuousClock.now - start < .seconds(deadline) {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return pendingPing != token
     }
 }
 

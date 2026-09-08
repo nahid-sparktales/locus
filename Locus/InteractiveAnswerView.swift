@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// `original()` is the native, selectable title and summary the caller
 /// already renders as the universal fallback; the sealed web view sits below
 /// it at the part's fixed height. Every degraded state — the kill switch, a
-/// rule list that did not compile, a hung or
+/// rule list that did not compile, a host torn down for the budget, a hung or
 /// crashed page — keeps the summary and replaces only the web view with a
 /// placeholder, so the answer is never blank.
 struct InteractiveAnswerView<Original: View>: View {
@@ -53,6 +53,7 @@ enum InteractiveAnswerPresentation: Equatable {
     case loading
     case web
     case unavailable
+    case budgetExceeded
     case stopped
 
     static func mode(isEnabled: Bool, state: InteractiveAnswerHost.State) -> InteractiveAnswerPresentation {
@@ -61,7 +62,8 @@ enum InteractiveAnswerPresentation: Equatable {
         case .idle, .loading: return .loading
         case .ready: return .web
         case .unavailable: return .unavailable
-        case .stopped: return .stopped
+        case .stopped(.budgetExceeded): return .budgetExceeded
+        case .stopped(.unresponsive), .stopped(.terminated): return .stopped
         }
     }
 }
@@ -137,6 +139,11 @@ private struct InteractiveAnswerCard<Original: View>: View {
             }
         case .unavailable:
             placeholder("Interactive content unavailable")
+        case .budgetExceeded:
+            placeholder("Interactive content paused to save memory") {
+                Button("Show interactive content") { host.reload() }
+                    .accessibilityIdentifier("message.interactiveAnswer.show")
+            }
         case .stopped:
             placeholder(stoppedMessage) {
                 Button("Reload") { host.reload() }
@@ -145,7 +152,13 @@ private struct InteractiveAnswerCard<Original: View>: View {
         }
     }
 
-    private var stoppedMessage: String { "This interactive content stopped." }
+    private var stoppedMessage: String {
+        switch host.state {
+        case .stopped(.unresponsive): "This interactive content stopped responding and was closed."
+        case .stopped(.terminated): "This interactive content stopped."
+        default: "This interactive content stopped."
+        }
+    }
 
     private func placeholder(_ message: String) -> some View {
         placeholder(message) { EmptyView() }
@@ -265,7 +278,7 @@ private struct InteractiveAnswerSheet: View {
                                 .accessibilityLabel("Interactive content, \(title)")
                         }
                     }
-                case .stopped:
+                case .stopped, .budgetExceeded:
                     VStack(spacing: 10) {
                         Text("This interactive content stopped.")
                             .font(.locus(size: 12))
