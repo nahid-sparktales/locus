@@ -303,33 +303,35 @@ struct LocusApp: App {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(LocusTheme.surfaceCanvas)
         case "notebook":
-            NotebookSheet(notebook: model.notebook)
-                .onAppear {
-                    // The UI-testing notes root is a fresh temporary directory,
-                    // so the fixture writes the documents it means to audit
-                    // instead of depending on what the host machine happens to
-                    // have. Written through the real store, saved immediately
-                    // because the list reads from disk.
-                    for (scope, text) in [
-                        (NotesScope.workspace, "Release checklist\n- [ ] tag the build"),
-                        (NotesScope.chat, "Follow up on the notary job"),
-                        (NotesScope.global, "Shared by every chat and workspace"),
-                    ] {
-                        let store = NotesStore.shared(
-                            workspacePath: model.workspacePath,
-                            sessionID: model.currentSessionID,
-                            scope: scope
+            GeometryReader { proxy in
+                NotebookSheet(notebook: model.notebook, availableSize: proxy.size)
+                    .onAppear {
+                        // The UI-testing notes root is a fresh temporary directory,
+                        // so the fixture writes the documents it means to audit
+                        // instead of depending on what the host machine happens to
+                        // have. Written through the real store, saved immediately
+                        // because the list reads from disk.
+                        for (scope, text) in [
+                            (NotesScope.workspace, "Release checklist\n- [ ] tag the build"),
+                            (NotesScope.chat, "Follow up on the notary job"),
+                            (NotesScope.global, "Shared by every chat and workspace"),
+                        ] {
+                            let store = NotesStore.shared(
+                                workspacePath: model.workspacePath,
+                                sessionID: model.currentSessionID,
+                                scope: scope
+                            )
+                            store.update(text)
+                            store.flushForTesting()
+                        }
+                        model.notebook.refresh(
+                            workspaces: model.workspaceProfiles,
+                            sessions: model.sessions
                         )
-                        store.update(text)
-                        store.flushForTesting()
                     }
-                    model.notebook.refresh(
-                        workspaces: model.workspaceProfiles,
-                        sessions: model.sessions
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(LocusTheme.surfaceCanvas)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(LocusTheme.surfaceCanvas)
+            }
         case "model-library":
             ModelLibraryView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1038,7 +1040,7 @@ struct RootView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.notebookPresented) {
-            NotebookSheet(notebook: model.notebook)
+            NotebookSheet(notebook: model.notebook, availableSize: workspaceLayout.geometry.windowSize)
                 .onAppear {
                     model.notebook.refresh(
                         workspaces: model.workspaceProfiles,
@@ -1085,8 +1087,7 @@ struct RootView: View {
             ShortcutsSheet()
         }
         .sheet(isPresented: $model.configureAgentPresented, onDismiss: {
-            model.configureAgentDraftSuggestion = ""
-            model.configureAgentPendingScheduleDraft = nil
+            model.dismissConfigureAgent()
         }) {
             ConfigureAgentView(
                 automation: model.eventAutomations,

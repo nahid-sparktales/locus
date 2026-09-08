@@ -1,73 +1,97 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Splits raw assistant output into reasoning ("thinking") and visible answer
 /// segments. Local models such as qwen3 and deepseek-r1 stream their chain of
 /// thought inside <think>/<thinking> tags; Locus renders those collapsed, the
 /// way Claude Code presents extended thinking.
+enum AssistantReasoningFormat: String, Codable, Sendable {
+    case legacyTags = "legacy_tags"
+    case native
+    case none
+}
+
 enum AssistantSegment: Hashable {
     case thinking(text: String, isComplete: Bool)
     case visible(String)
 
-    static func parse(_ text: String) -> [AssistantSegment] {
+    static func parse(_ text: String, reasoningFormat: AssistantReasoningFormat = .legacyTags) -> [AssistantSegment] {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        guard reasoningFormat == .legacyTags else { return [.visible(text)] }
+        let protected = MarkdownSourceScanner.protectedCodeRanges(in: text)
         var segments: [AssistantSegment] = []
-        var remainder = Substring(text)
-
-        while let open = firstTag(in: remainder) {
-            let before = remainder[..<open.range.lowerBound]
-            if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                segments.append(.visible(String(before)))
+        var cursor = text.startIndex
+        while let open = firstTag(in: text, after: cursor, protected: protected) {
+            if cursor < open.range.lowerBound {
+                segments.append(.visible(String(text[cursor..<open.range.lowerBound])))
             }
-            let afterOpen = remainder[open.range.upperBound...]
-            if let close = afterOpen.range(of: "</\(open.name)>") {
-                let body = afterOpen[..<close.lowerBound]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !body.isEmpty {
-                    segments.append(.thinking(text: body, isComplete: true))
-                }
-                remainder = afterOpen[close.upperBound...]
+            let bodyStart = open.range.upperBound
+            let closingTag = "</\(open.name)>"
+            var close = text.range(of: closingTag, range: bodyStart..<text.endIndex)
+            while let candidate = close,
+                  protected.contains(where: { $0.contains(candidate.lowerBound) })
+                    || MarkdownSourceScanner.isEscaped(candidate.lowerBound, in: text) {
+                close = text.range(of: closingTag, range: candidate.upperBound..<text.endIndex)
+            }
+            if let close {
+                let body = String(text[bodyStart..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !body.isEmpty { segments.append(.thinking(text: body, isComplete: true)) }
+                cursor = close.upperBound
             } else {
-                let body = afterOpen.trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = String(text[bodyStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 segments.append(.thinking(text: body, isComplete: false))
-                remainder = Substring("")
+                cursor = text.endIndex
             }
         }
-        if !remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            segments.append(.visible(String(remainder)))
-        }
+        if cursor < text.endIndex { segments.append(.visible(String(text[cursor...]))) }
         return segments
     }
 
-    private static func firstTag(in text: Substring) -> (name: String, range: Range<Substring.Index>)? {
-        ["think", "thinking"]
-            .compactMap { name in
-                text.range(of: "<\(name)>").map { (name: name, range: $0) }
+    private static func firstTag(
+        in source: String, after start: String.Index, protected: [Range<String.Index>]
+    ) -> (name: String, range: Range<String.Index>)? {
+        var cursor = start
+        while cursor < source.endIndex {
+            if let range = protected.first(where: { $0.contains(cursor) }) { cursor = range.upperBound; continue }
+            if source[cursor] == "<", !MarkdownSourceScanner.isEscaped(cursor, in: source) {
+                // Legacy tags are protocol markers only at the start of a line.
+                // A prose sentence discussing <think> remains ordinary text.
+                let lineStart = source[..<cursor].lastIndex(where: { $0 == "\n" || $0 == "\r\n" || $0 == "\r" }).map { source.index(after: $0) } ?? source.startIndex
+                if source[lineStart..<cursor].allSatisfy({ $0 == " " || $0 == "\t" }) {
+                    for name in ["think", "thinking"] {
+                        let tag = "<\(name)>"
+                        if source[cursor...].hasPrefix(tag) {
+                            return (name, cursor..<source.index(cursor, offsetBy: tag.count))
+                        }
+                    }
+                }
             }
-            .min { $0.range.lowerBound < $1.range.lowerBound }
+            cursor = source.index(after: cursor)
+        }
+        return nil
     }
 
-    /// The segments a transcript in the given visibility mode renders.
-    static func rendered(from text: String, mode: ThinkingVisibility) -> [AssistantSegment] {
-        let segments = parse(text)
-        guard mode == .hidden else { return segments }
-        return segments.filter {
-            if case .thinking = $0 { return false }
+    static func rendered(
+        from text: String, mode: ThinkingVisibility,
+        reasoningFormat: AssistantReasoningFormat = .legacyTags
+    ) -> [AssistantSegment] {
+        parse(text, reasoningFormat: reasoningFormat).filter {
+            if mode == .hidden, case .thinking = $0 { return false }
             return true
         }
     }
 
-    /// The complete answer a response-level Copy action places on the
-    /// pasteboard. Copy from the source message rather than the individually
-    /// rendered Markdown views, whose selections stop at block boundaries.
-    /// Local-model thinking tags remain private just as native reasoning does.
-    static func copyableText(from text: String) -> String {
-        parse(text)
-            .compactMap { segment -> String? in
-                guard case .visible(let value) = segment else { return nil }
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .joined(separator: "\n\n")
+    static func copyableText(from text: String, reasoningFormat: AssistantReasoningFormat = .legacyTags) -> String {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        let visible = parse(text, reasoningFormat: reasoningFormat).compactMap { segment -> String? in
+            guard case .visible(let value) = segment else { return nil }
+            return value
+        }.joined()
+        // Leave ordinary source byte-for-byte intact, including indentation.
+        // Legacy envelope removal trims only its outer newline separators.
+        return visible == text ? text : visible.trimmingCharacters(in: .newlines)
+
     }
 }
 
@@ -86,8 +110,8 @@ enum ResponseCopyFormat: String, CaseIterable, Identifiable {
 }
 
 enum ResponseCopyPayload {
-    static func text(from source: String, format: ResponseCopyFormat) -> String {
-        let visibleMarkdown = AssistantSegment.copyableText(from: source)
+    static func text(from source: String, format: ResponseCopyFormat, reasoningFormat: AssistantReasoningFormat = .legacyTags) -> String {
+        let visibleMarkdown = AssistantSegment.copyableText(from: source, reasoningFormat: reasoningFormat)
         switch format {
         case .plainText:
             return MarkdownPlainTextRenderer.render(visibleMarkdown)
@@ -138,6 +162,7 @@ struct MessageContentView: View {
     let isStreaming: Bool
     var reasoningText: String? = nil
     var reasoningSections: [String]? = nil
+    var reasoningFormat: AssistantReasoningFormat = .legacyTags
     var workspacePath: String? = nil
     var thinkingVisibility: ThinkingVisibility = .collapsed
     /// The transcript's selection store, owned above the lazy list so a drag
@@ -150,7 +175,7 @@ struct MessageContentView: View {
     /// A streaming answer freezes its rendered text while it is being
     /// selected, so the ground does not move under the drag.
     private var isSelecting: Bool {
-        selectionStore?.activeRowIDs.contains(selectionRowID) == true
+        selectionStore?.selectedRowIDs.contains(selectionRowID) == true
     }
 
     var body: some View {
@@ -181,8 +206,8 @@ struct MessageContentView: View {
             guard !isSelecting else { return }
             presentedStreamingText = next
         }
-        .onChange(of: isSelecting) { _, selecting in
-            guard !selecting else { return }
+        .onReceive(selectionStore?.$selectedRowIDs.eraseToAnyPublisher() ?? Just(Set<String>()).eraseToAnyPublisher()) { rows in
+            guard !rows.contains(selectionRowID) else { return }
             presentedStreamingText = text
         }
     }
@@ -200,6 +225,22 @@ struct MessageContentView: View {
                 }
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
+        } else if reasoningFormat == .legacyTags, text.contains("<think") {
+            let source = isSelecting ? presentedStreamingText : text
+            let segments = AssistantSegment.rendered(from: source, mode: thinkingVisibility, reasoningFormat: reasoningFormat)
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                switch segment {
+                case .thinking(let body, let complete):
+                    ThinkingSegmentView(text: body, workspacePath: workspacePath, isActive: !complete,
+                                        forceExpanded: thinkingVisibility == .expanded)
+                case .visible(let body):
+                    StreamingMarkdownBodyView(
+                        text: body, workspacePath: workspacePath, selectionStore: selectionStore,
+                        selectionRootPath: [index], selectionRowID: selectionRowID,
+                        onOpenWorkspaceReference: onOpenWorkspaceReference
+                    )
+                }
+            }
         } else {
             StreamingMarkdownBodyView(
                 text: isSelecting ? presentedStreamingText : text,
@@ -214,7 +255,7 @@ struct MessageContentView: View {
 
     @ViewBuilder
     private var finishedAnswer: some View {
-        let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
+        let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility, reasoningFormat: reasoningFormat)
         ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
             switch segment {
             case .thinking(let body, _):
@@ -242,6 +283,7 @@ struct MessageContentView: View {
 /// blocks freeze once, while the mutable tail stays native plain text.
 struct StreamingMessageContentView: View {
     @ObservedObject var reply: StreamingReplyState
+    var snapshotOverride: StreamingReplySnapshot? = nil
     let thinkingVisibility: ThinkingVisibility
     var workspacePath: String? = nil
     var activityOnly = false
@@ -252,11 +294,11 @@ struct StreamingMessageContentView: View {
     @State private var selectionSnapshot: StreamingReplySnapshot?
 
     private var isSelecting: Bool {
-        selectionStore?.activeRowIDs.contains(selectionRowID) == true
+        selectionStore?.selectedRowIDs.contains(selectionRowID) == true
     }
 
     var body: some View {
-        let snapshot = selectionSnapshot ?? reply.snapshot
+        let snapshot = selectionSnapshot ?? snapshotOverride ?? reply.snapshot
         VStack(alignment: .leading, spacing: 14) {
             if !snapshot.reasoning.isEmpty, thinkingVisibility != .hidden {
                 StreamingThinkingSegmentView(
@@ -297,8 +339,10 @@ struct StreamingMessageContentView: View {
                     .opacity(0.8)
             }
         }
-        .onChange(of: isSelecting) { _, selecting in
-            selectionSnapshot = selecting ? reply.snapshot : nil
+        .onReceive(selectionStore?.$selectedRowIDs.eraseToAnyPublisher() ?? Just(Set<String>()).eraseToAnyPublisher()) { rows in
+            if rows.contains(selectionRowID) {
+                if selectionSnapshot == nil { selectionSnapshot = snapshotOverride ?? reply.snapshot }
+            } else { selectionSnapshot = nil }
         }
     }
 }

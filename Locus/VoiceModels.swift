@@ -117,7 +117,7 @@ struct VoiceReplyProjection: Equatable {
                   block.kind == .assistant,
                   AssistantPhase.resolved(block.assistantPhase?.rawValue) == .finalAnswer
             else { return nil }
-            let visible = AssistantSegment.copyableText(from: block.text)
+            let visible = AssistantSegment.copyableText(from: block.text, reasoningFormat: block.reasoningFormat ?? .legacyTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return visible.isEmpty ? nil : visible
         }.joined(separator: "\n\n")

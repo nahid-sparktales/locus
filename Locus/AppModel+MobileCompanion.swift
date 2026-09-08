@@ -143,7 +143,7 @@ extension AppModel {
             guard !runtime.streamingText.isEmpty else { return nil }
             return .object([
                 "chat_id": .string(runtime.sessionID),
-                "text": .string(String(runtime.streamingText.suffix(120_000))),
+                "text": .string(runtime.streamingText),
             ])
         }
         if let assistant = blocks.last(where: {
@@ -151,7 +151,7 @@ extension AppModel {
         }) {
             streams.append(.object([
                 "chat_id": .string(currentSessionID),
-                "text": .string(String(assistant.text.suffix(120_000))),
+                "text": .string(assistant.text),
             ]))
         }
         return .object([
@@ -176,7 +176,7 @@ extension AppModel {
             guard !visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return .object([
                 "role": .string(message.role),
-                "content": .string(String(visible.prefix(120_000))),
+                "content": .string(visible),
                 "run_id": message.runID.map(JSONValue.string) ?? .null,
             ])
         }

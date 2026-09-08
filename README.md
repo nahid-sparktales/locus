@@ -22,10 +22,10 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 2.5.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.5.0/Locus-macOS.zip).
+> [Download Locus 2.6.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.6.0/Locus-macOS.zip).
 > This is the wallet-free edition and uses manual app updates. Existing Locus
 > chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.5.0).
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.6.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 

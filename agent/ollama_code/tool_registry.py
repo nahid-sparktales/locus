@@ -1212,7 +1212,7 @@ class ToolRegistry:
             and self._user_allows("delegate_read_only")
         ):
             schemas.append(DELEGATE_READ_ONLY_SCHEMA)
-        wanted = {"ask_user_question", "submit_plan"} if plan_mode else {"ask_user_question"}
+        wanted = {"ask_user_question", "submit_plan", "attach_output_parts"} if plan_mode else {"ask_user_question", "attach_output_parts"}
         schemas.extend(
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted

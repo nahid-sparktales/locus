@@ -13,20 +13,39 @@ struct AgentTeamsSettingsView: View {
     @State private var evaluationReport: EvaluationReport?
     @State private var consentAccount: ProviderAccount?
     @State private var quickTeamPresented = false
+    @State private var profileToDelete: AgentProfile?
+    @State private var teamToDelete: AgentTeam?
+    @State private var profileSearch = ""
 
     var body: some View {
         Form {
-            quickTeamSection
-                .id("settings.agents.quickTeam")
             primaryAgentSection
                 .id("settings.agents.primary")
+            Section {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Specialists & teams")
+                        .font(.locus(size: 15, weight: .semibold))
+                    Text("Specialists are reusable instructions, models, and permissions for delegated work. Combine them into a team when a task benefits from multiple perspectives.")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                if agentTeams.agentProfiles.count + agentTeams.agentTeams.count > 5 || !profileSearch.isEmpty {
+                    TextField("Search specialists and teams", text: $profileSearch)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("settings.agents.search")
+                }
+            }
             profilesSection
             teamsSection
+            quickTeamSection
+                .id("settings.agents.quickTeam")
 
             Section {
                 SettingsAdvancedDisclosureRow(
                     isExpanded: $advancedExpanded,
-                    detail: "Scheduling, evaluations, telemetry, and hosted routing"
+                    detail: "Model concurrency, evaluations, telemetry, and hosted routing"
                 )
                 .accessibilityIdentifier("settings.agents.advanced")
             }
@@ -44,11 +63,16 @@ struct AgentTeamsSettingsView: View {
         .background(LocusTheme.surfaceCanvas)
         .accessibilityIdentifier("settings.agents.root")
         .sheet(item: $editingProfile) { profile in
-            AgentProfileEditor(profile: profile) {
+            AgentProfileEditor(
+                profile: profile,
+                isNew: !agentTeams.agentProfiles.contains(where: { $0.id == profile.id }),
+                existingProfiles: agentTeams.agentProfiles
+            ) {
                 agentTeams.saveAgentProfile($0)
                 editingProfile = nil
             }
             .environmentObject(model)
+            .environmentObject(providerAccounts)
         }
         .sheet(isPresented: $quickTeamPresented) {
             QuickTeamBuilderView(suggestedName: agentTeams.suggestedQuickTeamName())
@@ -58,11 +82,13 @@ struct AgentTeamsSettingsView: View {
             AgentBehaviorEditor(
                 title: "Primary Agent",
                 behavior: agentTeams.primaryAgentBehavior,
-                modelName: model.selectedModel
+                mode: model.selectedMode
             ) {
                 agentTeams.savePrimaryAgentBehavior($0)
                 editingPrimaryAgent = false
             }
+            .environmentObject(model)
+            .environmentObject(providerAccounts)
         }
         .sheet(item: $editingTeam) { team in
             AgentTeamEditor(team: team) {
@@ -80,6 +106,41 @@ struct AgentTeamsSettingsView: View {
                 editingSuite = nil
             }
             .environmentObject(model)
+        }
+        .confirmationDialog(
+            "Remove specialist?",
+            isPresented: Binding(get: { profileToDelete != nil }, set: { if !$0 { profileToDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let profile = profileToDelete {
+                Button("Remove \(profile.name)", role: .destructive) {
+                    agentTeams.removeAgentProfile(profile)
+                    profileToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { profileToDelete = nil }
+        } message: {
+            if let profile = profileToDelete {
+                let count = agentTeams.agentTeams.filter { $0.memberIDs.contains(profile.id) }.count
+                Text(count == 0
+                    ? "This removes the saved specialist. Completed runs are kept."
+                    : "This specialist will also be removed from \(count) \(count == 1 ? "team" : "teams"). Teams may need a new dispatcher or lead editor before they can run.")
+            }
+        }
+        .confirmationDialog(
+            "Remove team?",
+            isPresented: Binding(get: { teamToDelete != nil }, set: { if !$0 { teamToDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let team = teamToDelete {
+                Button("Remove \(team.name)", role: .destructive) {
+                    agentTeams.removeAgentTeam(team)
+                    teamToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { teamToDelete = nil }
+        } message: {
+            Text("Its saved specialists and completed runs will remain available.")
         }
         .confirmationDialog(
             "Allow automatic hosted routing?",
@@ -102,7 +163,7 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var quickTeamSection: some View {
-        Section("Get started") {
+        Section("Build a team") {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "person.3.sequence.fill")
                     .font(.locus(size: 15, weight: .semibold))
@@ -112,7 +173,7 @@ struct AgentTeamsSettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Create a quick team")
                         .font(.locus(size: 11, weight: .semibold))
-                    Text("Choose a dispatcher, lead editor, and optional read-only helpers.")
+                    Text("Choose the models. Locus creates the specialist profiles and connects the team for you.")
                         .font(.caption)
                         .foregroundStyle(LocusTheme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -130,25 +191,25 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var runtimeSection: some View {
-        Section("Scheduler") {
+        Section("Model concurrency") {
             Stepper(
                 "Up to \(agentTeams.globalAgentConcurrency) simultaneous model calls",
                 value: $agentTeams.globalAgentConcurrency,
                 in: 1...8
             )
-            Text("Shared fairly across running chats. Expired worker leases are reclaimed after a crash.")
+            Text("Limits model calls across all running chats and teams. Automatic triggers have their own run-processing settings in Manage Agents.")
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
         }
     }
 
     private var primaryAgentSection: some View {
-        Section("Primary agent") {
+        Section("Default conversation behavior") {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(agentTeams.primaryAgentBehavior.displayName)
                         .font(.locus(size: 11, weight: .semibold))
-                    Text("Conversation model · \(model.selectedModel)")
+                    Text("Used by your main assistant · \(model.selectedModel)")
                         .font(.caption)
                         .foregroundStyle(LocusTheme.textTertiary)
                 }
@@ -157,7 +218,7 @@ struct AgentTeamsSettingsView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
-            Text("Customize its response style and memory behavior. Model identity and safety rules remain fixed.")
+            Text("Set the response style, instructions, and memory policy for your main assistant. Changes apply to its next turn.")
                 .font(.caption)
                 .foregroundStyle(LocusTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -165,37 +226,45 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var profilesSection: some View {
-        settingsSection(title: "Saved agents", actionTitle: "Add Agent") {
-            let role = nextSuggestedRole
+        settingsSection(title: "Specialist profiles", actionTitle: "Add Agent") {
+            let route: AgentRoute = model.settings.activeAccountID
+                .flatMap(UUID.init(uuidString:))
+                .map(AgentRoute.providerAccount) ?? .localOllama
             editingProfile = AgentProfile(
-                name: role.title,
+                name: "",
+                route: route,
                 model: model.selectedModel,
-                role: role,
-                instructions: role.defaultInstructions,
-                accessCeiling: role == .implementer ? .workspaceWrite : .readOnly
+                role: .generalist,
+                instructions: "",
+                accessCeiling: .readOnly,
+                behavior: AgentBehavior(selfDescription: "A specialist for delegated tasks.")
             )
         } content: {
             if agentTeams.agentProfiles.isEmpty {
-                emptyRow("No agent profiles yet. Start with a Dispatcher and Implementer.")
+                emptyRow("Save a specialist for research, implementation, or review. Start with a name and instructions; reuse it in any team.")
+            } else if filteredProfiles.isEmpty {
+                emptyRow("No specialists match “\(profileSearch)”.")
             } else {
-                ForEach(agentTeams.agentProfiles) { profile in
+                ForEach(filteredProfiles) { profile in
                     HStack(spacing: 10) {
                         providerLogo(for: profile.route)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.name).font(.locus(size: 11, weight: .semibold))
-                            Text("\(profile.role.title) · \(routeTitle(profile.route)) · \(profile.model)")
-                                .font(.locus(size: 8, design: .monospaced))
+                            Text("\(profile.role.title) · \(profile.accessCeiling.title) · \(routeTitle(profile.route))")
+                                .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(1)
                         }
                         Spacer()
                         Button("Edit") { editingProfile = profile }
                             .buttonStyle(.locus())
-                        Button(role: .destructive) { agentTeams.removeAgentProfile(profile) } label: {
+                        Button(role: .destructive) { profileToDelete = profile } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.locus())
                         .disabled(model.isBusy)
+                        .help("Remove \(profile.name)")
+                        .accessibilityLabel("Remove specialist \(profile.name)")
                     }
                     .padding(.vertical, 7)
                 }
@@ -220,9 +289,11 @@ struct AgentTeamsSettingsView: View {
             )
         } content: {
             if agentTeams.agentTeams.isEmpty {
-                emptyRow("Teams are explicit: add a dispatcher, a lead writer, other coding agents, and any read-only specialists.")
+                emptyRow("A team coordinates specialists around one task. Create a quick team below, or add a team using your saved specialists.")
+            } else if filteredTeams.isEmpty {
+                emptyRow("No teams match “\(profileSearch)”.")
             } else {
-                ForEach(agentTeams.agentTeams) { team in
+                ForEach(filteredTeams) { team in
                     let errors = AgentTeamValidation.errors(team: team, profiles: agentTeams.agentProfiles)
                     HStack(spacing: 10) {
                         Image(systemName: errors.isEmpty ? "person.2.fill" : "exclamationmark.triangle.fill")
@@ -238,11 +309,13 @@ struct AgentTeamsSettingsView: View {
                         Spacer()
                         Button("Edit") { editingTeam = team }
                             .buttonStyle(.locus())
-                        Button(role: .destructive) { agentTeams.removeAgentTeam(team) } label: {
+                        Button(role: .destructive) { teamToDelete = team } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.locus())
                         .disabled(model.isBusy)
+                        .help("Remove \(team.name)")
+                        .accessibilityLabel("Remove team \(team.name)")
                     }
                     .padding(.vertical, 7)
                 }
@@ -372,9 +445,16 @@ struct AgentTeamsSettingsView: View {
         .task { await evaluations.refreshEvaluations() }
     }
 
-    private var nextSuggestedRole: AgentRole {
-        AgentRole.allCases.first { role in !agentTeams.agentProfiles.contains(where: { $0.role == role }) }
-            ?? .generalist
+    private var filteredProfiles: [AgentProfile] {
+        let query = profileSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return agentTeams.agentProfiles.filter {
+            query.isEmpty || "\($0.name) \($0.role.title) \($0.model)".localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredTeams: [AgentTeam] {
+        let query = profileSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return agentTeams.agentTeams.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
     }
 
     private func routeTitle(_ route: AgentRoute) -> String {
@@ -1092,27 +1172,53 @@ private struct EvaluationReportView: View {
 
 private struct AgentBehaviorEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @State private var draft: AgentBehavior
     @State private var showAdvanced = false
     @State private var showPreview = false
+    @State private var previewMode: WorkMode
+    @State private var preview: EffectiveResponsePreview?
+    @State private var previewError: String?
+    @State private var previewLoading = false
+    @State private var previewRetry = UUID()
     let title: String
-    let modelName: String
+    let previewRoute: AgentRoute?
+    let previewModelName: String?
     let onSave: (AgentBehavior) -> Void
 
     init(
         title: String,
         behavior: AgentBehavior,
-        modelName: String,
+        mode: WorkMode,
+        previewRoute: AgentRoute? = nil,
+        previewModelName: String? = nil,
         onSave: @escaping (AgentBehavior) -> Void
     ) {
         _draft = State(initialValue: behavior)
+        _previewMode = State(initialValue: mode)
         self.title = title
-        self.modelName = modelName
+        self.previewRoute = previewRoute
+        self.previewModelName = previewModelName
         self.onSave = onSave
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "text.bubble")
+                    .foregroundStyle(LocusTheme.accentAction)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.locus(size: 17, weight: .semibold))
+                    Text("Instructions, response style, and memory")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                }
+                Spacer()
+            }
+            .padding(20)
+            Divider()
             ScrollView {
                 Form {
                     Section("Identity and response") {
@@ -1153,16 +1259,11 @@ private struct AgentBehaviorEditor: View {
                     }
 
                     Section("Prompt preview") {
-                        Button(showPreview ? "Hide Preview" : "Show Prompt Layers") {
+                        Button(showPreview ? "Hide Preview" : "Show Effective Prompt") {
                             showPreview.toggle()
                         }
                         if showPreview {
-                            Text(promptPreview)
-                                .font(.locus(size: 9, design: .monospaced))
-                                .textSelection(.enabled)
-                                .padding(10)
-                                .background(LocusTheme.white.opacity(0.8))
-                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                            promptPreview
                         }
                     }
                 }
@@ -1176,17 +1277,21 @@ private struct AgentBehaviorEditor: View {
                     .foregroundStyle(LocusTheme.muted)
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     draft.clamp()
                     onSave(draft)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(LocusTheme.accentAction)
+                .keyboardShortcut(.defaultAction)
             }
             .padding(14)
             .background(LocusTheme.paper)
         }
-        .frame(width: 650, height: 760)
+        .frame(width: 650, height: 580)
+        .background(LocusTheme.surfaceCanvas)
+        .task(id: previewRequest) { await refreshPromptPreview() }
     }
 
     private var advancedFields: some View {
@@ -1317,28 +1422,142 @@ private struct AgentBehaviorEditor: View {
         )
     }
 
-    private var promptPreview: String {
-        let overlay = [
-            ("Just Chat", draft.modeInstructions.ask),
-            ("Work", draft.modeInstructions.work),
-            ("Plan", draft.modeInstructions.plan),
-            ("Grill", draft.modeInstructions.grill),
-        ].filter { !$0.1.isEmpty }.map { "\($0.0): \($0.1)" }.joined(separator: "\n")
-        return """
-        [LOCKED · factual]
-        Model: \(modelName.isEmpty ? "selected conversation model" : modelName)
-        Safety, permissions, mode boundaries, and tool access are supplied by Locus.
+    private struct PreviewRequest: Hashable {
+        let behavior: AgentBehavior
+        let mode: WorkMode
+        let visible: Bool
+        let retry: UUID
+        let sessionID: String
+        let modelName: String
+        let accountID: String?
+        let route: AgentRoute?
+        let requestedModel: String?
+        let requestedNativeMode: Bool?
+    }
 
-        [EDITABLE · behavior]
-        Name: \(draft.displayName)
-        Description: \(draft.selfDescription)
-        Style: \(draft.responseStyle.tone.title), \(draft.responseStyle.verbosity.title)
-        \(draft.customInstructions)
-        \(overlay)
+    private var previewRequest: PreviewRequest {
+        PreviewRequest(behavior: draft, mode: previewMode, visible: showPreview, retry: previewRetry,
+            sessionID: model.currentSessionID, modelName: model.selectedModel, accountID: model.settings.activeAccountID,
+            route: previewRoute, requestedModel: previewModelName, requestedNativeMode: previewAccount?.codexNativeModeEnabled)
+    }
 
-        [RUNTIME · per turn]
-        Relevant approved memory and workspace instructions are added only when their scope and mode allow them.
-        """
+    private var previewAccount: ProviderAccount? {
+        guard case .providerAccount(let id) = previewRoute else { return nil }
+        return providerAccounts.providerAccounts.first { $0.id == id }
+    }
+
+    @ViewBuilder
+    private var promptPreview: some View {
+        Picker("Preview mode", selection: $previewMode) {
+            ForEach(WorkMode.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("settings.behavior.preview.mode")
+        if previewLoading {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading effective prompt…") }
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+        } else if let previewError {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Prompt preview unavailable", systemImage: "exclamationmark.triangle")
+                Text(previewError).foregroundStyle(LocusTheme.muted)
+                Button("Retry") { previewRetry = UUID() }.buttonStyle(.locus())
+            }
+            .font(.locus(size: 9))
+            .accessibilityIdentifier("settings.behavior.preview.error")
+        } else if let preview {
+            Text((previewRoute == nil ? "Current conversation route" : "Selected agent route") +
+                " · \(preview.provider) · \(preview.model ?? previewModelName ?? model.selectedModel) · \(preview.route)")
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+            Text(preview.basePrompt)
+                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+            previewText(preview.text)
+                .accessibilityIdentifier("settings.behavior.preview.text")
+            DisclosureGroup("Prompt layers") {
+                ForEach(Array(preview.layers.enumerated()), id: \.offset) { _, layer in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(layer.name + (layer.editable ? " · Editable" : " · Supplied by Locus"))
+                            .font(.locus(size: 9, weight: .semibold))
+                        previewText(layer.content)
+                    }
+                    .padding(.vertical, 5)
+                }
+            }
+        }
+    }
+
+    private func previewText(_ text: String) -> some View {
+        Text(text)
+            .font(.locus(size: 9, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(LocusTheme.white.opacity(0.8))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    @MainActor
+    private func refreshPromptPreview() async {
+        preview = nil
+        previewError = nil
+        guard showPreview else { previewLoading = false; return }
+        previewLoading = true
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+            var behavior = draft
+            behavior.clamp()
+            let data = try JSONEncoder().encode(behavior)
+            let configuration = try JSONSerialization.jsonObject(with: data)
+            var body: [String: Any] = ["agent_config": configuration, "mode": previewMode.rawValue]
+            if let route = previewRoute {
+                guard let selectedModel = previewModelName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !selectedModel.isEmpty else {
+                    throw NSError(domain: "LocusPromptPreview", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Choose a model for this agent before previewing its prompt."])
+                }
+                body["model"] = selectedModel
+                switch route {
+                case .localOllama: body["provider"] = "ollama"
+                case .providerAccount:
+                    guard let account = previewAccount else {
+                        throw NSError(domain: "LocusPromptPreview", code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "This agent's provider account is unavailable. Choose an available account first."])
+                    }
+                    body["provider"] = account.kind == .chatGPT ? "chatgpt" : "remote"
+                    if account.kind == .chatGPT { body["native_mode"] = account.codexNativeModeEnabled }
+                }
+            }
+            let response = try await model.conversationBackend.post(
+                "/api/response-preview",
+                body: body,
+                as: EffectiveResponsePreview.self
+            )
+            guard !Task.isCancelled else { return }
+            preview = response
+            previewLoading = false
+        } catch {
+            guard !Task.isCancelled else { return }
+            previewError = error.localizedDescription
+            previewLoading = false
+        }
+    }
+}
+
+struct EffectiveResponsePreview: Decodable, Equatable {
+    struct Layer: Decodable, Equatable {
+        let name: String
+        let content: String
+        let editable: Bool
+    }
+    let provider: String
+    let model: String?
+    let mode: String
+    let route: String
+    let layers: [Layer]
+    let text: String
+    let basePrompt: String
+    private enum CodingKeys: String, CodingKey {
+        case provider, model, mode, route, layers, text
+        case basePrompt = "base_prompt"
     }
 }
 
@@ -1357,9 +1576,22 @@ struct AgentProfileEditor: View {
     @State private var mcpPrompts: String
     @State private var advancedSettings = false
     @State private var editingBehavior = false
+    @State private var environmentExpanded = false
+    @State private var permissionsExpanded = false
+    @State private var connectionsExpanded = false
+    @State private var previousInstructions: String?
+    @State private var refreshingModels = false
+    @FocusState private var nameFocused: Bool
+    let isNew: Bool
+    let existingProfiles: [AgentProfile]
     let onSave: (AgentProfile) -> Void
 
-    init(profile: AgentProfile, onSave: @escaping (AgentProfile) -> Void) {
+    init(
+        profile: AgentProfile,
+        isNew: Bool = false,
+        existingProfiles: [AgentProfile] = [],
+        onSave: @escaping (AgentProfile) -> Void
+    ) {
         var value = profile
         value.behavior = profile.resolvedBehavior
         _draft = State(initialValue: value)
@@ -1367,119 +1599,276 @@ struct AgentProfileEditor: View {
         _mcpTools = State(initialValue: (profile.mcpPolicy?.tools ?? []).joined(separator: ", "))
         _mcpResources = State(initialValue: (profile.mcpPolicy?.resources ?? []).joined(separator: ", "))
         _mcpPrompts = State(initialValue: (profile.mcpPolicy?.prompts ?? []).joined(separator: ", "))
+        self.isNew = isNew
+        self.existingProfiles = existingProfiles
+        _environmentExpanded = State(initialValue: profile.model.isEmpty)
         self.onSave = onSave
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            header
+            Divider()
             ScrollViewReader { scrollProxy in
                 ScrollView {
-                    Form {
-                            LabeledContent {
-                                TextField("", text: $draft.name)
-                                    .accessibilityLabel("Name")
-                                    .accessibilityIdentifier("agent.name")
-                            } label: {
-                                Text("Name")
-                                    .foregroundStyle(LocusTheme.ink)
-                                    .accessibilityIdentifier("agent.nameLabel")
-                            }
-                            Picker("Role", selection: $draft.role) {
-                                ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
-                            }
-                            .accessibilityIdentifier("agent.role")
-                            Picker("Provider route", selection: $draft.route) {
-                                Text("Local Ollama").tag(AgentRoute.localOllama)
-                                ForEach(providerAccounts.providerAccounts) { account in
-                                    Text(account.displayName).tag(AgentRoute.providerAccount(account.id))
-                                }
-                            }
-                            .accessibilityIdentifier("agent.providerRoute")
-                            modelPicker
-                            if modelSelectionUnavailable {
-                                Label(
-                                    "This provider does not report \(draft.model). Choose a model from the menu before saving.",
-                                    systemImage: "exclamationmark.triangle.fill"
-                                )
-                                .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.coral)
-                                .accessibilityIdentifier("agent.modelAvailability")
-                            } else if modelChoices.isEmpty {
-                                Text("This provider cannot list models, so enter its exact API model ID.")
-                                    .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.inkSoft)
-                                    .accessibilityIdentifier("agent.modelAvailability")
-                            } else {
-                                Text("Only models reported by the selected provider are shown.")
-                                    .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.inkSoft)
-                                    .accessibilityIdentifier("agent.modelAvailability")
-                            }
-                            Picker("Access ceiling", selection: $draft.accessCeiling) {
-                                ForEach(AgentAccessCeiling.allCases) { Text($0.title).tag($0) }
-                            }
-                            .accessibilityIdentifier("agent.accessCeiling")
-                            Picker("Classification", selection: $draft.metering) {
-                                ForEach(AgentMetering.allCases) { Text($0.title).tag($0) }
-                            }
-                            .accessibilityIdentifier("agent.classification")
-                            instructionsEditor
-                            TextField("Capability tags", text: $tags, prompt: Text("code, tests, research"))
-                                .accessibilityIdentifier("agent.capabilityTags")
-                            advancedDisclosure
-                                .id("agent.advancedSettings.section")
-                            if draft.accessCeiling == .readOnly {
-                                standardToolAccess
-                            }
-                            if let connectionResult {
-                                Text(connectionResult)
-                                    .font(.locus(size: 9))
-                                    .foregroundStyle(LocusTheme.muted)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .accessibilityIdentifier("agent.connectionResult")
-                            }
+                    VStack(alignment: .leading, spacing: 18) {
+                        identityFields
+                        instructionsEditor
+                        Divider()
+                        environmentDisclosure
+                        Divider()
+                        permissionsDisclosure
+                        Divider()
+                        connectionsDisclosure
+                        Divider()
+                        advancedDisclosure
+                            .id("agent.advancedSettings.section")
                     }
-                    .padding(20)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .animation(LocusMotion.spatial, value: advancedSettings)
+                    .padding(22)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .accessibilityIdentifier("agent.scroll")
                 .onChange(of: advancedSettings) { _, expanded in
                     guard expanded else { return }
-                    withAnimation(LocusMotion.spatial) {
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         scrollProxy.scrollTo("agent.advancedSettings.section", anchor: .top)
                     }
                 }
             }
             .frame(maxHeight: .infinity)
             .clipped()
-
             Divider()
             footer
-                .frame(height: 56)
-                .zIndex(1)
         }
-        // Keep the fixed action footer inside the visible frame on the
-        // shortest supported displays. The form above remains scrollable.
-        .frame(width: 600, height: 640)
-        .task { await refreshModels() }
+        .frame(width: 640, height: 580)
+        .background(LocusTheme.surfaceCanvas)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent.editor")
+        .task {
+            nameFocused = isNew
+            await refreshModels()
+        }
         .onChange(of: draft.route) { _, _ in
             draft.model = ""
             connectionResult = nil
             Task { await refreshModels() }
         }
+        .onChange(of: draft.model) { _, _ in connectionResult = nil }
         .sheet(isPresented: $editingBehavior) {
             AgentBehaviorEditor(
-                title: "\(draft.name) Behavior",
+                title: "\(draft.name.isEmpty ? "Specialist" : draft.name) Behavior",
                 behavior: draft.resolvedBehavior,
-                modelName: draft.model
+                mode: model.selectedMode,
+                previewRoute: draft.route,
+                previewModelName: draft.model
             ) { behavior in
                 draft.behavior = behavior
                 draft.name = behavior.displayName
                 draft.instructions = behavior.customInstructions
                 editingBehavior = false
             }
+            .environmentObject(model)
+            .environmentObject(providerAccounts)
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.crop.square")
+                .font(.locus(size: 19, weight: .medium))
+                .foregroundStyle(LocusTheme.accentAction)
+                .frame(width: 42, height: 42)
+                .background(LocusTheme.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isNew ? "Create a specialist" : "Edit specialist")
+                    .font(.locus(size: 17, weight: .semibold))
+                Text("A reusable agent for delegated work and teams.")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textTertiary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+    }
+
+    private var identityFields: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Name")
+                    .font(.locus(size: 11, weight: .medium))
+                    .accessibilityIdentifier("agent.nameLabel")
+                TextField("e.g. Code reviewer", text: $draft.name)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($nameFocused)
+                    .accessibilityLabel("Name")
+                    .accessibilityIdentifier("agent.name")
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Specialty")
+                    .font(.locus(size: 11, weight: .medium))
+                Picker("Specialty", selection: $draft.role) {
+                    ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .accessibilityIdentifier("agent.role")
+            }
+            .frame(width: 170, alignment: .leading)
+        }
+    }
+
+    private var environmentDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            disclosureHeader(
+                "Model & provider", detail: environmentSummary,
+                symbol: "cpu", expanded: $environmentExpanded,
+                identifier: "agent.environment"
+            )
+            if environmentExpanded {
+                Picker("Provider", selection: $draft.route) {
+                    Text("Local Ollama").tag(AgentRoute.localOllama)
+                    if providerUnavailable {
+                        Text("Unavailable account").tag(draft.route)
+                    }
+                    ForEach(providerAccounts.providerAccounts) { account in
+                        Text(account.displayName).tag(AgentRoute.providerAccount(account.id))
+                    }
+                }
+                .accessibilityIdentifier("agent.providerRoute")
+                modelPicker
+                Text(providerDetail)
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(testingConnection ? "Testing…" : "Test Connection") { testConnection() }
+                        .disabled(testingConnection || modelValidationMessage != nil)
+                        .accessibilityIdentifier("agent.testConnection")
+                    if testingConnection { ProgressView().controlSize(.small) }
+                }
+                if let connectionResult {
+                    Text(connectionResult)
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("agent.connectionResult")
+                }
+            }
+            if let message = modelValidationMessage {
+                Label(message, systemImage: "exclamationmark.circle")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.warningForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("agent.modelAvailability")
+            }
+        }
+    }
+
+    private var permissionsDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            disclosureHeader(
+                "Permissions & tools", detail: draft.accessCeiling.title,
+                symbol: "lock.shield", expanded: $permissionsExpanded,
+                identifier: "agent.permissions"
+            )
+            if permissionsExpanded {
+                Picker("Access level", selection: $draft.accessCeiling) {
+                    ForEach(AgentAccessCeiling.allCases) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("agent.accessCeiling")
+                Text(accessExplanation)
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                standardToolAccess
+            }
+        }
+    }
+
+    private var connectionsDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            disclosureHeader(
+                "Connected services", detail: connectionSummary,
+                symbol: "point.3.connected.trianglepath.dotted", expanded: $connectionsExpanded,
+                identifier: "agent.connections"
+            )
+            if connectionsExpanded { connectionSettings }
+        }
+    }
+
+    private func disclosureHeader(
+        _ title: String, detail: String, symbol: String,
+        expanded: Binding<Bool>, identifier: String
+    ) -> some View {
+        Button {
+            withAnimation(reduceMotion ? nil : LocusMotion.spatial) { expanded.wrappedValue.toggle() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.locus(size: 11, weight: .semibold))
+                    Text(detail)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var environmentSummary: String {
+        let name: String
+        switch draft.route {
+        case .localOllama: name = "Local Ollama"
+        case .providerAccount(let id):
+            name = providerAccounts.providerAccounts.first { $0.id == id }?.displayName ?? "Unavailable provider"
+        }
+        return "\(name) · \(draft.model.isEmpty ? "Choose a model" : draft.model)"
+    }
+
+    private var providerDetail: String {
+        switch draft.route {
+        case .localOllama:
+            "Uses your configured Ollama endpoint. Tools run in the active chat’s workspace and environment."
+        case .providerAccount:
+            "The model receives its task through this provider. Tools run in the active chat’s workspace and environment."
+        }
+    }
+
+    private var accessExplanation: String {
+        switch draft.accessCeiling {
+        case .readOnly:
+            "Can inspect evidence with the tools below. Cannot edit workspace files. The active chat can further restrict access."
+        case .workspaceWrite:
+            "Can edit workspace files and use the tools below. The active chat’s approval rules and workspace boundaries still apply."
+        case .computerControl:
+            "Can edit workspace files and use computer-control tools when enabled below and allowed by the active chat."
+        }
+    }
+
+    private var connectionSummary: String {
+        if !draft.resolvedBehavior.capabilityPolicy.mcp { return "Disabled in Permissions & tools" }
+        let count = draft.mcpPolicy?.serverIDs.count ?? 0
+        if count == 0 { return "No services allowed" }
+        if csv(mcpTools).isEmpty && csv(mcpResources).isEmpty && csv(mcpPrompts).isEmpty {
+            return "\(count) \(count == 1 ? "service" : "services") selected · Choose allowed tools"
+        }
+        return "\(count) \(count == 1 ? "service" : "services") allowed · Explicit tool access"
     }
 
     private var modelPicker: some View {
@@ -1509,6 +1898,7 @@ struct AgentProfileEditor: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.locus())
+                .disabled(refreshingModels)
                 .help("Refresh models from this provider")
                 .accessibilityLabel("Refresh provider models")
                 .accessibilityIdentifier("agent.model.refresh")
@@ -1518,63 +1908,57 @@ struct AgentProfileEditor: View {
 
     private var instructionsEditor: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Custom role instructions")
-                .font(LocusType.caption)
-                .foregroundStyle(LocusTheme.inkSoft)
-                .accessibilityIdentifier("agent.instructionsLabel")
+            HStack {
+                Text("Instructions")
+                    .font(.locus(size: 11, weight: .medium))
+                    .accessibilityIdentifier("agent.instructionsLabel")
+                Spacer()
+                Button("Use \(draft.role.title) Template") {
+                    previousInstructions = draft.instructions
+                    draft.instructions = draft.role.defaultInstructions
+                }
+                .font(.locus(size: 9))
+                .buttonStyle(.borderless)
+                .foregroundStyle(LocusTheme.accentAction)
+                .accessibilityIdentifier("agent.useRoleTemplate")
+                if let previousInstructions {
+                    Button("Undo") {
+                        draft.instructions = previousInstructions
+                        self.previousInstructions = nil
+                    }
+                    .font(.locus(size: 9))
+                    .buttonStyle(.borderless)
+                    .help("Restore instructions from before the template")
+                }
+            }
             TextEditor(text: $draft.instructions)
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(LocusTheme.ink)
                 .tint(LocusTheme.accentAction)
                 .font(.locus(size: 11))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .frame(height: 120)
-                .background(LocusTheme.white.opacity(0.88))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .frame(height: 112)
+                .background(LocusTheme.surfaceCard)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .stroke(LocusTheme.lineStrong, lineWidth: 1)
                 }
+                .accessibilityLabel("Instructions")
                 .accessibilityIdentifier("agent.instructions")
-            Button("Use \(draft.role.title) Template") {
-                draft.instructions = draft.role.defaultInstructions
-                if draft.behavior == nil { draft.behavior = draft.resolvedBehavior }
-                draft.behavior?.customInstructions = draft.role.defaultInstructions
-            }
-            .buttonStyle(.locus())
-            .accessibilityIdentifier("agent.useRoleTemplate")
-            Button("Edit Full Behavior & Memory Policy…") {
-                editingBehavior = true
-            }
-            .buttonStyle(.locus())
+            Text("Describe its purpose, how it should work, and what a good result looks like.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.textTertiary)
         }
     }
 
     private var advancedDisclosure: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(LocusMotion.spatial) {
-                    advancedSettings.toggle()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Text("Advanced Settings")
-                        .font(.locus(size: 11, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(LocusTheme.signalDeep)
-                    Image(systemName: "chevron.right")
-                        .font(.locus(size: 9, weight: .bold))
-                        .foregroundStyle(LocusTheme.muted)
-                        .rotationEffect(.degrees(advancedSettings ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.locus())
-            .accessibilityValue(advancedSettings ? "Expanded" : "Collapsed")
-            .accessibilityIdentifier("agent.advancedSettings")
-
+        VStack(alignment: .leading, spacing: 12) {
+            disclosureHeader(
+                "Advanced settings", detail: "Behavior, memory, capability tags, and limits",
+                symbol: "slider.horizontal.3", expanded: $advancedSettings,
+                identifier: "agent.advancedSettings"
+            )
             if advancedSettings {
                 advancedSettingsContent
                     .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
@@ -1584,11 +1968,11 @@ struct AgentProfileEditor: View {
 
     private var standardToolAccess: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("STANDARD TOOL ACCESS")
+            Text("ALLOWED TOOLS")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
                 .foregroundStyle(LocusTheme.muted)
-            Text("Read-only agents get only the tool groups you check. These choices can remove access; they never override Full Access, workspace boundaries, or the read-only ceiling.")
+            Text("Enable only the tools this specialist needs. These choices can restrict access; they cannot override the access level, chat permissions, or workspace boundaries.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1598,6 +1982,13 @@ struct AgentProfileEditor: View {
                 "Read, list, search, Git status/diff, and workspace knowledge",
                 capabilityBinding(\.workspaceRead)
             )
+            if draft.accessCeiling.canWrite {
+                toolAccessRow("Edit workspace files", "Create and change files inside the allowed workspace", capabilityBinding(\.workspaceWrite))
+            }
+            if draft.accessCeiling == .computerControl {
+                toolAccessRow("Computer control", "Interact with desktop applications", capabilityBinding(\.computerControl))
+                toolAccessRow("iOS Simulator", "Interact with the connected simulator", capabilityBinding(\.simulatorControl))
+            }
             toolAccessRow(
                 "Terminal commands",
                 "Finite shell commands and managed background services",
@@ -1609,8 +2000,8 @@ struct AgentProfileEditor: View {
                 capabilityBinding(\.network)
             )
             toolAccessRow(
-                "Skills and MCP",
-                "Enabled skills and the MCP servers checked below",
+                "Skills and connected services",
+                "Enabled skills and services explicitly allowed in Connected services",
                 capabilityBinding(\.mcp)
             )
             toolAccessRow(
@@ -1625,6 +2016,7 @@ struct AgentProfileEditor: View {
             )
         }
         .padding(.vertical, 5)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.standardToolAccess")
     }
 
@@ -1681,11 +2073,22 @@ struct AgentProfileEditor: View {
 
     private var advancedSettingsContent: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Button("Edit behavior & memory…") {
+                var behavior = draft.resolvedBehavior
+                behavior.customInstructions = draft.instructions
+                draft.behavior = behavior
+                editingBehavior = true
+            }
+            .buttonStyle(.bordered)
+            TextField("Capability tags", text: $tags, prompt: Text("code, tests, research"))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("agent.capabilityTags")
+            Text("Tags help a team dispatcher choose the right specialist.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.textTertiary)
             Divider()
-            Text("RUNTIME LIMITS")
-                .font(.locus(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+            Text("Runtime limits")
+                .font(.locus(size: 11, weight: .medium))
             Stepper(
                 "Timeout: \(draft.timeoutSeconds)s",
                 value: $draft.timeoutSeconds,
@@ -1700,78 +2103,123 @@ struct AgentProfileEditor: View {
                 step: 1_024
             )
             .accessibilityIdentifier("agent.advanced.tokenLimit")
+            Picker("Usage classification", selection: $draft.metering) {
+                ForEach(AgentMetering.allCases) { Text($0.title).tag($0) }
+            }
+            .accessibilityIdentifier("agent.classification")
             if draft.metering == .metered {
                 TextField("Input $ / 1M tokens", value: $draft.inputCostPerMillion, format: .number)
                 TextField("Output $ / 1M tokens", value: $draft.outputCostPerMillion, format: .number)
             }
+        }
+    }
 
-            Divider()
-            Text("MCP ACCESS · NONE BY DEFAULT")
-                .font(.locus(size: 8, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
-            ForEach(extensionsModel.extensions.mcpServers) { server in
-                Toggle(server.name, isOn: Binding(
-                    get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
-                    set: { enabled in
-                        var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                        if enabled { policy.serverIDs.append(server.id) }
-                        else { policy.serverIDs.removeAll { $0 == server.id } }
-                        draft.mcpPolicy = policy
-                    }
-                ))
+    private var connectionSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if extensionsModel.extensions.mcpServers.isEmpty {
+                Text("No services are connected. Add an MCP server in Extensions to make it available here.")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textTertiary)
+            } else {
+                ForEach(extensionsModel.extensions.mcpServers) { server in
+                    Toggle(server.name, isOn: Binding(
+                        get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
+                        set: { enabled in
+                            var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                            if enabled, !policy.serverIDs.contains(server.id) { policy.serverIDs.append(server.id) }
+                            else if !enabled { policy.serverIDs.removeAll { $0 == server.id } }
+                            draft.mcpPolicy = policy
+                        }
+                    ))
+                    .toggleStyle(.checkbox)
+                }
             }
-            TextField("Allowed tools", text: $mcpTools, prompt: Text("tool names, comma separated"))
-            TextField("Allowed resources", text: $mcpResources, prompt: Text("resource URIs or names"))
-            TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("prompt names"))
-            Text("Prompts introduce instructions and must be named explicitly. Mutating MCP tools remain writer-only.")
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+            TextField("Allowed tools", text: $mcpTools, prompt: Text("Tool names, separated by commas"))
+                .textFieldStyle(.roundedBorder)
+            TextField("Allowed resources", text: $mcpResources, prompt: Text("Resource URIs or names"))
+                .textFieldStyle(.roundedBorder)
+            TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("Prompt names"))
+                .textFieldStyle(.roundedBorder)
+            Text("Service access requires an allowed server and tool. External actions still require a writer role and the active chat’s permission. Prompts must be named explicitly.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 4)
     }
 
     private var footer: some View {
-        HStack {
-            Button(testingConnection ? "Testing…" : "Test Connection") {
-                testingConnection = true
-                Task {
-                    connectionResult = await model.testAgentProfileConnection(draft)
-                    testingConnection = false
-                }
-            }
-            .disabled(testingConnection || draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("agent.testConnection")
-
-            Spacer()
-
+        HStack(spacing: 12) {
+            Text(nameValidationMessage ?? (isNew ? "You can refine everything later." : "Changes apply to future runs."))
+                .font(.locus(size: 9))
+                .foregroundStyle(nameValidationMessage == nil ? LocusTheme.textTertiary : LocusTheme.warningForeground)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("agent.saveHint")
+            Spacer(minLength: 8)
             Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("agent.cancel")
-            Button("Save") {
-                draft.capabilityTags = tags.split(separator: ",").map(String.init)
-                var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                policy.tools = csv(mcpTools)
-                policy.resources = csv(mcpResources)
-                policy.prompts = csv(mcpPrompts)
-                draft.mcpPolicy = policy
-                if draft.behavior == nil { draft.behavior = draft.resolvedBehavior }
-                draft.behavior?.displayName = draft.name
-                draft.behavior?.customInstructions = draft.instructions
-                draft.clamp()
-                onSave(draft)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.ink)
-            .disabled(
-                draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || modelSelectionUnavailable
-            )
-            .accessibilityIdentifier("agent.save")
+            Button(isNew ? "Create specialist" : "Save changes") { saveProfile() }
+                .buttonStyle(.borderedProminent)
+                .tint(LocusTheme.accentAction)
+                .keyboardShortcut(.defaultAction)
+                .disabled(nameValidationMessage != nil || modelValidationMessage != nil)
+                .accessibilityIdentifier("agent.save")
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(LocusTheme.paper)
+        .padding(.horizontal, 22)
+        .frame(minHeight: 62)
+        .background(LocusTheme.surfaceCanvas)
+    }
+
+    private var nameValidationMessage: String? {
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Give this specialist a name." }
+        if name.count > 64 { return "Keep the name to 64 characters or fewer." }
+        if existingProfiles.contains(where: { $0.id != draft.id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return "A specialist with this name already exists."
+        }
+        return nil
+    }
+
+    private var providerUnavailable: Bool {
+        guard case .providerAccount(let id) = draft.route else { return false }
+        return !providerAccounts.providerAccounts.contains { $0.id == id }
+    }
+
+    private var modelValidationMessage: String? {
+        if providerUnavailable { return "Choose an available provider to continue." }
+        if draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Choose a model to continue." }
+        if modelSelectionUnavailable { return "This model is unavailable. Choose one from the provider’s model list." }
+        return nil
+    }
+
+    private func saveProfile() {
+        guard nameValidationMessage == nil, modelValidationMessage == nil else { return }
+        draft.capabilityTags = csv(tags)
+        var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+        policy.tools = csv(mcpTools)
+        policy.resources = csv(mcpResources)
+        policy.prompts = csv(mcpPrompts)
+        draft.mcpPolicy = policy
+        var behavior = draft.resolvedBehavior
+        behavior.displayName = draft.name
+        behavior.customInstructions = draft.instructions
+        draft.behavior = behavior
+        draft.clamp()
+        onSave(draft)
+    }
+
+    private func testConnection() {
+        guard !testingConnection, modelValidationMessage == nil else { return }
+        testingConnection = true
+        connectionResult = nil
+        let testedProfile = draft
+        Task {
+            let result = await model.testAgentProfileConnection(testedProfile)
+            if draft.route == testedProfile.route, draft.model == testedProfile.model {
+                connectionResult = result
+            }
+            testingConnection = false
+        }
     }
 
     private var modelChoices: [String] {
@@ -1811,6 +2259,8 @@ struct AgentProfileEditor: View {
     }
 
     private func refreshModels() async {
+        refreshingModels = true
+        defer { refreshingModels = false }
         switch draft.route {
         case .localOllama:
             await model.refreshMetadata()
@@ -1853,6 +2303,20 @@ private struct AgentTeamEditor: View {
             team: draft, profiles: agentTeams.agentProfiles
         ) + engineErrors
         VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.3.sequence.fill")
+                    .foregroundStyle(LocusTheme.accentAction)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Configure team").font(.locus(size: 17, weight: .semibold))
+                    Text("Choose its specialists, execution environment, and limits.")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                }
+                Spacer()
+            }
+            .padding(20)
+            Divider()
             ScrollView {
                 Form {
                     TextField("Team name", text: $draft.name)
@@ -1861,8 +2325,14 @@ private struct AgentTeamEditor: View {
                             Toggle(isOn: Binding(
                                 get: { draft.memberIDs.contains(profile.id) },
                                 set: { included in
-                                    if included { draft.memberIDs.append(profile.id) }
-                                    else { draft.memberIDs.removeAll { $0 == profile.id } }
+                                    if included {
+                                        if !draft.memberIDs.contains(profile.id) { draft.memberIDs.append(profile.id) }
+                                    } else {
+                                        draft.memberIDs.removeAll { $0 == profile.id }
+                                        if draft.dispatcherID == profile.id { draft.dispatcherID = nil }
+                                        if draft.fallbackDispatcherID == profile.id { draft.fallbackDispatcherID = nil }
+                                        if draft.defaultWriterID == profile.id { draft.defaultWriterID = nil }
+                                    }
                                 }
                             )) {
                                 Text("\(profile.name) · \(profile.role.title)")
@@ -2034,8 +2504,15 @@ private struct AgentTeamEditor: View {
             Divider()
 
             HStack {
+                if let firstError = errors.first {
+                    Text(firstError)
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.warningForeground)
+                        .lineLimit(2)
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("teamEditor.cancel")
                 Button("Save") {
                     draft.evaluationTags = evaluationTags.split(separator: ",").map(String.init)
@@ -2043,7 +2520,8 @@ private struct AgentTeamEditor: View {
                     onSave(draft)
                 }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(LocusTheme.accentAction)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!errors.isEmpty)
                     .accessibilityIdentifier("teamEditor.save")
             }
@@ -2051,7 +2529,8 @@ private struct AgentTeamEditor: View {
             .padding(.vertical, 14)
             .background(LocusTheme.paper)
         }
-        .frame(width: 620, height: 680)
+        .frame(width: 640, height: 580)
+        .background(LocusTheme.surfaceCanvas)
     }
 
     private var memberProfiles: [AgentProfile] {

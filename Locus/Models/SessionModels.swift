@@ -303,11 +303,33 @@ struct ChatExportMessage: Codable, Hashable {
     let phase: AssistantPhase?
     let itemID: String?
     let attachments: [ChatExportAttachment]?
+    var responseParts: ResponseDocument? = nil
+    var reasoningFormat: AssistantReasoningFormat? = nil
+    var runID: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case role, content, name, reasoning, phase, attachments
         case reasoningSections = "reasoning_sections"
         case itemID = "item_id"
+        case responseParts = "response_parts", reasoningFormat = "reasoning_format", runID = "run_id"
+    }
+}
+
+extension ChatExportMessage {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        role = try values.decode(String.self, forKey: .role)
+        content = try values.decode(String.self, forKey: .content)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        reasoning = try values.decodeIfPresent(String.self, forKey: .reasoning)
+        reasoningSections = try values.decodeIfPresent([String].self, forKey: .reasoningSections)
+        phase = try? values.decodeIfPresent(AssistantPhase.self, forKey: .phase)
+        itemID = try values.decodeIfPresent(String.self, forKey: .itemID)
+        attachments = try values.decodeIfPresent([ChatExportAttachment].self, forKey: .attachments)
+        responseParts = try? values.decodeIfPresent(ResponseDocument.self, forKey: .responseParts)
+        reasoningFormat = (try? values.decodeIfPresent(String.self, forKey: .reasoningFormat))
+            .map { AssistantReasoningFormat(rawValue: $0) ?? .none }
+        runID = try values.decodeIfPresent(String.self, forKey: .runID)
     }
 }
 

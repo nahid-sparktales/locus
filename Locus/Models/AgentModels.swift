@@ -160,9 +160,9 @@ enum PermissionMode: String, Codable, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .ask: "Approve every file change, command, and fetch before it runs."
-        case .acceptEdits: "File edits inside the workspace run automatically. Commands still ask."
-        case .bypass: "Every tool runs without asking. Use only in a workspace you can throw away."
+        case .ask: "Read workspace files automatically. Ask before edits, commands, network requests and external actions."
+        case .acceptEdits: "Read and edit workspace files automatically. Ask before commands, network requests and external actions."
+        case .bypass: "Available tools run without asking, including file edits, commands, network requests and connected-service actions."
         }
     }
 

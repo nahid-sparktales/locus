@@ -1,13 +1,44 @@
 # Changelog
 
-## Unreleased
+## 2.6.0 — 2026-09-07
+
+### Added
+
+- Structured answers can present verified file collections, reusable writing,
+  deliverables, and source references while preserving a complete Markdown fallback.
+- Writing drafts support editing, original recovery, copying, and export.
+  Tables copy all rows and can export CSV even when the display is collapsed.
+- The Files panel browses all file types and generated folders with incremental
+  expansion, path search, explicit hidden-file visibility, and existing previews.
 
 ### Changed
+
+- Agents now have a searchable collection with clear instructions, triggers,
+  access, environment, and recent activity. Shared Connections and Runtime
+  controls are separate from Agent configuration.
+- Creation starts with a schedule, incoming event, or price condition and uses
+  a short form with progressively disclosed advanced settings.
+- The sidebar, Agent selector, and right inspector clarify Agent ownership,
+  live status, connection problems, and the difference between Agent and chat activity.
+- Answer and progress presentation is clearer, and behavior previews show the
+  effective instructions for the selected provider and mode.
+- Goal, plan, and permission controls explain their scope and keep actions
+  accessible in compact panels. Reusable profiles are labeled Specialists & teams.
 
 - Task Capsules now guide model setup, keep the next action visible, and make
   saved plans, edits, and past runs easier to find and review at compact sizes.
 
 ### Fixed
+
+- Mobile chat refresh preserves partial answers when loading fails and ignores
+  stale responses after switching conversations.
+
+- Removing every connected-service action permission now persists the empty
+  selection, including restrictions in workflow steps.
+- Agent creation from the sidebar waits for its parent sheet to mount.
+- Activity uses consistent receipt and execution states; failed or cancelled
+  deliveries cannot appear successful because of an older linked run.
+- Schedule loading preserves saved data on failure and ignores cancelled requests.
 
 - Browser resizing avoids redundant native layout and repeated file lookups;
   panel expansion and restoration keep their smooth transition.

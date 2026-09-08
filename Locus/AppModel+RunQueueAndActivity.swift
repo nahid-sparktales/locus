@@ -47,7 +47,7 @@ extension AppModel {
 
     func presentScheduleEditor(task: ScheduledTask? = nil, prompt: String? = nil) {
         let wasPresented = configureAgentPresented
-        let destinationTab: ConfigureAgentTab = task == nil ? .configurations : .agents
+        let destinationTab: ConfigureAgentTab = .agents
 
         let presentDraft: (ScheduleEditorDraft) -> Void = { [weak self] draft in
             guard let self else { return }
@@ -105,7 +105,7 @@ extension AppModel {
             draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
         )
         activity.activityCenterPresented = false
-        configureAgentTab = .configurations
+        configureAgentTab = .agents
         configureAgentPresented = true
         Task { @MainActor [weak self] in
             await self?.schedule.refreshScheduledTasks()
@@ -115,6 +115,8 @@ extension AppModel {
 
     func dismissConfigureAgent() {
         configureAgentPresented = false
+        configureAgentCreationPresented = false
+        configureAgentPendingCreation = false
         configureAgentDraftSuggestion = ""
         configureAgentPendingScheduleDraft = nil
         configureAgentPendingTriggerEdit = nil
@@ -122,6 +124,11 @@ extension AppModel {
     }
 
     func mountPendingConfigureAgentEditor() {
+        if configureAgentPendingCreation {
+            configureAgentPendingCreation = false
+            configureAgentCreationPresented = true
+            return
+        }
         if let edit = configureAgentPendingTriggerEdit {
             configureAgentPendingTriggerEdit = nil
             eventAutomations.presentEditor(
@@ -982,7 +989,13 @@ extension AppModel {
             eventAutomations.clearWarning(trigger)
         } else if action == "open_configuration" {
             presentConfigureAgent(draftText: "")
-            configureAgentFocusConfigurationID = item.automationID
+            if let id = item.automationID {
+                if item.automationKind == "schedule" {
+                    configureAgentFocusConfigurationID = "schedule:\(id)"
+                } else if let trigger = eventAutomations.triggers.first(where: { $0.id == id }) {
+                    configureAgentFocusConfigurationID = "\(trigger.triggerKind == .price ? "price" : "event"):\(id)"
+                }
+            }
         } else if action == "open_chat", let sessionID = item.sessionID,
                   let session = sessions.first(where: { $0.id == sessionID }) {
             activity.activityCenterPresented = false

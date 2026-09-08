@@ -615,6 +615,144 @@ final class EventAutomationTests: XCTestCase {
         XCTAssertEqual(model.editorDraft?.templateSessionID, "agent-chat")
     }
 
+    @MainActor
+    func testSavingExplicitlyEmptyServiceAccessNeverGrantsTheEventSource() async throws {
+        // Both create and edit used to turn every disabled action toggle back
+        // into permission to use the incoming Gmail account.
+        for isEditing in [false, true] {
+            let body = try await savedActionRequest(actions: [], isEditing: isEditing)
+            XCTAssertEqual(body["action_connection_ids"] as? [String], [])
+            XCTAssertEqual(body["connection_id"] as? String, "gmail")
+            XCTAssertEqual(body["target_session_id"] as? String, "chat-a")
+            XCTAssertEqual(body["instruction"] as? String, "Summarize only")
+            XCTAssertEqual(body["enabled"] as? Bool, false)
+            XCTAssertEqual(body["mode"] as? String, "work")
+        }
+    }
+
+    @MainActor
+    func testSavingServiceAccessDropsIngestionOnlyAndDeletedConnections() async throws {
+        for kind in EventTriggerKind.allCases {
+            let body = try await savedActionRequest(
+                actions: ["telegram", "deleted-account", "webhook", "gmail", "prices"],
+                kind: kind
+            )
+            XCTAssertEqual(body["action_connection_ids"] as? [String], ["telegram", "gmail"])
+            XCTAssertEqual(body["trigger_kind"] as? String, kind.rawValue)
+        }
+    }
+
+    @MainActor
+    func testRevokingServiceAccessNarrowsWorkflowStepsWithoutChangingInheritance() async throws {
+        let workflow = AutomationWorkflow(entryStepID: "restricted", steps: [
+            AutomationWorkflowStep(
+                id: "restricted", type: .agent, title: "Restricted", instructionTemplate: "Summarize only",
+                mode: .work, allowedConnectionIDs: ["gmail", "telegram", "prices", "removed"], nextStepID: "inherited"
+            ),
+            AutomationWorkflowStep(
+                id: "inherited", type: .agent, title: "Inherited", instructionTemplate: "Continue",
+                mode: .work, allowedConnectionIDs: nil, nextStepID: "none"
+            ),
+            AutomationWorkflowStep(
+                id: "none", type: .agent, title: "No actions", instructionTemplate: "Finish",
+                mode: .work, allowedConnectionIDs: []
+            ),
+        ])
+        for remaining in [["telegram"], []] {
+            let body = try await savedActionRequest(actions: remaining, isEditing: true, workflow: workflow)
+            let savedWorkflow = try XCTUnwrap(body["workflow"] as? [String: Any])
+            let steps = try XCTUnwrap(savedWorkflow["steps"] as? [[String: Any]])
+            XCTAssertEqual(body["action_connection_ids"] as? [String], remaining)
+            XCTAssertEqual(steps[0]["allowed_connection_ids"] as? [String], remaining)
+            XCTAssertNil(steps[1]["allowed_connection_ids"], "nil must continue to mean inherited permissions")
+            XCTAssertEqual(steps[2]["allowed_connection_ids"] as? [String], [], "Explicit no-action steps must stay restricted")
+            XCTAssertEqual(steps[0]["next_step_id"] as? String, "inherited")
+            XCTAssertEqual(body["instruction"] as? String, "Summarize only")
+        }
+    }
+
+    @MainActor
+    func testNewGmailDraftRetainsItsExistingDefaultActionSelection() {
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
+        model.seedForUITesting(
+            connections: [ConnectorConnection(
+                id: "gmail", kind: .gmail, displayName: "Inbox", publicConfig: [:], cursor: [:],
+                enabled: true, health: "connected", createdAt: 1, updatedAt: 1
+            )],
+            triggers: [], deliveries: []
+        )
+        model.presentEditor(targetSessionID: "chat-a", triggerKind: .event)
+        XCTAssertEqual(model.editorDraft?.actionConnectionIDs, ["gmail"])
+    }
+
+    /// Exercise saveTrigger's actual POST/PATCH body rather than a duplicate
+    /// projection of the permission rules. Paused connectors avoid native
+    /// polling in this test; their valid grants should still be preserved.
+    @MainActor
+    private func savedActionRequest(
+        actions: [String], kind: EventTriggerKind = .event, isEditing: Bool = false,
+        workflow: AutomationWorkflow? = nil
+    ) async throws -> [String: Any] {
+        BackendStub.reset()
+        var reply = triggerPayload(id: "permissions", enabled: false, lastError: nil)
+        reply["action_connection_ids"] = actions
+        reply["trigger_kind"] = kind.rawValue
+        let path = isEditing ? "/api/event-triggers/permissions" : "/api/event-triggers"
+        BackendStub.respond(toPath: path) { _ in reply }
+        let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
+        defer { model.stop() }
+        model.configure(
+            backend: stubbedBackendService(), onQueuedRun: { _ in },
+            canDispatchToSession: { _ in true }, onCapabilityChanged: {}, refreshSessions: {},
+            agentProviderRoute: { [:] }, openAgentSession: { _ in }, showMessage: { _ in },
+            supportsWorkflows: { workflow != nil }
+        )
+        let connectors: [(String, ConnectorKind)] = [
+            ("gmail", .gmail), ("telegram", .telegram), ("webhook", .webhook), ("prices", .priceFeed),
+        ]
+        model.seedForUITesting(
+            connections: connectors.map { id, kind in
+                ConnectorConnection(
+                    id: id, kind: kind, displayName: id, publicConfig: [:], cursor: [:],
+                    enabled: false, health: "connected", createdAt: 1, updatedAt: 1
+                )
+            }, triggers: [], deliveries: []
+        )
+        var draft = EventTriggerEditorDraft()
+        draft.id = isEditing ? "permissions" : nil
+        draft.name = "Inbox summary"
+        draft.instruction = "Summarize only"
+        draft.connectionID = kind == .price ? "prices" : "gmail"
+        draft.targetSessionID = "chat-a"
+        draft.triggerKind = kind
+        draft.actionConnectionIDs = actions
+        draft.enabled = false
+        if let workflow { draft.workflow = workflow }
+        if kind == .price {
+            var condition = PriceCondition()
+            condition.providerSymbol = "BTC"
+            condition.threshold = "50000"
+            draft.filters.priceCondition = condition
+        }
+        let saved = await model.saveTrigger(draft)
+        XCTAssertTrue(saved)
+        let request = try XCTUnwrap(BackendStub.requests.first { $0.url?.path == path })
+        XCTAssertEqual(request.httpMethod, isEditing ? "PATCH" : "POST")
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     func testAgentSessionSummaryDecodesDurableAgentIdentity() throws {
         let summary = try JSONDecoder().decode(
             SessionSummary.self,

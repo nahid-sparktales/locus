@@ -11,12 +11,87 @@ private struct ChatFolderEditorRequest: Identifiable {
     var title: String { folder == nil ? "New Chat Folder" : "Rename Chat Folder" }
 }
 
-private struct AgentSidebarGroupModel: Identifiable {
+struct AgentSidebarGroupModel: Identifiable {
     let id: String
     let reference: AgentInspectorAgent?
     let accessibilityID: String
     let name: String
     let tasks: [SessionSummary]
+    let totalChatCount: Int
+    let definition: AgentDefinition?
+    let runningChatCount: Int
+    let sourceNeedsAttention: Bool
+
+    var status: AgentOverview.Status { AgentOverview.status(for: definition) }
+    var needsAttention: Bool { status.isWarning || sourceNeedsAttention }
+    var statusTitle: String {
+        AgentInspectorCopy.agentStatusTitle(status, vocabulary: definition?.vocabulary ?? .events,
+            isRunning: runningChatCount > 0, sourceNeedsAttention: sourceNeedsAttention)
+    }
+}
+
+/// Build the hierarchy from agent definitions, not only their chats. Search
+/// an agent name to see its conversations, or a chat title to see its owner.
+/// Typed identities keep an event and schedule with the same storage ID apart.
+enum AgentSidebarCatalog {
+    static func groups(
+        definitions: [AgentDefinition], sessions: [SessionSummary], query: String,
+        showArchived: Bool, runningSessionIDs: Set<String>,
+        connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false
+    ) -> [AgentSidebarGroupModel] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chats = sessions.filter { $0.isAgentChat && (showArchived || !$0.isArchived) }
+        let byAgent = Dictionary(grouping: chats) {
+            $0.agentReference(in: definitions)?.id ?? "unassigned:\($0.id)"
+        }
+        let definitionsByID = Dictionary(uniqueKeysWithValues: definitions.map {
+            (AgentInspectorAgent($0).id, $0)
+        })
+        let identities = Set(definitionsByID.keys).union(byAgent.keys)
+        return identities.compactMap { identity -> AgentSidebarGroupModel? in
+            let definition = definitionsByID[identity]
+            let tasks = (byAgent[identity] ?? []).sorted {
+                if $0.isPinned != $1.isPinned { return $0.isPinned }
+                if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
+                return $0.id < $1.id
+            }
+            let reference = definition.map(AgentInspectorAgent.init)
+                ?? tasks.first?.agentReference(in: definitions)
+            let rawID = reference?.agentID ?? tasks.first?.agentTriggerID ?? identity
+            let hasCollision = definitions.filter { $0.id == rawID }.count > 1
+            let name = definition?.name.nilIfBlank
+                ?? tasks.compactMap(\.agentName).first?.nilIfBlank
+                ?? tasks.first?.displayTitle ?? "Unavailable agent"
+            let nameMatches = query.isEmpty || name.localizedCaseInsensitiveContains(query)
+            let matches = nameMatches ? tasks : tasks.filter {
+                $0.displayTitle.localizedCaseInsensitiveContains(query)
+                    || $0.name.localizedCaseInsensitiveContains(query)
+            }
+            guard nameMatches || !matches.isEmpty else { return nil }
+            return AgentSidebarGroupModel(
+                id: identity, reference: reference,
+                accessibilityID: hasCollision ? identity : rawID,
+                name: name, tasks: matches, totalChatCount: tasks.count,
+                definition: definition,
+                runningChatCount: tasks.filter { runningSessionIDs.contains($0.id) }.count,
+                sourceNeedsAttention: sourceNeedsAttention(
+                    definition: definition,
+                    connection: definition?.trigger.flatMap { trigger in connections.first { $0.id == trigger.connectionID } },
+                    connectionsLoaded: connectionsLoaded
+                )
+            )
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    static func sourceNeedsAttention(
+        definition: AgentDefinition?, connection: ConnectorConnection?, connectionsLoaded: Bool
+    ) -> Bool {
+        // Before the connection store has answered, absence is unknown rather
+        // than proof that an Agent's source was removed.
+        guard connection != nil || connectionsLoaded else { return false }
+        return AgentInspectorCopy.sourceNeedsAttention(definition: definition, connection: connection)
+    }
 }
 
 #if DEBUG
@@ -359,7 +434,6 @@ struct SessionSidebarView: View {
     @State private var folderToDelete: ChatFolderRecord?
     @State private var folderEditor: ChatFolderEditorRequest?
     @State private var folderEditorName = ""
-    @State private var collapsedAgentIDs: Set<String> = []
     @State private var agentToDelete: AgentDefinition?
     @State private var searchExpanded = false
     @FocusState private var searchFocused: Bool
@@ -395,24 +469,19 @@ struct SessionSidebarView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     sectionHeader(snapshot: snapshot)
-                    if searchExpanded {
+                    if searchExpanded || (model.sidebarDestination == .agents && model.agentDefinitions.count > 8) {
                         searchField(snapshot: snapshot)
                             .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                     }
                     if model.sidebarDestination == .agents {
-                        if snapshot.agentSessions.isEmpty {
-                            agentEmptyState(snapshot: snapshot)
-                        } else {
-                            ForEach(agentGroups(snapshot: snapshot)) { agent in
-                                agentGroupRow(agent)
-                                if !collapsedAgentIDs.contains(agent.id) {
-                                    ForEach(agent.tasks) { session in
-                                        sessionRow(session, snapshot: snapshot)
-                                            .padding(.leading, 22)
-                                    }
-                                }
+                        AgentSidebarSection(
+                            automation: model.eventAutomations,
+                            snapshot: snapshot,
+                            confirmDelete: { agentToDelete = $0 },
+                            sessionContent: { session in
+                                AnyView(sessionRow(session, snapshot: snapshot))
                             }
-                        }
+                        )
                     } else {
                         if snapshot.sidebarGroups.isEmpty {
                             emptyState(snapshot: snapshot)
@@ -736,7 +805,7 @@ struct SessionSidebarView: View {
                 secondaryButton(
                     symbol: "gearshape.2",
                     title: "Manage Agents",
-                    help: "Agents, their sources, and the events they have handled",
+                    help: "Create agents, manage their triggers and access, and inspect activity",
                     accessibilityLabel: "Manage Agents",
                     identifier: "sidebar.configureAgent"
                 ) {
@@ -923,10 +992,22 @@ struct SessionSidebarView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .buttonStyle(.locus(.icon))
-            .help("Search sessions (⇧⌘F)")
-            .accessibilityLabel("Search sessions")
+            .help(model.sidebarDestination == .agents ? "Search agents and chats (⇧⌘F)" : "Search sessions (⇧⌘F)")
+            .accessibilityLabel(model.sidebarDestination == .agents ? "Search agents and chats" : "Search sessions")
             .accessibilityValue(searchExpanded ? "Shown" : "Hidden")
             .accessibilityIdentifier("sidebar.search.toggle")
+            if model.sidebarDestination == .agents {
+                Button { model.presentNewAgent() } label: {
+                    Image(systemName: "plus")
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.locus(.icon))
+                .help("Create an agent")
+                .accessibilityLabel("Create an agent")
+                .accessibilityIdentifier("sidebar.newAgent")
+            }
             if model.sidebarDestination == .ask {
                 Button {
                     requestFolderEditor(
@@ -955,7 +1036,7 @@ struct SessionSidebarView: View {
                 .font(.locus(size: 11, weight: .medium))
                 .frame(width: SidebarMetrics.iconColumn)
                 .foregroundStyle(LocusTheme.muted)
-            TextField("Search sessions", text: Binding(
+            TextField(model.sidebarDestination == .agents ? "Search agents and chats" : "Search sessions", text: Binding(
                 get: { snapshot.searchQuery },
                 set: { sessionCatalog.setSearchQuery($0) }
             ))
@@ -1113,56 +1194,6 @@ struct SessionSidebarView: View {
         }
     }
 
-    private func agentGroups(snapshot: SessionCatalogSnapshot) -> [AgentSidebarGroupModel] {
-        let definitions = model.agentDefinitions
-        return Dictionary(grouping: snapshot.agentSessions) { session in
-            session.agentReference(in: definitions)?.id ?? "unassigned:\(session.id)"
-        }
-        .map { identity, tasks in
-            let reference = tasks[0].agentReference(in: definitions)
-            let rawID = reference?.agentID ?? tasks[0].agentTriggerID ?? tasks[0].id
-            let hasCollision = definitions.filter { $0.id == rawID }.count > 1
-            return AgentSidebarGroupModel(
-                id: identity,
-                reference: reference,
-                accessibilityID: hasCollision ? identity : rawID,
-                name: tasks.compactMap(\.agentName).first?.nilIfBlank
-                    ?? tasks[0].displayTitle,
-                tasks: tasks.sorted {
-                    if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
-                    return $0.id < $1.id
-                }
-            )
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    private func agentGroupRow(_ agent: AgentSidebarGroupModel) -> some View {
-        AgentGroupRow(
-            agent: agent,
-            automation: model.eventAutomations,
-            expanded: !collapsedAgentIDs.contains(agent.id),
-            selected: agent.reference != nil && model.inspectedAgentReference == agent.reference,
-            toggle: {
-                withAnimation(LocusMotion.spatial) {
-                    if collapsedAgentIDs.contains(agent.id) {
-                        collapsedAgentIDs.remove(agent.id)
-                    } else {
-                        collapsedAgentIDs.insert(agent.id)
-                    }
-                }
-            },
-            select: {
-                withAnimation(LocusMotion.spatial) {
-                    _ = collapsedAgentIDs.remove(agent.id)
-                }
-                if let reference = agent.reference { model.selectAgent(reference) }
-                else { model.showToast("This saved chat’s agent kind is unavailable. Its conversation is still available below.") }
-            },
-            confirmDelete: { agentToDelete = $0 }
-        )
-    }
-
     private func emptyState(snapshot: SessionCatalogSnapshot) -> some View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
@@ -1173,25 +1204,6 @@ struct SessionSidebarView: View {
                 .font(.locus(size: 10, weight: .semibold))
             if snapshot.searchQuery.isEmpty {
                 Text("Start a conversation and it will appear here.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 34)
-        .padding(.horizontal, 18)
-    }
-
-    private func agentEmptyState(snapshot: SessionCatalogSnapshot) -> some View {
-        VStack(spacing: 9) {
-            Image(locusSymbol: LocusSymbol.robot)
-                .font(.locus(size: 18))
-                .foregroundStyle(LocusTheme.muted)
-            Text(snapshot.searchQuery.isEmpty ? "No agents yet" : "No matching agents")
-                .font(.locus(size: 10, weight: .semibold))
-            if snapshot.searchQuery.isEmpty {
-                Text("Configure an agent to give it its own ongoing chats.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .multilineTextAlignment(.center)
@@ -1351,14 +1363,17 @@ struct SessionSidebarView: View {
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 
-    /// Agent mode mirrors the workspace selector: the current parent object
-    /// remains visible at the bottom of the sidebar and the menu changes that
-    /// parent without replacing the open conversation.
+    /// The selected agent owns the next chat. The open conversation retains
+    /// its own agent, which the picker states explicitly when they differ.
     private struct AgentSelectionMenu: View {
         @EnvironmentObject private var model: AppModel
         @EnvironmentObject private var schedule: ScheduleModel
         @EnvironmentObject private var sessionCatalog: SessionCatalogModel
         @ObservedObject var automation: EventAutomationModel
+        @State private var isPresented = false
+        @State private var query = ""
+        @State private var keyboardReference: AgentInspectorAgent?
+        @FocusState private var searchFocused: Bool
 
         private var entries: [AgentFleetEntry] {
             AgentFleet.entries(
@@ -1370,104 +1385,280 @@ struct SessionSidebarView: View {
             )
         }
 
-        private var selectedReference: AgentInspectorAgent? { model.inspectedAgentReference }
-
-        private var selectedEntry: AgentFleetEntry? {
-            guard let selectedReference else { return nil }
-            return entries.first { $0.inspectorID == selectedReference }
+        private var filteredEntries: [AgentFleetEntry] {
+            let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            return entries.filter {
+                text.isEmpty || $0.name.localizedCaseInsensitiveContains(text)
+                    || $0.summary.localizedCaseInsensitiveContains(text)
+            }
         }
 
+        private var selectedReference: AgentInspectorAgent? { model.inspectedAgentReference }
+        private var currentReference: AgentInspectorAgent? {
+            sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?
+                .agentReference(in: model.agentDefinitions)
+        }
+        private var selectedEntry: AgentFleetEntry? {
+            entries.first { $0.inspectorID == selectedReference }
+        }
+        private var currentEntry: AgentFleetEntry? {
+            entries.first { $0.inspectorID == currentReference }
+        }
         private var selectedName: String {
             if let selectedEntry { return selectedEntry.name }
-            guard let selectedReference else { return "Choose Agent" }
-            return sessionCatalog.snapshot.agentSessions.first {
+            guard let selectedReference else { return "Choose an agent" }
+            return sessionCatalog.snapshot.sessions.first {
                 $0.agentReference(in: model.agentDefinitions) == selectedReference
-            }?.agentName?.nilIfBlank ?? "Choose Agent"
+            }?.agentName?.nilIfBlank ?? "Choose an agent"
         }
-
-        private var iconColor: Color {
-            selectedEntry?.status.isWarning == true ? LocusTheme.warning : LocusTheme.signalDeep
+        private var selectedContext: String {
+            guard let selectedEntry else { return "For your next conversation" }
+            let ownership = currentReference == selectedEntry.inspectorID ? "This chat" : "New chats"
+            return "\(ownership) · \(statusTitle(selectedEntry))"
         }
 
         var body: some View {
-            Menu {
-                if entries.isEmpty {
-                    Button("No Agents Configured") {}
-                        .disabled(true)
-                } else {
-                    Section("Agents") {
-                        ForEach(entries, id: \.inspectorID) { entry in
-                            Button {
-                                model.selectAgent(entry.inspectorID)
-                            } label: {
-                                Label(
-                                    entry.name,
-                                    systemImage: entry.inspectorID == selectedReference
-                                        ? "checkmark.circle.fill"
-                                        : Self.statusSymbol(entry.status)
-                                )
-                            }
-                            .accessibilityIdentifier("agent.menu.\(entry.id)")
-                        }
-                    }
-                }
-                Divider()
-                Button("New Agent…") { model.presentNewAgent() }
-                    .accessibilityIdentifier("agent.menu.new")
-                Button("Manage Agents…") { model.presentConfigureAgent(draftText: "") }
-                    .accessibilityIdentifier("agent.menu.manage")
+            Button {
+                query = ""
+                keyboardReference = selectedReference
+                isPresented.toggle()
             } label: {
-                HStack(spacing: SidebarMetrics.iconGap) {
+                HStack(spacing: 9) {
                     Image(locusSymbol: LocusSymbol.robot)
-                        .font(.locus(size: 11, weight: .semibold))
-                        .foregroundStyle(iconColor)
-                        .frame(width: SidebarMetrics.iconColumn)
+                        .font(.locus(size: 13, weight: .semibold))
+                        .foregroundStyle(selectedEntry.map(showsWarning) == true
+                            ? LocusTheme.warning : LocusTheme.accentAction)
+                        .frame(width: 27, height: 27)
+                        .background(LocusTheme.accentAction.opacity(0.1),
+                                    in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("sidebar.agentIcon")
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(selectedName)
                             .font(.locus(size: 10, weight: .semibold))
                             .foregroundStyle(LocusTheme.ink)
                             .lineLimit(1)
-                        Text("Agent")
+                        Text(selectedContext)
                             .font(.locus(size: 8))
                             .foregroundStyle(LocusTheme.muted)
+                            .lineLimit(1)
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                .padding(.horizontal, SidebarMetrics.rowInset)
+                .padding(.horizontal, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 40)
+                .frame(height: 48)
                 .background(LocusTheme.white.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isPresented ? LocusTheme.accentAction.opacity(0.4) : LocusTheme.line,
+                                lineWidth: 1)
                 }
             }
-            .menuStyle(.button)
             .buttonStyle(.locus())
-            .menuIndicator(.hidden)
-            .help("Choose an agent")
+            .help("Choose an agent for new chats, or manage its instructions, triggers, and access")
             .accessibilityLabel("Agent menu")
-            .accessibilityValue(
-                "\(selectedName), \(entries.count) configured, "
-                    + "\(sessionCatalog.snapshot.agentSessions.count) chats"
-            )
+            .accessibilityValue("\(selectedName), \(selectedContext), \(entries.count) configured")
             .accessibilityIdentifier("sidebar.agentMenu")
+            .popover(isPresented: $isPresented, arrowEdge: .trailing) { picker }
         }
 
-        private static func statusSymbol(_ status: AgentOverview.Status) -> String {
-            switch status {
-            case .active: "circle"
-            case .paused: "pause.circle"
-            case .fired: "checkmark.circle"
-            case .stopped, .missingTrigger: "exclamationmark.triangle"
-            case .failing: "exclamationmark.circle"
+        private var picker: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Choose an agent")
+                        .font(.locus(size: 13, weight: .semibold))
+                    Spacer()
+                    Text("\(entries.count)")
+                        .font(.locus(size: 10, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                }
+                .padding(.horizontal, 16).padding(.top, 15).padding(.bottom, 12)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                    TextField("Search agents", text: $query)
+                        .textFieldStyle(.plain)
+                        .focused($searchFocused)
+                        .onSubmit { choose(keyboardReference ?? filteredEntries.first?.inspectorID) }
+                        .accessibilityIdentifier("sidebar.agentPicker.search")
+                    if !query.isEmpty {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.locus(.icon))
+                            .foregroundStyle(LocusTheme.muted)
+                            .accessibilityLabel("Clear agent search")
+                    }
+                }
+                .font(.locus(size: 11))
+                .padding(10)
+                .background(LocusTheme.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 12).padding(.bottom, 10)
+
+                if selectedReference != currentReference, let currentEntry {
+                    Button { choose(currentEntry.inspectorID) } label: {
+                        HStack(alignment: .top, spacing: 7) {
+                            Image(systemName: "bubble.left").padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Open chat: \(currentEntry.name)").fontWeight(.medium)
+                                Text("Use this chat’s agent").foregroundStyle(LocusTheme.accentAction)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.turn.up.left")
+                        }
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.inkSoft)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LocusTheme.paperDeep.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.locus())
+                    .padding(.horizontal, 12).padding(.bottom, 8)
+                    .accessibilityIdentifier("sidebar.agentPicker.currentChat")
+                } else if selectedReference != nil && currentReference == nil {
+                    Label("Your open conversation is a Work chat.", systemImage: "bubble.left")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .padding(.horizontal, 14).padding(.bottom, 10)
+                        .accessibilityIdentifier("sidebar.agentPicker.workChat")
+                }
+
+                if filteredEntries.isEmpty {
+                    VStack(spacing: 7) {
+                        Text(entries.isEmpty ? "No agents yet" : "No matching agents")
+                            .font(.locus(size: 11, weight: .medium))
+                        Text(entries.isEmpty
+                            ? "Create an agent with its own instructions, access, and triggers."
+                            : "Try an agent name or trigger type.")
+                            .font(.locus(size: 10))
+                            .foregroundStyle(LocusTheme.muted)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity).padding(22)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                ForEach(filteredEntries, id: \.inspectorID) { entry in
+                                    pickerRow(entry).id(entry.inspectorID)
+                                }
+                            }
+                            .padding(.horizontal, 6).padding(.bottom, 6)
+                        }
+                        .frame(height: min(CGFloat(filteredEntries.count) * 56 + 8, 320))
+                        .onChange(of: keyboardReference) {
+                            if let keyboardReference { proxy.scrollTo(keyboardReference, anchor: .center) }
+                        }
+                    }
+                }
+                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Text("Choosing an agent sets up your next chat. Your open conversation stays unchanged.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 8)
+                HStack(spacing: 8) {
+                    Button {
+                        isPresented = false
+                        model.presentNewAgent()
+                    } label: {
+                        Label("New agent", systemImage: "plus")
+                            .foregroundStyle(LocusTheme.accentAction)
+                    }
+                    .accessibilityIdentifier("agent.menu.new")
+                    Spacer()
+                    Button {
+                        isPresented = false
+                        model.presentConfigureAgent(draftText: "")
+                    } label: { Label("Manage agents", systemImage: "slider.horizontal.3") }
+                    .accessibilityIdentifier("agent.menu.manage")
+                }
+                .buttonStyle(.locus())
+                .font(.locus(size: 10, weight: .medium))
+                .padding(.horizontal, 14).padding(.bottom, 13)
             }
+            .frame(width: 320)
+            .background(LocusTheme.surfaceCard)
+            .onAppear { searchFocused = true }
+            .onChange(of: query) { keyboardReference = filteredEntries.first?.inspectorID }
+            .onMoveCommand { direction in moveSelection(direction) }
+            .onExitCommand { isPresented = false }
+        }
+
+        private func pickerRow(_ entry: AgentFleetEntry) -> some View {
+            let selected = selectedReference == entry.inspectorID
+            let focused = keyboardReference == entry.inspectorID
+            return Button { choose(entry.inspectorID) } label: {
+                HStack(spacing: 9) {
+                    Image(locusSymbol: LocusSymbol.robot)
+                        .font(.locus(size: 12, weight: .semibold))
+                        .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.accentAction)
+                        .frame(width: 28, height: 28)
+                        .background(LocusTheme.accentAction.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(entry.name).font(.locus(size: 11, weight: .medium)).lineLimit(1)
+                        Text("\(statusTitle(entry)) · \(environmentTitle(entry)) · \(entry.definition.kindTitle)")
+                            .font(.locus(size: 9))
+                            .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.muted)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 2)
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.locus(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.accentAction)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .padding(.horizontal, 9)
+                .background(focused ? LocusTheme.paperDeep.opacity(0.7)
+                    : selected ? LocusTheme.accentAction.opacity(0.07) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityLabel(entry.name)
+            .accessibilityValue("\(statusTitle(entry)), \(environmentTitle(entry)), \(selected ? "selected" : "not selected")")
+            .accessibilityIdentifier("agent.menu.\(entry.id)")
+        }
+
+        private func statusTitle(_ entry: AgentFleetEntry) -> String {
+            AgentInspectorCopy.agentStatusTitle(entry.status, vocabulary: entry.definition.vocabulary,
+                isRunning: entry.runningChatCount > 0, sourceNeedsAttention: sourceNeedsAttention(entry))
+        }
+
+        private func sourceNeedsAttention(_ entry: AgentFleetEntry) -> Bool {
+            AgentSidebarCatalog.sourceNeedsAttention(
+                definition: entry.definition, connection: entry.connection,
+                connectionsLoaded: automation.hasLoaded
+            )
+        }
+
+        private func showsWarning(_ entry: AgentFleetEntry) -> Bool {
+            entry.runningChatCount == 0 && (entry.status.isWarning || sourceNeedsAttention(entry))
+        }
+
+        private func environmentTitle(_ entry: AgentFleetEntry) -> String {
+            entry.definition.schedule?.executionEnvironment.title
+                ?? entry.latestChat?.executionEnvironment.title ?? "Workspace"
+        }
+
+        private func choose(_ reference: AgentInspectorAgent?) {
+            guard let reference, entries.contains(where: { $0.inspectorID == reference }) else { return }
+            isPresented = false
+            model.selectAgent(reference)
+        }
+
+        private func moveSelection(_ direction: MoveCommandDirection) {
+            guard direction == .up || direction == .down else { return }
+            let available = filteredEntries.map(\.inspectorID)
+            guard !available.isEmpty else { return }
+            let current = keyboardReference.flatMap { available.firstIndex(of: $0) }
+            let next = current.map { min(max($0 + (direction == .down ? 1 : -1), 0), available.count - 1) }
+                ?? (direction == .down ? 0 : available.count - 1)
+            keyboardReference = available[next]
         }
     }
 
@@ -1483,14 +1674,15 @@ struct SessionSidebarView: View {
         .foregroundStyle(LocusTheme.ink)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.agentStatus")
+        .help("Connection to the local Locus service. Each agent’s status appears beside its name.")
     }
 
     private var agentStatusText: String {
         switch model.agentRuntimePhase {
-        case .starting: "Starting"
-        case .online: "Ready"
-        case .recovering: "Recovering"
-        case .unavailable: "Offline"
+        case .starting: "Locus starting"
+        case .online: "Locus ready"
+        case .recovering: "Reconnecting"
+        case .unavailable: "Locus offline"
         }
     }
 
@@ -2220,6 +2412,13 @@ private struct SessionRow: View {
                         .foregroundStyle(LocusTheme.signalDeep)
                         .accessibilityHidden(true)
                 }
+                if session.isAgentEventChat && !showsAgentIcon {
+                    Image(systemName: "bolt.horizontal")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.muted)
+                        .help("Automated runs continue in this conversation")
+                        .accessibilityLabel("Receives automated work")
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
                         .font(.locus(size: 10, weight: isActive ? .medium : .regular))
@@ -2295,6 +2494,266 @@ private struct SessionRow: View {
     }
 }
 
+enum AgentSidebarFilter: String, CaseIterable, Identifiable {
+    case all, running, attention, paused
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "All agents"
+        case .running: "Running"
+        case .attention: "Needs attention"
+        case .paused: "Paused"
+        }
+    }
+    func includes(_ agent: AgentSidebarGroupModel) -> Bool {
+        switch self {
+        case .all: true
+        case .running: agent.runningChatCount > 0
+        case .attention: agent.needsAttention
+        case .paused: agent.status == .paused
+        }
+    }
+}
+
+/// Observe both definition stores at the hierarchy boundary so a new agent
+/// appears immediately, even before its first conversation is available.
+private struct AgentSidebarSection: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedule: ScheduleModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject var automation: EventAutomationModel
+    let snapshot: SessionCatalogSnapshot
+    let confirmDelete: (AgentDefinition) -> Void
+    let sessionContent: (SessionSummary) -> AnyView
+    @State private var filter: AgentSidebarFilter = .all
+    @State private var collapsedIDs: Set<String> = []
+    @State private var expandedIDs: Set<String> = []
+    @State private var showingAllChatIDs: Set<String> = []
+
+    private var groups: [AgentSidebarGroupModel] {
+        AgentSidebarCatalog.groups(
+            definitions: automation.triggers.map(AgentDefinition.trigger)
+                + schedule.scheduledTasks.map(AgentDefinition.schedule),
+            sessions: snapshot.sessions, query: snapshot.searchQuery,
+            showArchived: snapshot.showArchivedSessions,
+            runningSessionIDs: model.runningChatSessionIDs,
+            connections: automation.connections, connectionsLoaded: automation.hasLoaded
+        )
+    }
+
+    var body: some View {
+        let all = groups
+        let visible = all.filter(filter.includes)
+        LazyVStack(spacing: 3) {
+            if !all.isEmpty || filter != .all {
+                HStack {
+                    Menu {
+                        Picker("Show agents", selection: $filter) {
+                            ForEach(AgentSidebarFilter.allCases) { item in
+                                Text(item.title).tag(item)
+                            }
+                        }
+                        Divider()
+                        Button("Collapse all") {
+                            withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                                collapsedIDs = Set(all.map(\.id))
+                                expandedIDs.removeAll()
+                            }
+                        }
+                        Button("Expand all") {
+                            withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                                expandedIDs = Set(all.map(\.id))
+                                collapsedIDs.removeAll()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(filter.title)
+                            Image(systemName: "chevron.down").font(.locus(size: 7, weight: .semibold))
+                        }
+                        .font(.locus(size: 9, weight: .medium))
+                        .foregroundStyle(filter == .all ? LocusTheme.muted : LocusTheme.accentAction)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.locus())
+                    .menuIndicator(.hidden)
+                    .accessibilityLabel("Filter agents")
+                    .accessibilityIdentifier("sidebar.agentFilter")
+                    Spacer()
+                    Text("\(visible.count)")
+                        .font(.locus(size: 8, design: .monospaced))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityLabel("\(visible.count) agents")
+                }
+                .padding(.horizontal, 9)
+                .padding(.bottom, 5)
+            }
+            if visible.isEmpty {
+                emptyState
+            } else {
+                ForEach(visible) { agent in
+                    agentBranch(agent, totalAgents: all.count)
+                }
+            }
+        }
+        .onChange(of: snapshot.searchQuery) {
+            // A fresh search should reveal matches hidden by a prior filter.
+            filter = .all
+        }
+    }
+
+    private func isExpanded(_ agent: AgentSidebarGroupModel, totalAgents: Int) -> Bool {
+        if collapsedIDs.contains(agent.id) { return false }
+        return !snapshot.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || expandedIDs.contains(agent.id)
+            || agent.reference == model.inspectedAgentReference
+            || totalAgents <= 3
+    }
+
+    private func visibleChats(_ agent: AgentSidebarGroupModel) -> [SessionSummary] {
+        if showingAllChatIDs.contains(agent.id) || !snapshot.searchQuery.isEmpty { return agent.tasks }
+        let recent = Array(agent.tasks.prefix(4))
+        // The open chat must remain visible even when older than the recent four.
+        if let current = agent.tasks.first(where: { $0.id == model.currentSessionID }),
+           !recent.contains(where: { $0.id == current.id }) {
+            return Array(recent.prefix(3)) + [current]
+        }
+        return recent
+    }
+
+    private func agentBranch(_ agent: AgentSidebarGroupModel, totalAgents: Int) -> some View {
+        let expanded = isExpanded(agent, totalAgents: totalAgents)
+        let chats = visibleChats(agent)
+        return VStack(spacing: 1) {
+            AgentGroupRow(
+                agent: agent, automation: automation, expanded: expanded,
+                selected: agent.reference != nil && model.inspectedAgentReference == agent.reference,
+                toggle: {
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                        if expanded {
+                            collapsedIDs.insert(agent.id)
+                            expandedIDs.remove(agent.id)
+                        } else {
+                            collapsedIDs.remove(agent.id)
+                            expandedIDs.insert(agent.id)
+                        }
+                    }
+                },
+                select: {
+                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                        collapsedIDs.remove(agent.id)
+                        expandedIDs.insert(agent.id)
+                    }
+                    if let reference = agent.reference { model.selectAgent(reference) }
+                    else { model.showToast("This agent is unavailable. Its saved chats are still available below.") }
+                },
+                confirmDelete: confirmDelete
+            )
+            if expanded {
+                VStack(spacing: 1) {
+                    ForEach(chats) { session in sessionContent(session) }
+                    if agent.tasks.count > 4 && snapshot.searchQuery.isEmpty {
+                        Button {
+                            withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                                if showingAllChatIDs.contains(agent.id) { showingAllChatIDs.remove(agent.id) }
+                                else { showingAllChatIDs.insert(agent.id) }
+                            }
+                        } label: {
+                            Text(showingAllChatIDs.contains(agent.id)
+                                ? "Show recent chats" : "Show all \(agent.tasks.count) chats")
+                                .font(.locus(size: 9, weight: .medium))
+                                .foregroundStyle(LocusTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(height: 26)
+                                .padding(.horizontal, 8)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.locus())
+                        .accessibilityIdentifier("agent.\(agent.accessibilityID).showChats")
+                    }
+                    if agent.tasks.isEmpty {
+                        Button {
+                            if let reference = agent.reference { model.newAgentChat(reference: reference) }
+                        } label: {
+                            Label("Start a conversation", systemImage: "plus.bubble")
+                                .font(.locus(size: 9))
+                                .foregroundStyle(LocusTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .frame(height: 30)
+                        }
+                        .buttonStyle(.locus())
+                        .disabled(agent.reference == nil || model.chatNavigationDisabled)
+                        .accessibilityIdentifier("agent.\(agent.accessibilityID).firstChat")
+                    }
+                }
+                .padding(.leading, 32)
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
+                        .padding(.leading, 22).padding(.vertical, 3)
+                }
+                .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        let isLoading = automation.isRefreshing || schedule.isRefreshingSchedules
+        let isFiltered = filter != .all || !snapshot.searchQuery.isEmpty
+        let unavailable = !automation.hasLoaded || !schedule.hasLoaded
+        return VStack(spacing: 10) {
+            if isLoading {
+                ProgressView().controlSize(.small)
+                Text("Loading agents…").font(.locus(size: 10, weight: .medium))
+            } else {
+                Image(locusSymbol: LocusSymbol.robot)
+                    .font(.locus(size: 22))
+                    .foregroundStyle(LocusTheme.accentAction)
+                    .padding(.bottom, 3)
+                Text(isFiltered ? "No matching agents" : unavailable ? "Agents unavailable" : "Your own agents")
+                    .font(.locus(size: 11, weight: .semibold))
+                Text(isFiltered
+                    ? "Try another name or show all agents."
+                    : unavailable
+                        ? "Reconnect to load your agents and their activity."
+                        : "Give an agent instructions and a trigger. It keeps its work and conversations together.")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                if isFiltered {
+                    Button("Clear filters") {
+                        filter = .all
+                        model.sessionCatalog.setSearchQuery("")
+                    }
+                    .buttonStyle(.locus())
+                } else if unavailable {
+                    Button("Try again") {
+                        Task {
+                            await automation.refresh(announceFailure: true)
+                            await schedule.refreshScheduledTasks(announceFailure: true)
+                        }
+                    }
+                    .buttonStyle(.locus())
+                } else {
+                    Button { model.presentNewAgent() } label: {
+                        Label("Create an agent", systemImage: "plus")
+                            .font(.locus(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.accentAction)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(LocusTheme.accentAction.opacity(0.1), in: Capsule())
+                    }
+                    .buttonStyle(.locus())
+                    .accessibilityIdentifier("sidebar.empty.newAgent")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 26)
+    }
+}
+
 /// One agent's group header in the sidebar.
 ///
 /// It observes the trigger and schedule stores directly rather than reading
@@ -2338,12 +2797,14 @@ private struct AgentGroupRow: View {
         let record = definition
         let status = AgentOverview.status(for: record)
         let words = record?.vocabulary ?? .events
-        return HStack(spacing: 5) {
+        let showsWarning = agent.runningChatCount == 0 && agent.needsAttention
+        return HStack(spacing: 3) {
             Button(action: toggle) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
                     .font(.locus(size: 8, weight: .bold))
                     .foregroundStyle(LocusTheme.muted)
-                    .frame(width: 16, height: 28)
+                    .frame(width: 20, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -2352,80 +2813,101 @@ private struct AgentGroupRow: View {
             .accessibilityIdentifier("agent.\(agent.accessibilityID).disclosure")
 
             Button(action: select) {
-                HStack(spacing: 7) {
+                HStack(spacing: 8) {
                     Image(locusSymbol: LocusSymbol.robot)
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.signalDeep)
-                        .frame(width: 21, height: 21)
+                        .foregroundStyle(showsWarning ? LocusTheme.warning : LocusTheme.accentAction)
+                        .frame(width: 25, height: 25)
+                        .background(LocusTheme.accentAction.opacity(selected ? 0.12 : 0.06),
+                                    in: RoundedRectangle(cornerRadius: 7))
                         .accessibilityHidden(true)
-                    Text(agent.name)
-                        .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(agent.name)
+                            .font(.locus(size: 10, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            if agent.runningChatCount > 0 {
+                                Circle().fill(LocusTheme.accentAction).frame(width: 4, height: 4)
+                            } else if agent.sourceNeedsAttention || status != .active {
+                                Image(systemName: agent.sourceNeedsAttention ? "exclamationmark.circle.fill" : Self.statusSymbol(status))
+                                    .font(.locus(size: 7))
+                            }
+                            Text(agent.runningChatCount > 0 || agent.sourceNeedsAttention || status != .active
+                                ? agent.statusTitle : record?.kindTitle ?? "Saved chats")
+                            Text("·")
+                            Text("\(agent.totalChatCount) \(agent.totalChatCount == 1 ? "chat" : "chats")")
+                        }
+                        .font(.locus(size: 8))
+                        .foregroundStyle(showsWarning ? LocusTheme.warning : LocusTheme.muted)
                         .lineLimit(1)
-                    if status != .active {
-                        Image(systemName: AgentGroupRow.statusSymbol(status))
-                            .font(.locus(size: 8, weight: .semibold))
-                            .foregroundStyle(status.isWarning ? LocusTheme.warning : LocusTheme.muted)
-                            .help(status.detail(for: words))
-                            .accessibilityHidden(true)
                     }
-                    Spacer(minLength: 4)
-                    Text("\(agent.tasks.count)")
-                        .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .help("Show all information for \(agent.name)")
+            .help("View \(agent.name)’s instructions, triggers, access, and activity")
             .accessibilityLabel("\(agent.name) agent")
             .accessibilityValue(
-                "\(status.title(for: words)), "
-                    + "\(agent.tasks.count) \(agent.tasks.count == 1 ? "chat" : "chats"), "
-                    + (selected ? "selected" : "not selected")
+                "\(agent.statusTitle), \(agent.totalChatCount) chats, "
+                    + (selected ? "selected for new chats" : "not selected")
             )
             .accessibilityIdentifier("agent.\(agent.accessibilityID)")
+
+            Menu { agentActions } label: {
+                Image(systemName: "ellipsis")
+                    .font(.locus(size: 10, weight: .semibold))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 22, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.locus(.icon))
+            .menuIndicator(.hidden)
+            .help("Actions for \(agent.name)")
+            .accessibilityLabel("Actions for \(agent.name)")
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).actions")
         }
-        .padding(.horizontal, 5)
-        .frame(height: 34)
-        .background(selected ? LocusTheme.paperDeep.opacity(0.62) : LocusTheme.white.opacity(0.36))
+        .padding(.trailing, 4)
+        .background(selected ? LocusTheme.accentAction.opacity(0.09) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(Rectangle())
-        .contextMenu {
-            Button("New Chat with \(agent.name)") {
-                if let reference = agent.reference { model.newAgentChat(reference: reference) }
-            }
-            .disabled(agent.reference == nil)
-            .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
-            if let record {
-                if record.isSchedule {
-                    Button("Run Now") { model.runAgentNow(record) }
-                        .accessibilityIdentifier("agent.\(agent.accessibilityID).runNow")
-                }
-                Button("Edit Agent…") { model.editAgent(record) }
-                    .accessibilityIdentifier("agent.\(agent.accessibilityID).edit")
-                if record.lastError?.nilIfEmpty != nil {
-                    Button(model.isClearingAgentWarning(record)
-                        ? "Clearing Warning…" : "Clear Warning") {
-                        model.clearAgentWarning(record)
-                    }
-                    .disabled(model.isClearingAgentWarning(record))
-                    .accessibilityIdentifier("agent.\(agent.accessibilityID).clearWarning")
-                }
-                Button(record.enabled ? "Pause Agent" : "Resume Agent") {
-                    model.setAgentEnabled(record, enabled: !record.enabled)
-                }
-                .disabled(model.isChangingAgentEnabled(record))
-                .accessibilityIdentifier("agent.\(agent.accessibilityID).toggle")
-                Divider()
-                Button("Delete Agent…", role: .destructive) {
-                    confirmDelete(record)
-                }
-                .accessibilityIdentifier("agent.\(agent.accessibilityID).delete")
-            }
+        .contextMenu { agentActions }
+        .help(agent.sourceNeedsAttention ? "This Agent’s source connection needs attention. Open its settings to review the connection." : status.detail(for: words))
+    }
+
+    @ViewBuilder
+    private var agentActions: some View {
+        Button("New Chat with \(agent.name)") {
+            if let reference = agent.reference { model.newAgentChat(reference: reference) }
         }
-        .help(status.detail(for: words))
+        .disabled(agent.reference == nil || model.chatNavigationDisabled)
+        .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
+        if let record = definition {
+            if record.isSchedule {
+                Button("Run Now") { model.runAgentNow(record) }
+                    .accessibilityIdentifier("agent.\(agent.accessibilityID).runNow")
+            }
+            Button("Edit Agent…") { model.editAgent(record) }
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).edit")
+            if record.lastError?.nilIfEmpty != nil {
+                Button(model.isClearingAgentWarning(record) ? "Clearing Warning…" : "Clear Warning") {
+                    model.clearAgentWarning(record)
+                }
+                .disabled(model.isClearingAgentWarning(record))
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).clearWarning")
+            }
+            Button(record.enabled ? "Pause Agent" : "Resume Agent") {
+                model.setAgentEnabled(record, enabled: !record.enabled)
+            }
+            .disabled(model.isChangingAgentEnabled(record))
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).toggle")
+            Divider()
+            Button("Delete Agent…", role: .destructive) { confirmDelete(record) }
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).delete")
+        }
     }
 
     private static func statusSymbol(_ status: AgentOverview.Status) -> String {

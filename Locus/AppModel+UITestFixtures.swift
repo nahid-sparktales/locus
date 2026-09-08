@@ -607,6 +607,11 @@ extension AppModel {
            AppAppearance(rawValue: appearance) != nil {
             settings.appearanceRaw = appearance
         }
+        if let accent = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_ACCENT"],
+           LocusAccentPreset(rawValue: accent) != nil {
+            settings.accentPresetRaw = accent
+            LocusAccentRuntime.shared.configure(settings.resolvedAccent)
+        }
         if let variant = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_FIXTURE"],
            !variant.isEmpty {
             seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
@@ -766,6 +771,7 @@ extension AppModel {
             openInspectorTabs = [tab]
             inspectorTab = tab
         }
+        seedResponseOutputFixture()
     }
 
     /// A feature-scoped in-process transport exercises the real goal editor and

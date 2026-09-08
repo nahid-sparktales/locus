@@ -223,13 +223,17 @@ struct AgentOverview: Equatable {
             let fallback = delivery.event.eventType.isEmpty ? "Event" : delivery.event.eventType
             id = delivery.id
             title = !subject.isEmpty ? subject : (!text.isEmpty ? String(text.prefix(120)) : fallback)
-            // Delivery states are backend strings; the terminal ones are stable
-            // (`TERMINAL_STATES` in runstore), the rest describe dispatch.
-            stateTitle = AgentInspectorCopy.state(delivery.runState ?? delivery.state)
-            isFailed = delivery.error != nil
-                || ["failed", "interrupted", "cancelled"].contains(delivery.state)
-            isInFlight = ["pending", "claiming", "queued", "dispatching", "running"]
-                .contains(delivery.state)
+            let activityState = AgentInspectorCopy.effectiveActivityState(
+                deliveryState: delivery.state, runState: delivery.runState
+            )
+            stateTitle = AgentInspectorCopy.state(activityState)
+            isSkipped = activityState == "skipped"
+            isFailed = !isSkipped && (delivery.error?.nilIfEmpty != nil
+                || ["failed", "interrupted", "cancelled"].contains(activityState))
+            isInFlight = ["pending", "claiming", "queued", "dispatching", "planning", "running", "advancing", "awaiting_run"]
+                .contains(activityState)
+            // Retry authorization belongs to the delivery, even when its
+            // execution has a different visible outcome.
             canRetry = ["failed", "interrupted", "cancelled"].contains(delivery.state)
             observedPrice = delivery.event.eventType == "price.quote"
                 ? delivery.event.data["price"]?.string : nil

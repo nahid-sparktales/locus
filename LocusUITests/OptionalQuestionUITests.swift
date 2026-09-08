@@ -65,9 +65,13 @@ final class OptionalQuestionUITests: XCTestCase {
         app.launch()
         let entry = element("soloHelper.instruction.seed-helper")
         XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        revealHelperControls()
         entry.click()
         entry.typeText("Include the timeout check")
+        XCTAssertTrue((entry.value as? String ?? "").contains("Include the timeout check"))
+        revealHelperControls()
         element("soloHelper.message.seed-helper").click()
+        revealHelperControls()
         element("soloHelper.interrupt.seed-helper").click()
         let resume = element("soloHelper.resume.seed-helper")
         XCTAssertTrue(resume.waitForExistence(timeout: 5))
@@ -75,8 +79,25 @@ final class OptionalQuestionUITests: XCTestCase {
         image.name = "Solo helper interrupted with resume available"
         image.lifetime = .keepAlways
         add(image)
+        revealHelperControls()
         resume.click()
         XCTAssertTrue(element("soloHelper.interrupt.seed-helper").waitForExistence(timeout: 5))
+    }
+
+    private func revealHelperControls(file: StaticString = #filePath, line: UInt = #line) {
+        let scroll = element("runs.soloSwarm.overview")
+        let card = element("soloHelper.card.seed-helper")
+        XCTAssertTrue(scroll.waitForExistence(timeout: 3), file: file, line: line)
+        // Keep the entire instruction and its actions inside the viewport.
+        // A partially visible native field can exist without accepting input.
+        for _ in 0..<12 {
+            if card.exists, scroll.frame.insetBy(dx: 0, dy: 8).contains(card.frame) { break }
+            let scrollUp = card.exists && card.frame.minY < scroll.frame.minY + 8
+            scroll.scroll(byDeltaX: 0, deltaY: scrollUp ? 80 : -80)
+        }
+        XCTAssertTrue(scroll.frame.contains(card.frame), file: file, line: line)
+        XCTAssertTrue(element("soloHelper.instruction.seed-helper").isHittable,
+                      file: file, line: line)
     }
 
     private func element(_ id: String) -> XCUIElement {

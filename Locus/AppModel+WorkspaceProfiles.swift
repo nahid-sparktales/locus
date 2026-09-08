@@ -44,6 +44,7 @@ extension AppModel {
         touchWorkspaceProfile(path)
         gitWorkspace.refreshBranch()
         workspaceFiles.refresh(force: true)
+        activateWorkspaceBrowser()
     }
 
     /// Restores the model a workspace was last used with, through the account

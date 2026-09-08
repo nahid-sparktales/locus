@@ -94,7 +94,7 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def sanitize_event(value: Any, *, include_content: bool = True, depth: int = 0) -> Any:
+def sanitize_event(value: Any, *, include_content: bool = True, depth: int = 0, max_string_chars: int | None = 240_000) -> Any:
     """Return a bounded JSON value with credential-shaped fields removed."""
     if depth > 12:
         return "[truncated]"
@@ -107,17 +107,18 @@ def sanitize_event(value: Any, *, include_content: bool = True, depth: int = 0) 
                 continue
             if not include_content and key.lower() in {
                 "content", "output", "reasoning", "reasoning_text", "result",
-                "arguments", "prompt", "goal", "detail", "preview", "text",
+                "arguments", "prompt", "goal", "detail", "preview", "text", "response_parts", "_response_parts",
             }:
                 result[key] = "[content omitted]"
                 continue
-            result[key] = sanitize_event(item, include_content=include_content, depth=depth + 1)
+            result[key] = sanitize_event(item, include_content=include_content, depth=depth + 1,
+                                         max_string_chars=(1_000_000 if max_string_chars is not None and key in {"response_parts", "_response_parts"} else max_string_chars))
         return result
     if isinstance(value, (list, tuple)):
-        return [sanitize_event(item, include_content=include_content, depth=depth + 1)
+        return [sanitize_event(item, include_content=include_content, depth=depth + 1, max_string_chars=max_string_chars)
                 for item in list(value)[:512]]
     if isinstance(value, str):
-        text = value[:240_000]
+        text = value[:max_string_chars]
         text = _SENSITIVE_TEXT[0].sub(r"\1[redacted]", text)
         text = _SENSITIVE_TEXT[1].sub("Bearer [redacted]", text)
         text = _SENSITIVE_TEXT[2].sub(r"\1[redacted]", text)
@@ -1083,7 +1084,8 @@ class RunStore(AgentInspectorStore):
 
     def append_event(self, run_id: str, event: dict[str, Any]) -> dict[str, Any]:
         """Persist, number, and return one public event envelope."""
-        safe = sanitize_event(event)
+        transcript = event.get("type") in {"message_end", "assistant_item_end"}
+        safe = sanitize_event(event, max_string_chars=None if transcript else 240_000)
         if not isinstance(safe, dict):
             safe = {"type": "unknown"}
         safe.setdefault("run_id", run_id)
@@ -1119,7 +1121,9 @@ class RunStore(AgentInspectorStore):
             })
             self._update_attempt(connection, run_id, safe, now)
             encoded = _json(safe)
-            if len(encoded.encode("utf-8")) > MAX_EVENT_JSON_BYTES:
+            # Finalized transcript content is authoritative for both live and
+            # reconnect clients. General log/tool events remain bounded.
+            if not transcript and len(encoded.encode("utf-8")) > MAX_EVENT_JSON_BYTES:
                 safe = sanitize_event(safe, include_content=False)
                 safe["content_truncated"] = True
                 encoded = _json(safe)

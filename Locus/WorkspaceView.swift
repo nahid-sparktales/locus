@@ -669,8 +669,9 @@ private struct BackgroundChatPane: View {
                         PassiveChatBlockView(
                             block: block,
                             accent: model.effectiveAccent,
-                            workspacePath: model.workspacePath
+                            workspacePath: session.cwd ?? model.workspacePath
                         )
+                        .environment(\.responseOutputContext, model.responseOutputContext(sessionID: session.id))
                     }
                 }
             }
@@ -766,14 +767,21 @@ private struct PassiveChatBlockView: View {
         case .assistant:
             HStack(alignment: .top, spacing: 9) {
                 LocusMessageMarker(accent: accent)
+                Group {
+                    if !block.isStreaming, let document = block.responseParts, document.isSupported {
+                        ResponsePartsView(document: document, block: block, workspacePath: workspacePath)
+                    } else {
                 MessageContentView(
                     text: block.text,
                     isStreaming: block.isStreaming,
                     reasoningText: block.reasoningText,
                     reasoningSections: block.reasoningSections,
+                    reasoningFormat: block.reasoningFormat ?? .legacyTags,
                     workspacePath: workspacePath,
                     thinkingVisibility: .collapsed
                 )
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         case .tool:
@@ -1761,213 +1769,547 @@ private struct ScheduleRow: View {
 }
 
 struct ScheduleEditorView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var draft: ScheduleEditorDraft
+    @State private var initialDraft: ScheduleEditorDraft
     @State private var routeSelection: String
+    @State private var environmentExpanded = false
+    @State private var workflowExpanded = false
+    @State private var discardPresented = false
+    @State private var isSubmitting = false
+    @State private var saveError: String?
+    @State private var initialized = false
+    @FocusState private var nameFocused: Bool
 
     init(draft: ScheduleEditorDraft) {
-        _draft = State(initialValue: draft)
-        _routeSelection = State(initialValue: draft.providerAccountID ?? "ollama")
+        var normalized = draft
+        if let index = normalized.workflow.steps.firstIndex(where: { $0.type == .agent }),
+           normalized.workflow.steps[index].instructionTemplate?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            normalized.workflow.steps[index].instructionTemplate = normalized.prompt
+            normalized.workflow.steps[index].mode = normalized.mode
+        }
+        if normalized.runner == .soloSwarm { normalized.runner = .solo }
+        _draft = State(initialValue: normalized)
+        _initialDraft = State(initialValue: normalized)
+        _routeSelection = State(initialValue: normalized.providerAccountID ?? "ollama")
+        _workflowExpanded = State(initialValue: normalized.workflow.steps.count > 1)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(draft.id == nil ? "New Scheduled Task" : "Edit Scheduled Task")
-                        .font(.locus(size: 16, weight: .bold))
-                    Text("Every occurrence continues this agent’s dedicated chat.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                Spacer()
-                Button("Cancel") { schedule.scheduleEditorDraft = nil }
-                Button(draft.id == nil ? "Create" : "Save") {
-                    Task { _ = await schedule.saveSchedule(draft) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(schedule.isSavingSchedule)
-                .accessibilityIdentifier("scheduleEditor.save")
-            }
-            .padding(18)
-            .background(LocusTheme.paperDeep.opacity(0.55))
-
-            Form {
-                Section("Task") {
-                    TextField("Name", text: $draft.name)
-                        .accessibilityIdentifier("scheduleEditor.name")
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    identitySection
+                    Divider()
+                    scheduleSection
+                    Divider()
+                    environmentSection
                     if model.automationWorkflowsEnabled {
-                        AutomationWorkflowEditorView(workflow: $draft.workflow)
-                    } else {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Prompt")
-                                .font(.locus(size: 9, weight: .semibold))
-                                .foregroundStyle(LocusTheme.muted)
-                            TextEditor(text: $draft.prompt)
-                                .foregroundStyle(LocusTheme.inkSoft)
-                                .tint(LocusTheme.accentAction)
-                                .scrollContentBackground(.hidden)
-                                .font(.locus(size: 11))
-                                .frame(minHeight: 100)
-                                .padding(5)
-                                .background(LocusTheme.white.opacity(0.72))
-                                .clipShape(RoundedRectangle(cornerRadius: 7))
-                                .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
-                                .accessibilityIdentifier("scheduleEditor.prompt")
-                            Text("Attachments and temporary context chips are not included.")
-                                .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
+                        Divider()
+                        workflowSection
                     }
+                    Divider()
+                    permissionSummary
                 }
-
-                Section("Where and how") {
-                    HStack {
-                        TextField("Workspace", text: $draft.workspaceRoot)
-                        Button("Choose…") { chooseWorkspace() }
-                    }
-                    if !model.automationWorkflowsEnabled {
-                        Picker("Mode", selection: $draft.mode) {
-                            ForEach(WorkMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                    }
-                    Picker("Environment", selection: $draft.executionEnvironment) {
-                        ForEach(ChatExecutionEnvironment.allCases) { environment in
-                            Text(environment.title).tag(environment)
-                        }
-                    }
-                    Picker("Runner", selection: $draft.runner) {
-                        ForEach(ScheduleRunner.selectableCases) { runner in
-                            Text(runner.title).tag(runner)
-                        }
-                    }
-                    if draft.runner == .team {
-                        Picker("Team", selection: $draft.teamID) {
-                            Text("Choose a team").tag(String?.none)
-                            ForEach(agentTeams.agentTeams) { team in
-                                Text(team.name).tag(Optional(team.id.uuidString))
-                            }
-                        }
-                        .onChange(of: draft.teamID) { _, value in
-                            draft.teamName = value.flatMap { id in
-                                agentTeams.agentTeams.first(where: { $0.id.uuidString == id })?.name
-                            } ?? ""
-                        }
-                    }
-                    Picker("Model account", selection: $routeSelection) {
-                        Text("Local Ollama").tag("ollama")
-                        ForEach(providerAccounts.providerAccounts) { account in
-                            Text(account.displayName).tag(account.id.uuidString)
-                        }
-                    }
-                    .onChange(of: routeSelection) { _, value in updateRoute(value) }
-                    Picker("Model", selection: $draft.model) {
-                        ForEach(availableModels, id: \.self) { modelName in
-                            Text(modelName).tag(modelName)
-                        }
-                    }
-                    TextField("Time zone", text: $draft.timezone)
-                        .help("IANA time zone, for example America/Toronto")
-                }
-
-                Section("When") {
-                    Picker("Repeat", selection: $draft.ruleKind) {
-                        ForEach(ScheduleRuleKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
-                        }
-                    }
-                    scheduleFields
-                }
-
-                Section {
-                    Label(
-                        "Scheduled work uses the current app permission policy. Permission and plan-approval questions pause and notify you.",
-                        systemImage: "hand.raised.fill"
-                    )
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.inkSoft)
-                }
+                .padding(22)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
+            .accessibilityIdentifier("scheduleEditor.scroll")
+            .disabled(isSaving)
+            Divider()
+            footer
         }
-        .frame(width: 620, height: 690)
-        .background(LocusTheme.paper)
+        .frame(width: 650, height: 580)
+        .background(LocusTheme.surfaceCanvas)
+        .interactiveDismissDisabled()
         .onAppear {
-            if draft.model.isEmpty { draft.model = availableModels.first ?? "" }
+            guard !initialized else { return }
+            initialized = true
+            if draft.model.isEmpty { draft.model = catalogModels.first ?? "" }
+            initialDraft = draft
+            nameFocused = draft.id == nil
         }
+        .onChange(of: draft) { _, _ in saveError = nil }
+        .onChange(of: routeSelection) { _, value in updateRoute(value) }
+        .confirmationDialog("Discard changes?", isPresented: $discardPresented, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { schedule.scheduleEditorDraft = nil }
+                .accessibilityIdentifier("scheduleEditor.discard")
+            Button("Keep editing", role: .cancel) { }
+                .accessibilityIdentifier("scheduleEditor.keepEditing")
+        } message: {
+            Text("Your unsaved changes to this scheduled Agent will be lost.")
+        }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("scheduleEditor")
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.locus(size: 19, weight: .medium))
+                .foregroundStyle(LocusTheme.accentAction)
+                .frame(width: 42, height: 42)
+                .background(LocusTheme.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(draft.id == nil ? "Create a scheduled Agent" : "Edit scheduled Agent")
+                    .font(.locus(size: 17, weight: .semibold))
+                Text("Set the work once. Each run continues the Agent’s dedicated chat.")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textTertiary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+    }
+
+    private var identitySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Name").font(.locus(size: 11, weight: .medium))
+                TextField("e.g. Morning project review", text: $draft.name)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($nameFocused)
+                    .accessibilityLabel("Agent name")
+                    .accessibilityIdentifier("scheduleEditor.name")
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Instructions").font(.locus(size: 11, weight: .medium))
+                TextEditor(text: instructionsBinding)
+                    .foregroundStyle(LocusTheme.ink)
+                    .tint(LocusTheme.accentAction)
+                    .scrollContentBackground(.hidden)
+                    .font(.locus(size: 11))
+                    .frame(height: 104)
+                    .padding(8)
+                    .background(LocusTheme.surfaceCard)
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                    .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.lineStrong) }
+                    .accessibilityLabel("Instructions for each scheduled run")
+                    .accessibilityIdentifier("scheduleEditor.prompt")
+                Text(draft.workflow.steps.count > 1
+                    ? "Instructions for the first agent step. Edit the remaining steps in Workflow below."
+                    : "Describe what to do and what to report. Temporary context chips and attachments are not included.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var scheduleSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeading("Schedule", symbol: "calendar")
+            Picker("Repeat", selection: $draft.ruleKind) {
+                ForEach(ScheduleRuleKind.allCases) { kind in Text(kind.title).tag(kind) }
+            }
+            .accessibilityIdentifier("scheduleEditor.repeat")
+            scheduleFields
+            HStack(spacing: 10) {
+                Text("Time zone").font(.locus(size: 10))
+                TextField("America/Toronto", text: $draft.timezone)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Time zone")
+                    .accessibilityIdentifier("scheduleEditor.timezone")
+                Button("Use local") { draft.timezone = TimeZone.current.identifier }
+                    .buttonStyle(.borderless)
+                    .font(.locus(size: 9))
+                    .help("Use \(TimeZone.current.identifier)")
+                    .accessibilityIdentifier("scheduleEditor.localTimezone")
+            }
+            if let scheduleIssue {
+                issueLabel(scheduleIssue)
+                    .accessibilityIdentifier("scheduleEditor.scheduleIssue")
+            } else {
+                Text(scheduleSummary)
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("scheduleEditor.scheduleSummary")
+            }
+        }
+    }
+
+    private var environmentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            disclosure("Environment & model", detail: environmentSummary,
+                       symbol: "desktopcomputer", expanded: $environmentExpanded,
+                       identifier: "scheduleEditor.environmentDisclosure")
+            if environmentExpanded {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Workspace").font(.locus(size: 11, weight: .medium))
+                    HStack {
+                        TextField("Choose a workspace folder", text: $draft.workspaceRoot)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Workspace")
+                            .accessibilityIdentifier("scheduleEditor.workspace")
+                        Button("Choose…") { chooseWorkspace() }
+                            .accessibilityIdentifier("scheduleEditor.chooseWorkspace")
+                    }
+                }
+                Picker("Environment", selection: $draft.executionEnvironment) {
+                    ForEach(ChatExecutionEnvironment.allCases) { environment in
+                        Text(environment.title).tag(environment)
+                    }
+                }
+                .accessibilityIdentifier("scheduleEditor.environment")
+                Text(draft.executionEnvironment == .worktree
+                    ? "Runs in an isolated Git worktree. Choose a Git workspace for this environment."
+                    : "Runs directly in this workspace. File changes are visible in your working folder.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("Mode", selection: modeBinding) {
+                    ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
+                }
+                .accessibilityIdentifier("scheduleEditor.mode")
+                Picker("Runner", selection: $draft.runner) {
+                    ForEach(ScheduleRunner.selectableCases) { runner in Text(runner.title).tag(runner) }
+                }
+                .accessibilityIdentifier("scheduleEditor.runner")
+                if draft.runner == .team {
+                    Picker("Team", selection: $draft.teamID) {
+                        Text("Choose a team").tag(String?.none)
+                        if let teamID = draft.teamID, !agentTeams.agentTeams.contains(where: { $0.id.uuidString == teamID }) {
+                            Text("Unavailable team").tag(Optional(teamID))
+                        }
+                        ForEach(agentTeams.agentTeams) { team in
+                            Text(team.name).tag(Optional(team.id.uuidString))
+                        }
+                    }
+                    .onChange(of: draft.teamID) { _, value in
+                        draft.teamName = value.flatMap { id in
+                            agentTeams.agentTeams.first(where: { $0.id.uuidString == id })?.name
+                        } ?? ""
+                    }
+                    .accessibilityIdentifier("scheduleEditor.team")
+                }
+                Picker("Model account", selection: $routeSelection) {
+                    Text("Local Ollama").tag("ollama")
+                    if providerUnavailable { Text("Unavailable account").tag(routeSelection) }
+                    ForEach(providerAccounts.providerAccounts) { account in
+                        Text(account.displayName).tag(account.id.uuidString)
+                    }
+                }
+                .accessibilityIdentifier("scheduleEditor.account")
+                if catalogModels.isEmpty {
+                    LabeledContent("Model") {
+                        TextField("Exact model ID", text: $draft.model)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Model")
+                            .accessibilityIdentifier("scheduleEditor.model")
+                    }
+                } else {
+                    Picker("Model", selection: $draft.model) {
+                        Text("Choose a model").tag("")
+                        ForEach(availableModels, id: \.self) { name in Text(name).tag(name) }
+                    }
+                    .accessibilityIdentifier("scheduleEditor.model")
+                }
+                Text("Keep Locus running to process scheduled work. The selected provider receives the task when it starts.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let environmentIssue {
+                issueLabel(environmentIssue)
+                    .accessibilityIdentifier("scheduleEditor.environmentIssue")
+            }
+        }
+    }
+
+    private var workflowSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            disclosure("Workflow", detail: draft.workflow.steps.count == 1
+                       ? "Optional steps, conditions, and approvals"
+                       : "\(draft.workflow.steps.count) steps · Runs in order",
+                       symbol: "arrow.triangle.branch", expanded: $workflowExpanded,
+                       identifier: "scheduleEditor.workflowDisclosure")
+            if workflowExpanded { AutomationWorkflowEditorView(workflow: $draft.workflow) }
+        }
+    }
+
+    private var permissionSummary: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.shield")
+                .foregroundStyle(LocusTheme.textTertiary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Access now · \(model.permissionMode.title)")
+                    .font(.locus(size: 11, weight: .medium))
+                Text(permissionDetail)
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                Text("Each run uses the app’s permission policy at that time. Approval requests pause the run and notify you.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.textTertiary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("scheduleEditor.permissions")
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let saveError {
+                issueLabel(saveError)
+                    .accessibilityIdentifier("scheduleEditor.saveError")
+            }
+            HStack(spacing: 12) {
+                if isSaving {
+                    ProgressView().controlSize(.small)
+                    Text("Saving schedule…").font(.locus(size: 10))
+                } else {
+                    Text(validationIssue ?? (draft.id == nil ? "The schedule starts after you create the Agent." : "Changes apply to future runs."))
+                        .font(.locus(size: 9))
+                        .foregroundStyle(validationIssue == nil ? LocusTheme.textTertiary : LocusTheme.warningForeground)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("scheduleEditor.validation")
+                }
+                Spacer(minLength: 8)
+                Button("Cancel") { cancel() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("scheduleEditor.cancel")
+                Button(draft.id == nil ? "Create Agent" : "Save changes") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LocusTheme.accentAction)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving || validationIssue != nil)
+                    .accessibilityIdentifier("scheduleEditor.save")
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .background(LocusTheme.surfaceCanvas)
+    }
+
+    private func sectionHeading(_ title: String, symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.locus(size: 12, weight: .semibold))
+    }
+
+    private func disclosure(_ title: String, detail: String, symbol: String,
+                            expanded: Binding<Bool>, identifier: String) -> some View {
+        Button {
+            withAnimation(reduceMotion ? nil : LocusMotion.spatial) { expanded.wrappedValue.toggle() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).frame(width: 20).foregroundStyle(LocusTheme.textTertiary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.locus(size: 11, weight: .semibold))
+                    Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary).lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.locus(size: 9, weight: .semibold))
+                    .foregroundStyle(LocusTheme.textTertiary)
+                    .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
+            }
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func issueLabel(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.circle")
+            .font(.locus(size: 9))
+            .foregroundStyle(LocusTheme.warningForeground)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private var scheduleFields: some View {
         switch draft.ruleKind {
         case .once:
-            DatePicker(
-                "Run at", selection: $draft.oneTimeDate,
-                in: Date().addingTimeInterval(60)...,
-                displayedComponents: [.date, .hourAndMinute]
-            )
+            DatePicker("Run at", selection: $draft.oneTimeDate, displayedComponents: [.date, .hourAndMinute])
+                .environment(\.timeZone, selectedTimeZone ?? .current)
+                .accessibilityIdentifier("scheduleEditor.date")
         case .daily, .weekdays:
             DatePicker("Time", selection: $draft.clockTime, displayedComponents: .hourAndMinute)
+                .accessibilityIdentifier("scheduleEditor.time")
         case .weekly:
             Picker("Day", selection: $draft.weekday) {
-                ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, name in
-                    Text(name).tag(index)
-                }
+                ForEach(Array(weekdayNames.enumerated()), id: \.offset) { index, name in Text(name).tag(index) }
             }
+            .accessibilityIdentifier("scheduleEditor.weekday")
             DatePicker("Time", selection: $draft.clockTime, displayedComponents: .hourAndMinute)
+                .accessibilityIdentifier("scheduleEditor.time")
         case .interval:
             HStack {
                 Stepper("Every \(draft.intervalEvery)", value: $draft.intervalEvery, in: 1...100_000)
+                    .accessibilityIdentifier("scheduleEditor.interval")
                 Picker("Unit", selection: $draft.intervalUnit) {
-                    ForEach(ScheduleIntervalUnit.allCases) { unit in
-                        Text(unit.title).tag(unit)
-                    }
+                    ForEach(ScheduleIntervalUnit.allCases) { unit in Text(unit.title).tag(unit) }
                 }
                 .labelsHidden()
                 .frame(width: 120)
+                .accessibilityIdentifier("scheduleEditor.intervalUnit")
             }
-            DatePicker(
-                "Starting", selection: $draft.oneTimeDate,
-                displayedComponents: [.date, .hourAndMinute]
-            )
+            DatePicker("Starting", selection: $draft.oneTimeDate, displayedComponents: [.date, .hourAndMinute])
+                .environment(\.timeZone, selectedTimeZone ?? .current)
+                .accessibilityIdentifier("scheduleEditor.date")
         }
     }
 
-    private var weekdayNames: [String] {
-        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    private var instructionsBinding: Binding<String> {
+        Binding(get: { draft.workflow.firstAgent?.instructionTemplate ?? draft.prompt }, set: { value in
+            draft.prompt = value
+            if let index = draft.workflow.steps.firstIndex(where: { $0.type == .agent }) {
+                draft.workflow.steps[index].instructionTemplate = value
+            }
+        })
+    }
+
+    private var modeBinding: Binding<WorkMode> {
+        Binding(get: { draft.workflow.firstAgent?.mode ?? draft.mode }, set: { value in
+            draft.mode = value
+            if let index = draft.workflow.steps.firstIndex(where: { $0.type == .agent }) {
+                draft.workflow.steps[index].mode = value
+            }
+        })
+    }
+
+    private var isSaving: Bool { isSubmitting || schedule.isSavingSchedule }
+    private var selectedTimeZone: TimeZone? { TimeZone(identifier: draft.timezone.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    private var weekdayNames: [String] { ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] }
+
+    private var validationIssue: String? {
+        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Give this Agent a name." }
+        if instructionsBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Add instructions for each run." }
+        return scheduleIssue ?? environmentIssue
+    }
+
+    private var scheduleIssue: String? {
+        guard selectedTimeZone != nil else { return "Enter a valid time zone, such as America/Toronto." }
+        if draft.ruleKind == .once, draft.oneTimeDate <= Date() { return "Choose a future date and time." }
+        if draft.ruleKind == .weekly, !(0...6).contains(draft.weekday) { return "Choose a day of the week." }
+        if draft.ruleKind == .interval {
+            let multiplier: Int = switch draft.intervalUnit {
+            case .minutes: 60
+            case .hours: 3_600
+            case .days: 86_400
+            case .weeks: 604_800
+            }
+            if draft.intervalEvery < 1 || draft.intervalEvery > 100_000 { return "Enter an interval between 1 and 100,000." }
+            let seconds = draft.intervalEvery * multiplier
+            if seconds < 900 { return "Use an interval of at least 15 minutes." }
+            if seconds > 31_536_000 { return "Custom intervals cannot exceed one year." }
+        }
+        return nil
+    }
+
+    private var environmentIssue: String? {
+        if draft.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Choose a workspace in Environment & model." }
+        if providerUnavailable { return "Choose an available model account in Environment & model." }
+        if draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.model == "No model" {
+            return "Choose a model in Environment & model."
+        }
+        if draft.runner == .team, !agentTeams.agentTeams.contains(where: { $0.id.uuidString == draft.teamID }) {
+            return "Choose an available team in Environment & model."
+        }
+        return nil
+    }
+
+    private var providerUnavailable: Bool {
+        routeSelection != "ollama" && !providerAccounts.providerAccounts.contains { $0.id.uuidString == routeSelection }
+    }
+
+    private var environmentSummary: String {
+        let folder = draft.workspaceRoot.isEmpty ? "Choose a workspace" : URL(fileURLWithPath: draft.workspaceRoot).lastPathComponent
+        return "\(folder) · \(draft.executionEnvironment.title) · \(draft.runner.title) · \(draft.model.isEmpty ? "Choose a model" : draft.model)"
+    }
+
+    private var permissionDetail: String {
+        switch model.permissionMode {
+        case .ask: "File changes, commands, and network requests require approval."
+        case .acceptEdits: "Workspace file edits can run automatically. Commands still require approval."
+        case .bypass: "Available tools, including file edits, commands, and connected services, can run without approval."
+        }
+    }
+
+    private var scheduleSummary: String {
+        let time = draft.clockTime.formatted(date: .omitted, time: .shortened)
+        let zone = draft.timezone.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch draft.ruleKind {
+        case .once: return "Runs once on \(formattedDate(draft.oneTimeDate)) · \(zone)"
+        case .daily: return "Every day at \(time) · \(zone)"
+        case .weekdays: return "Monday–Friday at \(time) · \(zone)"
+        case .weekly: return "Every \(weekdayNames[min(max(draft.weekday, 0), 6)]) at \(time) · \(zone)"
+        case .interval:
+            let unit = draft.intervalEvery == 1 ? String(draft.intervalUnit.rawValue.dropLast()) : draft.intervalUnit.rawValue
+            let start = draft.oneTimeDate <= Date() ? "when saved" : formattedDate(draft.oneTimeDate)
+            return "Every \(draft.intervalEvery) \(unit), starting \(start) · \(zone)"
+        }
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = selectedTimeZone ?? .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private var catalogModels: [String] {
+        if routeSelection == "ollama" { return providerAccounts.installedLocalModels.map(\.name) }
+        guard let id = UUID(uuidString: routeSelection),
+              let account = providerAccounts.providerAccounts.first(where: { $0.id == id }) else { return [] }
+        return providerAccounts.accountModels[id] ?? account.kind.curatedModels
     }
 
     private var availableModels: [String] {
-        if routeSelection == "ollama" {
-            let names = providerAccounts.installedLocalModels.map(\.name)
-            return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
-        }
-        guard let id = UUID(uuidString: routeSelection),
-              let account = providerAccounts.providerAccounts.first(where: { $0.id == id })
-        else { return [draft.model].filter { !$0.isEmpty } }
-        let names = providerAccounts.accountModels[id] ?? account.kind.curatedModels
-        return names.isEmpty ? [draft.model].filter { !$0.isEmpty } : names
+        var names = catalogModels
+        if !draft.model.isEmpty, !names.contains(draft.model) { names.insert(draft.model, at: 0) }
+        var seen = Set<String>()
+        return names.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private func updateRoute(_ value: String) {
         if value == "ollama" {
             draft.provider = "ollama"
             draft.providerAccountID = nil
-        } else if let id = UUID(uuidString: value),
-                  let account = providerAccounts.providerAccounts.first(where: { $0.id == id }) {
+        } else if let account = providerAccounts.providerAccounts.first(where: { $0.id.uuidString == value }) {
             draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
             draft.providerAccountID = value
         }
-        if !availableModels.contains(draft.model) {
-            draft.model = availableModels.first ?? ""
+        if !catalogModels.contains(draft.model) { draft.model = catalogModels.first ?? "" }
+    }
+
+    private func cancel() {
+        guard !isSaving else { return }
+        if draft != initialDraft { discardPresented = true }
+        else { schedule.scheduleEditorDraft = nil }
+    }
+
+    private func save() {
+        guard !isSaving, validationIssue == nil else { return }
+        isSubmitting = true
+        saveError = nil
+        var submitted = draft
+        submitted.name = submitted.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        submitted.prompt = instructionsBinding.wrappedValue
+        submitted.mode = modeBinding.wrappedValue
+        submitted.timezone = submitted.timezone.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previousToast = model.toastMessage
+        Task {
+            let saved = await schedule.saveSchedule(submitted)
+            isSubmitting = false
+            if !saved {
+                saveError = model.toastMessage != previousToast
+                    ? model.toastMessage ?? "Could not save this schedule. Review the configuration and try again."
+                    : "Could not save this schedule. Review the configuration and try again."
+            }
         }
     }
 
@@ -1978,8 +2320,7 @@ struct ScheduleEditorView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose Workspace"
         guard panel.runModal() == .OK, let url = panel.url,
-              let path = model.rememberScheduleWorkspace(url)
-        else { return }
+              let path = model.rememberScheduleWorkspace(url) else { return }
         draft.workspaceRoot = path
     }
 }
@@ -2061,7 +2402,7 @@ private struct ModelPickerPopover: View {
                     model.presentSettings(.accounts)
                 }
                 pickerAction(
-                    "Manage Agents & Teams…",
+                    "Specialists & teams…",
                     symbol: "person.3.sequence.fill",
                     identifier: "workspace.modelPicker.manageAgentsTeams"
                 ) {
@@ -2554,6 +2895,11 @@ private struct ConversationView: View {
     /// Owned here, outside the lazy list, so recycling a row cannot take the
     /// selection with it — and so a drag can run from one message into another.
     @StateObject private var selection = TranscriptSelectionStore()
+    @State private var streamingPresentationRows: Set<String> = []
+    @State private var selectedBlockSnapshots: [String: ChatBlock] = [:]
+    @State private var selectedStreamingSnapshots: [String: StreamingReplySnapshot] = [:]
+    @State private var selectionSources: [String: RowSelectionSource] = [:]
+    @State private var deferredSelectionRows: Set<String> = []
 
     var body: some View {
         let transcript = transcriptPresentation.snapshot
@@ -2677,6 +3023,11 @@ private struct ConversationView: View {
             }
             .onChange(of: token.sessionGeneration) {
                 selection.reset()
+                streamingPresentationRows = []
+                selectedBlockSnapshots = [:]
+                selectedStreamingSnapshots = [:]
+                selectionSources = [:]
+                deferredSelectionRows = []
             }
             .onAppear {
                 configureSelection(
@@ -2684,11 +3035,33 @@ private struct ConversationView: View {
                     thinkingVisibility: transcript.thinkingVisibility
                 )
             }
-            .onChange(of: items.map(\.id.stableKey)) { _, _ in
+            .onChange(of: token.contentRevision) { _, _ in
                 configureSelection(
                     for: items,
                     thinkingVisibility: transcript.thinkingVisibility
                 )
+            }
+            .onReceive(selection.$selectedRowIDs.removeDuplicates()) { selected in
+                selectedBlockSnapshots = selectedBlockSnapshots.filter { selected.contains($0.key) }
+                selectedStreamingSnapshots = selectedStreamingSnapshots.filter { selected.contains($0.key) }
+                for item in items where selected.contains(item.id.stableKey) && selectedBlockSnapshots[item.id.stableKey] == nil {
+                    switch item {
+                    case .block(let block): selectedBlockSnapshots[item.id.stableKey] = block
+                    case .assistantSegment(let segment): selectedBlockSnapshots[item.id.stableKey] = segment.displayBlock
+                    default: break
+                    }
+                    if let streamingID = streamingReply.snapshot.id, item.sourceBlockIDs.contains(streamingID) {
+                        selectedStreamingSnapshots[item.id.stableKey] = streamingReply.snapshot
+                    }
+                }
+                streamingPresentationRows = streamingPresentationRows.filter { rowID in
+                    selected.contains(rowID) || items.contains { item in
+                        item.id.stableKey == rowID && model.activeStreamingAssistantID.map { item.sourceBlockIDs.contains($0) } == true
+                    }
+                }
+            }
+            .onChange(of: selection.selectedRowIDs) { _, _ in
+                configureSelection(for: items, thinkingVisibility: transcript.thinkingVisibility)
             }
             .onChange(of: transcript.thinkingVisibility) { _, visibility in
                 configureSelection(for: items, thinkingVisibility: visibility)
@@ -2772,13 +3145,21 @@ private struct ConversationView: View {
             },
             uniquingKeysWith: { first, _ in first }
         )
+        let workspacePath = model.workspacePath
+        let sessionID = transcriptPresentation.snapshot.sessionID
+        let affectedRows = Set(selectionSources.keys).union(sources.keys).union(deferredSelectionRows)
+        for rowID in affectedRows where selectionSources[rowID] != sources[rowID] || deferredSelectionRows.contains(rowID) {
+            if selection.selectedRowIDs.contains(rowID) { deferredSelectionRows.insert(rowID); continue }
+            let expected = sources[rowID].map { Self.spans(for: $0, rowID: rowID, thinkingVisibility: thinkingVisibility,
+                workspacePath: workspacePath, sessionID: sessionID) } ?? []
+            selection.retainSpanIDs(in: rowID, keeping: Set(expected.map(\.id)))
+            deferredSelectionRows.remove(rowID)
+        }
+        selectionSources = sources
         selection.spanProvider = { rowID in
             guard let source = sources[rowID] else { return [] }
-            return Self.spans(
-                for: source,
-                rowID: rowID,
-                thinkingVisibility: thinkingVisibility
-            )
+            return Self.spans(for: source, rowID: rowID, thinkingVisibility: thinkingVisibility,
+                workspacePath: workspacePath, sessionID: sessionID)
         }
         selection.onDragActiveChange = { active in
             scrollCoordinator.setSelectionDragActive(active)
@@ -2789,12 +3170,13 @@ private struct ConversationView: View {
         selection.syncRows(items.map(\.id.stableKey))
     }
 
-    private enum RowSelectionSource {
+    private enum RowSelectionSource: Equatable {
         /// A user bubble renders its text as one Markdown document.
         case whole(String)
         /// An assistant answer is split into reasoning and visible segments
         /// before rendering, and each visible one is its own subtree.
-        case assistant(String)
+        case assistant(String, AssistantReasoningFormat)
+        case structured(ResponseDocument, String?)
     }
 
     private func transcriptEnd(token: TranscriptRenderToken, id: TranscriptScrollTarget) -> some View {
@@ -2815,11 +3197,16 @@ private struct ConversationView: View {
         case .block(let block):
             switch block.kind {
             case .user: .whole(block.text)
-            case .assistant: .assistant(block.text)
+            case .assistant:
+                if block.assistantPhase == .commentary { nil }
+                else if let document = block.responseParts, document.isSupported { .structured(document, block.sourceItemID) }
+                else { .assistant(block.text, block.reasoningFormat ?? .legacyTags) }
             default: nil
             }
         case .assistantSegment(let segment):
-            .assistant(segment.text)
+            if segment.sourceBlock.assistantPhase == .commentary { nil }
+            else if let document = segment.sourceBlock.responseParts, document.isSupported { .structured(document, segment.sourceBlock.sourceItemID) }
+            else { .assistant(segment.text, segment.sourceBlock.reasoningFormat ?? .legacyTags) }
         case .toolGroup, .thinkingGroup:
             nil
         }
@@ -2831,7 +3218,9 @@ private struct ConversationView: View {
     private static func spans(
         for source: RowSelectionSource,
         rowID: String,
-        thinkingVisibility: ThinkingVisibility
+        thinkingVisibility: ThinkingVisibility,
+        workspacePath: String,
+        sessionID: String
     ) -> [TranscriptSelectionSpan] {
         switch source {
         case .whole(let text):
@@ -2844,9 +3233,12 @@ private struct ConversationView: View {
                     rowID: rowID
                 ).values
             )
-        case .assistant(let text):
+        case .structured(let document, let itemID):
+            return ResponseSelectionProjection.spans(document: document, rowID: rowID,
+                workspacePath: workspacePath, sessionID: sessionID, itemID: itemID)
+        case .assistant(let text, let format):
             var result: [TranscriptSelectionSpan] = []
-            let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility)
+            let segments = AssistantSegment.rendered(from: text, mode: thinkingVisibility, reasoningFormat: format)
             for (index, segment) in segments.enumerated() {
                 guard case .visible(let body) = segment, !body.isEmpty else { continue }
                 result += MarkdownSelectionProjection.spans(
@@ -2949,10 +3341,13 @@ private struct ConversationView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if sourceBlock.kind == .assistant,
-               sourceBlock.id == model.activeStreamingAssistantID
+               (sourceBlock.id == model.activeStreamingAssistantID
+                || (streamingPresentationRows.contains(presentationID.stableKey)
+                    && selection.selectedRowIDs.contains(presentationID.stableKey)))
             {
                 ActiveAssistantBlockView(
                     reply: streamingReply,
+                    frozenSnapshot: selectedStreamingSnapshots[presentationID.stableKey],
                     thinkingVisibility: thinkingVisibility,
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
@@ -2963,9 +3358,10 @@ private struct ConversationView: View {
                     selectionRowID: presentationID.stableKey,
                     onOpenWorkspaceReference: model.openWorkspaceReference
                 )
+                .onAppear { streamingPresentationRows.insert(presentationID.stableKey) }
             } else {
                 MessageBlockView(
-                    block: displayBlock,
+                    block: selectedBlockSnapshots[presentationID.stableKey] ?? displayBlock,
                     thinkingVisibility: thinkingVisibility,
                     accent: model.effectiveAccent,
                     workspacePath: model.workspacePath,
@@ -2979,14 +3375,14 @@ private struct ConversationView: View {
                     selectionRowID: presentationID.stableKey,
                     onCopy: { format in
                         if sourceBlock.kind == .assistant {
-                            model.copyResponse(sourceBlock.text, format: format)
+                            model.copyResponse(sourceBlock.text, format: format, reasoningFormat: sourceBlock.reasoningFormat ?? .legacyTags)
                         } else {
                             model.copyMessage(sourceBlock.text)
                         }
                     },
                     onUseAsDraft: {
                         let draft = sourceBlock.kind == .assistant
-                            ? AssistantSegment.copyableText(from: sourceBlock.text)
+                            ? AssistantSegment.copyableText(from: sourceBlock.text, reasoningFormat: sourceBlock.reasoningFormat ?? .legacyTags)
                             : sourceBlock.text
                         model.useAsDraft(draft)
                     },
@@ -2995,6 +3391,8 @@ private struct ConversationView: View {
                     onOpenWorkspaceReference: model.openWorkspaceReference
                 )
                 .equatable()
+                .environment(\.responseOutputContext, model.responseOutputContext(sessionID: transcriptPresentation.snapshot.sessionID))
+                .onAppear { if !selection.selectedRowIDs.contains(presentationID.stableKey) { streamingPresentationRows.remove(presentationID.stableKey) } }
             }
             if sourceBlock.kind == .user, let runID = sourceBlock.runID {
                 if runKind(for: runID) == "team" {
@@ -4668,6 +5066,7 @@ private struct EmptyConversationView: View {
 /// invalidating every completed Markdown row above it.
 private struct ActiveAssistantBlockView: View {
     @ObservedObject var reply: StreamingReplyState
+    var frozenSnapshot: StreamingReplySnapshot? = nil
     let thinkingVisibility: ThinkingVisibility
     let accent: LocusAccentSelection
     let workspacePath: String
@@ -4682,6 +5081,7 @@ private struct ActiveAssistantBlockView: View {
         if isReasoningActivity {
             StreamingMessageContentView(
                 reply: reply,
+                snapshotOverride: frozenSnapshot,
                 thinkingVisibility: thinkingVisibility,
                 workspacePath: workspacePath,
                 activityOnly: true,
@@ -4697,6 +5097,7 @@ private struct ActiveAssistantBlockView: View {
                 assistantMarker
                 StreamingMessageContentView(
                     reply: reply,
+                    snapshotOverride: frozenSnapshot,
                     thinkingVisibility: thinkingVisibility,
                     workspacePath: workspacePath,
                     selectionStore: selectionStore,
@@ -4881,6 +5282,7 @@ private struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     @State private var responseCopied = false
+    @State private var progressExpanded = false
     @FocusState private var actionsFocused: Bool
     let block: ChatBlock
     let thinkingVisibility: ThinkingVisibility
@@ -4968,17 +5370,31 @@ private struct MessageBlockView: View, Equatable {
                     {
                         ThinkingDots()
                     } else {
-                        MessageContentView(
-                            text: block.text,
-                            isStreaming: block.isStreaming,
-                            reasoningText: block.reasoningText,
-                            reasoningSections: block.reasoningSections,
-                            workspacePath: workspacePath,
-                            thinkingVisibility: thinkingVisibility,
-                            selectionStore: selectionStore,
-                            selectionRowID: selectionRowID,
-                            onOpenWorkspaceReference: onOpenWorkspaceReference
-                        )
+                        if block.assistantPhase == .commentary && !block.isStreaming {
+                            Button {
+                                withAnimation(reduceMotion ? nil : LocusMotion.content) {
+                                    progressExpanded.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.locus(size: 9, weight: .semibold))
+                                        .rotationEffect(.degrees(progressExpanded ? 90 : 0))
+                                        .accessibilityHidden(true)
+                                    Text("Progress update")
+                                    Spacer(minLength: 0)
+                                }
+                                .font(.locus(size: 12))
+                                .foregroundStyle(LocusTheme.muted)
+                                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.locus())
+                            .accessibilityLabel("Progress update")
+                            .accessibilityValue(progressExpanded ? "Expanded" : "Collapsed")
+                            .accessibilityIdentifier("message.progressUpdate")
+                            if progressExpanded { assistantResponse }
+                        } else { assistantResponse }
                         if block.isStreaming {
                             StreamingCaret()
                         }
@@ -5026,6 +5442,7 @@ private struct MessageBlockView: View, Equatable {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .animation(reduceMotion ? nil : LocusMotion.press, value: isHovering || actionsFocused)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityIdentifier)
         .contextMenu {
             if block.kind == .user || (block.kind == .assistant && showsAssistantActions) {
@@ -5059,6 +5476,28 @@ private struct MessageBlockView: View, Equatable {
         }
     }
 
+    @ViewBuilder
+    private var assistantResponse: some View {
+                        if !block.isStreaming, let document = block.responseParts, document.isSupported {
+                            ResponsePartsView(document: document, block: block, workspacePath: workspacePath,
+                                selectionStore: selectionStore, selectionRowID: selectionRowID,
+                                onOpenWorkspaceReference: onOpenWorkspaceReference)
+                        } else {
+                        MessageContentView(
+                            text: block.text,
+                            isStreaming: block.isStreaming,
+                            reasoningText: block.reasoningText,
+                            reasoningSections: block.reasoningSections,
+                            reasoningFormat: block.reasoningFormat ?? .legacyTags,
+                            workspacePath: workspacePath,
+                            thinkingVisibility: thinkingVisibility,
+                            selectionStore: selectionStore,
+                            selectionRowID: selectionRowID,
+                            onOpenWorkspaceReference: onOpenWorkspaceReference
+                        )
+                        }
+    }
+
     private func messageActionBar(name: String) -> some View {
         HStack(spacing: 1) {
             messageActions
@@ -5071,7 +5510,7 @@ private struct MessageBlockView: View, Equatable {
 
     @ViewBuilder
     private var messageActions: some View {
-        if block.kind == .assistant, !AssistantSegment.copyableText(from: block.text).isEmpty {
+        if block.kind == .assistant, !AssistantSegment.copyableText(from: block.text, reasoningFormat: block.reasoningFormat ?? .legacyTags).isEmpty {
             responseCopyButton
         } else if block.kind == .user {
             actionButton("doc.on.doc", help: "Copy message", identifier: "copy") {
@@ -5658,9 +6097,9 @@ private struct ToolActivityView: View {
             )
             .accessibilityIdentifier("toolActivity.group.\(groupID.uuidString)")
 
-            if expanded {
+            if expanded || tools.contains(where: { $0.status == .error || $0.status == .awaitingPermission }) {
                 VStack(spacing: 8) {
-                    ForEach(tools, id: \.toolID) { tool in
+                    ForEach(expanded ? tools : tools.filter { $0.status == .error || $0.status == .awaitingPermission }, id: \.toolID) { tool in
                         ToolCardView(tool: tool)
                     }
                 }
@@ -5950,7 +6389,7 @@ private struct ToolCardView: View {
             }
             #endif
 
-            if expanded || tool.status == .awaitingPermission {
+            if expanded || tool.status == .awaitingPermission || tool.status == .error {
                 VStack(alignment: .leading, spacing: 10) {
                     if !tool.detail.isEmpty {
                         ToolOutputText(text: tool.detail)

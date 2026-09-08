@@ -146,6 +146,186 @@ final class ScheduleModelTests: XCTestCase {
         XCTAssertEqual(toasts, ["Agent warning cleared; the agent remains paused"])
     }
 
+    func testFailedScheduleLoadExposesErrorAndSuccessfulRetryClearsIt() async {
+        BackendStub.respond(toPath: "/api/schedules", status: 503) { _ in ["detail": "temporarily unavailable"] }
+        let model = makeModel()
+
+        await model.refreshScheduledTasks(announceFailure: false)
+
+        XCTAssertNotNil(model.lastLoadError)
+        XCTAssertTrue(model.lastLoadError?.contains("Could not load scheduled Agents") == true)
+        XCTAssertFalse(model.hasLoaded)
+        XCTAssertFalse(model.isRefreshingSchedules)
+        XCTAssertTrue(model.scheduledTasks.isEmpty)
+        XCTAssertTrue(toasts.isEmpty, "The inline error should not require a toast")
+
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/schedules") { _ in
+            ["schedules": [Self.scheduleJSON(id: "restored")], "read_only": false]
+        }
+        await model.refreshScheduledTasks(announceFailure: false)
+
+        XCTAssertNil(model.lastLoadError)
+        XCTAssertTrue(model.hasLoaded)
+        XCTAssertFalse(model.isRefreshingSchedules)
+        XCTAssertEqual(model.scheduledTasks.map(\.id), ["restored"])
+    }
+
+    func testFailedScheduleRefreshPreservesLastLoadedAgents() async {
+        BackendStub.respond(toPath: "/api/schedules") { _ in
+            ["schedules": [Self.scheduleJSON(id: "kept", enabled: false)], "read_only": false]
+        }
+        let model = makeModel()
+        await model.refreshScheduledTasks()
+        let previouslyLoaded = model.scheduledTasks
+
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/schedules", status: 500) { _ in ["detail": "load failed"] }
+        await model.refreshScheduledTasks()
+
+        XCTAssertEqual(model.scheduledTasks, previouslyLoaded)
+        XCTAssertTrue(model.hasLoaded)
+        XCTAssertNotNil(model.lastLoadError)
+        XCTAssertFalse(model.isRefreshingSchedules)
+        XCTAssertEqual(toasts.count, 1)
+    }
+
+    func testOccurrenceFailurePreservesHistoryAndRetryClearsOnlyItsOwnError() async throws {
+        let first = try XCTUnwrap(decode(ScheduledTask.self, from: Self.scheduleJSON(id: "first")))
+        let second = try XCTUnwrap(decode(ScheduledTask.self, from: Self.scheduleJSON(id: "second")))
+        BackendStub.respond(toPath: "/api/schedules/first/occurrences") { _ in
+            ["occurrences": [Self.occurrenceJSON(id: "retained", scheduleID: "first")]]
+        }
+        let model = makeModel()
+        await model.refreshOccurrences(for: first, announceFailure: false)
+        let previousHistory = model.occurrencesBySchedule["first"]
+
+        BackendStub.reset()
+        BackendStub.respond(whenPathHasPrefix: "/api/schedules/", status: 503) { _ in ["detail": "history unavailable"] }
+        await model.refreshOccurrences(for: first, announceFailure: false)
+        await model.refreshOccurrences(for: second, announceFailure: false)
+
+        XCTAssertEqual(model.occurrencesBySchedule["first"], previousHistory)
+        XCTAssertNotNil(model.occurrenceLoadErrors["first"])
+        XCTAssertNotNil(model.occurrenceLoadErrors["second"])
+        XCTAssertTrue(model.loadingOccurrenceIDs.isEmpty)
+        XCTAssertNil(model.lastLoadError, "An activity error must not replace the agent-list error")
+        XCTAssertTrue(toasts.isEmpty)
+
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/schedules/first/occurrences") { _ in
+            ["occurrences": [Self.occurrenceJSON(id: "newest", scheduleID: "first")]]
+        }
+        await model.refreshOccurrences(for: first, announceFailure: false)
+
+        XCTAssertNil(model.occurrenceLoadErrors["first"])
+        XCTAssertNotNil(model.occurrenceLoadErrors["second"])
+        XCTAssertEqual(model.occurrencesBySchedule["first"]?.map(\.id), ["newest"])
+        XCTAssertTrue(model.loadingOccurrenceIDs.isEmpty)
+        let request = try XCTUnwrap(BackendStub.requests.first)
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "limit" }?.value, "100")
+    }
+
+    func testOverlappingOccurrenceLoadsShareTheExistingRequest() async throws {
+        let task = try XCTUnwrap(decode(ScheduledTask.self, from: Self.scheduleJSON(id: "one")))
+        let requested = expectation(description: "First occurrence request started")
+        let release = DispatchSemaphore(value: 0)
+        BackendStub.respond(toPath: "/api/schedules/one/occurrences") { _ in
+            requested.fulfill()
+            // This is the URL loading thread, not the main actor. The test
+            // explicitly releases the response after attempting an overlap.
+            _ = release.wait(timeout: .now() + 3)
+            return ["occurrences": [Self.occurrenceJSON(id: "once", scheduleID: "one")]]
+        }
+        defer { release.signal() }
+        let model = makeModel()
+        let firstLoad = Task { await model.refreshOccurrences(for: task, announceFailure: false) }
+        await fulfillment(of: [requested], timeout: 1)
+        XCTAssertEqual(model.loadingOccurrenceIDs, ["one"])
+
+        await model.refreshOccurrences(for: task, announceFailure: false)
+        XCTAssertEqual(model.loadingOccurrenceIDs, ["one"], "An overlapping caller must not clear the active request")
+        release.signal()
+        await firstLoad.value
+
+        XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/schedules/one/occurrences" }.count, 1)
+        XCTAssertEqual(model.occurrencesBySchedule["one"]?.map(\.id), ["once"])
+        XCTAssertTrue(model.loadingOccurrenceIDs.isEmpty)
+        XCTAssertTrue(model.occurrenceLoadErrors.isEmpty)
+    }
+
+    func testCancelledScheduleLoadKeepsSavedAgentsWithoutPublishingAnError() async throws {
+        let retained = try XCTUnwrap(decode(ScheduledTask.self, from: Self.scheduleJSON(id: "retained")))
+        let requested = expectation(description: "Schedule response held")
+        let release = DispatchSemaphore(value: 0)
+        BackendStub.respond(toPath: "/api/schedules") { _ in
+            requested.fulfill()
+            _ = release.wait(timeout: .now() + 3)
+            return ["schedules": [Self.scheduleJSON(id: "cancelled-result")], "read_only": false]
+        }
+        defer { release.signal() }
+        let model = makeModel()
+        model.seedForUITesting(tasks: [retained])
+        let load = Task { await model.refreshScheduledTasks() }
+        await fulfillment(of: [requested], timeout: 1)
+        XCTAssertTrue(model.isRefreshingSchedules)
+
+        load.cancel()
+        release.signal()
+        await load.value
+
+        XCTAssertEqual(model.scheduledTasks, [retained])
+        XCTAssertNil(model.lastLoadError)
+        XCTAssertTrue(model.hasLoaded)
+        XCTAssertFalse(model.isRefreshingSchedules)
+        XCTAssertTrue(toasts.isEmpty)
+    }
+
+    func testCancelledOccurrenceLoadKeepsHistoryAndReleasesItsLoadingSlot() async throws {
+        let task = try XCTUnwrap(decode(ScheduledTask.self, from: Self.scheduleJSON(id: "retained")))
+        let previous = try XCTUnwrap(decode(ScheduleOccurrence.self,
+            from: Self.occurrenceJSON(id: "existing", scheduleID: task.id)))
+        let requested = expectation(description: "Occurrence response held")
+        let release = DispatchSemaphore(value: 0)
+        BackendStub.respond(toPath: "/api/schedules/retained/occurrences", status: 503) { _ in
+            requested.fulfill()
+            _ = release.wait(timeout: .now() + 3)
+            return ["detail": "A response from a screen we already left"]
+        }
+        defer { release.signal() }
+        let model = makeModel()
+        model.seedForUITesting(tasks: [task], occurrences: [task.id: [previous]])
+        let load = Task { await model.refreshOccurrences(for: task) }
+        await fulfillment(of: [requested], timeout: 1)
+        XCTAssertEqual(model.loadingOccurrenceIDs, [task.id])
+
+        load.cancel()
+        release.signal()
+        await load.value
+
+        XCTAssertEqual(model.occurrencesBySchedule[task.id], [previous])
+        XCTAssertNil(model.occurrenceLoadErrors[task.id])
+        XCTAssertTrue(model.loadingOccurrenceIDs.isEmpty)
+        XCTAssertTrue(toasts.isEmpty)
+
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/schedules/retained/occurrences") { _ in
+            ["occurrences": [Self.occurrenceJSON(id: "retried", scheduleID: "retained")]]
+        }
+        await model.refreshOccurrences(for: task)
+        XCTAssertEqual(model.occurrencesBySchedule[task.id]?.map(\.id), ["retried"])
+        XCTAssertTrue(model.loadingOccurrenceIDs.isEmpty)
+    }
+
+    private static func occurrenceJSON(id: String, scheduleID: String) -> [String: Any] {
+        [
+            "id": id, "schedule_id": scheduleID, "schedule_name": "Nightly",
+            "scheduled_for": 100.0, "trigger": "due", "state": "completed",
+            "session_id": "chat", "run_id": "run-\(id)", "created_at": 100.0, "updated_at": 101.0,
+        ]
+    }
+
     func testProcessDueSchedulesIsInertWithoutPersistence() async {
         let model = makeModel(persistenceEnabled: false)
         await model.processDueSchedules()

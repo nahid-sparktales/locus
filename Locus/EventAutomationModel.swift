@@ -277,12 +277,25 @@ final class EventAutomationModel: ObservableObject {
                 return false
             }
         }
-        let actions = draft.triggerKind == .price
-            ? draft.actionConnectionIDs.filter { id in
-                connections.first(where: { $0.id == id })?.kind != .priceFeed
+        // The action list is an explicit permission choice. An empty list
+        // means no connected-service actions; never restore the event source
+        // as an implicit grant. Webhooks and price feeds only supply events.
+        let actionCapableIDs = Set(connections.compactMap { connection -> String? in
+            switch connection.kind {
+            case .gmail, .telegram: connection.id
+            case .webhook, .priceFeed: nil
             }
-            : (draft.actionConnectionIDs.isEmpty
-                ? [draft.connectionID] : draft.actionConnectionIDs)
+        })
+        let actions = draft.actionConnectionIDs.filter(actionCapableIDs.contains)
+        let allowedActions = Set(actions)
+        // Revoking a service also revokes explicit grants in workflow steps.
+        // nil continues to inherit the Agent's access; [] continues to allow
+        // no connected-service actions, including after every grant is removed.
+        for index in workflow.steps.indices {
+            if let stepActions = workflow.steps[index].allowedConnectionIDs {
+                workflow.steps[index].allowedConnectionIDs = stepActions.filter(allowedActions.contains)
+            }
+        }
         isSaving = true
         defer { isSaving = false }
         let targetSessionID: String
@@ -1039,7 +1052,7 @@ final class EventAutomationModel: ObservableObject {
     static func suggestedName(from request: String) -> String {
         let first = request.split(separator: "\n").first.map(String.init) ?? ""
         let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "New event trigger" : String(trimmed.prefix(80))
+        return String(trimmed.prefix(80))
     }
 
     static func suggestedFilters(

@@ -38,6 +38,7 @@ final class WorkspaceFileModel: ObservableObject {
     }
     private var canIndexProvider: () -> Bool = { false }
     private var indexedWorkspacePath: String?
+    private var indexGeneration = UUID()
     private var indexTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
 
@@ -64,6 +65,15 @@ final class WorkspaceFileModel: ObservableObject {
         )
     }
 
+    /// Workspace events mark this text-only candidate index stale. Rebuild on
+    /// the next composer request rather than walking the tree after every edit.
+    func invalidateIndex() {
+        indexedWorkspacePath = nil
+        indexGeneration = UUID()
+        indexTask?.cancel()
+        indexTask = nil
+    }
+
     func refresh(force: Bool = false) {
         // UI tests run against a seeded index; scanning the runner would make
         // their file browser depend on unrelated host files.
@@ -75,15 +85,17 @@ final class WorkspaceFileModel: ObservableObject {
         guard canIndexProvider() else { return }
         guard force || indexedWorkspacePath != root || files.isEmpty else { return }
         indexTask?.cancel()
+        let generation = UUID()
+        indexGeneration = generation
         let scanner = scanner
         indexTask = Task { [weak self] in
             let files = await Task.detached(priority: .utility) {
                 scanner(root)
             }.value
-            // Cancellation alone is not a staleness boundary: two overlapping
-            // scans of the same root have the same valid answer. Workspace
-            // identity is the condition that determines whether to publish.
-            guard let self, self.workspacePath == root else { return }
+            // A change in this same workspace can invalidate a scan while its
+            // synchronous enumerator is still running off the main actor.
+            guard !Task.isCancelled, let self, self.workspacePath == root,
+                  self.indexGeneration == generation else { return }
             indexedWorkspacePath = root
             self.files = files
         }
@@ -134,12 +146,15 @@ final class WorkspaceFileModel: ObservableObject {
     }
 
     func stop() {
+        indexGeneration = UUID()
         indexTask?.cancel()
         previewTask?.cancel()
     }
 
     /// Deterministic fixture setup without exposing mutable production state.
     func seed(_ files: [URL], workspacePath: String) {
+        indexGeneration = UUID()
+        indexTask?.cancel()
         indexedWorkspacePath = workspacePath
         self.files = files
     }

@@ -107,6 +107,10 @@ struct PermissionPromptView: View {
                     .textSelection(.enabled)
                     .lineLimit(2)
             }
+            if summary.isEmpty && detail.isEmpty {
+                Text("No preview was supplied for this request.")
+                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+            }
             if !detail.isEmpty {
                 ScrollView {
                     ToolOutputText(text: detail)
@@ -127,17 +131,17 @@ struct PermissionPromptView: View {
         VStack(spacing: 1) {
             optionRow(
                 index: 0,
-                title: "Yes, allow once",
+                title: "Allow once",
                 identifier: "permission.once"
             )
             optionRow(
                 index: 1,
-                title: "Yes, and don't ask again for \(toolLabel) this session",
+                title: "Allow \(toolLabel) for this session",
                 identifier: "permission.always"
             )
             optionRow(
                 index: 2,
-                title: "No, and tell Locus what to do differently",
+                title: "Deny this action",
                 keyCap: "esc",
                 identifier: "permission.deny"
             )
@@ -165,8 +169,8 @@ struct PermissionPromptView: View {
                 Text(title)
                     .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(LocusTheme.ink)
-                    .lineLimit(1)
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
@@ -185,7 +189,8 @@ struct PermissionPromptView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 30)
+            .padding(.vertical, 5)
+            .frame(minHeight: 34)
             .background(isSelected ? LocusTheme.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
@@ -195,6 +200,11 @@ struct PermissionPromptView: View {
             if hovering { selection = index }
         }
         .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(index == 1
+            ? "Allows future requests from this tool for the rest of this session."
+            : index == 2 ? "Reject this action. You can give different instructions in the chat."
+            : "Allows only the action shown above.")
         .accessibilityIdentifier(identifier)
     }
 

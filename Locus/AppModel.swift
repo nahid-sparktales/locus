@@ -372,9 +372,12 @@ final class AppModel: ObservableObject {
     var capturedQuestionThisTurn: UserQuestion?  // internal(for: AppModel extension files)
     let gitWorkspace = GitWorkspaceModel()
     let workspaceFiles = WorkspaceFileModel()
+    let workspaceBrowser = WorkspaceBrowserModel()
     let library = WorkspaceLibraryModel()
     let identityVault: IdentityVaultModel
-    let outputsLibrary = OutputsLibraryModel()
+    let outputsLibrary = OutputsLibraryModel(store: ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
+        ? OutputsLibraryStore(directory: NotesStore.applicationSupportDirectory.appendingPathComponent("ResponseOutputLibrary"))
+        : OutputsLibraryStore())
     let onboarding = OnboardingModel()
     let agentInspector = AgentInspectorModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
@@ -445,7 +448,9 @@ final class AppModel: ObservableObject {
     @Published var automaticInspectorPrompt: AutomaticInspectorPrompt?  // internal(for: AppModel extension files)
     @Published var usageDashboardPresented = false
     @Published var configureAgentPresented = false
-    @Published var configureAgentTab: ConfigureAgentTab = .configurations
+    @Published var configureAgentCreationPresented = false
+    @Published var configureAgentPendingCreation = false
+    @Published var configureAgentTab: ConfigureAgentTab = .agents
     /// A configuration the sheet should select once its lists have loaded,
     /// keyed the way the sheet keys them ("event:<id>", "price:<id>",
     /// "schedule:<id>"). The sheet clears it after applying it.
@@ -1885,7 +1890,10 @@ final class AppModel: ObservableObject {
         guard !query.isEmpty else { return [] }
         return blocks.filter { block in
             switch block.kind {
-            case .user, .assistant, .note, .error: block.text.lowercased().contains(query)
+            case .assistant:
+                ResponseCopyPayload.text(from: block.text, format: .plainText,
+                    reasoningFormat: block.reasoningFormat ?? .legacyTags).lowercased().contains(query)
+            case .user, .note, .error: block.text.lowercased().contains(query)
             case .tool: false
             }
         }.map(\.id)

@@ -234,6 +234,51 @@ def reload_project_context(service: ServiceDependency) -> dict[str, Any]:
         raise _busy_http() from exc
 
 
+def response_preview(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Preview the actual route's Locus-owned layers without changing the active task."""
+    import copy
+
+    from ..agent_config import AgentConfiguration
+    core = copy.copy(service.core)
+    core.config = copy.deepcopy(service.core.config)
+    if "provider" in body:
+        provider = body["provider"]
+        if not isinstance(provider, str) or provider not in {"ollama", "remote", "chatgpt"}:
+            raise HTTPException(422, "unknown selected provider")
+        core.provider = provider
+        # A profile preview must not borrow the active account's identity.
+        core.config.pop("remote_account_label", None)
+        core.config.pop("remote_base_url", None)
+        core.config.pop("chatgpt_account_label", None)
+    if "native_mode" in body:
+        if not isinstance(body["native_mode"], bool):
+            raise HTTPException(422, "native_mode must be a Boolean")
+        core.config["chatgpt_native_mode"] = body["native_mode"]
+    if "model" in body:
+        if not isinstance(body["model"], str) or not body["model"].strip() or len(body["model"]) > 256:
+            raise HTTPException(422, "selected model must be a nonempty name of at most 256 characters")
+        core.model = body["model"].strip()
+    if "agent_config" in body:
+        core.agent_configuration = AgentConfiguration.parse(body["agent_config"])
+    mode = str(body.get("mode") or core.agent_mode)
+    if mode not in {"ask", "work", "plan", "grill", "build"}:
+        raise HTTPException(422, "unknown response mode")
+    core.agent_mode = mode
+    if core.provider == "chatgpt" and mode != "ask" and core.config.get("chatgpt_native_mode", True):
+        if core.codex_manager is None or not getattr(core.codex_manager, "supports_parity", False):
+            raise HTTPException(409, "The selected ChatGPT native runtime is not available for preview. Connect that account first.")
+    native = core.chatgpt_parity_active(mode != "ask")
+    if native:
+        text = core._parity_developer_instructions()
+        layers = [{"name": "Locus developer instructions", "content": text, "editable": False}]
+    else:
+        text = core.system_message(mode)["content"]
+        layers = core.prompt_layers
+    return {"provider": core.provider, "model": core.model, "mode": mode, "route": "native" if native else "classic",
+            "layers": layers, "text": text,
+            "base_prompt": "Provider-owned native instructions are additional to these Locus layers." if native else "Included in layers."}
+
+
 def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/health", health, methods=["GET"])
     router.add_api_route("/api/tools", list_tools, methods=["GET"])
@@ -244,6 +289,7 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route("/api/permissions", get_permissions, methods=["GET"])
     router.add_api_route("/api/permissions", set_permissions, methods=["POST"])
+    router.add_api_route("/api/response-preview", response_preview, methods=["POST"])
     router.add_api_route("/api/config", get_config, methods=["GET"])
     router.add_api_route("/api/config", post_config, methods=["POST"])
     router.add_api_route("/api/context/reload", reload_project_context, methods=["POST"])

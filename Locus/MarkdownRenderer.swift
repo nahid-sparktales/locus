@@ -1,30 +1,51 @@
 import AppKit
 import Markdown
 import SwiftUI
+import UniformTypeIdentifiers
+
+private struct ResponseRegisteredSourcesKey: EnvironmentKey {
+    static let defaultValue: [ResponseSource] = []
+}
+
+extension EnvironmentValues {
+    var responseRegisteredSources: [ResponseSource] {
+        get { self[ResponseRegisteredSourcesKey.self] }
+        set { self[ResponseRegisteredSourcesKey.self] = newValue }
+    }
+}
+
+enum ResponseCitationDecoration {
+    static func source(for run: MarkdownInlineRun, renderedURL: URL?, registered: [ResponseSource]) -> ResponseSource? {
+        // Registration is explicit; ordinary links never imply evidence.
+        guard !run.isImage, let raw = run.destination, let original = URL(string: raw) else { return nil }
+        return registered.first { source in
+            guard let destination = source.destination else { return false }
+            return destination == original || destination == renderedURL
+        }
+    }
+}
 
 enum StreamingMarkdownBoundary {
     /// Returns a conservative prefix boundary outside fenced code. A blank
     /// separator confirms that the preceding top-level block is complete;
     /// an open fence deliberately keeps the whole tail provisional.
     static func lastStableBoundary(in source: String) -> String.Index? {
-        var fence: Character?
+        var fence: MarkdownSourceScanner.Fence?
+        var context = MarkdownSourceScanner.BlockContext()
         var lastBoundary: String.Index?
         var lineStart = source.startIndex
-
         while lineStart < source.endIndex {
-            let lineEnd = source[lineStart...].firstIndex(of: "\n") ?? source.endIndex
+            let lineEnd = source[lineStart...].firstIndex(where: { $0 == "\n" || $0 == "\r\n" || $0 == "\r" }) ?? source.endIndex
             let line = source[lineStart..<lineEnd]
-            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
-            if trimmed.hasPrefix("```") {
-                fence = fence == "`" ? nil : (fence == nil ? "`" : fence)
-            } else if trimmed.hasPrefix("~~~") {
-                fence = fence == "~" ? nil : (fence == nil ? "~" : fence)
+            if let active = fence, !active.containerContinues(in: line) { fence = nil }
+            if let active = fence {
+                if active.closes(in: line) { fence = nil }
+            } else {
+                fence = context.opening(in: line)
             }
-
-            let nextStart = lineEnd < source.endIndex
-                ? source.index(after: lineEnd)
-                : source.endIndex
-            if fence == nil, line.isEmpty, nextStart > source.startIndex {
+            let nextStart = lineEnd < source.endIndex ? source.index(after: lineEnd) : source.endIndex
+            // A partial last line cannot establish a stable blank separator.
+            if fence == nil, lineEnd < source.endIndex, line.allSatisfy(\.isWhitespace) {
                 lastBoundary = nextStart
             }
             lineStart = nextStart
@@ -458,7 +479,8 @@ struct MarkdownInlineStyleSpec {
         baseWeight: NSFont.Weight,
         baseColor: Color,
         inlineCodeSize: CGFloat,
-        link: URL?
+        link: URL?,
+        isRegisteredCitation: Bool = false
     ) -> Self {
         var spec = Self(
             fontSize: baseSize,
@@ -495,6 +517,12 @@ struct MarkdownInlineStyleSpec {
             } else if !run.style.contains(.code) {
                 spec.isUnderlined = true
             }
+        }
+
+        if isRegisteredCitation {
+            spec.weight = .semibold
+            spec.isUnderlined = false
+            spec.pillFill = LocusTheme.paperDeep.opacity(0.8)
         }
 
         return spec
@@ -702,22 +730,27 @@ enum MarkdownNativeText {
         lineSpacing: CGFloat,
         inlineCodeSize: CGFloat,
         workspacePath: String?,
-        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil
+        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil,
+        alignment: MarkdownColumnAlignment = .left,
+        registeredSources: [ResponseSource] = []
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = lineSpacing
+        paragraph.alignment = alignment.nsTextAlignment
         for run in runs {
             let url = MarkdownLinkPolicy.renderedURL(
                 for: run, workspacePath: workspacePath, resolveArtifact: resolveArtifact
             )
+            let citation = ResponseCitationDecoration.source(for: run, renderedURL: url, registered: registeredSources)
             let spec = MarkdownInlineStyleSpec.resolve(
                 run: run,
                 baseSize: size,
                 baseWeight: weight,
                 baseColor: color,
                 inlineCodeSize: inlineCodeSize,
-                link: url
+                link: url,
+                isRegisteredCitation: citation != nil
             )
             var attributes: [NSAttributedString.Key: Any] = [
                 .font: spec.nsFont,
@@ -736,6 +769,10 @@ enum MarkdownNativeText {
                 attributes[.locusInlineCodePill] = NSColor(fill)
             }
             if let url { attributes[.link] = url }
+            if let citation {
+                attributes[.toolTip] = [citation.label, citation.detail, citation.destination?.absoluteString]
+                    .compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
+            }
             let piece = NSMutableAttributedString(string: run.text, attributes: attributes)
             if spec.pillFill != nil, piece.length > 0 {
                 // Trailing room only, so the following word clears the pill's
@@ -851,6 +888,15 @@ final class StreamingRenderCoordinator: ObservableObject {
         publishRevision()
     }
 
+    func canPresentStablePrefix(for text: String) -> Bool {
+        text.hasPrefix(sourceText) && text.hasPrefix(committedSource)
+    }
+
+    func provisionalText(for text: String) -> String {
+        guard canPresentStablePrefix(for: text) else { return text }
+        return String(text.dropFirst(committedSource.count))
+    }
+
     func cancel() {
         generation &+= 1
         parseTask?.cancel()
@@ -925,7 +971,11 @@ final class StreamingRenderCoordinator: ObservableObject {
     private func parseFinal(_ text: String) {
         cancel()
         sourceText = text
-        provisionalText = text
+        if !text.hasPrefix(committedSource) {
+            stableBlocks = []
+            committedSource = ""
+        }
+        refreshProvisionalText()
         let expectedGeneration = generation
         parseCountForTesting += 1
         parseTask = Task { @MainActor [weak self] in
@@ -977,7 +1027,7 @@ struct StreamingMarkdownBodyView: View {
 
     var body: some View {
         Group {
-            if coordinator.sourceText != text {
+            if !coordinator.canPresentStablePrefix(for: text) {
                 StreamingPlainTextView(
                     text: text,
                     font: .systemFont(ofSize: density.fontSize),
@@ -1002,9 +1052,10 @@ struct StreamingMarkdownBodyView: View {
                             onOpenWorkspaceReference: onOpenWorkspaceReference
                         )
                     }
-                    if !coordinator.provisionalText.isEmpty {
+                    let tail = coordinator.provisionalText(for: text)
+                    if !tail.isEmpty {
                         StreamingPlainTextView(
-                            text: coordinator.provisionalText,
+                            text: tail,
                             font: .systemFont(ofSize: density.fontSize),
                             color: NSColor(
                                 density == .compact ? LocusTheme.muted : LocusTheme.inkSoft
@@ -1046,6 +1097,7 @@ struct StreamingMarkdownBodyView: View {
 
 @MainActor
 private struct MarkdownBlocksView: View {
+    @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.locusAccent) private var accent
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
     @State private var artifactCache = WorkspaceArtifactRenderCache()
@@ -1087,8 +1139,8 @@ private struct MarkdownBlocksView: View {
     private func blockView(_ block: MarkdownRenderBlock, path: [Int]) -> some View {
         switch block {
         case .paragraph(let runs):
-            let artifact = standaloneArtifact(in: runs)
-            if let artifact, artifact.kind == .image {
+            if runs.count == 1, runs.first?.isImage == true,
+               let artifact = standaloneArtifact(in: runs), artifact.kind == .image {
                 AsyncWorkspaceImageArtifactView(
                     reference: artifact,
                     caption: runs.map(\.text).joined(),
@@ -1097,32 +1149,9 @@ private struct MarkdownBlocksView: View {
                     onOpen: { open(artifact) }
                 )
             } else {
-                switch MarkdownArtifactPromotion.presentation(nestingDepth: nestingDepth) {
-                case .fullCard:
-                    if let artifact {
-                        WorkspaceArtifactCard(
-                            reference: artifact,
-                            selectionStore: selectionStore,
-                            selectionSpan: selectionSpan(at: path),
-                            onOpen: { open(artifact) }
-                        )
-                    } else {
-                        prose(runs, path: path)
-                    }
-                case .compactChip:
-                    if let reference = MarkdownArtifactPromotion.leadingArtifact(
-                        in: runs, workspacePath: workspacePath, resolveArtifact: resolveArtifact
-                    ) {
-                        WorkspaceArtifactChipRow(
-                            reference: reference,
-                            onOpen: { open(reference) }
-                        ) {
-                            prose(runs, path: path)
-                        }
-                    } else {
-                        prose(runs, path: path)
-                    }
-                }
+                // Ordinary file references are prose; only an inventory or an
+                // explicit response artifact earns a surrounding container.
+                prose(runs, path: path)
             }
 
         case .heading(let level, let runs):
@@ -1134,6 +1163,7 @@ private struct MarkdownBlocksView: View {
                 color: LocusTheme.ink,
                 lineSpacing: density.headingLineSpacing
             )
+            .accessibilityAddTraits(.isHeader)
 
         case .code(let language, let body):
             CodeBlockView(
@@ -1198,7 +1228,26 @@ private struct MarkdownBlocksView: View {
         }
     }
 
+    @ViewBuilder
     private func list(items: [MarkdownRenderListItem], start: Int?, path: [Int]) -> some View {
+        if start == nil,
+           let references = MarkdownFileCollectionDetector.references(in: items, resolve: resolveArtifact) {
+            let entries = items.enumerated().map { index, item in
+                let runs: [MarkdownInlineRun]
+                if case .paragraph(let value) = item.blocks[0] { runs = value } else { runs = [] }
+                return WorkspaceFileCollectionEntry(
+                    id: (path + [index]).map(String.init).joined(separator: "."),
+                    path: references[index].relativePath,
+                    runs: runs,
+                    reference: references[index],
+                    selectionSpan: selectionSpan(at: path + [index, 0])
+                )
+            }
+            WorkspaceFileCollectionView(
+                entries: entries, workspacePath: workspacePath, density: density,
+                selectionStore: selectionStore, onOpenWorkspaceReference: onOpenWorkspaceReference
+            )
+        } else {
         VStack(alignment: .leading, spacing: density == .compact ? 3 : 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
                 HStack(alignment: .top, spacing: 8) {
@@ -1219,6 +1268,7 @@ private struct MarkdownBlocksView: View {
             }
         }
         .padding(.leading, nestingDepth > 0 ? 10 : 2)
+        }
     }
 
     @ViewBuilder
@@ -1274,7 +1324,8 @@ private struct MarkdownBlocksView: View {
                     lineSpacing: lineSpacing,
                     inlineCodeSize: density.inlineCodeFontSize,
                     workspacePath: workspacePath,
-                    resolveArtifact: resolveArtifact
+                    resolveArtifact: resolveArtifact,
+                    registeredSources: registeredSources
                 ),
                 span: span,
                 store: selectionStore,
@@ -1347,7 +1398,8 @@ private struct MarkdownBlocksView: View {
                 baseWeight: baseWeight,
                 baseColor: baseColor,
                 inlineCodeSize: density.inlineCodeFontSize,
-                link: url
+                link: url,
+                isRegisteredCitation: ResponseCitationDecoration.source(for: run, renderedURL: url, registered: registeredSources) != nil
             )
             var piece = AttributedString(run.text)
             piece.font = spec.swiftUIFont
@@ -1922,6 +1974,7 @@ private struct WorkspaceArtifactCard: View {
 }
 
 private struct MarkdownTableRenderer: View {
+    @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.locusAccent) private var accent
     let headers: [[MarkdownInlineRun]]
     let alignments: [MarkdownColumnAlignment]
@@ -1933,6 +1986,8 @@ private struct MarkdownTableRenderer: View {
     let path: [Int]
     let onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)?
     @State private var collapsed = false
+    @State private var copied = false
+    @State private var exportError: String?
     /// Measured once at construction. A fixed width for every column made even a
     /// two-column table scroll sideways; sizing to content is what lets a normal
     /// table simply sit in the reply.
@@ -2010,8 +2065,7 @@ private struct MarkdownTableRenderer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if isLong {
-                HStack(spacing: 7) {
+            HStack(spacing: 7) {
                     Image(systemName: "tablecells")
                         .font(.locus(size: 9, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
@@ -2022,6 +2076,31 @@ private struct MarkdownTableRenderer: View {
                         .font(.locus(size: 9, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                     Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            MarkdownTableExport.render(headers: headers, rows: rows, format: .tsv),
+                            forType: .string
+                        )
+                        copied = true
+                    } label: {
+                        Label(copied ? "Copied" : "Copy table", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.locusExact(size: 11))
+                    }
+                    .buttonStyle(.locus())
+                    .help("Copy all rows for a spreadsheet")
+                    .accessibilityIdentifier("message.table.copy")
+                    Menu {
+                        Button("Export CSV…") { exportCSV() }
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 24, height: 24)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Table actions")
+                    .accessibilityIdentifier("message.table.actions")
+                    if isLong {
                     Button {
                         collapsed.toggle()
                     } label: {
@@ -2038,14 +2117,14 @@ private struct MarkdownTableRenderer: View {
                             : "Collapse \(rows.count)-row table"
                     )
                     .accessibilityIdentifier("message.table.collapse")
+                    }
                 }
                 .padding(.horizontal, 11)
                 .frame(height: 34)
                 .background(LocusTheme.paperDeep.opacity(0.78))
                 Rectangle().fill(LocusTheme.line.opacity(0.8)).frame(height: 1)
-            }
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     row(headers, rowIndex: 0, header: true)
                     Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
@@ -2064,7 +2143,7 @@ private struct MarkdownTableRenderer: View {
                 Button("Show all \(rows.count) rows") {
                     collapsed = false
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus())
                 .font(.locus(size: 9, weight: .semibold))
                 .foregroundStyle(accent.actionColor)
                 .padding(.horizontal, 12)
@@ -2084,6 +2163,30 @@ private struct MarkdownTableRenderer: View {
             "Table with \(headers.count) columns and \(rows.count) rows"
                 + (collapsed ? ", collapsed" : ", expanded")
         )
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            copied = false
+        }
+        .alert("Could not export table", isPresented: Binding(
+            get: { exportError != nil }, set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK") { exportError = nil }
+        } message: { Text(exportError ?? "") }
+    }
+
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "table.csv"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try MarkdownTableExport.render(headers: headers, rows: rows, format: .csv)
+                    .write(to: url, atomically: true, encoding: .utf8)
+            } catch { exportError = error.localizedDescription }
+        }
     }
 
     private func row(
@@ -2099,10 +2202,12 @@ private struct MarkdownTableRenderer: View {
                 case .center: .center
                 case .right: .trailing
                 }
-                cellText(cell, path: path + [rowIndex, index], header: header)
+                cellText(cell, path: path + [rowIndex, index], header: header, alignment: alignment)
                     .frame(width: cellWidth(at: index), alignment: edge)
                     .frame(minHeight: 34, alignment: edge)
                     .padding(.horizontal, 10)
+                    .accessibilityLabel(cellAccessibilityLabel(cell, column: index, row: rowIndex, header: header))
+                    .accessibilityAddTraits(header ? .isHeader : [])
                     .overlay(alignment: .trailing) {
                         if index != cells.indices.last {
                             Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
@@ -2117,7 +2222,8 @@ private struct MarkdownTableRenderer: View {
     private func cellText(
         _ runs: [MarkdownInlineRun],
         path: [Int],
-        header: Bool
+        header: Bool,
+        alignment: MarkdownColumnAlignment
     ) -> some View {
         let size = cellFontSize
         let weight: NSFont.Weight = header ? .semibold : .regular
@@ -2132,7 +2238,9 @@ private struct MarkdownTableRenderer: View {
                     color: color,
                     lineSpacing: 2,
                     inlineCodeSize: density.inlineCodeFontSize,
-                    workspacePath: workspacePath
+                    workspacePath: workspacePath,
+                    alignment: alignment,
+                    registeredSources: registeredSources
                 ),
                 span: span,
                 store: selectionStore,
@@ -2142,8 +2250,16 @@ private struct MarkdownTableRenderer: View {
         } else {
             SwiftUI.Text(attributed(runs, size: size, weight: weight, color: color))
                 .textSelection(.enabled)
+                .multilineTextAlignment(alignment == .right ? .trailing : alignment == .center ? .center : .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func cellAccessibilityLabel(_ cell: [MarkdownInlineRun], column: Int, row: Int, header: Bool) -> String {
+        let text = cell.map(\.text).joined()
+        if header { return "Column \(column + 1), \(text)" }
+        let heading = column < headers.count ? headers[column].map(\.text).joined() : "Column \(column + 1)"
+        return "Row \(row), \(heading): \(text)"
     }
 
     private func attributed(
@@ -2161,7 +2277,8 @@ private struct MarkdownTableRenderer: View {
                 baseWeight: weight,
                 baseColor: color,
                 inlineCodeSize: density.inlineCodeFontSize,
-                link: url
+                link: url,
+                isRegisteredCitation: ResponseCitationDecoration.source(for: run, renderedURL: url, registered: registeredSources) != nil
             )
             var piece = AttributedString(run.text)
             piece.font = spec.swiftUIFont

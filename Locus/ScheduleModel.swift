@@ -18,6 +18,9 @@ final class ScheduleModel: ObservableObject {
     /// Whether the schedule list has ever loaded. Until it has, a schedule
     /// that is not in `scheduledTasks` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
+    @Published private(set) var lastLoadError: String?
+    @Published private(set) var occurrenceLoadErrors: [String: String] = [:]
+    @Published private(set) var loadingOccurrenceIDs: Set<String> = []
 
     private var scheduleCoordinatorTask: Task<Void, Never>?
     private var isDispatchingSchedules = false
@@ -96,8 +99,10 @@ final class ScheduleModel: ObservableObject {
             let response: SchedulesResponse = try await backend.get(
                 "/api/schedules", as: SchedulesResponse.self
             )
+            guard !Task.isCancelled else { return }
             let known = Set(scheduledTasks.map(\.id))
             scheduledTasks = response.schedules
+            lastLoadError = nil
             hasLoaded = true
             // Listing gives a schedule that predates agents its dedicated
             // chat, and a schedule made elsewhere arrives with one; either
@@ -106,6 +111,9 @@ final class ScheduleModel: ObservableObject {
                 await refreshMetadata()
             }
         } catch {
+            // Leaving a screen cancels its load; that is not a service failure.
+            guard !Task.isCancelled else { return }
+            lastLoadError = "Could not load scheduled Agents: \(error.localizedDescription)"
             if announceFailure {
                 toastHandler("Could not load schedules: \(error.localizedDescription)")
             }
@@ -249,15 +257,20 @@ final class ScheduleModel: ObservableObject {
     }
 
     func refreshOccurrences(for task: ScheduledTask, announceFailure: Bool = true) async {
-        guard let backend else { return }
+        guard let backend, loadingOccurrenceIDs.insert(task.id).inserted else { return }
+        defer { loadingOccurrenceIDs.remove(task.id) }
         do {
             let response: ScheduleOccurrencesResponse = try await backend.get(
                 "/api/schedules/\(task.id)/occurrences",
                 query: [URLQueryItem(name: "limit", value: "100")],
                 as: ScheduleOccurrencesResponse.self
             )
+            guard !Task.isCancelled else { return }
             occurrencesBySchedule[task.id] = response.occurrences
+            occurrenceLoadErrors[task.id] = nil
         } catch {
+            guard !Task.isCancelled else { return }
+            occurrenceLoadErrors[task.id] = error.localizedDescription
             if announceFailure {
                 toastHandler("Could not load run history: \(error.localizedDescription)")
             }

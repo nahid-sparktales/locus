@@ -122,6 +122,10 @@ final class TranscriptSelectionStore: ObservableObject {
     /// own row is being selected, and republishing per mouse-move would
     /// re-render — and therefore re-register — every leaf in it.
     @Published private(set) var activeRowIDs: Set<String> = []
+    /// All rows covered by the current selection, including after mouse-up.
+    /// Presentation changes must wait until this lease is released; the drag
+    /// endpoints above remain a separate signal for scroll coordination.
+    @Published private(set) var selectedRowIDs: Set<String> = []
 
     /// Supplies a row's spans when no leaf of it is currently on screen.
     var spanProvider: ((String) -> [TranscriptSelectionSpan])?
@@ -174,6 +178,8 @@ final class TranscriptSelectionStore: ObservableObject {
             clearViewportAnchor()
         }
         rowRank = next
+        let retainedSelectionRows = selectedRowIDs.intersection(next.keys)
+        if retainedSelectionRows != selectedRowIDs { selectedRowIDs = retainedSelectionRows }
         for rowID in removed {
             for spanID in rowSpanIDs.removeValue(forKey: rowID) ?? [] {
                 spans.removeValue(forKey: spanID)
@@ -196,6 +202,7 @@ final class TranscriptSelectionStore: ObservableObject {
         currentRanges.removeAll()
         appliedRanges.removeAll()
         activeRowIDs = []
+        selectedRowIDs = []
         invalidateOrder()
         TranscriptSelectionMenu.shared.storeDidClearSelection(self)
     }
@@ -235,6 +242,28 @@ final class TranscriptSelectionStore: ObservableObject {
         if viewportAnchor?.view === view { clearViewportAnchor() }
         views.removeValue(forKey: spanID)
         appliedRanges.removeValue(forKey: spanID)
+    }
+
+    /// Reconcile a changed presentation without confusing it with lazy-view
+    /// teardown. Ordinary unregister keeps offscreen text; this explicit call
+    /// drops only leaves that no longer belong to the displayed subtree.
+    @discardableResult
+    func retainSpanIDs(in rowID: String, under rootPath: [Int] = [], keeping ids: Set<String>) -> Bool {
+        guard !selectedRowIDs.contains(rowID) else { return false }
+        let obsolete = (rowSpanIDs[rowID] ?? []).filter { id in
+            guard let span = spans[id] else { return true }
+            return span.treePath.starts(with: rootPath) && !ids.contains(id)
+        }
+        for id in obsolete {
+            if viewportAnchor?.spanID == id { clearViewportAnchor() }
+            spans.removeValue(forKey: id)
+            views.removeValue(forKey: id)
+            appliedRanges.removeValue(forKey: id)
+            rowSpanIDs[rowID]?.remove(id)
+        }
+        providedSpans.removeValue(forKey: rowID)
+        invalidateOrder()
+        return true
     }
 
     // MARK: - Reading the selection
@@ -676,6 +705,14 @@ final class TranscriptSelectionStore: ObservableObject {
     /// Repaints only the leaves whose range actually changed.
     private func applySelectionDiff() {
         projectIfNeeded()
+        let selectedRows: Set<String>
+        if !currentRanges.isEmpty, let selection,
+           let anchor = rowRank[Self.rowID(ofSpanID: selection.anchor.spanID)],
+           let focus = rowRank[Self.rowID(ofSpanID: selection.focus.spanID)] {
+            let covered = min(anchor, focus)...max(anchor, focus)
+            selectedRows = Set(rowRank.compactMap { covered.contains($0.value) ? $0.key : nil })
+        } else { selectedRows = [] }
+        if selectedRows != selectedRowIDs { selectedRowIDs = selectedRows }
         var next: [String: NSRange] = [:]
         for (spanID, box) in views {
             guard let view = box.value else { continue }

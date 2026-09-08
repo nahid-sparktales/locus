@@ -156,6 +156,31 @@ final class LocusUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    /// A SwiftUI `Stepper` on macOS is an `NSStepper` beside its label. The
+    /// native incrementor reports its accessibility value as a number, never
+    /// a String, and the identifier can land on the incrementor itself or on
+    /// a wrapping group depending on the macOS release. Accept the control's
+    /// numeric value or the label text the user actually sees, so the check
+    /// follows the rendered state rather than one attribute representation.
+    private func stepperShows(_ stepper: XCUIElement, seconds: Int) -> Bool {
+        let control = stepper.elementType == .stepper
+            ? stepper
+            : stepper.descendants(matching: .stepper).firstMatch
+        let value: Int? = {
+            guard control.exists else { return nil }
+            switch control.value {
+            case let number as NSNumber: return number.intValue
+            case let text as String: return Int(text.filter(\.isNumber))
+            default: return nil
+            }
+        }()
+        if value == seconds { return true }
+        let label = "Timeout: \(seconds)s"
+        return app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ OR title == %@ OR value == %@", label, label, label
+        )).firstMatch.exists
+    }
+
     #if LOCUS_WALLET
     /// Recovery is intentionally launched as an exact child executable rather
     /// than by XCTest. Resolve and validate that running child directly;
@@ -1038,7 +1063,9 @@ final class LocusUITests: XCTestCase {
 
 
     func testTranscriptUsesTrailingUserBubbleAndOpenAssistantReadingFlow() {
-        let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101")
+        // The message row spans the column for selection and its action bar;
+        // the decorated bubble is the element whose reading width is capped.
+        let userBubble = anyElement("message.00000000-0000-0000-0000-000000000101.bubble")
         let assistant = anyElement("message.00000000-0000-0000-0000-000000000102")
         let readingColumn = app.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "Conversation transcript")
@@ -1518,47 +1545,74 @@ final class LocusUITests: XCTestCase {
     #endif
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
         anyElement("workspace.modelPicker").click()
-        app.buttons["Manage Agents & Teams…"].click()
-
+        anyElement("workspace.modelPicker.manageAgentsTeams").click()
         let addAgent = app.buttons["Add Agent"]
         XCTAssertTrue(addAgent.waitForExistence(timeout: 3))
+        revealSettingsControl(addAgent, in: anyElement("settings.content.agents"))
         addAgent.click()
 
         let instructions = anyElement("agent.instructions")
         let template = anyElement("agent.useRoleTemplate")
-        let tags = anyElement("agent.capabilityTags")
-        let advanced = anyElement("agent.advancedSettings")
-        let testConnection = anyElement("agent.testConnection")
+        let scroll = anyElement("agent.scroll")
         let cancel = anyElement("agent.cancel")
         let save = anyElement("agent.save")
-
         XCTAssertTrue(instructions.waitForExistence(timeout: 3))
         XCTAssertTrue(template.exists)
-        XCTAssertTrue(tags.exists)
-        XCTAssertTrue(advanced.exists)
-        XCTAssertTrue(advanced.isHittable)
-        XCTAssertTrue(testConnection.exists)
-        XCTAssertTrue(cancel.exists)
-        XCTAssertTrue(save.exists)
-        XCTAssertLessThan(instructions.frame.maxY, advanced.frame.minY)
+        XCTAssertFalse(anyElement("agent.capabilityTags").exists)
+        XCTAssertFalse(anyElement("agent.advanced.timeout").exists)
+        XCTAssertFalse(save.isEnabled, "A new specialist needs a name before it can be saved")
 
+        let name = anyElement("agent.name")
+        name.click()
+        name.typeText("Focused reviewer")
         instructions.click()
         app.typeKey("a", modifierFlags: .command)
         instructions.typeText("Custom editable instructions")
         XCTAssertEqual(instructions.value as? String, "Custom editable instructions")
-
         template.click()
         XCTAssertNotEqual(instructions.value as? String, "Custom editable instructions")
+        app.buttons["Undo"].firstMatch.click()
+        XCTAssertEqual(instructions.value as? String, "Custom editable instructions")
 
         let footerY = save.frame.minY
-        advanced.click()
-        XCTAssertTrue(anyElement("agent.advanced.timeout").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("agent.advanced.tokenLimit").exists)
+        let environment = anyElement("agent.environment")
+        revealSettingsControl(environment, in: scroll)
+        environment.click()
+        let testConnection = anyElement("agent.testConnection")
+        revealSettingsControl(testConnection, in: scroll)
         XCTAssertTrue(testConnection.isHittable)
+        revealSettingsControl(environment, in: scroll)
+        environment.click()
+
+        let permissions = anyElement("agent.permissions")
+        revealSettingsControl(permissions, in: scroll)
+        permissions.click()
+        XCTAssertTrue(anyElement("agent.accessCeiling").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("agent.standardToolAccess").exists)
+        permissions.click()
+
+        let advanced = anyElement("agent.advancedSettings")
+        revealSettingsControl(advanced, in: scroll)
+        advanced.click()
+        XCTAssertTrue(anyElement("agent.capabilityTags").waitForExistence(timeout: 3))
+        let timeout = anyElement("agent.advanced.timeout")
+        // NSStepper's center is the gap between its two arrows on macOS 15.
+        // Exercise the actionable children, not the aggregate's hit point.
+        let increaseTimeout = timeout.descendants(matching: .incrementArrow).firstMatch
+        let decreaseTimeout = timeout.descendants(matching: .decrementArrow).firstMatch
+        revealSettingsControl(increaseTimeout, in: scroll)
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 600) },
+            timeout.debugDescription)
+        increaseTimeout.click()
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 630) },
+            timeout.debugDescription)
+        decreaseTimeout.click()
+        XCTAssertTrue(waitUntil { [self] in stepperShows(timeout, seconds: 600) },
+            timeout.debugDescription)
+        XCTAssertTrue(anyElement("agent.advanced.tokenLimit").exists)
         XCTAssertTrue(cancel.isHittable)
         XCTAssertTrue(save.isHittable)
         XCTAssertEqual(save.frame.minY, footerY, accuracy: 1)
-
         cancel.click()
     }
 
@@ -2192,7 +2246,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(newChat.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
         XCTAssertEqual(newChat.label, "New chat")
-        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
+        XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         // One name for the sheet, in both destinations.
         XCTAssertEqual(configureAgent.label, "Manage Agents")
@@ -2201,6 +2255,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("activity.center").exists)
         XCTAssertFalse(anyElement("configureAgent.draftSuggestion").exists)
+        XCTAssertTrue(anyElement("configureAgent.agents").exists)
+        XCTAssertTrue(anyElement("configureAgent.newAgent").exists)
+        XCTAssertFalse(anyElement("configureAgent.create.schedule").exists)
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.creation").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("configureAgent.create.schedule").exists)
         XCTAssertTrue(anyElement("configureAgent.create.event").exists)
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
@@ -2229,7 +2288,7 @@ final class LocusUITests: XCTestCase {
             ((agentMenu.value as? String) ?? "").contains("Inbox Triage"),
             "the footer identifies the selected agent"
         )
-        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
+        XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
         XCTAssertTrue(manage.exists)
@@ -2244,8 +2303,8 @@ final class LocusUITests: XCTestCase {
         )
         let status = anyElement("agentOverview.status")
         XCTAssertTrue(
-            (status.label + " " + (status.value as? String ?? "")).contains("Active"),
-            "agent status should read Active"
+            ["Ready", "Running"].contains { (status.label + " " + (status.value as? String ?? "")).contains($0) },
+            "agent status should distinguish readiness from running work"
         )
         XCTAssertTrue(anyElement("agentOverview.newChat").exists)
         XCTAssertTrue(anyElement("agentOverview.edit").exists)
@@ -2274,9 +2333,14 @@ final class LocusUITests: XCTestCase {
         // The parent row is independently selectable from its disclosure
         // control. It changes the complete Agent inspector without replacing
         // the conversation in the centre.
-        anyElement("agent.seed-schedule").click()
+        let scheduledAgent = anyElement("agent.seed-schedule")
+        // A compact window can leave the fourth Agent below the sidebar's
+        // viewport. AX still publishes that row; reveal it before clicking.
+        revealSettingsControl(scheduledAgent, in: anyElement("sidebar.scroll"))
+        scheduledAgent.click()
         XCTAssertTrue(waitUntil {
             let selectedName = self.anyElement("agentOverview.name")
+            guard selectedName.exists else { return false }
             return (selectedName.label + " " + (selectedName.value as? String ?? ""))
                 .contains("Morning Review")
         })
@@ -2287,7 +2351,11 @@ final class LocusUITests: XCTestCase {
         )
 
         agentMenu.click()
-        let inboxAgent = app.menuItems["Inbox Triage"]
+        let agentSearch = anyElement("sidebar.agentPicker.search")
+        XCTAssertTrue(agentSearch.waitForExistence(timeout: 3))
+        agentSearch.click()
+        agentSearch.typeText("Inbox")
+        let inboxAgent = anyElement("agent.menu.seed-agent")
         XCTAssertTrue(inboxAgent.waitForExistence(timeout: 3))
         inboxAgent.click()
         XCTAssertTrue(waitUntil {
@@ -2317,16 +2385,25 @@ final class LocusUITests: XCTestCase {
         // The schedule's dedicated chat groups under the schedule like any agent.
         let group = anyElement("agent.seed-schedule")
         XCTAssertTrue(group.waitForExistence(timeout: Self.launchContentTimeout))
-        XCTAssertTrue((group.label + " " + (group.value as? String ?? "")).contains("Active"))
-        XCTAssertTrue(anyElement("session.seed-schedule-chat").exists)
+        let sidebarScroll = anyElement("sidebar.scroll")
+        revealSettingsControl(group, in: sidebarScroll)
+        XCTAssertTrue((group.label + " " + (group.value as? String ?? "")).contains("Ready"))
+        // Fleets with more than three Agents start collapsed. Expanding the
+        // branch reveals its chats without leaving the fleet overview.
+        let disclosure = anyElement("agent.seed-schedule.disclosure")
+        if disclosure.label.hasPrefix("Expand") { disclosure.click() }
+        let scheduledChat = anyElement("session.seed-schedule-chat")
+        revealSettingsControl(scheduledChat, in: sidebarScroll)
+        XCTAssertTrue(scheduledChat.exists)
 
         // The fleet lists it with its cadence, not a connector.
         let row = anyElement("agentOverview.fleet.seed-schedule")
         XCTAssertTrue(row.waitForExistence(timeout: 3))
         XCTAssertTrue(row.label.contains("Morning Review"))
-        XCTAssertTrue(row.label.contains("Active"))
+        XCTAssertTrue(row.label.contains("Ready"))
 
         // Schedules gain the one action triggers cannot have.
+        revealSettingsControl(group, in: sidebarScroll)
         group.rightClick()
         XCTAssertTrue(
             app.menuItems["agent.seed-schedule.runNow"].waitForExistence(timeout: 3)
@@ -2358,8 +2435,8 @@ final class LocusUITests: XCTestCase {
         // the one before it is a normal outcome, not something to look at.
         let status = revealAgentOverviewItem("agentOverview.status")
         XCTAssertTrue(
-            (status.label + " " + (status.value as? String ?? "")).contains("Active"),
-            "a skipped run is not a failure"
+            (status.label + " " + (status.value as? String ?? "")).contains("Ready"),
+            "a skipped run keeps the Agent ready for its next occurrence"
         )
 
         // Both tiles speak of runs, so the panel never calls a scheduled run
@@ -2376,13 +2453,13 @@ final class LocusUITests: XCTestCase {
         let stopped = anyElement("agent.seed-stopped-agent")
         XCTAssertTrue(stopped.waitForExistence(timeout: Self.launchContentTimeout))
         let spoken = stopped.label + " " + (stopped.value as? String ?? "")
-        XCTAssertTrue(spoken.contains("Stopped"), "Locus stopping an agent is not the same as pausing it")
+        XCTAssertTrue(spoken.contains("Needs attention"), "An agent stopped after a failure must not look deliberately paused")
         XCTAssertTrue(spoken.contains("chat"), "an agent's conversations are chats, not tasks")
 
         // The fleet ranks it above the healthy agents and repeats the state.
         let fleetRow = anyElement("agentOverview.fleet.seed-stopped-agent")
         XCTAssertTrue(fleetRow.waitForExistence(timeout: 3))
-        XCTAssertTrue(fleetRow.label.contains("Stopped"))
+        XCTAssertTrue(fleetRow.label.contains("Needs attention"))
         XCTAssertLessThan(
             fleetRow.frame.minY,
             anyElement("agentOverview.fleet.seed-agent").frame.minY,
@@ -2426,7 +2503,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntil { agents.isSelected })
         XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
         XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
-        XCTAssertFalse(anyElement("sidebar.newAgent").exists)
+        XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
         XCTAssertTrue(anyElement("composer.context").exists)
@@ -3964,78 +4041,73 @@ final class LocusUITests: XCTestCase {
 
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
         revealSidebarForNavigation()
-        let configureAgent = anyElement("sidebar.configureAgent")
-        XCTAssertTrue(configureAgent.waitForExistence(timeout: 3))
-        configureAgent.click()
+        anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("activity.center").exists)
-        XCTAssertTrue(anyElement("configureAgent.create.schedule").exists)
-        XCTAssertTrue(anyElement("configureAgent.create.event").exists)
-        XCTAssertTrue(anyElement("configureAgent.create.price").exists)
-
-        let agents = anyElement("configureAgent.tab.agents")
-        XCTAssertTrue(agents.waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("configureAgent.agents").exists)
-        agents.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        XCTAssertTrue(waitUntil { agents.value as? String == "Selected" })
-        XCTAssertTrue(app.staticTexts["No Agents Yet"].waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.agents").exists)
+        XCTAssertEqual(anyElement("configureAgent.tab.agents").value as? String, "Selected")
+        XCTAssertTrue(app.staticTexts["Your first Agent starts here"].waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("configureAgent.newAgent").exists)
         XCTAssertFalse(anyElement("configureAgent.create.schedule").exists)
 
-        let sources = anyElement("configureAgent.tab.sources")
-        XCTAssertTrue(sources.waitForExistence(timeout: 3))
-        sources.click()
-
-        let addConnection = anyElement("eventAutomations.addConnection")
-        XCTAssertTrue(addConnection.waitForExistence(timeout: 3))
-        // The automation center is a SwiftUI overlay; macOS can expose its
-        // menu button as visible but non-hittable even though AppKit accepts a
-        // pointer at the same frame.
-        addConnection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        let webhook = app.menuItems["Signed Webhook"].firstMatch
+        let connections = anyElement("configureAgent.tab.sources")
+        connections.click()
+        XCTAssertTrue(anyElement("eventAutomations.addConnection").waitForExistence(timeout: 3))
+        let webhook = anyElement("configureAgent.connect.webhook")
         XCTAssertTrue(webhook.waitForExistence(timeout: 3))
+        revealSettingsControl(webhook, in: anyElement("configureAgent.sources"))
         webhook.click()
         XCTAssertTrue(app.staticTexts["Connect Signed Webhook"].waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("eventAutomations.webhookSecurityNote").exists)
         app.buttons["Cancel"].firstMatch.click()
 
-        let history = anyElement("configureAgent.tab.run_history")
-        XCTAssertTrue(history.waitForExistence(timeout: 3))
-        history.click()
-        XCTAssertTrue(app.staticTexts["Choose a Configuration"].waitForExistence(timeout: 3))
+        anyElement("configureAgent.tab.run_history").click()
+        XCTAssertEqual(anyElement("configureAgent.tab.run_history").value as? String, "Selected")
+        XCTAssertTrue(anyElement("configureAgent.history.configuration").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.history.status").exists)
+        XCTAssertTrue(app.staticTexts["No activity yet"].waitForExistence(timeout: 5))
+        anyElement("configureAgent.tab.configurations").click()
+        XCTAssertTrue(anyElement("configureAgent.maximumActiveChats").waitForExistence(timeout: 3))
     }
 
     func testSavedConfigurationsLiveOnTheAgentsTab() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
-
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("configureAgent.create.event").exists)
-        XCTAssertFalse(anyElement("configureAgent.eventTrigger.seed-agent").exists)
-
-        anyElement("configureAgent.tab.agents").click()
-        XCTAssertTrue(
-            anyElement("configureAgent.eventTrigger.seed-agent").waitForExistence(timeout: 3)
-        )
+        XCTAssertTrue(anyElement("configureAgent.agents").exists)
+        XCTAssertTrue(anyElement("configureAgent.eventTrigger.seed-agent").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("configureAgent.create.event").exists)
+        XCTAssertTrue(anyElement("configureAgent.detail").exists)
+
+        let search = anyElement("configureAgent.search")
+        search.click()
+        search.typeText("Inbox")
+        XCTAssertTrue(anyElement("configureAgent.eventTrigger.seed-agent").exists)
+        XCTAssertFalse(anyElement("configureAgent.timeTrigger.seed-schedule").exists)
+        anyElement("configureAgent.eventTrigger.seed-agent").click()
+        XCTAssertTrue(anyElement("configureAgent.detail.open").exists)
+        XCTAssertTrue(anyElement("configureAgent.detail.edit").exists)
+        XCTAssertTrue(anyElement("configureAgent.detail.toggle").exists)
     }
 
     func testAgentEventQueueFanOutAndSharedLimitAreVisible() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
-
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("configureAgent.eventProcessing").exists)
+        anyElement("configureAgent.tab.configurations").click()
+        XCTAssertEqual(anyElement("configureAgent.tab.configurations").value as? String, "Selected")
+        XCTAssertTrue(anyElement("configureAgent.eventProcessing").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("configureAgent.maximumActiveChats").exists)
 
-        anyElement("configureAgent.tab.agents").click()
-        let eventAgent = anyElement("configureAgent.eventTrigger.seed-agent")
-        XCTAssertTrue(eventAgent.waitForExistence(timeout: 3))
-        eventAgent.click()
         anyElement("configureAgent.tab.run_history").click()
-
-        XCTAssertTrue(app.staticTexts["WAITING IN CHAT QUEUE"].waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.activity.event:seed-delivery-pending").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Waiting to start"].firstMatch.exists)
+        XCTAssertTrue(anyElement("configureAgent.history.status").exists)
+        XCTAssertTrue(anyElement("configureAgent.activity.event:seed-delivery-pending.inspect").exists)
+        anyElement("configureAgent.close").click()
+        XCTAssertTrue(revealAgentOverviewItem("agentOverview.event.seed-delivery-pending").exists)
         XCTAssertTrue(app.staticTexts["Matched 2 agents"].exists)
     }
 
@@ -4044,24 +4116,19 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
         composer.click()
         composer.typeText("When bitcoin hits 100k run the safety plan")
-
         revealSidebarForNavigation()
         anyElement("sidebar.configureAgent").click()
-
         XCTAssertTrue(anyElement("configureAgent.draftSuggestion").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("configureAgent.suggestion.time").exists)
-        XCTAssertTrue(anyElement("configureAgent.suggestion.event").exists)
-        let useForPrice = anyElement("configureAgent.suggestion.price")
-        XCTAssertTrue(useForPrice.exists)
-        useForPrice.click()
-        XCTAssertTrue(app.staticTexts["New Price Alert"].waitForExistence(timeout: 3))
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.creation").waitForExistence(timeout: 3))
+        anyElement("configureAgent.create.price").click()
+        XCTAssertTrue(app.staticTexts["New Price Alert Agent"].waitForExistence(timeout: 3))
         let threshold = anyElement("eventAutomation.price.threshold")
         XCTAssertTrue(threshold.waitForExistence(timeout: 3))
         XCTAssertEqual(threshold.value as? String, "100000")
         app.buttons["Cancel"].firstMatch.click()
-        let done = app.buttons["Done"].firstMatch
-        XCTAssertTrue(done.waitForExistence(timeout: 3))
-        done.click()
+        XCTAssertTrue(anyElement("configureAgent.close").waitForExistence(timeout: 3))
+        anyElement("configureAgent.close").click()
         XCTAssertEqual(composer.value as? String, "When bitcoin hits 100k run the safety plan")
     }
 
@@ -4070,19 +4137,78 @@ final class LocusUITests: XCTestCase {
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
 
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.creation").waitForExistence(timeout: 3))
         anyElement("configureAgent.create.schedule").click()
-        XCTAssertTrue(app.staticTexts["New Scheduled Task"].waitForExistence(timeout: 3))
-        app.buttons["Cancel"].firstMatch.click()
-        XCTAssertTrue(anyElement("configureAgent.create.event").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("scheduleEditor").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("scheduleEditor.prompt").exists)
+        XCTAssertTrue(anyElement("scheduleEditor.cancel").isHittable)
+        anyElement("scheduleEditor.cancel").click()
+        XCTAssertTrue(anyElement("configureAgent.newAgent").waitForExistence(timeout: 3))
 
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.creation").waitForExistence(timeout: 3))
         anyElement("configureAgent.create.event").click()
-        XCTAssertTrue(app.staticTexts["New Incoming Event"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["New Event Agent"].waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("eventTrigger.instruction").exists)
         app.buttons["Cancel"].firstMatch.click()
-        XCTAssertTrue(anyElement("configureAgent.create.price").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.newAgent").waitForExistence(timeout: 3))
 
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.creation").waitForExistence(timeout: 3))
         anyElement("configureAgent.create.price").click()
-        XCTAssertTrue(app.staticTexts["New Price Alert"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["New Price Alert Agent"].waitForExistence(timeout: 3))
         app.buttons["Cancel"].firstMatch.click()
+        XCTAssertTrue(anyElement("configureAgent.sheet").exists)
+    }
+
+    func testScheduleEditorValidatesTimezoneAndProtectsUnsavedChanges() {
+        relaunchWithAgentFixture()
+        revealSidebarForNavigation()
+        anyElement("sidebar.configureAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.newAgent").waitForExistence(timeout: 3))
+        anyElement("configureAgent.newAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.create.schedule").waitForExistence(timeout: 3))
+        anyElement("configureAgent.create.schedule").click()
+        let save = anyElement("scheduleEditor.save")
+        XCTAssertTrue(save.waitForExistence(timeout: 3))
+        XCTAssertFalse(save.isEnabled)
+        let name = anyElement("scheduleEditor.name")
+        name.click()
+        name.typeText("Daily project review")
+        let prompt = anyElement("scheduleEditor.prompt")
+        prompt.click()
+        app.typeKey("a", modifierFlags: .command)
+        prompt.typeText("Review yesterday’s changes and summarize open questions.")
+        XCTAssertTrue(waitUntil { save.isEnabled })
+
+        let scroll = anyElement("scheduleEditor.scroll")
+        let timezone = anyElement("scheduleEditor.timezone")
+        revealSettingsControl(timezone, in: scroll)
+        timezone.click()
+        app.typeKey("a", modifierFlags: .command)
+        timezone.typeText("Not/A_Timezone")
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertTrue(anyElement("scheduleEditor.scheduleIssue").exists)
+        anyElement("scheduleEditor.localTimezone").click()
+        XCTAssertTrue(waitUntil { save.isEnabled })
+
+        let environment = anyElement("scheduleEditor.environmentDisclosure")
+        revealSettingsControl(environment, in: scroll)
+        let footerY = save.frame.minY
+        environment.click()
+        XCTAssertTrue(anyElement("scheduleEditor.workspace").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("scheduleEditor.cancel").isHittable)
+        XCTAssertTrue(save.isHittable)
+        XCTAssertEqual(save.frame.minY, footerY, accuracy: 1)
+        anyElement("scheduleEditor.cancel").click()
+        XCTAssertTrue(anyElement("scheduleEditor.keepEditing").waitForExistence(timeout: 3))
+        anyElement("scheduleEditor.keepEditing").click()
+        XCTAssertTrue(anyElement("scheduleEditor").exists)
+        anyElement("scheduleEditor.cancel").click()
+        XCTAssertTrue(anyElement("scheduleEditor.discard").waitForExistence(timeout: 3))
+        anyElement("scheduleEditor.discard").click()
+        XCTAssertTrue(waitForDisappearance(anyElement("scheduleEditor")))
         XCTAssertTrue(anyElement("configureAgent.sheet").exists)
     }
 
@@ -4363,6 +4489,31 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement(
             "message.00000000-0000-0000-0000-000000000304"
         ).exists)
+        // Completed commentary starts as a quiet, reversible progress row.
+        for (id, text) in [
+            ("00000000-0000-0000-0000-000000000303", "I’ll check both locations now."),
+            ("00000000-0000-0000-0000-000000000308", "The source data is ready."),
+            ("00000000-0000-0000-0000-000000000309", "Both locations have clear conditions."),
+        ] {
+            XCTAssertFalse(transcriptText(text).exists)
+            let row = anyElement("message.\(id)")
+            let progress = row.descendants(matching: .any).matching(identifier: "message.progressUpdate").firstMatch
+            XCTAssertTrue(progress.exists)
+            XCTAssertEqual(progress.value as? String, "Collapsed")
+            // Progress can begin above the viewport in compact windows. The
+            // whole row remains clickable after scrolling it into view.
+            clickInTranscript(progress)
+            XCTAssertTrue(waitUntil { progress.value as? String == "Expanded" })
+            XCTAssertTrue(transcriptText(text).waitForExistence(timeout: 3))
+            if id == "00000000-0000-0000-0000-000000000303" {
+                clickInTranscript(progress)
+                XCTAssertTrue(waitUntil {
+                    progress.value as? String == "Collapsed" && !self.transcriptText(text).exists
+                })
+                clickInTranscript(progress)
+                XCTAssertTrue(transcriptText(text).waitForExistence(timeout: 3))
+            }
+        }
         XCTAssertTrue(transcriptText("I’ll check both locations now.").exists)
         XCTAssertTrue(transcriptText("The source data is ready.").exists)
         XCTAssertTrue(transcriptText("Both locations have clear conditions.").exists)
@@ -4412,6 +4563,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(reasoning.label.contains("Planning data retrieval · Checking forecast parsing"))
         XCTAssertTrue(tools.label.contains("Read files, ran command"))
         XCTAssertTrue(browser.label.contains("Browsed"))
+        XCTAssertFalse(transcriptText("I’ll check both locations now.").exists)
+        XCTAssertTrue(commentary.descendants(matching: .any).matching(identifier: "message.progressUpdate").firstMatch.exists)
 
         XCTAssertLessThan(reasoning.frame.maxY, commentary.frame.minY)
         XCTAssertLessThan(commentary.frame.maxY, tools.frame.minY)

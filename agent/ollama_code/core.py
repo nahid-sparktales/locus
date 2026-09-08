@@ -47,6 +47,7 @@ from .agent_config import (
     ANSWER_CONTRACT,
     AgentConfiguration,
     compose_system_prompt,
+    render_agent_behavior,
 )
 from .config import (
     DEFAULTS,
@@ -108,7 +109,7 @@ def _cwd_after_chdir(fallback: str) -> str:
 _SOLO_ROOT_ONLY_TOOLS = {
     "spawn_agent", "list_agents", "read_agent", "send_agent_message", "followup_agent",
     "interrupt_agent", "resume_agent", "wait_agents", "integrate_agent", "ask_question_async",
-    "delegate_read_only", "get_goal", "update_goal",
+    "delegate_read_only", "get_goal", "update_goal", "attach_output_parts",
     # Only the visible root chat has a user to ask.
     "ask_question",
     "todo_write",
@@ -283,12 +284,6 @@ FINAL_ANSWER_NUDGE = (
     "established, write the final answer now, following the locked answer "
     "contract. Do not call any tools and do not start new work."
 )
-
-#: A reply shorter than this, after a turn that ran at least
-#: FINAL_ANSWER_TOOL_FLOOR tools, is a fragment rather than an answer. One tool
-#: call and a short sentence is a legitimately terse turn and is left alone.
-FINAL_ANSWER_MIN_CHARS = 40
-FINAL_ANSWER_TOOL_FLOOR = 3
 
 INIT_PROMPT = (
     "Analyze this project and create an OLLAMA.md file that will help future AI "
@@ -465,6 +460,10 @@ class AgentCore:
         self._streaming_response = False
         self._in_tool_call = False
         self.active_tool_call_id = ""
+        self._output_run_id = ""
+        self._classic_item_id = ""
+        self._response_parts_lock = threading.RLock()
+        self._tool_activity_labels: dict[int, str] = {}
         self.tool_ctx.should_stop = self._interrupt.is_set
         self._last_user_message: str | None = None
         #: The server's ground-truth size of the last completed model call
@@ -515,6 +514,11 @@ class AgentCore:
         self._event_handler = handler
 
     def _emit(self, event: dict[str, Any]) -> None:
+        if getattr(self, "_output_run_id", "") and event.get("type") in {
+            "message_start", "message_end", "assistant_item_start", "assistant_item_delta",
+            "assistant_item_end", "token", "thinking", "turn_done",
+        }:
+            event.setdefault("run_id", self._output_run_id)
         if self._event_handler is not None:
             try:
                 self._event_handler(event)
@@ -810,6 +814,8 @@ class AgentCore:
         self.tool_ctx.memory_scopes = scopes
         self.tool_ctx.memory_search_enabled = memory_policy.search_enabled
         self.tool_ctx.memory_proposals_enabled = memory_policy.proposals_enabled
+        self.tool_ctx.response_parts_enabled = not bool(self.agent_role_contract) and self.agent_mode != "ask"
+        self.tool_ctx.response_parts_allow_workspace = self.agent_configuration.capability_policy.workspace_read
         self.tool_ctx.cross_chat_context_enabled = (
             self.agent_mode != "ask" and memory_policy.cross_chat_context_enabled
         )
@@ -1666,7 +1672,10 @@ class AgentCore:
         self.tool_ctx.plan_document = None
         self.tool_ctx.user_question = None
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.response_parts.clear()
+        self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
+        self._output_run_id = ""
         self._last_user_message = None
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
@@ -1738,6 +1747,7 @@ class AgentCore:
         if self.tool_ctx.goal is not None:
             from .goal_runtime import GOAL_CONTRACT
             sections.append(GOAL_CONTRACT)
+        sections.append("## Editable agent behavior\n" + render_agent_behavior(self.agent_configuration, self.agent_mode))
         sections.append("## Locus answer contract\n" + ANSWER_CONTRACT)
         return "\n\n".join(sections)
 
@@ -1938,6 +1948,16 @@ class AgentCore:
         event_id: str = "",
         persist: bool = True,
     ) -> None:
+        if message.get("role") in {"user", "assistant"}:
+            if self._output_run_id:
+                message.setdefault("run_id", self._output_run_id)
+            if message.get("role") == "assistant":
+                message.setdefault("_item_id", uuid.uuid4().hex)
+                message.setdefault("_reasoning_format", "native")
+            if persisted_message is not None:
+                for key in ("run_id", "_item_id", "_reasoning_format"):
+                    if key in message:
+                        persisted_message.setdefault(key, message[key])
         saved = persisted_message if persisted_message is not None else message
         if self.identity_mode:
             saved = copy.deepcopy(saved)
@@ -1975,6 +1995,9 @@ class AgentCore:
         ``self.messages`` where a later provider request could treat them as
         assistant instructions.
         """
+        if self._output_run_id:
+            message.setdefault("run_id", self._output_run_id)
+        message.setdefault("_reasoning_format", "native")
         self.session.append({"type": "message", "message": message})
 
     def run_turn(
@@ -2047,6 +2070,7 @@ class AgentCore:
         # out here because a missing helper skips the block below entirely.
         native_model_calls = 0
         native_tool_steps = 0
+        native_tool_requests = 0
         native_prompt_tokens = 0
         native_completion_tokens = 0
         self._turn_allows_tools = allow_tools
@@ -2055,6 +2079,8 @@ class AgentCore:
             self._interrupt.clear()
         self.begin_steerable_turn(preserve_open=True)
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.response_parts.clear()
+        self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
         self._last_user_message = user_text
         if allow_tools:
@@ -2296,6 +2322,7 @@ class AgentCore:
                             "type": "assistant_item_start",
                             "item_id": item_id,
                             "kind": kind,
+                            "reasoning_format": "native",
                         }
                         if kind == "message":
                             started_event["phase"] = state["phase"]
@@ -2347,18 +2374,23 @@ class AgentCore:
                     if phase:
                         state["phase"] = normalized_phase(phase)
                     state["ended"] = True
+                    state["text"], document = self._finalize_output(state["text"], state["phase"])
                     self._emit({
                         "type": "assistant_item_end",
                         "item_id": state["id"],
                         "kind": "message",
                         "phase": state["phase"],
                         "text": state["text"],
+                        "response_parts": document,
+                        "reasoning_format": "native",
                     })
                     self._add_message({
                         "role": "assistant",
                         "content": state["text"],
                         "_phase": state["phase"],
                         "_item_id": state["id"],
+                        "_response_parts": document,
+                        "_reasoning_format": "native",
                     })
 
                 def finish_reasoning(
@@ -2376,6 +2408,7 @@ class AgentCore:
                         "type": "assistant_item_end",
                         "item_id": state["id"],
                         "kind": "reasoning",
+                        "reasoning_format": "native",
                         "sections": sections,
                     })
                     if sections:
@@ -2520,7 +2553,7 @@ class AgentCore:
                         raise RuntimeError("ChatGPT helper requested a disabled native approval")
 
                 def handle_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
-                    nonlocal native_tool_steps
+                    nonlocal native_tool_steps, native_tool_requests
                     if not allow_tools:
                         return "Not run: Just Chat has no tool or workspace access."
                     if self._interrupt.is_set():
@@ -2528,10 +2561,12 @@ class AgentCore:
                     if self.external_should_stop and self.external_should_stop():
                         self._interrupt.set()
                         return "Not run: the helper's parent or shared usage budget stopped execution."
-                    if native_tool_steps >= dynamic_call_limit:
+                    if native_tool_requests >= dynamic_call_limit:
                         self._interrupt.set()
                         return "Error: Locus stopped this turn at its configured tool-step budget."
-                    native_tool_steps += 1
+                    native_tool_requests += 1
+                    if name != "attach_output_parts":
+                        native_tool_steps += 1
                     if parity:
                         # Parity names exist only on the wire. Everything
                         # downstream — deny lists, accept-edits, previews,
@@ -2656,6 +2691,8 @@ class AgentCore:
                         "content": "",
                         "_phase": "final_answer",
                     })
+                if reason == "complete":
+                    self._finish_staged_output()
                 if self._needs_final_answer_pass(
                     reason=reason, tool_calls=native_tool_steps
                 ):
@@ -2783,6 +2820,8 @@ class AgentCore:
                 self._steer_event.clear()
                 self._accepting_steers = True
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.response_parts.clear()
+        self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
         self._last_user_message = user_text
         # Stale counts from a previous turn must not leak into this turn's
@@ -3075,6 +3114,8 @@ class AgentCore:
         self.messages = self.messages[: index + 1]
         self._interrupt.clear()
         self.tool_ctx.read_files.clear()
+        self.tool_ctx.response_parts.clear()
+        self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
         # Branch onto a fresh saved session so the original transcript survives.
         self.session = self._new_session_store()
@@ -3099,6 +3140,27 @@ class AgentCore:
 
     #: Shorter alias used by the WebSocket handler.
     retry_last = retry_last_response
+
+    def _finalize_output(self, text: str, phase: str) -> tuple[str, dict[str, Any] | None]:
+        if phase != "final_answer" or self._interrupt.is_set() or not self.tool_ctx.response_parts:
+            return text, None
+        from .response_parts import markdown_fallback, response_document
+        document = response_document(text, list(self.tool_ctx.response_parts.values()))
+        self.tool_ctx.response_parts.clear()
+        return markdown_fallback(document), document
+
+    def _finish_staged_output(self) -> None:
+        """A typed deliverable is a written answer even if the model ends silently."""
+        if not self.tool_ctx.response_parts or self._interrupt.is_set():
+            return
+        text, document = self._finalize_output("", "final_answer")
+        item_id = uuid.uuid4().hex
+        self._emit({"type": "assistant_item_start", "kind": "message", "item_id": item_id,
+                    "phase": "final_answer", "reasoning_format": "none"})
+        self._add_message({"role": "assistant", "content": text, "_item_id": item_id,
+                           "_phase": "final_answer", "_response_parts": document, "_reasoning_format": "none"})
+        self._emit({"type": "assistant_item_end", "kind": "message", "item_id": item_id,
+                    "phase": "final_answer", "text": text, "response_parts": document, "reasoning_format": "none"})
 
     def _last_final_answer_text(self) -> str:
         """This turn's visible answer, or "" when it never wrote one.
@@ -3143,10 +3205,7 @@ class AgentCore:
         text = self._last_final_answer_text()
         if not text:
             return True
-        return (
-            tool_calls >= FINAL_ANSWER_TOOL_FLOOR
-            and len(text) < FINAL_ANSWER_MIN_CHARS
-        )
+        return False
 
     def _run_final_answer_pass(self) -> bool:
         """One tool-free call that writes the answer the turn owed the user."""
@@ -3157,13 +3216,15 @@ class AgentCore:
         if resp is None:
             # An error or a partial reply already reached the conversation.
             return False
-        text = strip_think(resp.content).strip()
+        text = resp.content if resp.provider_fields.get("locus_response_parts") else resp.content.strip()
         if not text:
             return False
         self._add_message({
             "role": "assistant",
             "content": text,
             "_phase": "final_answer",
+            "_item_id": resp.provider_fields.get("locus_item_id") or uuid.uuid4().hex,
+            "_response_parts": resp.provider_fields.get("locus_response_parts"),
         })
         self.total_prompt_tokens += resp.prompt_eval_count
         self.total_completion_tokens += resp.eval_count
@@ -3208,7 +3269,14 @@ class AgentCore:
             if resp is None:  # error already emitted
                 reason = "error"
                 break
-            assistant_msg: dict[str, Any] = {"role": "assistant", "content": strip_think(resp.content)}
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant", "content": resp.content,
+                "_item_id": resp.provider_fields.get("locus_item_id") or uuid.uuid4().hex,
+                "_phase": resp.provider_fields.get("locus_phase") or ("commentary" if resp.tool_calls else "final_answer"),
+                "_reasoning_format": "native",
+            }
+            if resp.provider_fields.get("locus_response_parts"):
+                assistant_msg["_response_parts"] = resp.provider_fields["locus_response_parts"]
             inline_thinking = str(resp.provider_fields.get("inline_thinking") or "")
             display_reasoning = "\n\n".join(
                 part for part in (resp.thinking.strip(), inline_thinking.strip()) if part
@@ -3313,7 +3381,8 @@ class AgentCore:
                     steered = True
                     break
                 self._in_tool_call = True
-                tool_calls_run += 1
+                if tc.name != "attach_output_parts":
+                    tool_calls_run += 1
                 try:
                     result = self._run_tool_call(tc, decider)
                 finally:
@@ -3323,6 +3392,8 @@ class AgentCore:
                     "name": tc.name,
                     "tool_call_id": tc.call_id or tc.name,
                     "content": result,
+                    "_activity_label": self._tool_activity_labels.pop(id(tc), None),
+                    "run_id": self._output_run_id,
                 })
                 pending_goal_action = self._goal_pending_actions.pop(id(tc), None)
                 if pending_goal_action is not None:
@@ -3374,6 +3445,8 @@ class AgentCore:
         self.end_steerable_turn()
         if self._interrupt.is_set():
             reason = "interrupted"
+        if reason == "complete":
+            self._finish_staged_output()
         if self._needs_final_answer_pass(reason=reason, tool_calls=tool_calls_run):
             if self._run_final_answer_pass():
                 iteration += 1
@@ -3498,8 +3571,11 @@ class AgentCore:
         Just Chat system prompt in underneath.
         """
         goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
-        self._emit({"type": "message_start"})
+        self._classic_item_id = uuid.uuid4().hex
+        self._classic_final_metadata = {}
+        self._emit({"type": "message_start", "item_id": self._classic_item_id, "reasoning_format": "native"})
         think_filter = ThinkFilter()
+        use_inline_thinking = self.provider == "ollama"
         inline_thinking: list[str] = []
         native_thinking: list[str] = []
         visible_text: list[str] = []
@@ -3507,6 +3583,9 @@ class AgentCore:
         def finish_message(content: str | None = None) -> None:
             event: dict[str, Any] = {
                 "type": "message_end",
+                "item_id": self._classic_item_id,
+                "phase": "final_answer",
+                "reasoning_format": "native",
                 "content": content if content is not None else "".join(visible_text),
             }
             reasoning = "\n\n".join(
@@ -3515,9 +3594,14 @@ class AgentCore:
             )
             if reasoning:
                 event["reasoning_text"] = reasoning
+            event.update(getattr(self, "_classic_final_metadata", {}))
             self._emit(event)
 
         def on_token(token: str) -> None:
+            if not use_inline_thinking:
+                visible_text.append(token)
+                self._emit({"type": "token", "text": token})
+                return
             piece = think_filter.feed(token)
             thought = think_filter.take_thinking()
             if thought:
@@ -3568,7 +3652,7 @@ class AgentCore:
         except OllamaError as e:
             # Keep whatever already streamed: the user has read it on screen,
             # so it must exist in the conversation and the session file too.
-            partial = strip_think(think_filter.flush_all())
+            partial = think_filter.flush_all() if use_inline_thinking else "".join(visible_text)
             thought_tail = think_filter.take_thinking()
             if thought_tail:
                 inline_thinking.append(thought_tail)
@@ -3639,17 +3723,21 @@ class AgentCore:
                     disable_tools=disable_tools,
                 )
             if partial:
-                visible_text.append(partial)
-                self._add_message({"role": "assistant", "content": partial})
+                visible_text[:] = [partial]
+                self._add_message({"role": "assistant", "content": partial, "_item_id": self._classic_item_id, "_phase": "final_answer"})
             self._emit({"type": "error", "message": (
                 "The private Identity request failed or sharing was declined. No alternate provider was used."
                 if self.identity_mode else str(e)
             )})
             finish_message()
             return None
-        if resp is None:  # interrupted mid-stream: synthesize an empty response
-            finish_message()
-            return ChatResponse(done=True, done_reason="interrupted")
+        if resp is None:
+            # The visible partial answer must survive interruption and reopening.
+            partial = think_filter.flush_all() if use_inline_thinking else "".join(visible_text)
+            finish_message(partial)
+            return ChatResponse(content_parts=[partial], done=True, done_reason="interrupted",
+                                provider_fields={"locus_item_id": self._classic_item_id,
+                                                 "locus_phase": "final_answer"})
         tail = think_filter.flush()
         thought_tail = think_filter.take_thinking()
         if thought_tail:
@@ -3660,7 +3748,17 @@ class AgentCore:
             self._emit({"type": "token", "text": tail})
         if inline_thinking:
             resp.provider_fields["inline_thinking"] = "".join(inline_thinking)
-        finish_message(strip_think(resp.content))
+        phase = "commentary" if resp.tool_calls else "final_answer"
+        final_text, document = self._finalize_output(strip_think(resp.content) if use_inline_thinking else resp.content, phase)
+        resp.content_parts = [final_text]
+        resp.provider_fields["locus_item_id"] = self._classic_item_id
+        resp.provider_fields["locus_phase"] = phase
+        if document is not None:
+            resp.provider_fields["locus_response_parts"] = document
+        self._classic_final_metadata = {"phase": phase, "reasoning_format": "native",
+                                        "response_parts": document}
+        finish_message(final_text)
+        self._classic_final_metadata = {}
         return resp
 
     def accept_computer_screenshot(self, screenshot: dict[str, Any]) -> bool:
@@ -3781,6 +3879,22 @@ class AgentCore:
             track_active=False,
         )
 
+    def _verified_activity_label(self, tc: ToolCall, effects: list[dict[str, Any]]) -> str:
+        if tc.name == "apply_patch":
+            return f"Updated {len(effects)} file{'s' if len(effects) != 1 else ''}" if effects else ""
+        verb = {"list_dir": "Checked", "read_file": "Read", "write_file": "Updated",
+                "edit_file": "Updated", "multi_edit": "Updated"}.get(tc.name)
+        if not verb:
+            return ""
+        raw_path = tc.arguments.get("path") or tc.arguments.get("file_path") or "."
+        try:
+            path = self.tool_ctx.resolve(str(raw_path)).resolve()
+            root = Path(self.cwd).resolve()
+            label = str(path.relative_to(root)) if path != root else root.name
+        except (ValueError, OSError, RuntimeError):
+            label = Path(str(raw_path)).name
+        return f"{verb} {' '.join(label.split())}"
+
     def _run_tool_call(
         self,
         tc: ToolCall,
@@ -3790,6 +3904,16 @@ class AgentCore:
         execution_lock: Any | None = None,
         track_active: bool = True,
     ) -> str:
+        if tc.name == "attach_output_parts":
+            if (self.identity_mode or not self._turn_allows_tools or self.agent_role_contract
+                    or not track_active or getattr(self, "helper_allowed_tools", None) is not None):
+                return "Error: presentation output belongs only to the visible workspace turn."
+            with self._response_parts_lock:
+                result = execute_tool(tc.name, tc.arguments, self.tool_ctx)
+                if not result.startswith("Error:"):
+                    self.session.append({"type": "response_parts_staged", "run_id": self._output_run_id,
+                                         "parts": list(self.tool_ctx.response_parts.values())})
+                return result
         if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
             return "Error: goal tools belong only to the active goal coordinator."
         if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():
@@ -4000,12 +4124,21 @@ class AgentCore:
                 self._goal_pending_actions[id(tc)] = (call_id, ok, result)
             else:
                 self.goal_runtime.finish_action(call_id, ok=ok, result=result)
+        activity_label = self._verified_activity_label(tc, effects) if ok else ""
+        if activity_label:
+            if self.provider == "chatgpt":
+                self._persist_display_message({"role": "tool", "name": tc.name, "content": result,
+                                               "_display_only": True, "_item_id": call_id,
+                                               "_activity_label": activity_label})
+            else:
+                self._tool_activity_labels[id(tc)] = activity_label
         self._emit({
             "type": "tool_result",
             "id": call_id,
             "tool": tc.name,
             "summary": summary,
             "result": result,
+            "activity_label": activity_label or None,
             "ok": ok,
             "denied": False,
             **({"file_effects": effects} if effects and ok else {}),
@@ -4296,9 +4429,9 @@ class AgentCore:
             content = str(m.get("content") or "")
             if role == "user":
                 content = strip_prompt_decoration(content)
-            item: dict[str, Any] = {"role": role, "content": content[:4000]}
+            item: dict[str, Any] = {"role": role, "content": content if role in {"user", "assistant"} else content[:4000]}
             run_id = str(m.get("run_id") or m.get("team_run_id") or "")[:128]
-            if role == "user" and run_id:
+            if role in {"user", "assistant", "tool"} and run_id:
                 item["run_id"] = run_id
             event_trigger = m.get("event_trigger")
             if role == "user" and isinstance(event_trigger, dict):
@@ -4308,6 +4441,10 @@ class AgentCore:
                 # that card with the raw instruction and JSON body.
                 item["event_trigger"] = event_trigger
             if role == "assistant":
+                if m.get("_response_parts") is not None:
+                    item["response_parts"] = m["_response_parts"]
+                if m.get("_reasoning_format"):
+                    item["reasoning_format"] = m["_reasoning_format"]
                 phase = str(m.get("_phase") or "")[:32]
                 item_id = str(m.get("_item_id") or "")[:256]
                 if phase:
@@ -4340,6 +4477,10 @@ class AgentCore:
                     item["reasoning"] = reasoning[:20000]
             if role == "tool":
                 item["name"] = m.get("name", "tool")
+                if m.get("_activity_label"):
+                    item["activity_label"] = m["_activity_label"]
+                if m.get("_item_id"):
+                    item["item_id"] = m["_item_id"]
             tool_calls = m.get("tool_calls") or []
             if tool_calls:
                 item["tool_calls"] = [
@@ -4353,6 +4494,8 @@ class AgentCore:
         if path is None:
             raise FileNotFoundError(f"session not found: {session_id}")
         messages = SessionStore.load(path)
+        self.tool_ctx.response_parts.clear()
+        self._output_run_id = ""
         self.identity_mode = (SessionMeta.get(session_id).get("identity_mode") is True
                               or any(message.get("identity_mode") is True for message in messages))
         self.tool_registry.identity_mode = self.identity_mode

@@ -14,6 +14,7 @@ final class OutputsLibraryModel: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var storageLimit = OutputsLibraryStore.defaultWorkspaceLimit
     @Published private(set) var isRefreshing = false
+    @Published private(set) var responseRevision: UInt = 0
     let store: OutputsLibraryStore
     private var workspace = ""
     private var captureTail: Task<Void, Never>?
@@ -178,6 +179,7 @@ final class OutputsLibraryModel: ObservableObject {
 
     func endRun(sessionID: String) {
         guard let run = runs.removeValue(forKey: sessionID) else { return }
+        defer { responseRevision &+= 1 }
         if let runID = run.runID { retiredRunIDs[sessionID, default: []].insert(runID) }
         let pending = run.watcher.finish()
         for path in run.paths.union(pending.map(\.path)) {
@@ -187,6 +189,17 @@ final class OutputsLibraryModel: ObservableObject {
     }
 
     func flush() async { await captureTail?.value }
+
+    func isCapturingResponse(sessionID: String, runID: String) -> Bool {
+        guard let run = runs[sessionID] else { return false }
+        return run.runID == nil || run.runID == runID
+    }
+
+    func responseBinding(key: String, workspace: String, path: String, sessionID: String, runID: String) async throws -> ResponseArtifactBinding? {
+        guard enabled, !isCapturingResponse(sessionID: sessionID, runID: runID) else { return nil }
+        await flush()
+        return try await store.bindResponse(key: key, workspace: workspace, path: path, sessionID: sessionID, runID: runID)
+    }
 
     var hasCaptureWork: Bool { !runs.isEmpty || captureTail != nil }
 
@@ -240,6 +253,7 @@ final class OutputsLibraryModel: ObservableObject {
         let previous = captureTail
         captureTail = Task { [weak self] in
             await previous?.value
+            defer { if let self { self.responseRevision &+= 1 } }
             do { try await work() }
             catch { self?.error = error.localizedDescription; return }
             await self?.refresh()

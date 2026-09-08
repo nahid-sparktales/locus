@@ -5033,7 +5033,7 @@ final class AppModelTests: XCTestCase {
             ChatBlock(
                 id: finalID,
                 kind: .assistant,
-                text: "Before<thinking>Prepare response</thinking>After"
+                text: "Before\n<thinking>Prepare response</thinking>After"
             ),
             ChatBlock(
                 id: completionID,
@@ -5081,7 +5081,7 @@ final class AppModelTests: XCTestCase {
             .init(sourceBlockID: finalID, ordinal: 0),
             .init(sourceBlockID: finalID, ordinal: 1),
         ])
-        XCTAssertEqual(visibleAssistants.map(\.text), ["Visible progress", "Before", "After"])
+        XCTAssertEqual(visibleAssistants.map(\.text), ["Visible progress", "Before\n", "After"])
         XCTAssertTrue(visibleAssistants.allSatisfy { $0.displayBlock.reasoningText == nil })
 
         let expanded = TranscriptPresentation.items(
@@ -6190,7 +6190,7 @@ final class AppModelTests: XCTestCase {
         model.presentConfigureAgent(draftText: model.draftText)
 
         XCTAssertTrue(model.configureAgentPresented)
-        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(model.configureAgentTab, .agents)
         XCTAssertEqual(
             model.configureAgentDraftSuggestion,
             "When bitcoin hits 100k, run the safety plan"
@@ -6204,13 +6204,49 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAttentionConfigurationOpensTheMatchingSchedule() {
+        let model = AppModel(startImmediately: false)
+        let item = AttentionItem(id: "schedule-warning", kind: "configuration", group: .configuration,
+            automationKind: "schedule", automationID: "daily-review", title: "Review Agent settings",
+            detail: "Workspace unavailable", actions: ["open_configuration"])
+
+        model.performAttentionAction(item, action: "open_configuration")
+
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentFocusConfigurationID, "schedule:daily-review")
+    }
+
+    @MainActor
+    func testNewAgentChooserWaitsForItsManageAgentsHost() {
+        let model = AppModel(startImmediately: false)
+        model.draftText = "Review incoming issues"
+
+        model.presentNewAgent()
+
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertTrue(model.configureAgentPendingCreation)
+        XCTAssertFalse(model.configureAgentCreationPresented)
+        XCTAssertNil(model.eventAutomations.editorDraft)
+
+        model.mountPendingConfigureAgentEditor()
+        XCTAssertFalse(model.configureAgentPendingCreation)
+        XCTAssertTrue(model.configureAgentCreationPresented)
+        XCTAssertEqual(model.configureAgentDraftSuggestion, "Review incoming issues")
+        XCTAssertEqual(model.draftText, "Review incoming issues")
+
+        model.dismissConfigureAgent()
+        XCTAssertFalse(model.configureAgentCreationPresented)
+        XCTAssertFalse(model.configureAgentPendingCreation)
+    }
+
+    @MainActor
     func testScheduleEditorMountsInsideConfigureAgentHub() {
         let model = AppModel(startImmediately: false)
 
         model.presentScheduleEditor(prompt: "Send the weekly report")
 
         XCTAssertTrue(model.configureAgentPresented)
-        XCTAssertEqual(model.configureAgentTab, .configurations)
+        XCTAssertEqual(model.configureAgentTab, .agents)
         XCTAssertEqual(
             model.configureAgentPendingScheduleDraft?.prompt,
             "Send the weekly report"

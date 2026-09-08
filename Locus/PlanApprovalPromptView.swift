@@ -796,7 +796,7 @@ struct TeamDispatchApprovalPromptView: View {
                 Text("Approve this complete plan once?")
                     .font(.locus(size: 12, weight: .bold))
             }
-            Text("After Run Plan, every listed job and any bounded read-only children proceed without another dispatch approval. Writers still cannot delegate, and tool permissions continue to follow your security settings.")
+            Text("The listed jobs and their read-only helpers can run after one approval. Agents that change files cannot delegate. Tool actions still follow your shared approval policy.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -951,8 +951,8 @@ struct TeamDispatchApprovalPromptView: View {
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                .lineLimit(1)
-                Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
@@ -971,7 +971,8 @@ struct TeamDispatchApprovalPromptView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 38)
+            .padding(.vertical, 5)
+            .frame(minHeight: 42)
             .background(isSelected ? LocusTheme.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
@@ -981,6 +982,8 @@ struct TeamDispatchApprovalPromptView: View {
             if hovering { selection = index }
         }
         .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(detail)
         .accessibilityIdentifier(identifier)
     }
 
@@ -1141,9 +1144,23 @@ struct PlanApprovalPromptView: View {
         }
     }
 
-    @ViewBuilder
     private var steps: some View {
+        ViewThatFits(in: .vertical) {
+            stepContents.fixedSize(horizontal: false, vertical: true)
+            ScrollView { stepContents }
+        }
+        .frame(maxHeight: 180)
+        .background(LocusTheme.paperDeep.opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityIdentifier("planApproval.steps")
+    }
+
+    private var stepContents: some View {
         VStack(alignment: .leading, spacing: 5) {
+            if planSteps.isEmpty {
+                Text("Review the plan in the conversation above before starting work.")
+                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+            }
             ForEach(Array(planSteps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 7) {
                     Text("\(index + 1).")
@@ -1158,9 +1175,6 @@ struct PlanApprovalPromptView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(LocusTheme.paperDeep.opacity(0.65))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .accessibilityIdentifier("planApproval.steps")
     }
 
     private var options: some View {
@@ -1168,7 +1182,7 @@ struct PlanApprovalPromptView: View {
             optionRow(
                 index: 0,
                 title: "Proceed",
-                detail: "Switch to Work and implement with current permissions",
+                detail: "Start implementation with the shared tool approval policy",
                 identifier: "planApproval.proceed"
             )
             optionRow(
@@ -1180,7 +1194,7 @@ struct PlanApprovalPromptView: View {
             optionRow(
                 index: 2,
                 title: "Cancel",
-                detail: "Return to adaptive Work and keep the plan for reference",
+                detail: "Return to Work and keep the plan for reference",
                 keyCap: "esc",
                 identifier: "planApproval.cancel"
             )
@@ -1214,8 +1228,8 @@ struct PlanApprovalPromptView: View {
                         .font(.locus(size: 8))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                .lineLimit(1)
-                Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
@@ -1234,7 +1248,8 @@ struct PlanApprovalPromptView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 38)
+            .padding(.vertical, 5)
+            .frame(minHeight: 42)
             .background(isSelected ? LocusTheme.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
@@ -1244,6 +1259,8 @@ struct PlanApprovalPromptView: View {
             if hovering { selection = index }
         }
         .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(detail)
         .accessibilityIdentifier(identifier)
     }
 
