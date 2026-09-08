@@ -254,8 +254,8 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
         let host = try await loadHost("<script>document.body.dataset.marker = 'alive';</script>", appearance: { light })
         try await expectDataset(host, "marker", "alive")
 
-        let lightInk = LocusTheme.cssHex(LocusTheme.lightPalette.ink)
-        let darkInk = LocusTheme.cssHex(LocusTheme.darkPalette.ink)
+        let lightInk = LocusTheme.cssHex(LocusTheme.lightPalette.ink, fallback: LocusTheme.lightPalette.ink)
+        let darkInk = LocusTheme.cssHex(LocusTheme.darkPalette.ink, fallback: LocusTheme.darkPalette.ink)
         XCTAssertNotEqual(lightInk, darkInk)
         let observed_lightInk = try await computedVariable(host, "--locus-ink")
         XCTAssertEqual(observed_lightInk, lightInk)
@@ -425,6 +425,143 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
         XCTAssertNil(host.webView)
     }
 
+    // MARK: - Review fixes
+
+    func testACardThatDisappearsBeforeItsPageMountsReleasesItsHost() async throws {
+        let before = InteractiveAnswerRegistry.shared.liveHostCount
+        // The page holds its load event for long enough that the card is
+        // guaranteed to be caught in the loading window: admitted to the
+        // registry, web view created, nothing mounted yet.
+        let mounted = mountCard(
+            isEnabled: true,
+            html: "<p>slow</p><script>const t = performance.now(); while (performance.now() - t < 1500) {}</script>"
+        )
+        defer { mounted.window.orderOut(nil); mounted.window.contentView = nil }
+        try await poll("the card never admitted its host") {
+            InteractiveAnswerRegistry.shared.liveHostCount == before + 1
+        }
+        XCTAssertNil(
+            Self.firstWebView(in: mounted.window.contentView),
+            "the page mounted before the card could leave; the loading window this test needs closed too early"
+        )
+
+        // The card leaves the transcript — a scroll past it, a session
+        // switch — while the page is still loading.
+        mounted.hosting.rootView = AnyView(EmptyView())
+        try await poll("the card left but its host kept its registry slot", timeout: .seconds(4)) {
+            InteractiveAnswerRegistry.shared.liveHostCount == before
+        }
+        // Nothing that was in flight may admit it again later.
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertEqual(InteractiveAnswerRegistry.shared.liveHostCount, before)
+    }
+
+    func testDetachDuringLoadingReleasesTheHostAndTheWebView() async throws {
+        let registry = InteractiveAnswerRegistry(budget: 2)
+        weak var weakHost: InteractiveAnswerHost?
+        // Every strong reference lives inside this closure so the host's
+        // survival afterwards can only be a leak.
+        try await { @MainActor in
+            let host = makeHost(
+                "<p>loading</p><script>const t = performance.now(); while (performance.now() - t < 1500) {}</script>",
+                registry: registry
+            )
+            weakHost = host
+            host.start()
+            try await poll("the host was never admitted") { registry.liveHostCount == 1 }
+            XCTAssertEqual(host.state, .loading)
+            XCTAssertNotNil(host.webView)
+
+            host.detach()
+            XCTAssertFalse(registry.contains(host))
+            XCTAssertNil(host.webView)
+            XCTAssertEqual(registry.liveHostCount, 0)
+            try await poll("a detached loading host did not return to idle") { host.state == .idle }
+            hosts.removeAll { $0 === host }
+        }()
+        try await poll("the detached host is still retained by something") { weakHost == nil }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(registry.liveHostCount, 0)
+    }
+
+    func testTheSealedWebViewHasNoContextMenuAndCancelsDownloads() async throws {
+        let base = server.url("")
+        let host = try await loadHost("""
+        <a id="link" href="\(base)/leak.bin" download="leak.bin">a link the model wrote</a>
+        <img id="picture" src="data:image/png;base64,\(Self.onePixelPNGBase64)" alt="">
+        """)
+        let webView = try XCTUnwrap(host.webView as? InteractiveAnswerSealedWebView, "the host lends a plain WKWebView")
+        XCTAssertFalse(webView.isInspectable)
+        webView.isInspectable = true
+        XCTAssertFalse(webView.isInspectable, "the inspector could be switched on after construction")
+
+        // WebKit fills the menu with its own items and then asks the view
+        // (`willOpenMenu`) before it pops up: this is the menu a right-click on
+        // the link would produce.
+        let menu = NSMenu(title: "context")
+        for title in ["Open Link", "Open Link in New Window", "Download Linked File", "Copy Link", "Copy Image", "Reload"] {
+            menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        }
+        let point = NSPoint(x: 10, y: 10)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+        ))
+        webView.willOpenMenu(menu, with: event)
+        XCTAssertEqual(menu.items.map(\.title), [], "the context menu still offers items")
+        XCTAssertEqual(webView.suppressedContextMenus, 1)
+        XCTAssertNil(webView.menu(for: event), "the view offers a menu of its own")
+
+        // And a download WebKit hands over by any other route is cancelled
+        // before a destination is chosen.
+        XCTAssertEqual(host.cancelledDownloads, 0)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(server.paths, [], "the sealed page reached the loopback server")
+    }
+
+    func testWatchdogSurvivesAMainThreadStallLongerThanTheDeadline() async throws {
+        let policy = InteractiveAnswerWatchdogPolicy(pingInterval: 0.3, deadline: 0.6)
+        let host = makeHost(
+            "<p>healthy</p><script>document.body.dataset.marker = 'alive';</script>",
+            watchdog: policy
+        )
+        host.start()
+        try await poll("the host never became ready") { host.state == .ready }
+        try await expectDataset(host, "marker", "alive")
+
+        // The app's main thread blocks for deadline + 1 s right after a ping
+        // goes out: the page answers at once, but its answer cannot be
+        // delivered until the stall ends. Once is enough to reproduce the
+        // false verdict; the closure disarms itself.
+        var stalls = 0
+        host.watchdogDidSendPing = {
+            guard stalls == 0 else { return }
+            stalls += 1
+            Thread.sleep(forTimeInterval: policy.deadline + 1)
+        }
+        try await poll("the watchdog never pinged", timeout: .seconds(4)) { stalls == 1 }
+        // Long enough for the stalled ping to be judged and for several
+        // ordinary pings to follow it.
+        try await Task.sleep(for: .seconds(policy.pingInterval + policy.deadline + 1))
+        XCTAssertEqual(host.state, .ready, "a healthy page was torn down because the app stalled")
+        XCTAssertNotNil(host.webView)
+        try await expectDataset(host, "marker", "alive")
+        XCTAssertEqual(stalls, 1)
+        XCTAssertLessThan(InteractiveAnswerHost.watchdogTurnCredit, .seconds(policy.deadline))
+    }
+
+    func testCSSHexFallsBackToTheInkForAColourWithoutAnSRGBValue() throws {
+        let pattern = NSColor(patternImage: NSImage(size: NSSize(width: 2, height: 2)))
+        XCTAssertNil(LocusAccentSelection.hexString(for: pattern), "a pattern colour converted to sRGB; pick another unconvertible colour")
+        let light = LocusTheme.lightPalette.ink
+        let dark = LocusTheme.darkPalette.ink
+        XCTAssertEqual(LocusTheme.cssHex(pattern, fallback: light), LocusTheme.cssHex(light, fallback: dark))
+        XCTAssertEqual(LocusTheme.cssHex(pattern, fallback: dark), LocusTheme.cssHex(dark, fallback: light))
+        XCTAssertNotEqual(LocusTheme.cssHex(pattern, fallback: light), LocusTheme.cssHex(pattern, fallback: dark))
+        XCTAssertFalse(LocusTheme.cssHex(pattern, fallback: light).contains("808080"))
+        XCTAssertEqual(LocusTheme.cssHex(pattern, fallback: pattern), "#000000")
+    }
+
     // MARK: - Helpers
 
     private func makeHost(
@@ -540,14 +677,17 @@ final class InteractiveAnswerSandboxTests: XCTestCase {
         throw LoadWaiterError.timedOut
     }
 
-    private func mountCard(isEnabled: Bool) -> (window: NSWindow, hosting: NSHostingView<AnyView>) {
+    private func mountCard(
+        isEnabled: Bool,
+        html: String = "<p>widget</p><script>document.body.dataset.inline = 'ran';</script>"
+    ) -> (window: NSWindow, hosting: NSHostingView<AnyView>) {
         let card = InteractiveAnswerView(
             title: "Binary search",
             summary: "Seven elements, three steps.",
-            html: "<p>widget</p><script>document.body.dataset.inline = 'ran';</script>",
+            html: html,
             height: 200,
             isEnabled: isEnabled,
-            identity: "test-\(isEnabled)"
+            identity: "test-\(isEnabled)-\(html.hashValue)"
         ) {
             Text("Binary search — seven elements, three steps.")
         }

@@ -118,6 +118,12 @@ private struct InteractiveAnswerCard<Original: View>: View {
         .task(id: host.state == .idle && isEnabled) {
             if isEnabled { host.start() }
         }
+        // The web view's own dismantling only covers a host whose page had
+        // mounted; a card scrolled out of the transcript or left behind by a
+        // session switch while still loading would otherwise keep its
+        // registry slot, its web content process and its watchdog until the
+        // budget evicted it. Registry admission follows the card's lifetime.
+        .onDisappear { host.detach() }
         .sheet(isPresented: $enlarged) {
             InteractiveAnswerSheet(title: title, html: html)
         }
@@ -304,5 +310,8 @@ private struct InteractiveAnswerSheet: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message.interactiveAnswer.sheet")
         .task { host.start() }
+        // A sheet closed while its page was still loading releases the host
+        // the same way the card does.
+        .onDisappear { host.detach() }
     }
 }

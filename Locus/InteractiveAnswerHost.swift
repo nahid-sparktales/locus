@@ -224,6 +224,12 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
     private(set) var openPanelRequests = 0
     /// How many navigations were cancelled after the initial load.
     private(set) var cancelledNavigations = 0
+    /// How many downloads WebKit offered and were cancelled unstarted.
+    private(set) var cancelledDownloads = 0
+    /// Runs on the main thread right after each watchdog ping is issued. A
+    /// test seam: a closure that blocks here stalls the app in exactly the
+    /// window where the page's answer cannot be delivered.
+    var watchdogDidSendPing: (() -> Void)?
     /// The appearance the page was last themed for.
     private(set) var appliedAppearance: NSAppearance?
 
@@ -281,10 +287,12 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
         state = .loading
         generation += 1
         let attempt = generation
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let outcome = await self.ruleListStore.resolve()
-            guard self.generation == attempt, self.state == .loading else { return }
+        // The compile is awaited without holding the host: a card that leaves
+        // the transcript during it lets the host deinit, and the registry
+        // never hears of it.
+        Task { @MainActor [weak self, ruleListStore] in
+            let outcome = await ruleListStore.resolve()
+            guard let self, self.generation == attempt, self.state == .loading else { return }
             switch outcome {
             case .failed(let reason):
                 self.state = .unavailable(reason)
@@ -400,7 +408,10 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
         configuration.userContentController.add(ruleList)
         // No message handlers, no user scripts: the page has no channel back
         // into the app, in either world.
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: height), configuration: configuration)
+        let webView = InteractiveAnswerSealedWebView(
+            frame: NSRect(x: 0, y: 0, width: 320, height: height),
+            configuration: configuration
+        )
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.isInspectable = false
@@ -441,23 +452,71 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
         }
     }
 
-    /// True when the page answered within `deadline`. A hung web content
-    /// process never completes the evaluation; the completion is left to
-    /// arrive (or not) and is ignored once its token is stale.
+    /// The most main-thread time one poll turn is credited with. A turn that
+    /// took longer was the app stalling — a relayout, a modal, a synchronous
+    /// export — not the page thinking, and the page must not pay for it.
+    static let watchdogTurnCredit: Duration = .milliseconds(250)
+
+    /// True when the page answered within `deadline` of main-thread time. A
+    /// hung web content process never completes the evaluation; the
+    /// completion is left to arrive (or not) and is ignored once its token
+    /// is stale.
+    ///
+    /// The completion can only be delivered on the main thread, so the
+    /// deadline is measured in time the main thread was actually free: each
+    /// poll turn counts for at most `watchdogTurnCredit`, and once the budget
+    /// is spent the run loop gets one more turn, because a queued answer and
+    /// the poll's own resumption land in unspecified order.
     private func ping(deadline: TimeInterval) async -> Bool {
         guard let webView else { return false }
         let token = UUID()
         pendingPing = token
+        var lastTurn = ContinuousClock.now
         webView.evaluateJavaScript("1", in: nil, in: Self.themeWorld) { [weak self] _ in
             guard let self, self.pendingPing == token else { return }
             self.pendingPing = nil
         }
-        let start = ContinuousClock.now
-        while pendingPing == token, !Task.isCancelled,
-              ContinuousClock.now - start < .seconds(deadline) {
+        watchdogDidSendPing?()
+        var responsive: Duration = .zero
+        while pendingPing == token, !Task.isCancelled, responsive < .seconds(deadline) {
+            try? await Task.sleep(for: .milliseconds(50))
+            let now = ContinuousClock.now
+            responsive += min(now - lastTurn, Self.watchdogTurnCredit)
+            lastTurn = now
+        }
+        if pendingPing == token, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))
         }
         return pendingPing != token
+    }
+}
+
+// MARK: - Sealed web view
+
+/// The web view class every host creates.
+///
+/// WebKit's default context menu offers Open Link, Download Linked File, Copy
+/// Link and friends for any `<a href>` the model wrote, and the download path
+/// runs through the process pool rather than the navigation policy, so a
+/// right-click was the one way sealed content could put a URL of its choosing
+/// on the wire. The menu is emptied before it opens — an empty menu never
+/// appears — and the inspector can never be switched on after construction.
+@MainActor
+final class InteractiveAnswerSealedWebView: WKWebView {
+    /// How many context menus were suppressed; tests read it.
+    private(set) var suppressedContextMenus = 0
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        menu.removeAllItems()
+        suppressedContextMenus += 1
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
+
+    override var isInspectable: Bool {
+        get { false }
+        set { super.isInspectable = false }
     }
 }
 
@@ -466,7 +525,9 @@ final class InteractiveAnswerHost: NSObject, ObservableObject {
 extension InteractiveAnswerHost: WKNavigationDelegate {
     /// Exactly one navigation is ever allowed: the main-frame `about:blank`
     /// load that carries the wrapped document. Links, form posts, `location`
-    /// assignments, downloads and anything a frame tries are cancelled.
+    /// assignments and anything a frame tries are cancelled here; the
+    /// `.download` policy is never returned, and a download WebKit offers by
+    /// another route is cancelled below before it starts.
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -483,6 +544,19 @@ extension InteractiveAnswerHost: WKNavigationDelegate {
         }
         cancelledNavigations += 1
         decisionHandler(.cancel, preferences)
+    }
+
+    /// A download reaches the delegate only by a route the policy does not
+    /// see — a response WebKit cannot show, or a menu item — and is cancelled
+    /// before a destination is ever chosen.
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        cancelledDownloads += 1
+        download.cancel(nil)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        cancelledDownloads += 1
+        download.cancel(nil)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

@@ -36,7 +36,7 @@ extension LocusTheme {
             ("--locus-warning", palette.warning),
         ]
         var declarations = colours.map { name, colour in
-            "\(name):\(cssHex(colour))"
+            "\(name):\(cssHex(colour, fallback: palette.ink))"
         }
         declarations.append("--locus-font:\(cssFontStack)")
         declarations.append("--locus-mono:\(cssMonoStack)")
@@ -45,9 +45,16 @@ extension LocusTheme {
     }
 
     /// `#RRGGBB` in sRGB. A colour that cannot be converted (a pattern colour,
-    /// say) falls back to the appearance's ink so the page stays readable
-    /// rather than inheriting a browser default.
-    static func cssHex(_ colour: NSColor) -> String {
-        "#" + (LocusAccentSelection.hexString(for: colour) ?? "808080")
+    /// say) falls back to `fallback` — the appearance's ink in
+    /// `cssVariables` — so the page stays readable rather than inheriting a
+    /// browser default. Every palette colour converts, so the closing black
+    /// is a guard against a caller passing something exotic as the fallback
+    /// too, never a colour the app draws.
+    static func cssHex(_ colour: NSColor, fallback: NSColor) -> String {
+        let hex = LocusAccentSelection.hexString(for: colour)
+            ?? LocusAccentSelection.hexString(for: fallback)
+            ?? LocusAccentSelection.hexString(for: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+            ?? "000000"
+        return "#" + hex
     }
 }
