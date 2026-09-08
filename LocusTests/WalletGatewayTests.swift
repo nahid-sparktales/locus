@@ -6571,6 +6571,86 @@ final class WalletGatewayTests: XCTestCase {
         _ = try await client.recheck(intentID: "capped-priority", packet: packet)
     }
 
+    func testSolanaPriorityFeeEvidenceNamesTheBoundThatFailed() async throws {
+        let payer = "3Cy3YNTFywCmxoxt8n7UH6hg6dLo5uACowX3CFceaSnx"
+        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
+        let blockhash = WalletSolanaBase58.encode(Data(repeating: 9, count: 32))
+        var recentFees: Any = [] as [Any]
+        let client = makeSolanaRPCClient { request in
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: walletRPCRequestBody(request)
+                ) as? [String: Any]
+            )
+            let method = try XCTUnwrap(object["method"] as? String)
+            let result: Any
+            switch method {
+            case "getGenesisHash":
+                result = WalletNetworkCatalog.solanaDevnet.identity.value
+            case "getLatestBlockhash":
+                result = [
+                    "context": ["slot": 42],
+                    "value": ["blockhash": blockhash, "lastValidBlockHeight": 500],
+                ]
+            case "getFeeForMessage":
+                result = ["context": ["slot": 42], "value": 5_000]
+            case "getRecentPrioritizationFees":
+                result = recentFees
+            case "simulateTransaction":
+                result = [
+                    "context": ["slot": 42],
+                    "value": [
+                        "err": NSNull(), "innerInstructions": [], "logs": [],
+                        "unitsConsumed": 750,
+                    ],
+                ]
+            case "getBlockHeight":
+                result = 450
+            default:
+                throw URLError(.unsupportedURL)
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "id": object["id"]!, "result": result,
+            ])
+        }
+        let request = WalletPrepareRequest(
+            networkID: WalletNetworkCatalog.solanaDevnet.id,
+            accountID: "locus-vault-solana-0", source: .human,
+            action: .nativeTransfer(recipient: recipient, amountBaseUnits: "1"),
+            maximumFeeBaseUnits: "6000"
+        )
+        func rows(_ count: Int) -> [[String: Any]] {
+            (0..<count).map { ["slot": 1_000 + $0, "prioritizationFee": 0] }
+        }
+
+        // 150 blocks is the documented depth of a node's fee cache, and the
+        // pinned local validator fills exactly that many, so the ceiling is
+        // inclusive.
+        recentFees = rows(150)
+        let packet = try await client.prepare(request: request, feePayer: payer)
+        XCTAssertEqual(packet.computeUnitPriceMicroLamports, "0")
+        XCTAssertEqual(packet.feeQuoteBaseUnits, "5000")
+
+        // Each bound fails closed under its own name. An idle validator that
+        // has confirmed no non-vote transaction answers with an empty list,
+        // which must never read as "excessive".
+        let outsideBounds: [(payload: Any, expected: String)] = [
+            ([] as [Any], "returned no recent fee evidence"),
+            (rows(151), "returned excessive data"),
+            (["slot": 1_000, "prioritizationFee": 0] as [String: Any],
+             "did not return an array"),
+        ]
+        for (payload, expected) in outsideBounds {
+            recentFees = payload
+            do {
+                _ = try await client.prepare(request: request, feePayer: payer)
+                XCTFail("Fee evidence outside the reviewed bounds must fail closed.")
+            } catch WalletRPCError.invalidResponse(let message) {
+                XCTAssertTrue(message.contains(expected), message)
+            }
+        }
+    }
+
     func testSolanaProviderRejectsMaliciousGenesisBeforePreparation() async throws {
         let client = makeSolanaRPCClient { request in
             let object = try XCTUnwrap(

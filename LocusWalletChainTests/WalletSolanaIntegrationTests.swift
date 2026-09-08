@@ -161,6 +161,17 @@ final class WalletSolanaIntegrationTests: XCTestCase {
         try await waitForBalance(
             minimum: 5_000_000_000, address: Self.signer, client: client
         )
+        // Agave's prioritization-fee cache lists only optimistically confirmed
+        // slots that carried a non-vote transaction, and its bank tracker
+        // publishes the confirmed bank before queueing that slot to the
+        // cache's service thread. So a confirmed airdrop balance does not yet
+        // imply fee evidence, and an idle validator answers with an empty
+        // list no matter how many slots it has produced. Wait for the
+        // airdrop's own row so the client's reviewed non-empty bound is met
+        // deterministically instead of by winning a thread race.
+        try await waitForPrioritizationFeeEvidence(
+            writableAccounts: [Self.signer, Self.recipient], endpoint: endpoint
+        )
         let recipientBefore = try await client.balance(address: Self.recipient)
 
         let request = WalletPrepareRequest(
@@ -478,6 +489,30 @@ final class WalletSolanaIntegrationTests: XCTestCase {
             domain: "WalletSolanaIntegrationTests", code: 2,
             userInfo: [NSLocalizedDescriptionKey:
                 "The local validator airdrop did not finalize."]
+        )
+    }
+
+    private func waitForPrioritizationFeeEvidence(
+        writableAccounts: [String],
+        endpoint: String
+    ) async throws {
+        for _ in 0..<100 {
+            let raw = try await solanaRPC(
+                endpoint: endpoint, method: "getRecentPrioritizationFees",
+                params: [writableAccounts]
+            )
+            if let rows = raw as? [Any], !rows.isEmpty {
+                // The validator keeps at most 150 blocks of fee history; the
+                // client's ceiling mirrors that documented depth exactly.
+                XCTAssertLessThanOrEqual(rows.count, 150)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw NSError(
+            domain: "WalletSolanaIntegrationTests", code: 3,
+            userInfo: [NSLocalizedDescriptionKey:
+                "The local validator published no prioritization-fee evidence."]
         )
     }
 
