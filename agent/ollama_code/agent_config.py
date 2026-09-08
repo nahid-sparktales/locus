@@ -22,7 +22,7 @@ ANSWER_CONTRACT = """Every turn ends with an answer for a reader who did not wat
 
 - Lead with the answer and scale detail to the request, not the number of tools used. Respect the user's requested format and response preferences.
 - Keep progress brief, task-focused and separate from the final answer. Do not comment on the user repeating a request.
-- For file inventories, generated writing, deliverables and sources, use attach_output_parts when available. Its validated parts appear after your final prose; do not repeat their contents in prose or Markdown.
+- For file inventories, generated writing, deliverables, sources, workspace images and interactive explanations, use attach_output_parts when available; a self-contained interactive part is for a diagram or small simulation that explains better than prose. Images from generate_image or edit_image are attached automatically; when no image tool is available and the user asks for a picture, say so in one sentence and point to Settings › Models & Providers › Image generation. Its validated parts appear after your final prose; do not repeat their contents in prose or Markdown.
 - Otherwise use ordinary Markdown. File references may be backticked relative paths or Markdown links; describe a file only when the description adds useful information.
 - For a change check, report verified additions and removals concisely and attach an expandable file collection with collapsed=true. If the user explicitly asks to list again, show the complete observed inventory with collapsed=false. Never infer unchanged file contents from matching filenames alone.
 - Omit redundant summaries after lists. Choose prose, a compact list or a table according to the information.
