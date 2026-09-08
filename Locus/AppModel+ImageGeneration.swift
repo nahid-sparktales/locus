@@ -49,37 +49,92 @@ extension AppModel {
         return body
     }
 
-    /// Pushes the image provider to the local agent, and to the current
-    /// session's worker when one is live. Like the chat provider, the key
-    /// travels in memory only and is re-sent after every agent restart.
+    /// Pushes the image provider to the local agent and to every live chat
+    /// worker, the way `applyProvider` fans the chat route out: a rotated or
+    /// removed key must reach each process that holds a copy. Like the chat
+    /// provider, the key travels in memory only and is re-sent after every
+    /// agent restart. A process that refused because a turn was running is
+    /// pushed again when that turn ends.
     @discardableResult
     func applyImageProvider(announce: Bool = false) async -> Bool {
         // An agent that has switched the capability off has no route to push
         // to; the Settings section already explains why the controls are off.
         guard backendCapabilities["image_generation_v1"] != false else { return true }
         let body = imageProviderRequestBody()
+        var applied = true
+        var state: ImageProviderStateResponse?
         do {
-            let state = try await imageGeneration.apply(body: body)
-            if let worker = taskWorkers[currentSessionID] {
-                _ = try? await worker.service.post(
-                    "/api/images/provider",
-                    body: body,
-                    as: ImageProviderStateResponse.self
-                )
-            }
-            guard announce else { return true }
-            showToast(
-                state.configured
-                    ? "Image generation uses \(state.model) on \(selectedImageAccount?.displayName ?? shortHost(state.host))"
-                    : "Image generation is off"
-            )
-            return true
+            state = try await imageGeneration.apply(body: body)
         } catch {
+            applied = false
+            if ImageGenerationModel.isBusyRefusal(error) || isBusy {
+                imageGeneration.deferPushUntilIdle()
+            }
             if announce {
                 showToast("Could not update image generation: \(error.localizedDescription)")
             }
-            return false
         }
+        for worker in Array(taskWorkers.values) {
+            if await pushImageProvider(to: worker.service, body: body, announceFailure: announce) == .busy {
+                imageGeneration.deferPushUntilIdle()
+            }
+        }
+        guard announce, let state else { return applied }
+        showToast(
+            state.configured
+                ? "Image generation uses \(state.model) on \(selectedImageAccount?.displayName ?? shortHost(state.host))"
+                : "Image generation is off"
+        )
+        return applied
+    }
+
+    /// How one agent process answered an image provider push.
+    enum ImageProviderPushOutcome: Equatable {
+        case applied
+        /// Refused because a turn was running (HTTP 409); worth retrying once
+        /// the turn ends.
+        case busy
+        case failed
+        /// The agent reports the capability off, so there is nothing to push.
+        case skipped
+    }
+
+    /// Hands the image provider to one chat worker — a freshly spawned one
+    /// before it resumes its conversation, or every live one after a change.
+    /// Internal for regression tests. A failure never costs the worker: the
+    /// image tools are simply absent in it, which is announced once so a
+    /// "no provider configured" answer is not a mystery.
+    @discardableResult
+    func pushImageProvider(
+        to service: BackendService,
+        body: [String: Any]? = nil,
+        announceFailure: Bool = true
+    ) async -> ImageProviderPushOutcome {
+        guard backendCapabilities["image_generation_v1"] != false else { return .skipped }
+        let body = body ?? imageProviderRequestBody()
+        do {
+            _ = try await imageGeneration.push(body: body, to: service)
+            return .applied
+        } catch {
+            let busy = ImageGenerationModel.isBusyRefusal(error)
+            // A worker told "off" that stays off has lost nothing worth a toast.
+            if announceFailure, body["enabled"] as? Bool == true {
+                showToast(
+                    busy
+                        ? "Image generation will update in this chat after the current turn"
+                        : "Image generation is unavailable in this chat: \(error.localizedDescription)"
+                )
+            }
+            return busy ? .busy : .failed
+        }
+    }
+
+    /// A push the agent refused mid-turn, re-sent once it is idle. Called from
+    /// the turn-done and slash-result handlers beside the pending chat
+    /// provider switch.
+    func applyPendingImageProviderIfNeeded() {
+        guard imageGeneration.takeDeferredPush() else { return }
+        Task { await applyImageProvider(announce: false) }
     }
 
     /// "Edit in chat" on a generated image: attaches the file to the composer

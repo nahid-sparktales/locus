@@ -48,6 +48,9 @@ final class ImageGenerationModel: ObservableObject {
     /// Why the most recent push or refresh failed, cleared by the next success.
     @Published private(set) var lastError: String?
     @Published private(set) var isApplying = false
+    /// Set when an agent refused a push because a turn was running; AppModel
+    /// re-pushes once that turn ends, so Settings and the agent converge.
+    private(set) var pushDeferredUntilIdle = false
 
     private var backend: BackendService?
 
@@ -65,17 +68,44 @@ final class ImageGenerationModel: ObservableObject {
         isApplying = true
         defer { isApplying = false }
         do {
-            let state = try await backend.post(
-                "/api/images/provider",
-                body: body,
-                as: ImageProviderStateResponse.self
-            )
+            let state = try await push(body: body, to: backend)
             record(state)
             return state
         } catch {
             recordFailure(error.localizedDescription)
             throw error
         }
+    }
+
+    /// The one request every agent process receives — the main agent through
+    /// `apply`, each chat worker directly. Records nothing: a worker's answer
+    /// is not the state Settings shows.
+    func push(
+        body: [String: Any],
+        to service: BackendService
+    ) async throws -> ImageProviderStateResponse {
+        try await service.post(
+            "/api/images/provider",
+            body: body,
+            as: ImageProviderStateResponse.self
+        )
+    }
+
+    /// Whether a push failure means "try again when the turn is over": the
+    /// agent answers 409 from `state_mutation` while a turn runs.
+    static func isBusyRefusal(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "Locus.Backend" && nsError.code == 409
+    }
+
+    func deferPushUntilIdle() {
+        pushDeferredUntilIdle = true
+    }
+
+    /// Clears and reports the deferred push, so it is retried exactly once.
+    func takeDeferredPush() -> Bool {
+        defer { pushDeferredUntilIdle = false }
+        return pushDeferredUntilIdle
     }
 
     /// Reads the agent's current state without changing it, so the Settings

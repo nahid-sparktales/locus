@@ -52,6 +52,18 @@ final class ImageGenerationSettingsTests: XCTestCase {
         return model.providerAccounts.first { $0.id == account.id } ?? account
     }
 
+    /// Places an account and its key without the save path, whose background
+    /// catalog refresh re-pushes the image provider on its own schedule and
+    /// would blur a test that counts pushes.
+    private func insertAccount(
+        _ model: AppModel, kind: ProviderKind, name: String, key: String = "sk-test"
+    ) -> ProviderAccount {
+        let account = ProviderAccount(kind: kind, name: name)
+        model.providerAccounts.append(account)
+        model.credentialStore.set(key, account: account.credentialAccount)
+        return account
+    }
+
     private func pointWorkspace(_ model: AppModel, at root: URL) {
         model.sessionInfo = SessionInfo(
             model: "m", host: "h", cwd: root.path, session: "s", sessionID: "s",
@@ -101,6 +113,42 @@ final class ImageGenerationSettingsTests: XCTestCase {
 
     private static var imagePushes: [URLRequest] {
         BackendStub.requests.filter { $0.url?.path == "/api/images/provider" }
+    }
+
+    private static func imagePushes(host: String) -> [URLRequest] {
+        imagePushes.filter { $0.url?.host == host }
+    }
+
+    /// A transport answered by BackendStub under its own host name, so a
+    /// worker's traffic can be told from the main agent's.
+    private func stubbedService(host: String) -> BackendService {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendStub.self]
+        return BackendService(
+            baseURL: URL(string: "http://\(host)")!,
+            authToken: "test-token",
+            session: URLSession(configuration: configuration)
+        )
+    }
+
+    /// A live chat worker whose service is the stub, keyed like the app keys
+    /// the ones it spawns.
+    @discardableResult
+    private func addWorker(_ model: AppModel, sessionID: String, host: String) -> ChatWorkerRuntime {
+        let runtime = ChatWorkerRuntime(
+            requestedSessionID: sessionID, workspacePath: "/tmp", process: BackendProcess(),
+            endpoint: URL(string: "http://\(host)")!, service: stubbedService(host: host)
+        )
+        model.taskWorkers[sessionID] = runtime
+        return runtime
+    }
+
+    private static func configuredState(_ url: URL) -> [String: Any] {
+        [
+            "configured": true, "host": "https://api.openai.com/v1",
+            "model": "gpt-image-1", "size": "auto", "quality": "auto",
+            "account_id": "a", "account_label": "OpenAI API", "has_api_key": true,
+        ]
     }
 
     private func waitUntil(
@@ -355,6 +403,189 @@ final class ImageGenerationSettingsTests: XCTestCase {
         await waitUntil({ model.imageGeneration.state?.configured == true }, "state recorded")
     }
 
+    // MARK: - Chat workers
+
+    func testNewChatWorkerReceivesTheImageProviderWithItsKey() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", with: Self.configuredState)
+        let account = insertAccount(model, kind: .codex, name: "Work", key: "sk-worker")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        let outcome = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
+
+        XCTAssertEqual(outcome, .applied)
+        let pushes = Self.imagePushes(host: "chat-worker.test")
+        XCTAssertEqual(pushes.count, 1, "one push per spawned worker")
+        XCTAssertEqual(pushes.first?.httpMethod, "POST")
+        let body = pushes.first.flatMap(Self.body(of:))
+        XCTAssertEqual(body?["enabled"] as? Bool, true)
+        XCTAssertEqual(body?["api_key"] as? String, "sk-worker")
+        XCTAssertNil(model.toastMessage)
+        XCTAssertNil(model.imageGeneration.state, "a worker's answer is not the state Settings shows")
+    }
+
+    func testNewChatWorkerIsToldOffWhenNoAccountIsChosen() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider") { _ in ["configured": false] }
+
+        let outcome = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
+
+        XCTAssertEqual(outcome, .applied)
+        XCTAssertEqual(
+            Self.imagePushes(host: "chat-worker.test").first.flatMap(Self.body(of:)).map { $0 as NSDictionary },
+            ["enabled": false]
+        )
+    }
+
+    func testWorkerPushIsSkippedWhenTheCapabilityIsOff() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        model.backendCapabilities["image_generation_v1"] = false
+        let outcome = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
+        XCTAssertEqual(outcome, .skipped)
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testWorkerPushFailureCostsTheToolsNotTheWorkerAndIsAnnouncedOnce() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", status: 500) { _ in
+            ["detail": "images service exploded"]
+        }
+        let account = seedAccount(model, kind: .codex, name: "Work")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        let outcome = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(
+            model.toastMessage,
+            "Image generation is unavailable in this chat: images service exploded"
+        )
+        XCTAssertNil(model.imageGeneration.lastError, "the main agent's status is untouched")
+
+        // A worker that could not be told "off" has nothing to announce.
+        model.toast = nil
+        model.settings.imageGenerationAccountID = nil
+        let off = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
+        XCTAssertEqual(off, .failed)
+        XCTAssertNil(model.toastMessage)
+    }
+
+    func testApplyImageProviderReachesEveryLiveWorkerNotJustTheCurrentOne() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider") { _ in ["configured": false] }
+        model.currentSessionID = "current"
+        addWorker(model, sessionID: "current", host: "worker-current.test")
+        addWorker(model, sessionID: "background", host: "worker-background.test")
+        let account = seedAccount(model, kind: .codex, name: "Work")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        model.removeProviderAccount(account)
+
+        for host in ["127.0.0.1", "worker-current.test", "worker-background.test"] {
+            await waitUntil({ !Self.imagePushes(host: host).isEmpty }, "\(host) is told")
+            XCTAssertEqual(
+                Self.imagePushes(host: host).last.flatMap(Self.body(of:)).map { $0 as NSDictionary },
+                ["enabled": false],
+                "\(host) must drop the removed account's key"
+            )
+        }
+    }
+
+    func testRotatedKeyReachesEveryLiveWorker() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", with: Self.configuredState)
+        addWorker(model, sessionID: "a", host: "worker-a.test")
+        addWorker(model, sessionID: "b", host: "worker-b.test")
+        let account = insertAccount(model, kind: .codex, name: "Work", key: "sk-new")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        let ok = await model.applyImageProvider(announce: false)
+
+        XCTAssertTrue(ok)
+        for host in ["127.0.0.1", "worker-a.test", "worker-b.test"] {
+            let pushes = Self.imagePushes(host: host)
+            XCTAssertEqual(pushes.count, 1, host)
+            XCTAssertEqual(pushes.first.flatMap(Self.body(of:))?["api_key"] as? String, "sk-new", host)
+        }
+    }
+
+    func testPushRefusedWhileBusyIsRetriedOnceWhenTheTurnEnds() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", status: 409) { _ in
+            ["detail": "the agent is busy"]
+        }
+        let account = insertAccount(model, kind: .codex, name: "Work")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        let ok = await model.applyImageProvider(announce: true)
+
+        XCTAssertFalse(ok)
+        XCTAssertEqual(Self.imagePushes.count, 1)
+        XCTAssertTrue(model.imageGeneration.pushDeferredUntilIdle)
+        XCTAssertEqual(model.toastMessage, "Could not update image generation: the agent is busy")
+
+        BackendStub.reset()
+        BackendStub.respond(toPath: "/api/images/provider", with: Self.configuredState)
+        model.handleEventForTesting(["type": "turn_done"])
+
+        await waitUntil({ !Self.imagePushes.isEmpty }, "the turn ending re-pushes")
+        XCTAssertFalse(model.imageGeneration.pushDeferredUntilIdle)
+        XCTAssertEqual(Self.imagePushes.first.flatMap(Self.body(of:))?["enabled"] as? Bool, true)
+        await waitUntil({ model.imageGeneration.state?.configured == true }, "the retry records state")
+        XCTAssertNil(model.imageGeneration.lastError)
+
+        model.handleEventForTesting(["type": "turn_done"])
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(Self.imagePushes.count, 1, "a retry happens exactly once")
+    }
+
+    func testABusyWorkerIsRetriedWhenTheTurnEndsEvenIfTheMainAgentAccepted() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", with: Self.configuredState)
+        addWorker(model, sessionID: "busy", host: "worker-busy.test")
+        let account = seedAccount(model, kind: .codex, name: "Work")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+        // The main agent answers 200 and the worker 409: BackendStub matches
+        // the first route, so the worker refusal is expressed by a busy
+        // refusal from the model's own classifier on a synthetic error.
+        let refusal = NSError(domain: "Locus.Backend", code: 409, userInfo: [NSLocalizedDescriptionKey: "busy"])
+        XCTAssertTrue(ImageGenerationModel.isBusyRefusal(refusal))
+        XCTAssertFalse(ImageGenerationModel.isBusyRefusal(NSError(domain: "Locus.Backend", code: 422)))
+        XCTAssertFalse(ImageGenerationModel.isBusyRefusal(NSError(domain: "Other", code: 409)))
+
+        model.imageGeneration.deferPushUntilIdle()
+        model.handleEventForTesting(["type": "slash_result", "command": "help"])
+
+        await waitUntil({ !Self.imagePushes(host: "worker-busy.test").isEmpty }, "the worker is re-pushed")
+        XCTAssertFalse(model.imageGeneration.pushDeferredUntilIdle)
+    }
+
+    func testNonBusyFailuresAreNotRetried() async {
+        let model = makeModel()
+        defer { model.eventAutomations.stop() }
+        BackendStub.respond(toPath: "/api/images/provider", status: 422) { _ in
+            ["detail": "base_url must use https"]
+        }
+        let account = insertAccount(model, kind: .codex, name: "Work")
+        model.settings.imageGenerationAccountID = account.id.uuidString
+
+        let ok = await model.applyImageProvider(announce: false)
+
+        XCTAssertFalse(ok)
+        XCTAssertFalse(model.imageGeneration.pushDeferredUntilIdle, "a rejected body would fail again")
+        model.handleEventForTesting(["type": "turn_done"])
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(Self.imagePushes.count, 1)
+    }
+
     func testPushIsSkippedWhenTheAgentReportsTheCapabilityOff() async {
         let model = makeModel()
         defer { model.eventAutomations.stop() }
@@ -513,7 +744,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         let attachment = ChatAttachment(
             url: image, kind: .image, imageData: try Self.pngData(), mimeType: "image/png"
         )
-        let guidance = "pass the backticked `Locus Images/…` path from the request as the source of edit_image"
+        let guidance = "pass the backticked workspace image path from the request as the source of edit_image"
         let named = "Edit `Locus Images/sunset.png`: make it dusk"
 
         let work = AppModel.decoratedPrompt(
@@ -522,6 +753,29 @@ final class ImageGenerationSettingsTests: XCTestCase {
         )
         XCTAssertTrue(work.contains(guidance))
         XCTAssertTrue(work.contains("attachment:<name>"))
+
+        // Edits land beside their source and `filename` can target any
+        // folder, so any workspace-relative image path earns the guidance.
+        for elsewhere in [
+            "Edit `assets/logo-2.png`: sharpen it",
+            "Edit `docs/Photo.JPG`: crop it",
+            "Edit `hero.webp`: brighten it",
+            "Edit `sprites/run.gif`: loop it",
+        ] {
+            let prompt = AppModel.decoratedPrompt(
+                elsewhere, mode: .work, chatAttachments: [attachment], contextFiles: [],
+                restoredTranscriptContext: nil
+            )
+            XCTAssertTrue(prompt.contains(guidance), elsewhere)
+        }
+        for notAWorkspaceImage in [
+            "Edit `/Users/me/Desktop/photo.png`: crop it",
+            "Edit `~/Pictures/photo.png`: crop it",
+            "Edit `notes.md`: fix the typo",
+            "Edit Locus Images/sunset.png without backticks",
+        ] {
+            XCTAssertFalse(AppModel.namesWorkspaceImagePath(notAWorkspaceImage), notAWorkspaceImage)
+        }
 
         let noImage = AppModel.decoratedPrompt(
             named, mode: .work, chatAttachments: [], contextFiles: [],
@@ -540,6 +794,31 @@ final class ImageGenerationSettingsTests: XCTestCase {
             restoredTranscriptContext: nil
         )
         XCTAssertFalse(ask.contains(guidance), "Just Chat has no edit_image tool")
+    }
+
+    // MARK: - Settings section
+
+    func testCustomModelCommitsOnlyATrimmedChangedNonEmptyName() {
+        var draft = AppSettings()
+        draft.imageGenerationModel = "gpt-image-1"
+        // Keystrokes never reach the draft; only the committed value does.
+        XCTAssertTrue(ImageGenerationSettingsView.commitCustomModel("  my-model \n", into: &draft))
+        XCTAssertEqual(draft.imageGenerationModel, "my-model")
+        XCTAssertFalse(
+            ImageGenerationSettingsView.commitCustomModel("my-model", into: &draft),
+            "committing the same value again must not change the draft, so nothing is pushed"
+        )
+        XCTAssertFalse(ImageGenerationSettingsView.commitCustomModel("   ", into: &draft))
+        XCTAssertEqual(draft.imageGenerationModel, "my-model", "a blank name keeps the last committed one")
+    }
+
+    func testInteractiveToggleFollowsItsOwnCapabilityNotTheImageOne() {
+        XCTAssertTrue(ImageGenerationSettingsView.imageControlsDisabled(capabilities: ["image_generation_v1": false]))
+        XCTAssertFalse(ImageGenerationSettingsView.interactiveToggleDisabled(capabilities: ["image_generation_v1": false]))
+        XCTAssertTrue(ImageGenerationSettingsView.interactiveToggleDisabled(capabilities: ["interactive_answers_v1": false]))
+        XCTAssertFalse(ImageGenerationSettingsView.imageControlsDisabled(capabilities: ["interactive_answers_v1": false]))
+        XCTAssertFalse(ImageGenerationSettingsView.imageControlsDisabled(capabilities: [:]), "an older agent has both on")
+        XCTAssertFalse(ImageGenerationSettingsView.interactiveToggleDisabled(capabilities: [:]))
     }
 
     // MARK: - Model lists

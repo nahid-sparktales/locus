@@ -118,17 +118,20 @@ final class ChatWorkerRuntime {
         processRunning && connected && !attaching && !preparingConfiguration
     }
 
+    /// `service` lets a test stand a stubbed transport behind a worker; the
+    /// app always derives it from the endpoint.
     init(
         requestedSessionID: String,
         workspacePath: String,
         process: BackendProcess,
-        endpoint: URL
+        endpoint: URL,
+        service: BackendService? = nil
     ) {
         self.requestedSessionID = requestedSessionID
         self.workspacePath = SessionSummary.canonicalWorkspacePath(workspacePath)
         sessionID = requestedSessionID
         self.process = process
-        service = BackendService(baseURL: endpoint)
+        self.service = service ?? BackendService(baseURL: endpoint)
     }
 
     func stop() {
