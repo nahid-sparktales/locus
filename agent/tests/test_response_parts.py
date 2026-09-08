@@ -420,3 +420,207 @@ def test_output_parts_cannot_be_inherited_or_guessed_by_solo_helpers(tmp_path):
     core.helper_allowed_tools = {'read_file'}
     assert core._run_tool_call(call, None).startswith('Error:')
     assert core.tool_ctx.response_parts == {}
+
+
+# --------------------------------------------------------------- image parts
+
+
+def _image_part(**extra):
+    return {'id': 'picture', 'type': 'image', 'path': 'Locus Images/chart.png', **extra}
+
+
+def test_image_part_derives_dimensions_format_and_size_and_ignores_model_values(tmp_path):
+    from test_image_files import png_bytes, webp_lossless_bytes
+    folder = tmp_path / 'Locus Images'
+    folder.mkdir()
+    (folder / 'chart.png').write_bytes(png_bytes(40, 30))
+    (folder / 'source.webp').write_bytes(webp_lossless_bytes(8, 8))
+    raw = _image_part(width=9999, height=1, format='gif', size=5, title='Sales chart', prompt='a chart',
+                      source_path='Locus Images/source.webp', workspace=str(tmp_path))
+    part = normalize_parts([raw], str(tmp_path))[0]
+    assert (part['width'], part['height'], part['format']) == (40, 30, 'png')
+    assert part['size'] == (folder / 'chart.png').stat().st_size
+    assert part['path'] == 'Locus Images/chart.png' and part['workspace'] == str(tmp_path.resolve())
+    assert part['alt'] == 'Sales chart' and part['prompt'] == 'a chart'
+    assert part['source_path'] == 'Locus Images/source.webp'
+    fallback = markdown_fallback(response_document('', [part]))
+    assert fallback.startswith('![Sales chart](' + str(tmp_path.resolve()).replace(' ', '%20') + '/Locus%20Images/chart.png)')
+    assert 'Sales chart — edited from Locus Images/source.webp' in fallback
+    bare = normalize_parts([_image_part()], str(tmp_path))[0]
+    assert bare['alt'] == 'chart.png' and 'prompt' not in bare and 'source_path' not in bare
+    assert 'Image saved to Locus Images/chart.png' in markdown_fallback(response_document('', [bare]))
+
+
+def test_image_part_rejects_missing_non_image_escaping_oversize_and_foreign_workspace(tmp_path):
+    import os
+
+    from test_image_files import png_bytes
+    folder = tmp_path / 'Locus Images'
+    folder.mkdir()
+    (folder / 'chart.png').write_bytes(png_bytes())
+    (folder / 'notes.png').write_text('not really a picture')
+    (folder / 'report.txt').write_text('text')
+    (tmp_path / 'escape').symlink_to(tmp_path.parent)
+    other = tmp_path.parent / 'elsewhere'
+    other.mkdir(exist_ok=True)
+    (other / 'chart.png').write_bytes(png_bytes())
+    for raw, reason in [
+        (_image_part(path='Locus Images/absent.png'), 'existing file'),
+        (_image_part(path='Locus Images'), 'existing file'),
+        (_image_part(path='Locus Images/notes.png'), 'not a readable'),
+        (_image_part(path='Locus Images/report.txt'), 'PNG, JPEG, GIF or WebP file'),
+        (_image_part(path='../elsewhere/chart.png'), 'inside the current workspace'),
+        (_image_part(path='escape/elsewhere/chart.png'), 'inside the current workspace'),
+        (_image_part(workspace=str(other)), 'does not match'),
+        (_image_part(alt='a' * 401), 'at most 400'),
+        (_image_part(prompt='p' * 4001), 'at most 4000'),
+        (_image_part(source_path='Locus Images/absent.png'), 'source_path must exist'),
+        (_image_part(source_path='../elsewhere/chart.png'), 'inside the current workspace'),
+    ]:
+        with pytest.raises(ResponsePartsError, match=reason):
+            normalize_parts([raw], str(tmp_path))
+    with pytest.raises(ResponsePartsError, match='unavailable in this mode'):
+        normalize_parts([_image_part()], str(tmp_path), allow_workspace=False)
+    big = folder / 'huge.png'
+    big.write_bytes(png_bytes())
+    os.truncate(big, 50_000_001)
+    with pytest.raises(ResponsePartsError, match='50 MB'):
+        normalize_parts([_image_part(path='Locus Images/huge.png')], str(tmp_path))
+
+
+def test_disabled_image_capability_rejects_image_parts_only(tmp_path, monkeypatch):
+    from test_image_files import png_bytes
+
+    from ollama_code.capabilities import CAPABILITY_ENV
+    (tmp_path / 'Locus Images').mkdir()
+    (tmp_path / 'Locus Images' / 'chart.png').write_bytes(png_bytes())
+    monkeypatch.setenv(CAPABILITY_ENV['image_generation_v1'], 'off')
+    with pytest.raises(ResponsePartsError, match='disabled'):
+        normalize_parts([_image_part()], str(tmp_path))
+    assert normalize_parts([{'id': 'a', 'type': 'artifact', 'path': 'Locus Images/chart.png'}], str(tmp_path))
+    assert normalize_parts([_interactive_part()], str(tmp_path))[0]['height'] == 360
+
+
+# --------------------------------------------------------- interactive parts
+
+
+def _interactive_part(**extra):
+    part = {'id': 'widget', 'type': 'interactive', 'summary': 'A slider steps a binary search.',
+            'html': '<label>Step <input type="range" min="0" max="6"></label><script>void 0;</script>'}
+    part.update(extra)
+    return part
+
+
+def test_interactive_part_defaults_title_and_height_and_falls_back_to_summary(tmp_path):
+    part = normalize_parts([_interactive_part()], str(tmp_path))[0]
+    assert part['title'] == 'Interactive explanation' and part['height'] == 360
+    assert part['summary'] == 'A slider steps a binary search.'
+    fallback = markdown_fallback(response_document('Here it is.', [part]))
+    assert fallback == ('Here it is.\n\n### Interactive explanation\n\nA slider steps a binary search.'
+                        '\n\nInteractive version available in Locus for Mac.')
+    assert '<input' not in fallback
+    custom = normalize_parts([_interactive_part(title='Binary search', height=500.0)], str(tmp_path))[0]
+    assert custom['title'] == 'Binary search' and custom['height'] == 500
+
+
+def test_interactive_part_requires_summary_and_html_and_bounds_bytes_and_height(tmp_path):
+    for raw, reason in [
+        (_interactive_part(summary=''), 'summary'),
+        (_interactive_part(summary='   '), 'summary'),
+        (_interactive_part(summary='s' * 4001), 'at most 4000'),
+        (_interactive_part(html=''), 'html body fragment'),
+        (_interactive_part(html=None), 'html body fragment'),
+        (_interactive_part(html='<p>' + 'x' * 262_144), '256 KB'),
+        (_interactive_part(height=159), 'between 160 and 720'),
+        (_interactive_part(height=721), 'between 160 and 720'),
+        (_interactive_part(height=True), 'between 160 and 720'),
+        (_interactive_part(height='360'), 'between 160 and 720'),
+        (_interactive_part(height=300.5), 'between 160 and 720'),
+        (_interactive_part(title=''), 'title'),
+        (_interactive_part(title='t' * 201), 'title'),
+    ]:
+        with pytest.raises(ResponsePartsError, match=reason):
+            normalize_parts([raw], str(tmp_path))
+
+
+@pytest.mark.parametrize('html', [
+    '<!DOCTYPE html><p>hi</p>',
+    '<html><body>hi</body></html>',
+    '<HEAD><title>x</title></HEAD>',
+    '<body class="x">hi</body>',
+    '<base href="https://example.com/">',
+    '<link rel="stylesheet" href="https://example.com/a.css">',
+    '<iframe src="https://example.com"></iframe>',
+    '<frame/>',
+    '<object data="x"></object>',
+    '<embed src="x">',
+    '<applet code="x"></applet>',
+    '<meta http-equiv="refresh" content="0;url=https://example.com">',
+    '<Link\nhref="x">',
+])
+def test_interactive_part_rejects_document_base_link_and_frame_tags(tmp_path, html):
+    with pytest.raises(ResponsePartsError, match='body fragment'):
+        normalize_parts([_interactive_part(html=html)], str(tmp_path))
+
+
+def test_interactive_part_accepts_inline_svg_metadata_and_ordinary_fragments(tmp_path):
+    html = ('<svg viewBox="0 0 10 10"><metadata>made in Locus</metadata><circle r="4"/></svg>'
+            '<style>circle{fill:var(--locus-accent)}</style><p>The <b>headline</b> and a linkless body.</p>'
+            '<button type="button" aria-label="Next">Next</button><script>document.body.dataset.ready = "1";</script>')
+    part = normalize_parts([_interactive_part(html=html)], str(tmp_path))[0]
+    assert part['html'] == html
+
+
+def test_oversize_interactive_html_is_rejected_atomically_leaving_prior_staging(tmp_path):
+    ctx = ToolContext(cwd=str(tmp_path))
+    assert not execute_tool('attach_output_parts', {'parts': [_interactive_part()]}, ctx).startswith('Error:')
+    huge = _interactive_part(id='second', html='<p>' + 'y' * 262_200)
+    result = execute_tool('attach_output_parts', {'parts': [_interactive_part(id='third'), huge]}, ctx)
+    assert result.startswith('Error:') and '256 KB' in result
+    assert list(ctx.response_parts) == ['widget']
+
+
+def test_disabled_interactive_capability_rejects_interactive_parts_only(tmp_path, monkeypatch):
+    from ollama_code.capabilities import CAPABILITY_ENV
+    monkeypatch.setenv(CAPABILITY_ENV['interactive_answers_v1'], 'false')
+    with pytest.raises(ResponsePartsError, match='disabled'):
+        normalize_parts([_interactive_part()], str(tmp_path))
+    assert normalize_parts([{'id': 'm', 'type': 'markdown', 'text': 'fine'}], str(tmp_path))
+
+
+def test_image_and_interactive_parts_survive_history_checkpoint_export_and_reconnect(tmp_path):
+    from test_image_files import png_bytes
+
+    from ollama_code.runstore import RunStore
+    (tmp_path / 'Locus Images').mkdir()
+    (tmp_path / 'Locus Images' / 'chart.png').write_bytes(png_bytes(64, 48))
+    core = _core(tmp_path, [
+        ChatResponse(content_parts=['Staging.'], tool_calls=[ToolCall('attach_output_parts', {
+            'parts': [_image_part(title='Chart'), _interactive_part(title='Widget')]
+        })], done=True),
+        ChatResponse(content_parts=['Both are attached.'], done=True),
+    ])
+    events = []
+    core.on_event(events.append)
+    core.run_turn('Show the chart')
+    final = core.messages[-1]
+    kinds = [part['type'] for part in final['_response_parts']['parts']]
+    assert kinds == ['markdown', 'image', 'interactive']
+    image, widget = final['_response_parts']['parts'][1:]
+    assert (image['width'], image['height'], image['format']) == (64, 48, 'png')
+    assert widget['html'].startswith('<label>')
+    assert '![Chart](' in final['content'] and '### Widget' in final['content']
+    end = [e for e in events if e['type'] == 'message_end'][-1]
+    assert end['response_parts'] == final['_response_parts']
+    history = core.sanitize_messages(core.messages)
+    assert history[-1]['response_parts'] == final['_response_parts']
+    saved = SessionStore.load(core.session.path)
+    assert saved[-1]['_response_parts'] == final['_response_parts']
+    exported = SessionStore.export_messages(core.session.path)
+    assert exported[-1]['response_parts'] == final['_response_parts']
+    assert all('_response_parts' not in m for m in core._request_messages())
+    assert all('<label>' not in str(m.get('content')) for m in core._request_messages())
+    store = RunStore(tmp_path / 'runs.sqlite3')
+    live = store.append_event('run', end)
+    replay = store.events('run')[0]
+    assert live['response_parts'] == replay['response_parts'] == final['_response_parts']
