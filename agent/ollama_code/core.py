@@ -61,7 +61,7 @@ from .config import (
 from .extensions import ExtensionManager
 from .identity import IDENTITY_ACTIONS, IDENTITY_SYSTEM_PROMPT, source_references
 from .image_generation import IMAGE_TOOL_NAMES
-from .image_generation import SETUP_HINT as IMAGE_SETUP_HINT
+from .image_generation import refusal_message as image_refusal_message
 from .mcp_runtime import MCPManager
 from .ollama import (
     DEFAULT_HOST,
@@ -785,6 +785,20 @@ class AgentCore:
         else:
             provider_label = "local Ollama"
         return f"{self.model or 'not yet selected'} via {provider_label}"
+
+    @property
+    def agent_mode(self) -> str:
+        return self._agent_mode
+
+    @agent_mode.setter
+    def agent_mode(self, value: str) -> None:
+        # Mirrored into the registry so the classic tool list hides the image
+        # tools in Plan mode exactly as `parity_schemas(plan_mode=...)` does,
+        # whether the mode arrives through `configure_agent` or a direct set.
+        self._agent_mode = value
+        registry = getattr(self, "tool_registry", None)
+        if registry is not None:
+            registry.plan_mode = value == "plan"
 
     def configure_agent(
         self,
@@ -3965,8 +3979,9 @@ class AgentCore:
                 return "Error: image tools belong only to the visible workspace turn."
             # `tool_info` names no origin for an unconfigured builtin, so the
             # policy re-check lives here rather than at the executor.
-            if not self.tool_registry.image_tool_allowed(tc.name):
-                return f"Error: {tc.name} is not available in this session; {IMAGE_SETUP_HINT}."
+            refusal = self.tool_registry.image_tool_refusal(tc.name)
+            if refusal is not None:
+                return image_refusal_message(tc.name, refusal)
         if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
             return "Error: goal tools belong only to the active goal coordinator."
         if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():

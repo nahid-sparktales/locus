@@ -22,6 +22,7 @@ from ollama_code.image_generation import (
     INTERRUPTED,
     MAX_IMAGES_PER_SESSION,
     MAX_IMAGES_PER_TURN,
+    SETUP_HINT,
     ImageGenerationService,
     ImageProviderConfig,
     plan_destination,
@@ -779,33 +780,75 @@ def test_image_tools_are_unavailable_to_ask_identity_role_contract_helpers_and_u
     assert len(stub.calls) == 1
 
 
-def test_capability_policy_off_removes_image_tools_and_refuses_at_dispatch(tmp_path, monkeypatch):
+def test_capability_policy_off_removes_image_tools_and_refuses_at_dispatch_naming_the_cause(tmp_path, monkeypatch):
     stub = ProviderStub(monkeypatch)
     core = _core(tmp_path, [])
     _install(core)
     core.perms.set_mode("bypass")
     call = ToolCall("generate_image", {"prompt": "x"})
+    policy_refusal = ("Error: generate_image is not allowed by this agent's capability policy; "
+                      "it needs both network and workspace write access.")
     for policy in ({"network": False}, {"workspace_write": False}):
         core.tool_registry.set_user_capability_policy(policy)
         assert not IMAGE_TOOL_NAMES & _names(core), policy
         assert not IMAGE_TOOL_NAMES & _names(core, parity=True), policy
         assert not core.tool_registry.image_tool_allowed("generate_image")
-        refused = core._run_tool_call(call, None)
-        assert refused.startswith("Error: generate_image is not available"), policy
+        assert core._run_tool_call(call, None) == policy_refusal, policy
     core.tool_registry.set_user_capability_policy({})
     assert IMAGE_TOOL_NAMES <= _names(core)
 
     core.tool_registry.set_mcp_agent_policy(None, access_ceiling="read_only")
     assert not IMAGE_TOOL_NAMES & _names(core) and not IMAGE_TOOL_NAMES & _names(core, parity=True)
-    assert core._run_tool_call(call, None).startswith("Error: generate_image is not available")
+    assert core._run_tool_call(call, None) == "Error: generate_image is not available to a read-only agent."
     core.tool_registry.set_mcp_agent_policy(None)
 
     monkeypatch.setenv(CAPABILITY_ENV["image_generation_v1"], "off")
     assert not IMAGE_TOOL_NAMES & _names(core)
-    assert core._run_tool_call(call, None).startswith("Error: generate_image is not available")
+    assert core._run_tool_call(call, None) == (
+        "Error: generate_image is disabled in this build (the image_generation_v1 capability is off)."
+    )
     monkeypatch.delenv(CAPABILITY_ENV["image_generation_v1"])
+
+    # Only a missing provider earns the setup hint; every other gate names itself.
+    core.tool_registry.image_generation_enabled = False
+    unconfigured = core._run_tool_call(call, None)
+    assert unconfigured == f"Error: generate_image is not available in this session; {SETUP_HINT}."
+    core.tool_registry.image_generation_enabled = True
+    for text in (policy_refusal, unconfigured):
+        assert ("add an OpenAI API account" in text) == (text is unconfigured)
     assert stub.calls == [] and _images(tmp_path) == []
     assert not core._run_tool_call(call, None).startswith("Error:")
+
+
+def test_plan_mode_hides_image_tools_on_both_routes_and_refuses_a_guessed_call(tmp_path, monkeypatch):
+    """PROTOCOL.md: the tools are advertised only outside Plan mode, on the classic route too."""
+    stub = ProviderStub(monkeypatch)
+    core = _core(tmp_path, [])
+    _install(core)
+    core.perms.set_mode("bypass")
+    call = ToolCall("generate_image", {"prompt": "x"})
+    assert IMAGE_TOOL_NAMES <= _names(core) and IMAGE_TOOL_NAMES <= _names(core, parity=True)
+
+    core.configure_agent(None, mode="plan")
+    assert core.tool_registry.plan_mode is True
+    assert not IMAGE_TOOL_NAMES & _names(core), "classic route"
+    assert not IMAGE_TOOL_NAMES & _names(core, parity=True, plan_mode=True), "parity route"
+    assert not IMAGE_TOOL_NAMES & _names(core, parity=True), "the registry flag alone hides them"
+    assert "submit_plan" in _names(core, parity=True, plan_mode=True)
+    assert core._run_tool_call(call, None) == (
+        "Error: generate_image is not available in Plan mode; planning modifies no files."
+    )
+    assert core._run_tool_call(ToolCall("edit_image", {"prompt": "x", "source": "a.png"}), None).startswith(
+        "Error: edit_image is not available in Plan mode"
+    )
+    assert stub.calls == [] and _images(tmp_path) == []
+
+    # A direct mode assignment (the /api/agent/mode route) re-arms them too.
+    core.agent_mode = "work"
+    assert core.tool_registry.plan_mode is False
+    assert IMAGE_TOOL_NAMES <= _names(core) and IMAGE_TOOL_NAMES <= _names(core, parity=True)
+    assert not core._run_tool_call(call, None).startswith("Error:")
+    assert len(stub.calls) == 1
 
 
 # ------------------------------------------------------------------ output

@@ -889,6 +889,9 @@ class ToolRegistry:
         #: ``POST /api/images/provider``; the CLI and evaluation cores never
         #: advertise tools whose executor is ``None``.
         self.image_generation_enabled = False
+        #: Mirrored from ``AgentCore.agent_mode``: Plan mode modifies no files,
+        #: so the image tools leave both the classic and the parity surface.
+        self.plan_mode = False
         self.identity_enabled = False
         self.identity_mode = False
         # History is a separate opt-in inside Browser Settings. Keeping this
@@ -1260,13 +1263,21 @@ class ToolRegistry:
 
     def image_tool_allowed(self, name: str) -> bool:
         """Re-checked at dispatch: schema omission is not a boundary."""
+        return self.image_tool_refusal(name) is None
+
+    def image_tool_refusal(self, name: str) -> str | None:
+        """Why ``name`` is unavailable (``image_generation.refusal_message`` keys), or ``None``."""
         if name not in IMAGE_TOOL_NAMES or not self.image_generation_enabled:
-            return False
+            return "unconfigured"
         if not capability_enabled("image_generation_v1"):
-            return False
+            return "capability"
+        if self.plan_mode:
+            return "plan"
         if self._agent_access_ceiling == "read_only":
-            return False
-        return self._user_allows(name)
+            return "read_only"
+        if not self._user_allows(name):
+            return "policy"
+        return None
 
     def simulator_schemas(self) -> list[dict[str, Any]]:
         if not self.simulator_enabled:

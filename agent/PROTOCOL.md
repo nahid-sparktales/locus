@@ -418,7 +418,8 @@ with `account_id`, `account_label`, `base_url`, `api_key`, `model`, `size`
 (`auto`, `1024x1024`, `1536x1024`, `1024x1536`) and `quality` (`auto`, `low`,
 `medium`, `high`). The base URL is normalised like a remote chat endpoint and
 must be HTTPS unless it is on this Mac; `model` is 1–128 characters of letters,
-digits, `.`, `_`, `:` and `-`; the key is at most 4096 characters. The key is
+digits, `.`, `_`, `:` and `-`; the key is at most 4096 characters and must not
+contain whitespace or control characters (422, without echoing the key). The key is
 held in memory by the chat service only — it is never persisted, never echoed
 by any route, never part of `provider_state` or any event. Configuring or
 clearing changes the advertised tool set, which restarts a live Codex-native
@@ -426,8 +427,11 @@ thread once. Returns the `GET` payload. Errors: 409 busy, 422 invalid body.
 
 While configured, the tools appear in classic and Codex-parity schemas only for
 the visible root chat, only outside Plan mode and read-only roles, and only
-while both the `network` and `workspace_write` capability switches are on.
-`generate_image` asks for permission (and may be allowed for the session);
+while both the `network` and `workspace_write` capability switches are on. A
+guessed call is re-checked at dispatch under the same rules, and the refusal
+names its cause (no provider configured — with the Settings hint —, the
+`image_generation_v1` capability off, Plan mode, a read-only agent, or the
+capability policy). `generate_image` asks for permission (and may be allowed for the session);
 `edit_image` uploads user pixels and asks every time. Both are refused in
 scheduled, event-triggered and workflow runs, are capped at 4 calls per turn
 and 24 per session, write a PNG under `Locus Images/` (never overwriting), and

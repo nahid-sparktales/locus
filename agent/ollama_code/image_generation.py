@@ -62,6 +62,22 @@ REQUEST_TIMEOUT = (10, 180)
 _ERROR_CODE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 SETUP_HINT = "add an OpenAI API account under Settings › Models & Providers › Image generation"
 INTERRUPTED = "Error: image generation interrupted."
+#: Dispatch refusals keyed by ``ToolRegistry.image_tool_refusal``; each names
+#: its real cause so the model never relays "add an account" for a policy gate.
+_REFUSALS = {
+    "unconfigured": f"is not available in this session; {SETUP_HINT}.",
+    "capability": "is disabled in this build (the image_generation_v1 capability is off).",
+    "plan": "is not available in Plan mode; planning modifies no files.",
+    "read_only": "is not available to a read-only agent.",
+    "policy": (
+        "is not allowed by this agent's capability policy; "
+        "it needs both network and workspace write access."
+    ),
+}
+
+
+def refusal_message(name: str, reason: str) -> str:
+    return f"Error: {name} {_REFUSALS.get(reason, _REFUSALS['unconfigured'])}"
 
 
 class ImageProviderError(Exception):
