@@ -44,8 +44,8 @@ Each package's complete license text is retained in its installed
 | fastapi | 0.141.1 | MIT |
 | googleapis-common-protos | 1.75.1 | Apache-2.0 |
 | h11 | 0.16.0 | MIT |
-| httpcore2 | 2.9.1 | BSD-3-Clause |
-| httpx2 | 2.9.1 | BSD-3-Clause |
+| httpcore2 | 2.12.0 | BSD-3-Clause |
+| httpx2 | 2.12.0 | BSD-3-Clause |
 | idna | 3.18 | BSD-3-Clause |
 | jsonschema | 4.26.0 | MIT |
 | jsonschema-specifications | 2025.9.1 | MIT |

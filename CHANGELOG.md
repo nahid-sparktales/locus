@@ -60,6 +60,11 @@
 - Markdown, plain-text, and PDF exports include generated images and the
   interactive HTML beside the exported chat.
 
+### Fixed
+
+- Updated the bundled HTTP transport to HTTPX2 and HTTPCore2 2.12.0 to include
+  upstream TLS, redirect, and streaming decompression security fixes.
+
 ## 2.6.0 — 2026-09-07
 
 ### Added
