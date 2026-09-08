@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Identity Vault</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Identity Vault does not sync to a cloud service or automatically import contacts, Library documents, or browser Autofill records. It is separate from LocusX cryptocurrency wallet functionality.</p>
+
+<h2>Create a career profile or draft</h2>
+
+<ol>
+<li>Import PDF, DOCX, TXT, PNG, or JPEG material up to 100 MB. Text extraction and recognition run locally.</li>
+<li>Review the extracted text, save the original, and choose <strong>Create career profile from text…</strong>. Correct the proposed fields before using them.</li>
+<li>Choose <strong>Write with AI</strong> to open a separate Identity task. Review the career details that may be sent to the selected provider.</li>
+<li>Review generated claims before saving. <strong>Create PDF &amp; Word</strong> produces a single-column PDF and editable DOCX, inserting private contact details locally.</li>
+<li>Use <strong>Export this version…</strong> only when you want an ordinary decrypted file outside the vault. Previous vault versions remain available.</li>
+</ol>
+
+<h2>Use a profile in a private application</h2>
+
+<p>An Identity task can open an HTTPS application in a fresh, nonpersistent browser context. Existing browser logins are not copied.</p>
+
+<p><strong>Fill from Profile…</strong> and <strong>Attach Document…</strong> work locally without sending the page or private values to an AI provider. Review the exact values, document version, destination, and controls before releasing them. Unclear matches remain blank. Unsupported or embedded forms need manual completion.</p>
+
+<p><strong>Continue with AI…</strong> asks you to review one exact page-text snapshot. Only approved text reaches the selected account; later snapshots need another review. Agent-driven website actions receive a native confirmation, including actions that may submit. Websites may receive data as soon as it is filled or attached.</p>
+
+<p>Signature images can be previewed and explicitly uploaded. Signing PDFs and filling PDF forms are outside this release.</p>
+
+<h2>Privacy and supported routes</h2>
+
+<p>Vault content and metadata use AES-GCM with an edition-specific Keychain key. Search and previews use decrypted memory without a plaintext index or preview cache. Lock, sleep, and quit clear decrypted state, cancel work, and close private browser contexts. Unlocking the Mac makes the vault available without a second prompt.</p>
+
+<p>Sharing is bound to the requesting task and actual provider, account, endpoint, and model. Restoring or changing context requires renewed review. <strong>Sharing History</strong> records completed releases. Revocation blocks future use but cannot recall data already sent. Generated replies follow normal chat retention; exported copies follow their destination's storage rules.</p>
+
+<p>The protected workflow currently supports <strong>Local Ollama and API providers</strong>. Managed ChatGPT-plan Identity tasks are disabled because that retained provider-side context cannot yet enforce this boundary. General shell/filesystem tools, MCP, Computer Control, teams, automatic fallback, and background execution are unavailable in Identity tasks, including under Bypass mode.</p>
+</body></html>

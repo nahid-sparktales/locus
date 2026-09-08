@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Hosted &amp; Custom Models</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Add accounts under Settings → Models &amp; Providers.</p>
+
+<h2>ChatGPT-plan access</h2>
+
+<p>Choose <strong>ChatGPT</strong>, install the optional Codex component if prompted, and complete OpenAI's managed browser sign-in. Locus discovers the plan's visible models and usage windows. This route does not use or fall back to an OpenAI API key.</p>
+
+<p>Each account has a <strong>Codex-native mode</strong> toggle:</p>
+
+<ul>
+<li>New ChatGPT accounts begin with the Locus contract—Locus's prompt and tools, approved memory, cross-chat context, and skill index.</li>
+<li>Existing accounts keep the setting they had before the 2.1 update.</li>
+<li>Turn Codex-native mode on for the model's Codex prompt, voice, and Codex-shaped shell, patch, and plan tools. Locus still owns execution, permission prompts, deny lists, and edit previews.</li>
+<li>Codex-native chats deliberately omit approved memory, cross-chat context, and the skill index.</li>
+<li>Changing the toggle restarts that conversation's server-side context. The first message in an existing ChatGPT chat after the update may replay its history once.</li>
+</ul>
+
+<p>The account editor also controls model-supported reasoning effort and optional OpenAI web search. Reasoning effort applies on the next turn without resetting the conversation; higher effort can use plan quota faster. Web search is off by default and sends search queries to OpenAI when enabled.</p>
+
+<p>Ask, explicit teams, evaluations, and non-ChatGPT providers keep their existing behavior.</p>
+
+<h2>API-backed accounts</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Account</th>
+  <th>Endpoint</th>
+  <th>Authentication</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>OpenAI API</td>
+  <td>api.openai.com/v1</td>
+  <td>OpenAI API key</td>
+</tr>
+<tr>
+  <td>Claude</td>
+  <td>api.anthropic.com/v1</td>
+  <td>Anthropic API key</td>
+</tr>
+<tr>
+  <td>Kimi</td>
+  <td>api.moonshot.ai/v1</td>
+  <td>Moonshot API key</td>
+</tr>
+<tr>
+  <td>Kimi Code</td>
+  <td>api.kimi.com/coding/v1</td>
+  <td>Kimi Code subscription key</td>
+</tr>
+<tr>
+  <td>Custom</td>
+  <td>Your URL</td>
+  <td>Endpoint key if required</td>
+</tr>
+</tbody>
+</table>
+
+<p>Use <strong>Test Connection</strong> before selecting the route. Locus reports a rejected key, an incorrect URL, or a waking endpoint. When a provider has no model-list route, the test sends a minimal completion.</p>
+
+<p>Multiple accounts for one provider remain distinct. Model and account changes requested during a run wait until it finishes. Removing the active hosted account returns the session to local Ollama. In 2.1, switching models no longer checks hosted ChatGPT or Kimi models against the locally installed Ollama list.</p>
+
+<h2>Custom endpoints and safety</h2>
+
+<p>Custom accounts support vLLM, TGI, llama.cpp, Hugging Face endpoints, and compatible services. Authenticated non-loopback endpoints must use HTTPS. Redirects are refused so credentials cannot follow a response to another origin.</p>
+
+<p>If the endpoint rejects tool calling, Locus retries once without tools and says the route can answer but cannot edit. If it rejects an image, Locus retries once without images and keeps that route text-only for the session.</p>
+
+<p>Selecting a hosted route sends the prompt and included project context to that provider. Automatic hosted team routing requires separate one-time consent.</p>
+</body></html>

@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Persistent Goals</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Start and supervise a goal</h2>
+
+<ol>
+<li>Open an idle ordinary chat and choose the account or team that should do the work.</li>
+<li>Select <strong>Goal</strong> beside the composer. Enter the objective and optional model-call or token allowances, then select <strong>Start goal</strong>.</li>
+<li>Follow the goal card for progress and cumulative usage. Send a message to refine the request while keeping the objective.</li>
+<li>Use <strong>Pause</strong> or Stop to stop automatic continuation. <strong>Resume</strong> returns to Work mode. <strong>Edit</strong> saves changes while paused. <strong>End</strong> closes the goal without claiming the objective was achieved.</li>
+</ol>
+
+<p>Only one unfinished goal can belong to a chat. Switching to Ask, Plan, or Grill pauses it. Changing the model or team also pauses it; save the newly selected configuration through Goal before resuming. Editing the objective or allowances preserves accumulated usage.</p>
+
+<p>Queued messages take priority over automatic continuation. Unsent drafts and attachments stay in the composer. A finished turn is an intermediate result: completion requires evidence from the coordinating agent that the objective has been achieved.</p>
+
+<h2>Understand allowances</h2>
+
+<p>Usage accumulates across turns, helpers, team stages, retries, and restarts. Goal allowances do not replace profile or team limits. Tokens describe provider-reported input and output, not currency or remaining subscription quota. In-flight responses can exceed an allowance, and provider-internal work can only be counted as exposed by the provider.</p>
+
+<p>If an allowance cannot be enforced from the available measurements, the goal pauses. Exhausted, blocked, and paused goals need attention before continuing.</p>
+
+<h2>Reopen and recover</h2>
+
+<p>Locus must be running for work to execute. Quitting saves the goal; reopening restores eligible goals with their original account, team, and workspace. It does not install a service that works after Locus quits.</p>
+
+<p>Review partial work and usage before resuming an interrupted operation with an unknown outcome. Locus does not automatically replay it. Missing accounts or workspaces, incompatible team changes, and repeated missing progress can stop continuation.</p>
+
+<p>Permissions and required questions keep their normal behavior. Losing a connection or waiting longer never grants approval. Scheduled Agents, workflows, Task Capsules, and Identity tasks have separate execution lifecycles.</p>
+</body></html>

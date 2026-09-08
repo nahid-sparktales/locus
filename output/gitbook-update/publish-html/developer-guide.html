@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Developer Guide</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus 2.6 is an Apache-2.0 SwiftUI application with a bundled Python agent, optional Codex helpers, and a shared mobile protocol.</p>
+
+<ul>
+<li><a href="https://locus-3.gitbook.io/locus-docs/developer-guide/build-and-test">Build &amp; Test</a> covers Xcode 26, Rust, XcodeGen, native tests, Python tests, mobile checks, and component packaging.</li>
+<li><a href="https://locus-3.gitbook.io/locus-docs/developer-guide/architecture-and-protocol">Architecture &amp; Protocol</a> explains feature-model ownership, process ownership, loopback communication, Codex-plan routing, persistence, and security boundaries.</li>
+</ul>
+
+<h2>Repository map</h2>
+
+<pre><code>Locus/             SwiftUI application, feature models, and native brokers
+LocusTests/        Swift unit tests
+LocusUITests/      macOS UI tests with isolated fixture storage
+agent/             Bundled Python agent service and domain API modules
+mobile/            Locus Mobile source and shared protocol client
+ProtocolFixtures/  Shared Mac/mobile wire envelopes
+Tools/             Build, packaging, appcast, audit, and reviewability scripts
+Docs/              Guides, architecture notes, and screenshots
+</code></pre>
+
+<p>AppModel and agent/server.py are composition roots, not default homes for new feature behavior. Add native state and actions to the matching observable feature model, and add service routes and request behavior to the matching domain API module.</p>
+
+<p>Read the repository CONTRIBUTING guide before changing provider routing, credentials, protocol contracts, permissions, packaging, or third-party inventory.</p>
+</body></html>

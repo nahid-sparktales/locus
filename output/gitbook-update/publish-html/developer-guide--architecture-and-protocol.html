@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Architecture &amp; Protocol</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus is one product with two local runtimes:</p>
+
+<ul>
+<li>The SwiftUI application owns native presentation, workspace access, permission surfaces, platform integrations, and feature view models.</li>
+<li>The Python service owns model and provider I/O, orchestration, tools, sessions, schedules, persisted runs, and the authenticated local API.</li>
+</ul>
+
+<p>They communicate over authenticated loopback HTTP and WebSocket contracts.</p>
+
+<h2>Native app</h2>
+
+<p><strong>AppModel is the composition root.</strong> It connects features, translates events, and derives cross-feature presentation, but new feature state and actions belong in a feature-owned observable model.</p>
+
+<p>In 2.1, provider accounts, agent teams, run history, the live run card, extensions and MCP, workspace knowledge, evaluations, schedules, the Activity Center, transcript search, background services, the AGENTS.md editor, landing flow, and toasts moved to their own tested models. GitWorkspaceModel and WorkspaceFileModel own Git and file behavior, while BrowserService, TerminalSession, ApplicationContextService, and SimulatorControlService retain independent platform lifetimes.</p>
+
+<p>Feature views observe their model directly. Dependencies flow toward feature models; a feature model must not retain AppModel. The composition root supplies narrow callbacks for shared presentation such as toasts or session activity.</p>
+
+<h2>Bundled agent</h2>
+
+<p><strong>server.py is the service composition root.</strong> create_app builds isolated FastAPI instances, and request-time dependencies resolve from the concrete application.</p>
+
+<p>Chat runtime lives in chat_service.py. Domain modules own ordinary request behavior: workspace and evaluations; system and providers; knowledge, sessions, and continuity; schedules; runs and usage; extensions; and authenticated chat/Codex transport. Request-neutral runtime helpers live beside those modules.</p>
+
+<p>API modules resolve services through the dependency layer and do not import a module-global application. New routes belong in the matching domain module. The server.app symbol remains only as the uvicorn and import compatibility entry point.</p>
+
+<h2>Communication</h2>
+
+<p>The app and service communicate over authenticated REST and WebSocket endpoints bound to 127.0.0.1. The service rejects browser-origin requests. Browser, Notes, Terminal, and Computer Control capabilities appear dynamically only when their native broker and permissions are available.</p>
+
+<p>ChatGPT-plan requests use a pinned Codex App Server child over local JSONL and stdio. Direct builds resolve it from the verified downloaded component; Mac App Store and development builds can embed it. Team workers use a launch-token-authenticated internal broker and never receive OAuth state.</p>
+
+<p>Locus Mobile uses a separate private TLS gateway with certificate pinning and a one-use pairing code. It never exposes the agent's loopback port.</p>
+
+<h2>Persistence</h2>
+
+<ul>
+<li>append-only session JSONL plus organizer metadata and recoverable trash;</li>
+<li>local SQLite for durable runs, schedules, usage, transcript search, and team events;</li>
+<li>private Git worktrees and immutable evaluation fixtures;</li>
+<li>hashed local note ownership, formatting archives, Notebook labels, Browser profiles, and Keychain-backed Autofill;</li>
+<li>AES-256-GCM memory and continuity with a user-only local <code>memory/master.key</code> file; and</li>
+<li>versioned shared Mac/mobile protocol fixtures.</li>
+</ul>
+
+<p>Credentials, secure fields, provider signatures, and hidden reasoning are excluded from run records and exports by default.</p>
+
+<h2>Reviewable changes</h2>
+
+<p>Keep a refactor and a behavior change separate when either can stand alone. Route moves retain contract snapshots; feature ownership moves retain characterization tests until consumers use the new boundary directly.</p>
+
+<p>Tools/ReviewabilityReport.py reports large production files, large diff slices, architecture-boundary drift, new published state or view-facing actions in AppModel, and registered route handlers added to server.py. Findings are advisory: a large file is not itself a defect, but another unrelated responsibility is a signal to choose a clearer owner.</p>
+
+<h2>Feature ownership added in 2.5 and 2.6</h2>
+
+<p>Persistent goals keep durable objective state, cumulative usage, continuation reservations, and action recovery in the existing run store. The native Goal model coordinates continuation through the ordinary chat worker.</p>
+
+<p>Task Capsules use a workspace-scoped SQLite store for saved plans, immutable revisions, baseline validation, and run links. Each stage resolves the exact account from its selected profile.</p>
+
+<p>Library coordinates document extraction, citation locations, and immutable output snapshots with separate metadata. Identity Vault keeps its own encrypted storage and edition-specific Keychain key; its restricted task path is separate from ordinary tool dispatch.</p>
+
+<p>Persistent Agents represent schedules or event/price triggers. Their definitions and shared connections remain separate from open chats. Receipt, occurrence, attempt, and execution identities remain distinct in the inspector and activity views.</p>
+
+<p>Packaging selects wallet-free Locus or the separate LocusX backend and native source set. Wallet support cannot be activated in a standard staged build by changing a setting or environment variable.</p>
+</body></html>

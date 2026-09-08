@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LibraryWorkspaceView: View {
@@ -10,12 +11,13 @@ struct LibraryWorkspaceView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Library").font(.title2.weight(.semibold))
-                    Text(URL(fileURLWithPath: library.workspace).lastPathComponent).foregroundStyle(LocusTheme.textSecondary)
+                    Text("Documents and saved work · \(URL(fileURLWithPath: library.workspace).lastPathComponent)")
+                        .font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(1)
                 }
                 Spacer()
                 Picker("Library", selection: $library.tab) {
                     ForEach(WorkspaceLibraryTab.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).frame(width: 220)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(20)
@@ -35,31 +37,36 @@ struct LibraryWorkspaceView: View {
     private var documents: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                TextField("Search document names and content", text: $library.query).textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("library.documentSearch")
-                    .accessibilityLabel("Search document names and content")
-                Button { library.importDocuments() } label: { Label("Import", systemImage: "plus") }
+                LibrarySearchField(prompt: "Search document names and content", text: $library.query, identifier: "library.documentSearch")
+                Button { library.importDocuments() } label: { Label("Import Documents", systemImage: "plus") }
                     .disabled(library.pending.contains("import") || !library.documentsEnabled)
                 Button { Task { await library.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh documents").accessibilityLabel("Refresh documents")
             }.padding()
             HStack(alignment: .top, spacing: 12) {
-                Toggle("Document knowledge", isOn: Binding(get: { library.documentsEnabled }, set: { library.setEnabled($0) }))
+                Toggle("Use documents in chats", isOn: Binding(get: { library.documentsEnabled }, set: { library.setEnabled($0) }))
                     .disabled(library.pending.contains("settings"))
-                Text("Search PDF, Word, and spreadsheet content across this workspace's chats. Imported files are copied into Locus Documents.")
+                Text("Search PDF, Word, and spreadsheet content in this workspace. Imports are copied into Locus Documents.")
                     .font(.subheadline).foregroundStyle(LocusTheme.textSecondary).frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.horizontal).padding(.bottom)
             if let error = library.error { libraryError(error) }
             Divider()
-            if library.documents.isEmpty && library.searchResults.isEmpty && !library.isLoading {
+            if library.isLoading && library.documents.isEmpty && library.searchResults.isEmpty {
+                ProgressView("Loading documents…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if library.documents.isEmpty && library.searchResults.isEmpty {
                 if !library.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView("No matching documents", systemImage: "magnifyingglass",
                         description: Text("Try another filename or phrase from a document."))
+                    Button("Clear search") { library.query = "" }.padding(.bottom, 24)
                 } else {
                     ContentUnavailableView(library.documentsEnabled ? "Build your document library" : "Enable document knowledge",
                         systemImage: "books.vertical", description: Text(library.documentsEnabled
                             ? "Import documents or add supported files to your workspace. Their content will be available in your chats."
                             : "Turn on document knowledge to index documents locally. Existing text and code knowledge keeps its current settings."))
+                }
+                if library.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && library.documentsEnabled {
+                    Button("Import Documents…", systemImage: "plus") { library.importDocuments() }
+                        .disabled(library.pending.contains("import")).padding(.bottom, 24)
                 }
             } else {
                 List {
@@ -139,14 +146,25 @@ struct OutputsLibraryView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
     @EnvironmentObject private var outputs: OutputsLibraryModel
-    @State private var selectedURL: URL?
+    @State private var loadedURL: URL?
+    @State private var loadedVersionID: String?
+    private var selectedURL: URL? { loadedVersionID == outputs.selectedVersion?.id ? loadedURL : nil }
     @State private var comparison: OutputComparisonRequest?
     @State private var removeItem: LibraryOutput?
+    @State private var expandedPreview: DocumentPreviewRequest?
+    @State private var loadingPreview = false
+    @State private var sortByName = false
+    private var visibleItems: [LibraryOutput] {
+        sortByName ? outputs.visibleItems.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : outputs.visibleItems
+    }
+    private var hasFilters: Bool {
+        !outputs.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || outputs.typeFilter != "all"
+            || outputs.sourceSessionID != nil || outputs.sourceRunID != nil
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                TextField("Search outputs", text: $outputs.query).textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Search outputs")
+                LibrarySearchField(prompt: "Search outputs", text: $outputs.query, identifier: "library.output.search")
                 Picker("Type", selection: $outputs.typeFilter) {
                     Text("All types").tag("all")
                     Text("Documents").tag("document")
@@ -156,6 +174,12 @@ struct OutputsLibraryView: View {
                     Text("Media").tag("media")
                     Text("Websites").tag("website")
                 }.frame(width: 180)
+                Menu {
+                    Picker("Sort by", selection: $sortByName) {
+                        Text("Recently updated").tag(false)
+                        Text("Name").tag(true)
+                    }
+                } label: { Label("Sort", systemImage: "arrow.up.arrow.down") }.fixedSize()
                 Menu {
                     ForEach([1, 2, 5, 10, 20], id: \.self) { limit in
                         Button("\(limit) GB per workspace") { outputs.setStorageLimit(gigabytes: limit) }
@@ -171,45 +195,68 @@ struct OutputsLibraryView: View {
             }
             if let error = outputs.error { Label(error, systemImage: "exclamationmark.triangle").padding().frame(maxWidth: .infinity, alignment: .leading) }
             Divider()
-            if outputs.visibleItems.isEmpty {
-                ContentUnavailableView("Your finished work lives here", systemImage: "tray.full",
-                    description: Text("Files and websites created in this workspace appear automatically. Saved versions stay available when the originals change."))
+            if visibleItems.isEmpty {
+                if outputs.isRefreshing {
+                    ProgressView("Loading outputs…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if hasFilters {
+                    ContentUnavailableView {
+                        Label("No matching outputs", systemImage: "magnifyingglass")
+                    } description: { Text("Try another name or show all types and chats.") }
+                    actions: { Button("Clear filters") { outputs.query = ""; outputs.typeFilter = "all"; outputs.clearOriginFilter() } }
+                } else {
+                    ContentUnavailableView("Your finished work lives here", systemImage: "tray.full",
+                        description: Text("Files and websites created in this workspace appear automatically. Saved versions stay available when the originals change."))
+                }
             } else {
                 HSplitView {
-                    List(selection: $outputs.selectedItemID) {
-                        ForEach(outputs.visibleItems) { output in
-                            VStack(alignment: .leading, spacing: 5) {
+                    List(selection: Binding(get: { outputs.selectedItemID }, set: { outputs.selectedVersionID = nil; outputs.selectedItemID = $0 })) {
+                        ForEach(visibleItems) { output in
+                            HStack(alignment: .top, spacing: 10) {
+                                OutputLibraryThumbnail(item: output)
+                                VStack(alignment: .leading, spacing: 5) {
                                 Text(output.title).font(.headline).lineLimit(1)
-                                Text(output.target).font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(1)
-                                Text(output.isWebsite ? "Live website" : "\(output.versions.filter { $0.hash != nil }.count) saved versions")
+                                Text(output.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                                Text(output.isWebsite ? "Live website" : "\(output.versions.filter { $0.hash != nil }.count) saved \(output.versions.filter { $0.hash != nil }.count == 1 ? "version" : "versions")")
                                     .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
                                 if let reason = output.latest?.unavailableReason { Text(reason).font(.subheadline).foregroundStyle(LocusTheme.warningForeground).lineLimit(2) }
+                                }
                             }.padding(.vertical, 6).tag(output.id)
                                 .accessibilityIdentifier("library.output.item.\(output.target)")
                         }
-                    }.frame(minWidth: 235, idealWidth: 300, maxWidth: 370)
+                    }.listStyle(.sidebar).frame(minWidth: 200, idealWidth: 240, maxWidth: 280)
                     if let item = outputs.selectedItem, let version = outputs.selectedVersion { detail(item, version: version) }
                     else { ContentUnavailableView("Select an output", systemImage: "doc.viewfinder") }
                 }
             }
             Divider()
             HStack {
-                Text("\(ByteCountFormatter.string(fromByteCount: outputs.storageUsed, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: outputs.storageLimit, countStyle: .file)) used")
+                Text("\(visibleItems.count) \(visibleItems.count == 1 ? "output" : "outputs")")
                     .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
                 Spacer()
+                Text("\(ByteCountFormatter.string(fromByteCount: outputs.storageUsed, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: outputs.storageLimit, countStyle: .file)) used")
+                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
                 if outputs.isRefreshing { ProgressView().controlSize(.small) }
             }.padding(12)
         }
         .task(id: outputs.selectedVersion?.id) {
-            selectedURL = nil
+            loadedURL = nil
+            loadedVersionID = nil
+            loadingPreview = true
             if let item = outputs.selectedItem, let version = outputs.selectedVersion {
                 let url = await outputs.store.versionURL(item, version: version)
                 guard !Task.isCancelled, outputs.selectedItem?.id == item.id,
                       outputs.selectedVersion?.id == version.id else { return }
-                selectedURL = url
+                loadedURL = url
+                loadedVersionID = version.id
             }
+            if !Task.isCancelled { loadingPreview = false }
+        }
+        .onChange(of: outputs.visibleItems.map(\.id), initial: true) { _, ids in
+            if !ids.contains(outputs.selectedItemID ?? "") { outputs.open(itemID: ids.first ?? "") }
         }
         .sheet(item: $comparison) { OutputComparisonView(request: $0) }
+        .sheet(item: $expandedPreview) { DocumentPreviewSheet(request: $0) }
         .alert("Remove saved history?", isPresented: Binding(get: { removeItem != nil }, set: { if !$0 { removeItem = nil } })) {
             Button("Cancel", role: .cancel) { removeItem = nil }
             Button("Remove history", role: .destructive) { if let item = removeItem { outputs.remove(item) }; removeItem = nil }
@@ -217,7 +264,19 @@ struct OutputsLibraryView: View {
     }
     private func detail(_ item: LibraryOutput, version: OutputVersion) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
+                    Text(item.target).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle).help(item.target)
+                }
+                Spacer(minLength: 8)
+                if let selectedURL {
+                    Button { expandedPreview = DocumentPreviewRequest(url: selectedURL, title: item.title) }
+                    label: { Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right") }
+                    .help("Open a larger preview").accessibilityIdentifier("library.output.expand")
+                }
+            }
             if !item.isWebsite {
                 Picker("Version", selection: Binding(get: { version.id }, set: { outputs.selectedVersionID = $0 })) {
                     ForEach(item.versions.reversed()) { version in
@@ -225,18 +284,26 @@ struct OutputsLibraryView: View {
                     }
                 }.accessibilityIdentifier("library.output.versions")
             }
-            HStack {
-                Button("Source chat") { model.openOutputSourceChat(outputs.sourceSession(for: version)) }
-                    .disabled(outputs.sourceSession(for: version).isEmpty)
+            HStack(spacing: 8) {
                 if item.isWebsite, let url = URL(string: item.target) {
                     Link("Open website", destination: url)
+                    Button("Source chat") { model.openOutputSourceChat(outputs.sourceSession(for: version)) }
+                        .disabled(outputs.sourceSession(for: version).isEmpty)
                     Button("Remove link", role: .destructive) { removeItem = item }
                 }
                 else {
+                    Button("Export…", systemImage: "square.and.arrow.up") { outputs.export(item, version: version) }
+                        .disabled(selectedURL == nil).accessibilityIdentifier("library.output.export")
                     Button("Revise") { model.reviseLibraryOutput(item, version: version) }.disabled(selectedURL == nil)
                     Menu("More") {
+                        Button("Source chat") { model.openOutputSourceChat(outputs.sourceSession(for: version)) }
+                            .disabled(outputs.sourceSession(for: version).isEmpty)
+                        if let selectedURL {
+                            Button("Open in Default App") { NSWorkspace.shared.open(selectedURL) }
+                        }
                         Button("Export this version") { outputs.export(item, version: version) }.disabled(selectedURL == nil)
-                        if item.versions.filter({ $0.hash != nil }).count > 1 {
+                        if let index = item.versions.firstIndex(where: { $0.id == version.id }), version.hash != nil,
+                           item.versions.prefix(index).contains(where: { $0.hash != nil }) {
                             Button("Compare with previous version") { compare(item, version: version) }
                         }
                         Button("Remove saved history", role: .destructive) { removeItem = item }
@@ -251,6 +318,8 @@ struct OutputsLibraryView: View {
             if let selectedURL {
                 DocumentPreviewView(request: DocumentPreviewRequest(url: selectedURL, title: item.title))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if loadingPreview {
+                ProgressView("Loading preview…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if item.isWebsite {
                 ContentUnavailableView("Live website", systemImage: "globe", description: Text("This link opens the current website. Deployment history is not stored in the library."))
             } else {
@@ -266,6 +335,58 @@ struct OutputsLibraryView: View {
                   let right = await outputs.store.versionURL(item, version: version) else { return }
             comparison = OutputComparisonRequest(title: item.title, left: left, right: right, leftLabel: previous.label, rightLabel: version.label)
         }
+    }
+}
+
+struct LibrarySearchField: View {
+    let prompt: String
+    @Binding var text: String
+    var identifier: String
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.textSecondary).accessibilityHidden(true)
+            TextField(prompt, text: $text).textFieldStyle(.plain)
+                .accessibilityLabel(prompt).accessibilityIdentifier(identifier)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.locus(.icon)).accessibilityLabel("Clear search").help("Clear search")
+            }
+        }.padding(.horizontal, 10).padding(.vertical, 7)
+            .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.separator, lineWidth: 1))
+    }
+}
+
+private struct OutputLibraryThumbnail: View {
+    let item: LibraryOutput
+    @EnvironmentObject private var outputs: OutputsLibraryModel
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: NSImage?
+    private var symbol: String {
+        switch item.kind {
+        case "image": "photo"
+        case "spreadsheet": "tablecells"
+        case "website": "globe"
+        case "media": "play.rectangle"
+        case "text": "doc.plaintext"
+        default: "doc.richtext"
+        }
+    }
+    var body: some View {
+        Group {
+            if let image { Image(nsImage: image).resizable().scaledToFit() }
+            else { Image(systemName: symbol).font(.title2).foregroundStyle(LocusTheme.textSecondary) }
+        }.frame(width: 48, height: 48).background(LocusTheme.surfaceCard)
+            .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
+            .task(id: item.latest?.id) {
+                image = nil
+                guard item.kind == "image", let version = item.versions.last(where: { $0.hash != nil }),
+                      let url = await outputs.store.versionURL(item, version: version) else { return }
+                let loaded = await ArtifactThumbnailStore.shared.image(for: url,
+                    maximumDisplaySize: CGSize(width: 48, height: 48), displayScale: displayScale)
+                guard !Task.isCancelled else { return }
+                image = loaded
+            }
     }
 }
 

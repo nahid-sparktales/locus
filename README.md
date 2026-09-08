@@ -22,10 +22,11 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 2.6.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.6.0/Locus-macOS.zip).
-> This is the wallet-free edition and uses manual app updates. Existing Locus
-> chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.6.0).
+> [Download Locus 2.7.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.7.0/Locus-macOS.zip).
+> This wallet-free release adds automatic updates, a clearer workspace, and dark
+> appearance by default. Install this download once if you use 2.6.0 or earlier;
+> existing chats, accounts, settings, and browser data stay in place. See the
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.7.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 
@@ -36,7 +37,14 @@ the separate **LocusX** edition.
 - **Use the built-in browser.** Share tabs with the agent, inspect pages,
   interact with sites, and switch to a mobile viewport.
 - **Plan and delegate.** Plan work, refine a request in Grill mode, or let an agent act. Follow tasks,
-  tool activity, outputs, and agent teams from the Overview.
+  tool activity, outputs, and agent teams from the Overview. It appears at the
+  top right during work and makes room for any inspector you open.
+- **Understand your context.** Chat Context shows token usage, a colored
+  breakdown, expandable categories, reserved space, and remaining capacity.
+  Estimates and provider-managed limits are labeled clearly.
+- **Create and revisit deliverables.** Generate or edit images with a configured
+  image account, explore interactive answers, and browse saved outputs in the
+  Library with versions, document previews, image zoom, and export controls.
 - **Keep working toward a goal.** Save an objective with optional usage limits.
   Solo agents and teams continue across turns with verified completion,
   pause/resume controls, and recovery when you reopen Locus.
@@ -70,7 +78,13 @@ the separate **LocusX** edition.
 
 </details>
 
-Screenshots show the current wallet-free app with demonstration data.
+Screenshots show the wallet-free workspace with demonstration data; some
+controls have moved in 2.7.0.
+
+The workspace starts in dark appearance unless you have already chosen a theme.
+The Work menu brings together Plan, Grill, Goal, Task Capsules, and team options.
+Getting Started offers document, coding, and recurring-agent paths and keeps
+your progress if you return later.
 
 ## Locus and LocusX
 
@@ -89,8 +103,8 @@ downloads, and installation when the app quits. Settings preserves your existing
 update preferences and includes a manual check button. Development builds and
 LocusX remain manual; App Store builds update through the store.
 
-Existing manual installations, including 2.6.0, need one manual upgrade to the
-first update-enabled release. The new Locus feed is separate from the preserved
+Existing manual installations, including 2.6.0, need one manual upgrade to
+2.7.0 or later. The new Locus feed is separate from the preserved
 legacy feed, so older wallet-era apps are not automatically moved to wallet-free
 Locus. See the
 [editions guide](Docs/Editions.md) for build boundaries and profile details.
@@ -179,6 +193,8 @@ and interface checks are defined in the [CI workflow](.github/workflows/ci.yml).
 
 - [Architecture and ownership](Docs/Architecture.md)
 - [Agent teams](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
+- [Library and Getting Started](Docs/LibraryAndGettingStarted.md)
+- [Task Capsules](Docs/TaskCapsules.md)
 - [Image generation and interactive answers](Docs/LocusImageAndInteractiveAnswersImplementation.md)
 - [Backend development](agent/README.md) and [wire protocol](agent/PROTOCOL.md)
 - [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile)

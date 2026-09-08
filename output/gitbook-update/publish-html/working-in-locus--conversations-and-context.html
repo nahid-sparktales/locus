@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Conversations &amp; Context</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Organize project chats</h2>
+
+<p>Each workspace owns its conversation group. Create nested chat folders without changing where chats run, drag or move chats between folders, and reorder them. Removing a folder keeps its chats and moves them up one level.</p>
+
+<p>Chats can be named, pinned, archived, duplicated, exported, or deleted into recoverable storage. <strong>Duplicate with Worktree</strong> creates an isolated Git-backed copy when you want a separate implementation path.</p>
+
+<p>Sidebar search matches titles, folders, and transcript content. ⇧⌘F focuses the cross-conversation search; selecting a result opens the exact message.</p>
+
+<h2>Side Chat</h2>
+
+<p>Open Side Chat from the right rail to place two saved conversations side by side. Each pane keeps its own draft, attachments, mode, selected team, context, search, and active run status. The split and divider position restore across launches.</p>
+
+<h2>Transcript behavior</h2>
+
+<p>Reasoning and tool activity remain in the order they happened. Collapsed mode uses quiet inline disclosures at real activity boundaries; Expanded reasoning and Verbose tools keep the detailed cards.</p>
+
+<p>Text selection now spans the entire conversation, survives scrolling, supports Shift-click extension and edge scrolling, and keeps links clickable. Command-C copies exactly the selected text, including content that has scrolled out of view. Copy and Search in Google remain available from the context menu; the floating Copy/Quote buttons have been removed.</p>
+
+<p>Agent questions can appear in a focused popup after the turn, with choices and a free-text answer. This is especially common in Grill mode. Your answer returns to the chat as an ordinary user message.</p>
+
+<h2>Attachments, outputs, and exports</h2>
+
+<p>Type @ to mention a workspace file, drag files into either pane, or paste an image. Export a chat as Markdown, plain text, or PDF. The export sheet can include attachments, provider-supplied reasoning, and full tool details; sensitive data should be reviewed before sharing.</p>
+
+<p>Files produced by agent tools or shell commands are detected even when they are gitignored or the folder is not a Git repository. Produced documents open in their normal Mac app; source files open in the Files inspector; every detected result is listed in Overview → Outputs.</p>
+
+<p>Attachment bytes are not stored in the normal transcript. A restored chat retains names only. Include attachments in an export only when you intend to copy those bytes into the exported artifact.</p>
+
+<h2>Persistent context</h2>
+
+<p>Use <strong>Context</strong> or /context to add files and folders to the context pack. Locus refreshes selected files immediately before sending and trims them to a model-aware budget. The Files inspector can add a file, mention it, reveal it in Finder, or copy its relative path.</p>
+
+<p>The header meter measures the conversation against the usable model window after tool schemas and reply room. Local Ollama windows are measured when resident and remembered per host and model; hosted accounts use provider metadata, a configured value, or a marked estimate.</p>
+
+<h2>Notebook, knowledge, and continuity</h2>
+
+<p>Open <strong>Notebook…</strong> from the sidebar menu or press <strong>⇧⌘9</strong>. Create a standalone note with <strong>New Note</strong>, search full note text, pin or duplicate a note, and export text or RTF. Workspace, chat, and shared notes keep their existing ownership. Standalone notes are not automatically included in agent context.</p>
+
+<p>Deleted notes remain in <strong>Recently Deleted</strong> until you explicitly remove them. You can preview and restore them. Permanent deletion requires confirmation; no automatic deadline applies.</p>
+
+<p>Eligible agentic modes can query enabled workspace knowledge. <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/library-documents-and-outputs">Document knowledge</a> is a separate opt-in. Long-term memory is added only after explicit approval, and encrypted continuity preserves development state across chats.</p>
+
+<p>Ask mode does not receive workspace tools, skills, knowledge retrieval, or continuity.</p>
+
+<h2>Writing drafts and structured answers</h2>
+
+<p>Answers can include verified file collections, reusable writing, deliverables, and source references with a complete Markdown fallback. Editable writing drafts support copying, export, and recovery of the original text. Table copy and CSV export include all rows even when the displayed table is collapsed.</p>
+
+<p>Context controls choose information included in the chat; they do not grant broader file access. File access still follows the workspace and permission boundaries.</p>
+
+<h2>Saved deliverable history</h2>
+
+<p>Use <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/library-documents-and-outputs">Library → Outputs</a> to revisit saved versions, compare changes, export a snapshot, or prepare a revision. Opening Library preserves the current chat and draft. Saved snapshots remain available when the original workspace file is removed, provided the version was captured successfully.</p>
+</body></html>

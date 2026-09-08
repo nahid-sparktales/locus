@@ -5,10 +5,12 @@ import Foundation
 
 extension AppModel {
     func configureOnboarding(defaults: UserDefaults?, existingInstallation: Bool) {
+        let isFirstLaunchFixture = isUITesting
+            && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_FIRST_LAUNCH"] == "1"
         onboarding.configure(
             defaults: defaults,
-            isExistingInstallation: existingInstallation,
-            autoPresent: persistenceEnabled && !isUITesting,
+            isExistingInstallation: isFirstLaunchFixture ? false : existingInstallation,
+            autoPresent: (persistenceEnabled && !isUITesting) || isFirstLaunchFixture,
             readiness: { [weak self] in
                 guard let self else { return .unknown }
                 let detail = agentRuntimePhase.message ?? modelRuntimePhase.message
@@ -67,6 +69,9 @@ extension AppModel {
     }
 
     private func startOnboardingTask(_ point: OnboardingStartingPoint, workspace: String) async throws -> OnboardingRun {
+        guard let outputPath = point.outputPath else {
+            throw onboardingError("Choose Create an agent to set up recurring work.")
+        }
         guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
             throw onboardingError("Finish the current task before starting the example.")
         }
@@ -109,7 +114,7 @@ extension AppModel {
             : "Read the repository and identify its purpose, structure, setup instructions, and a few useful next steps. Write a concise guide with links to the files that support your findings. Do not change source code or install dependencies."
         let prompt = """
         \(taskDescription)
-        Save the finished document as \(point.outputPath) in this workspace. This is a guided first task: keep the result short, explain any missing information honestly, and include a link to the saved file in your final answer.
+        Save the finished document as \(outputPath) in this workspace. This is a guided first task: keep the result short, explain any missing information honestly, and include a link to the saved file in your final answer.
         """
         let start = Date()
         let startingCompletionTokens = sessionInfo?.completionTokens
@@ -131,7 +136,7 @@ extension AppModel {
             throw onboardingError("The example’s task could not be identified. Open its chat before retrying.")
         }
         return OnboardingRun(
-            sessionID: currentSessionID, workspace: workspace, outputPath: point.outputPath,
+            sessionID: currentSessionID, workspace: workspace, outputPath: outputPath,
             startedAt: start, requestStartedAt: sessionOverview.state.requestStartedAt ?? Self.sessionTimestamp,
             startingCompletionTokens: startingCompletionTokens, runID: runID
         )
@@ -218,6 +223,7 @@ extension AppModel {
 
 enum OnboardingSamples {
     static func create(at root: URL, startingPoint: OnboardingStartingPoint) throws {
+        guard startingPoint != .agents else { throw CocoaError(.featureUnsupported) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         if startingPoint == .documents {
             let documents = root.appendingPathComponent("Locus Documents", isDirectory: true)

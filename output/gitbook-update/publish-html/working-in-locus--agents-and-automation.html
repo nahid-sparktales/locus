@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Agents &amp; Automation</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Create an Agent</h2>
+
+<ol>
+<li>Open <strong>Manage Agents</strong> and choose <strong>New Agent</strong>.</li>
+<li>Choose what starts the work: a <strong>schedule</strong>, <strong>incoming event</strong>, or <strong>price condition</strong>.</li>
+<li>Enter a name and clear instructions, then configure the cadence or matching conditions.</li>
+<li>Review the model, workspace or environment, and allowed connected-service actions. Advanced settings reveal additional controls.</li>
+<li>Save the Agent. An incoming-event Agent can be created paused so you can review its configuration before enabling it.</li>
+</ol>
+
+<p>For example: “Review the workspace and summarize what changed since yesterday. Include the relevant files and any items that need my decision.” Choose the schedule and model that fit that request.</p>
+
+<p><img src="https://raw.githubusercontent.com/nahid-sparktales/locus/c3a27c3/Docs/locus-schedules-dark.png" alt="Scheduled Agent with instructions, controls, next occurrence, and run records" /></p>
+
+<p><em>Demonstration data: the Agent panel distinguishes an enabled Agent from running chats and shows individual scheduled occurrences.</em></p>
+
+<h2>Find configuration and activity</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Section</th>
+  <th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Agents</td>
+  <td>Search and filter configured Agents; inspect instructions, triggers, access, and recent activity</td>
+</tr>
+<tr>
+  <td>Activity</td>
+  <td>Review recent schedule and event records, filter by Agent or status, and inspect supported retry actions</td>
+</tr>
+<tr>
+  <td>Connections</td>
+  <td>Review shared source connections, their health, last check, and which Agents use them</td>
+</tr>
+<tr>
+  <td>Runtime</td>
+  <td>Set shared local concurrency and execution context; open specialist and team settings</td>
+</tr>
+</tbody>
+</table>
+
+<p>The right <strong>Agent</strong> panel follows the selected Agent. <strong>Overview</strong> follows the open conversation. <strong>Runs</strong> shows that chat's executions. Activity's recent list is an entry point; the contextual inspector carries the exact durable record and its available evidence.</p>
+
+<h2>Triggers and service access</h2>
+
+<p>Incoming events can use configured Gmail, Telegram, or signed webhook sources. Price conditions use configured price sources and a symbol or threshold. Each Agent currently has one trigger.</p>
+
+<p>A connection used to receive events is separate from permission to perform service actions. Grant only the action connections that the task needs. Clearing every action grant keeps the selection empty. Webhook and price-feed identifiers are not action grants.</p>
+
+<p>Tool approval mode is shared across chats and worker runtimes. The Agent's workspace, environment, and service restrictions still apply. Selecting a hosted model does not turn the Agent into a cloud service.</p>
+
+<h2>Workflows and Attention</h2>
+
+<p>Automation workflows can sequence <strong>Agent</strong>, <strong>Condition</strong>, and <strong>Approval</strong> steps. The simulator previews templates, branches, outputs, and approval cards without calling a model or creating chat history.</p>
+
+<p>Each occurrence records its workflow, attempts, and approval state. After interruption or failure, inspect the occurrence before resuming. An uncertain external action is not silently repeated.</p>
+
+<p><strong>Attention</strong> collects questions, permissions, workflow approvals, recoverable runs, retryable failures, and configuration warnings that need a decision. Routine successful activity belongs in Activity.</p>
+
+<h2>Pause, run, and recover</h2>
+
+<p>Use <strong>Pause</strong> to stop automatic triggering and <strong>Run now</strong> for supported manual runs. Read an occurrence's status before retrying: receipt, delivery, and execution outcomes are distinct. A previous successful chat does not make a later failed or cancelled delivery successful.</p>
+
+<p>Locus must be running and the Mac available for work to execute. Quitting does not leave a cloud worker behind. Review connection errors, missing accounts, and interrupted actions before restarting work.</p>
+
+<p>For ongoing work in an ordinary chat, use <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/persistent-goals">Persistent Goals</a>. For a saved model-to-model plan, use <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/task-capsules">Task Capsules</a>. Reusable model profiles are configured under <strong>Specialists &amp; teams</strong>.</p>
+</body></html>

@@ -20,6 +20,7 @@ final class GoalUITests: XCTestCase {
         let composer = element("composer.input")
         composer.click()
         composer.typeText("Keep this ordinary draft")
+        element("composer.workflow").click()
         let goalButton = element("composer.goal")
         XCTAssertTrue(goalButton.waitForExistence(timeout: 5))
         goalButton.click()
@@ -67,6 +68,7 @@ final class GoalUITests: XCTestCase {
     }
 
     func testGoalEditorRejectsInvalidAllowanceWithoutLosingTheObjective() {
+        element("composer.workflow").click()
         element("composer.goal").click()
         let objective = element("goal.editor.objective")
         XCTAssertTrue(objective.waitForExistence(timeout: 5))

@@ -1,0 +1,92 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Troubleshooting</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Start with the visible status in the sidebar, Overview, transcript, run board, Activity and Attention, or Runs. Locus reports the failing layer rather than silently changing routes.</p>
+
+<h2>Local services or Ollama are unavailable</h2>
+
+<p>Wait for Starting or Recovering to finish. Confirm Ollama is installed and reachable at the configured host. A local model loads on the first prompt and may reload after a context-window change.</p>
+
+<h2>ChatGPT sign-in or component fails</h2>
+
+<p>Open Settings → Updates and confirm the Codex component is installed. Retry the component download on a stable connection. A checksum or code-signature failure installs nothing; remove and reinstall the component if the verified archive is incomplete. ChatGPT-plan routing never falls back to an API key.</p>
+
+<p>If /compact appears ineffective, update to 2.6; compaction resets the helper's server-side thread too.</p>
+
+<h2>ChatGPT behavior changed after the update</h2>
+
+<p>Open the account editor and check <strong>Codex-native mode</strong>. New accounts begin with Locus's prompt and tools; accounts added before 2.1 keep their previous choice. Turning the toggle on or off restarts the conversation's server-side context, and the first message in an existing chat may replay history once.</p>
+
+<p>Reasoning effort applies on the next turn without a reset. Web search is a separate, off-by-default toggle.</p>
+
+<h2>A hosted account will not switch</h2>
+
+<p>Test the account, URL, key, and selected model. Kimi and Kimi Code use different hosts and credentials. Authenticated custom endpoints require HTTPS and cannot redirect. A rejected switch should restore the previous active route. Update to 2.6 if a ChatGPT or Kimi model is incorrectly reported as not installed.</p>
+
+<h2>A model answers but cannot edit or see images</h2>
+
+<p>The route may lack tool calling or image input. Locus retries once without the rejected capability and records a note. Choose a tool-capable or vision-capable model for that request.</p>
+
+<h2>A note opens empty</h2>
+
+<p>Update to 2.6 before typing into it. Locus now falls back to the formatting archive when the plain-text mirror is missing. Open Notebook with ⇧⌘9; older notes that cannot be matched to an existing owner appear under Unlinked.</p>
+
+<h2>Browser input, layout, or Autofill fails</h2>
+
+<p>Refresh the page snapshot before reusing element identifiers. For a canvas or map, capture the region and target page coordinates. Confirm real input is enabled under Settings → Browser. Reload after changing the mobile-device presentation because sites choose their layout at navigation time.</p>
+
+<p>Resize the inspector after updating to 2.6; the live page should follow the panel and wide pages should keep native horizontal scrolling.</p>
+
+<p>For Autofill, confirm the vault is loaded and the required category is enabled for agent access. Passwords are origin-scoped. Browser JavaScript and dev-server startup require approval even in Bypass.</p>
+
+<h2>Wallet controls are missing</h2>
+
+<p>This is expected in standard Locus 2.6.0: the app is wallet-free. Cryptocurrency wallet functionality belongs to the separate LocusX edition. Old wallet files and Keychain entries are not deleted or automatically migrated. <a href="https://locus-3.gitbook.io/locus-docs/safety-and-privacy/identity-vault">Identity Vault</a> is a separate private profile-and-document feature.</p>
+
+<h2>A named dev server will not start</h2>
+
+<p>Validate .locus/launch.json, executable, arguments, and port. Use a URL-only configuration to attach to an existing server. Read the bounded server output with a level or search filter.</p>
+
+<h2>Mobile will not pair</h2>
+
+<p>Enable Mobile Access on the Mac, keep Locus or its menu-bar process running, and use a fresh five-minute code. Confirm both devices can reach each other over the LAN or Tailscale. A changed Mac certificate requires a new pairing.</p>
+
+<h2>A command needs a full terminal</h2>
+
+<p>Use Terminal for interactive programs. Managed background services are better for watchers and servers that should survive an agent turn.</p>
+
+<h2>A run shows the wrong files, steps, or usage</h2>
+
+<p>Update to 2.6. Overview and Activity are scoped to the selected run even when another run is live. Switch away and back if you were viewing data loaded by an older build.</p>
+
+<h2>A team plan is repaired or a run reaches a limit</h2>
+
+<p>Open the board or Runs for the exact validation or budget boundary. Writer-step and model-call limits pause at a durable checkpoint; they are not success conditions. Repair the missing profile, credential, checkout, or budget and resume.</p>
+
+<h2>Proxy traffic fails</h2>
+
+<p>Run a profile health check. In strict tunnel mode, external traffic remains blocked until a healthy route exists. PAC-based system proxy settings may not reach agent libraries; use a manual profile. A child process can report 407 because Locus withholds proxy passwords from it.</p>
+
+<h2>Still blocked?</h2>
+
+<p>Record the Locus version, build channel, provider and model, visible error, and relevant Runs timeline. Do not include credentials. Report security issues privately to <a href="&#x6d;&#97;&#x69;&#108;&#x74;&#111;&#x3a;&#115;&#x65;&#99;&#x75;&#114;&#x69;&#116;y&#x40;&#115;&#112;a&#114;&#x6b;&#116;&#x61;&#x6c;&#101;&#115;&#46;&#x69;&#111;">&#115;&#x65;&#99;&#x75;&#114;&#x69;&#116;y&#x40;&#115;&#112;a&#114;&#x6b;&#116;&#x61;&#x6c;&#101;&#115;&#46;&#x69;&#111;</a>.</p>
+
+<h2>An Agent is active but no chat is running</h2>
+
+<p>Active means the Agent is enabled for its trigger. Inspect the next occurrence or incoming-event record, connection health, and the exact execution status. A received, waiting, or skipped record is not a completed run. Locus must remain running for local work to execute.</p>
+
+<h2>A goal has paused</h2>
+
+<p>Check whether the mode, account, team, allowance, or connection changed. Review any interrupted action with an unknown outcome before Resume. Required questions need a real answer; elapsed time is not approval.</p>
+
+<h2>A Task Capsule will not run</h2>
+
+<p>Check the selected profiles, account availability, and implementation access ceiling. If a named file changed after planning, use <strong>Update the plan or ask for help</strong> to save a revision. Review partial file changes before starting another run.</p>
+
+<h2>A document or output is missing</h2>
+
+<p>Enable Document knowledge for persistent document search and check the extraction status. Older DOC/XLS files need conversion; formulas without saved values and hidden spreadsheet sheets are omitted with warnings. Retry an extraction after correcting the source.</p>
+
+<p>In Outputs, inspect the workspace storage budget and per-file limit. Missing originals cannot be reconstructed from older entries unless a version was already saved. Existing history remains available when limits are reached.</p>
+
+<h2>The app does not update automatically</h2>
+
+<p>Locus 2.6.0 uses manual app updates. Install the desired version from its release page. A ChatGPT component update does not update the application. The old wallet-era feed does not migrate an installation to wallet-free Locus.</p>
+</body></html>

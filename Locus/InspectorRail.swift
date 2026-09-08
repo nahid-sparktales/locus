@@ -2,12 +2,13 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Overview, Terminal, Browser, and Notes stay within reach,
+/// the window edge: Context, Terminal, Browser, and Notes stay within reach,
 /// while the vertical-ellipsis menu contains Side Chat and every additional
 /// workspace panel, including Simulator, Model Router, and Proxies.
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
+    static let width: CGFloat = 44
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -16,32 +17,31 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes
+        $0 != .terminal && $0 != .notes && $0 != .context
     }
 
     var body: some View {
         VStack(spacing: 4) {
             moreMenu
             panelToggleButton
+            Rectangle().fill(LocusTheme.line).frame(width: 24, height: 1).padding(.vertical, 5)
+                .accessibilityHidden(true)
             if model.sidebarDestination == .agents {
-                // Agents mode leads with the agent itself; Overview stays one
-                // step below for the chat's plan and context.
+                // Agents mode leads with the selected agent.
                 railTab(.agent)
             }
-            railTab(.plan)
+            railTab(.preview)
             if model.sidebarDestination == .agents {
                 railTab(.runs)
             }
-            Rectangle().fill(LocusTheme.line).frame(width: 18, height: 1).padding(.vertical, 5)
-                .accessibilityHidden(true)
             railTab(.terminal)
-            railTab(.preview)
+            railTab(.context)
             railTab(.notes)
             Spacer(minLength: 0)
             zoomButton
         }
         .padding(.vertical, 8)
-        .frame(width: 44)
+        .frame(width: Self.width)
         .frame(maxHeight: .infinity)
         .locusSurface(.structural)
         .overlay(alignment: .leading) {
@@ -147,6 +147,8 @@ struct InspectorRail: View {
 
     private var moreMenu: some View {
         Menu {
+            Button("Show Request Overview") { model.presentRequestOverview(replacingInspector: true) }
+                .accessibilityIdentifier("inspector.rail.menu.overview")
             Button(model.splitViewActive ? "Close Side Chat" : "Open Side Chat") {
                 withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                     model.toggleSplitView()
@@ -164,6 +166,13 @@ struct InspectorRail: View {
                 }
                 .accessibilityIdentifier("inspector.rail.menu.\(tab.rawValue)")
             }
+            Divider()
+            Button("Show Workspace in Finder") { model.revealSessionWorkspace() }
+                .accessibilityIdentifier("inspector.rail.menu.finder")
+            Button("Accounts…") { model.presentSettings(.accounts) }
+                .accessibilityIdentifier("inspector.rail.menu.accounts")
+            Button("Plugins & MCP…") { model.presentSettings(.extensions) }
+                .accessibilityIdentifier("inspector.rail.menu.extensions")
         } label: {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 12, weight: .semibold))
@@ -212,6 +221,9 @@ struct WorkspaceActionsMenu: View {
 
     var body: some View {
         Menu {
+            Button("Show Request Overview") { model.presentRequestOverview(replacingInspector: true) }
+                .accessibilityIdentifier("workspace.actions.overview")
+            Divider()
             if model.currentExecutionEnvironment == .worktree {
                 Button("Hand Off to Local") { model.handoffCurrentChat(to: .local) }
                     .disabled(model.isBusy || model.hasPendingPermission)

@@ -59,6 +59,11 @@ struct WorkspaceView: View {
             }
         }
         .clipped()
+        .onExitCommand { model.dismissOverview() }
+        .onChange(of: model.currentSessionID) {
+            if model.isBusy { model.presentRequestOverview() }
+            else { model.dismissOverview() }
+        }
     }
 
     private var chatContent: some View {
@@ -105,10 +110,8 @@ struct WorkspaceView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                WorkspaceSessionTitle(
-                    sessionID: model.currentSessionID
-                )
+            VStack(alignment: .leading, spacing: 3) {
+                WorkspaceSessionTitle(sessionID: model.currentSessionID)
 
                 HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
@@ -127,7 +130,9 @@ struct WorkspaceView: View {
                         }
                     }
                 }
-                .font(.locus(size: 8, design: .monospaced))
+                .font(.locus(size: 10))
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .foregroundStyle(LocusTheme.muted)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.breadcrumb")

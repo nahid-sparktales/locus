@@ -1,0 +1,226 @@
+[
+  {
+    "path": "agent-teams.md",
+    "title": "Agent Teams",
+    "description": "Choose adaptive Solo work or configure explicit, durable multi-model teams.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/agent-teams.html",
+    "action": "update"
+  },
+  {
+    "path": "developer-guide/architecture-and-protocol.md",
+    "title": "Architecture & Protocol",
+    "description": "Understand the feature-owned native client, domain-owned agent service, Codex component, persistence, and companion boundary.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/developer-guide--architecture-and-protocol.html",
+    "action": "update"
+  },
+  {
+    "path": "developer-guide/build-and-test.md",
+    "title": "Build & Test",
+    "description": "Build wallet-free Locus from the repository's main branch with Xcode 26 and XcodeGen. project.yml is the source of truth for the generated Xcode project.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/developer-guide--build-and-test.html",
+    "action": "update"
+  },
+  {
+    "path": "developer-guide.md",
+    "title": "Developer Guide",
+    "description": "Build, test, package, and understand the native Locus app and bundled agent.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/developer-guide.html",
+    "action": "update"
+  },
+  {
+    "path": "extensions-and-mcp/bundled-workflows-notes-and-continuity.md",
+    "title": "Bundled Workflows, Notebook & Continuity",
+    "description": "Use bundled development workflows, Notebook and Notes, and private cross-chat continuity.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/extensions-and-mcp--bundled-workflows-notes-and-continuity.html",
+    "action": "update"
+  },
+  {
+    "path": "extensions-and-mcp/workspace-knowledge-and-memory.md",
+    "title": "Workspace Knowledge & Memory",
+    "description": "Search local project knowledge and carry forward only user-approved, encrypted memory.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/extensions-and-mcp--workspace-knowledge-and-memory.html",
+    "action": "update"
+  },
+  {
+    "path": "extensions-and-mcp.md",
+    "title": "Extensions & MCP",
+    "description": "Add plugins, skills, MCP tools, Notebook workflows, and private continuity without expanding permissions.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/extensions-and-mcp.html",
+    "action": "update"
+  },
+  {
+    "path": "getting-started/chat-work-plan-and-build.md",
+    "title": "Ask, Work, Plan & Grill",
+    "description": "Choose conversation, adaptive work, planning, or a one-question-at-a-time Grill interview.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/getting-started--chat-work-plan-and-build.html",
+    "action": "update"
+  },
+  {
+    "path": "getting-started/install-locus.md",
+    "title": "Install Locus",
+    "description": "Install the wallet-free Locus 2.6.0 release and choose your model source.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/getting-started--install-locus.html",
+    "action": "update"
+  },
+  {
+    "path": "getting-started/your-first-workspace.md",
+    "title": "Your First Workspace",
+    "description": "Open a project folder, choose a model, and complete your first supervised Locus 2.6 request.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/getting-started--your-first-workspace.html",
+    "action": "update"
+  },
+  {
+    "path": "getting-started.md",
+    "title": "Getting Started",
+    "description": "Connect a model, choose a workspace, and complete your first Locus task.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/getting-started.html",
+    "action": "update"
+  },
+  {
+    "path": "locus.md",
+    "title": "Locus",
+    "description": "Your models, projects, agents, and tools in one native macOS workspace.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/locus.html",
+    "action": "update"
+  },
+  {
+    "path": "models-and-accounts/hosted-and-custom-models.md",
+    "title": "Hosted & Custom Models",
+    "description": "Add a ChatGPT plan, OpenAI API, Claude, Kimi, or compatible custom endpoint.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/models-and-accounts--hosted-and-custom-models.html",
+    "action": "update"
+  },
+  {
+    "path": "models-and-accounts/usage-router-and-proxy-profiles.md",
+    "title": "Usage, Router & Proxy Profiles",
+    "description": "Understand usage, model-routing scorecards, and health-ranked proxy profiles.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/models-and-accounts--usage-router-and-proxy-profiles.html",
+    "action": "update"
+  },
+  {
+    "path": "models-and-accounts.md",
+    "title": "Models & Accounts",
+    "description": "Configure Ollama, ChatGPT plans, API providers, reasoning, routing scorecards, usage, and proxy profiles.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/models-and-accounts.html",
+    "action": "update"
+  },
+  {
+    "path": "release-notes.md",
+    "title": "Release Notes",
+    "description": "Released changes through Locus 2.6.0. Older entries describe their historical editions. Standard Locus is wallet-free from 2.5 onward; wallet-era release notes are not current standard-app instructions.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/release-notes.html",
+    "action": "update"
+  },
+  {
+    "path": "safety-and-privacy/credentials-and-local-data.md",
+    "title": "Credentials & Local Data",
+    "description": "Understand what Locus stores locally, what leaves the Mac, and how credentials, notes, Autofill, and wallet material are handled.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/safety-and-privacy--credentials-and-local-data.html",
+    "action": "update"
+  },
+  {
+    "path": "safety-and-privacy/identity-vault.md",
+    "title": "Identity Vault",
+    "description": "Keep reusable personal, business, and career details, original documents, signatures, and writing drafts in an encrypted vault on your Mac. Open it below Library or choose Use Identity Vault\u2026 in the composer.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/safety-and-privacy--identity-vault.html",
+    "action": "add"
+  },
+  {
+    "path": "safety-and-privacy/permission-modes.md",
+    "title": "Permission Modes",
+    "description": "Control when V2 edits, commands, fetches, browser actions, MCP, and UI control require approval.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/safety-and-privacy--permission-modes.html",
+    "action": "update"
+  },
+  {
+    "path": "safety-and-privacy.md",
+    "title": "Safety & Privacy",
+    "description": "Your Mac stores the workspace and its history. The account and capabilities you select determine what information is sent elsewhere.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/safety-and-privacy.html",
+    "action": "update"
+  },
+  {
+    "path": "troubleshooting.md",
+    "title": "Troubleshooting",
+    "description": "Resolve model, Agent, goal, capsule, document, output, browser, mobile, and update problems in Locus 2.6.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/troubleshooting.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/agents-and-automation.md",
+    "title": "Agents & Automation",
+    "description": "An Agent saves instructions, a model route, an environment, and one trigger for recurring work. It owns a primary conversation and can have side chats for investigation.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--agents-and-automation.html",
+    "action": "add"
+  },
+  {
+    "path": "working-in-locus/browser-and-dev-servers.md",
+    "title": "Browser & Dev Servers",
+    "description": "Drive real web pages, inspect applications, use guarded Autofill, and manage named development servers.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--browser-and-dev-servers.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/conversations-and-context.md",
+    "title": "Conversations & Context",
+    "description": "Organize, search, split, export, and give models the right project context.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--conversations-and-context.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/git-changes-and-console.md",
+    "title": "Git Changes & Terminal",
+    "description": "Review and ship Git changes, then run interactive project commands in the retained terminal.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--git-changes-and-console.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/library-documents-and-outputs.md",
+    "title": "Library, Documents & Outputs",
+    "description": "Open Library from the sidebar or press \u21e7\u2318L. Documents and Outputs open without replacing your selected conversation or its draft.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--library-documents-and-outputs.html",
+    "action": "add"
+  },
+  {
+    "path": "working-in-locus/mobile-schedules-and-background-work.md",
+    "title": "Mobile, Schedules & Background Work",
+    "description": "Continue work from your phone, schedule tasks, and supervise durable background activity.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--mobile-schedules-and-background-work.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/persistent-goals.md",
+    "title": "Persistent Goals",
+    "description": "Give an ordinary Solo or team chat an objective that continues across turns in Work mode.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--persistent-goals.html",
+    "action": "add"
+  },
+  {
+    "path": "working-in-locus/shortcuts-and-slash-commands.md",
+    "title": "Shortcuts & Slash Commands",
+    "description": "Navigate Locus 2.6 and control a session from the keyboard.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--shortcuts-and-slash-commands.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus/task-capsules.md",
+    "title": "Task Capsules",
+    "description": "Save a detailed plan with explicit models for planning, implementation, and optional review. A capsule keeps its plan, revisions, model choices, usage allowances, and run history together.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--task-capsules.html",
+    "action": "add"
+  },
+  {
+    "path": "working-in-locus/the-inspector.md",
+    "title": "The Inspector",
+    "description": "Keep overview, files, diffs, terminal, browser, notes, runs, routing, and proxies beside the conversation.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus--the-inspector.html",
+    "action": "update"
+  },
+  {
+    "path": "working-in-locus.md",
+    "title": "Working in Locus",
+    "description": "Keep the conversation, project tools, and the record of the work together.",
+    "html": "/Users/nahid/Documents/locus/output/gitbook-update/publish-html/working-in-locus.html",
+    "action": "update"
+  }
+]

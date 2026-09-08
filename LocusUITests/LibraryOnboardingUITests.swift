@@ -36,6 +36,54 @@ final class LibraryOnboardingUITests: XCTestCase {
         capture("Setup resumes at connection")
     }
 
+    func testFirstLaunchAutomaticallyOffersGettingStarted() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "1"
+        app.launch()
+        let agents = element("onboarding.path.agents")
+        XCTAssertTrue(agents.waitForExistence(timeout: 15))
+        XCTAssertTrue(element("onboarding.path.documents").exists)
+        XCTAssertTrue(element("onboarding.path.coding").exists)
+        capture("First launch offers Getting Started automatically")
+        element("onboarding.skip").click()
+        XCTAssertTrue(element("composer.input").waitForExistence(timeout: 5))
+        XCTAssertFalse(agents.exists)
+        openSetup()
+        XCTAssertTrue(agents.waitForExistence(timeout: 5))
+    }
+
+    func testGettingStartedOpensRecurringAgentSetupAndPreservesDraft() {
+        app.launch()
+        let composer = element("composer.input")
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        composer.click()
+        composer.typeText("Keep this unrelated draft")
+        let previous = composer.value as? String
+        openSetup()
+        let agents = element("onboarding.path.agents")
+        XCTAssertTrue(agents.waitForExistence(timeout: 10))
+        capture("Getting Started choices")
+        agents.click()
+        element("onboarding.continue").click()
+        let create = element("onboarding.createAgent")
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        XCTAssertFalse(element("onboarding.runFirstTask").exists)
+        capture("Getting Started agents and recurring tasks")
+        element("onboarding.back").click()
+        XCTAssertTrue(agents.waitForExistence(timeout: 5))
+        element("onboarding.continue").click()
+        create.click()
+        let scheduled = element("configureAgent.create.schedule")
+        XCTAssertTrue(scheduled.waitForExistence(timeout: 10))
+        scheduled.click()
+        XCTAssertTrue(element("scheduleEditor.name").waitForExistence(timeout: 10))
+        XCTAssertFalse((element("scheduleEditor.prompt").value as? String ?? "").contains("Keep this unrelated draft"))
+        capture("Getting Started opens recurring task editor")
+        element("scheduleEditor.cancel").click()
+        element("configureAgent.close").click()
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, previous)
+    }
+
     func testLibraryPreservesDraftAcrossTabsAndClose() {
         app.launch()
         let composer = element("composer.input")
@@ -134,10 +182,106 @@ final class LibraryOnboardingUITests: XCTestCase {
             XCTAssertTrue(element("library.output.versions").waitForExistence(timeout: 5))
         }
         image.click()
+        XCTAssertTrue(element("preview.image.actualSize").waitForExistence(timeout: 5))
+        element("preview.image.actualSize").click()
+        XCTAssertTrue(pageCaption(element("preview.image.zoom")).contains("100%"))
+        element("preview.image.zoomIn").click()
+        XCTAssertTrue(pageCaption(element("preview.image.zoom")).contains("125%"))
+        XCTAssertTrue(element("library.output.export").isHittable)
+        element("library.output.expand").click()
+        XCTAssertTrue(element("preview.image.fit").waitForExistence(timeout: 5))
+        // Controls can exist even when an AppKit canvas never received its
+        // initial layout. Verify the known teal fixture is actually visible.
+        let bitmap = NSBitmapImageRep(data: app.windows.firstMatch.screenshot().pngRepresentation)
+        let center = bitmap.flatMap { $0.colorAt(x: $0.pixelsWide / 2, y: $0.pixelsHigh / 2)?.usingColorSpace(.sRGB) }
+        XCTAssertNotNil(center)
+        XCTAssertGreaterThan(center?.blueComponent ?? 0, (center?.redComponent ?? 1) + 0.15)
+        capture("Expanded image with zoom controls")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(element("library.output.expand").waitForExistence(timeout: 5))
+        element("preview.image.fit").click()
         capture("Owned image preview")
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(element("composer.input").waitForExistence(timeout: 5))
         XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    func testOutputSearchExplainsNoResultsAndRecoversSelection() {
+        app.launchEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] = "1"
+        app.launch()
+        XCTAssertTrue(element("sidebar.library").waitForExistence(timeout: 15))
+        element("sidebar.library").click()
+        XCTAssertTrue(element("library.document.fixture-pdf").waitForExistence(timeout: 10))
+        selectTab("Outputs")
+        let search = element("library.output.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("no-such-output")
+        XCTAssertTrue(app.staticTexts["No matching outputs"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("library.output.expand").exists)
+        app.buttons["Clear filters"].click()
+        XCTAssertTrue(element("library.output.expand").waitForExistence(timeout: 5))
+        capture("Library search recovered")
+    }
+
+    func testVaultCreatesProfileFindsFieldsAndExplainsEmptySearch() {
+        app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "identity-vault"
+        app.launch()
+        XCTAssertTrue(element("identity.search").waitForExistence(timeout: 15))
+        app.buttons["Personal"].firstMatch.click()
+        let name = element("identity.profile.name")
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Delete Profile"].exists)
+        name.click()
+        app.typeKey("a", modifierFlags: .command)
+        name.typeText("Travel details")
+        let fields = element("identity.profile.fieldSearch")
+        fields.click()
+        fields.typeText("email")
+        XCTAssertTrue(app.textFields["Email"].exists)
+        XCTAssertFalse(app.textFields["Phone"].exists)
+        element("identity.profile.save").click()
+        XCTAssertTrue(app.buttons["Edit Travel details"].waitForExistence(timeout: 5))
+        capture("Identity Vault profile")
+        let search = element("identity.search")
+        search.click()
+        search.typeText("no-such-profile")
+        XCTAssertTrue(app.staticTexts["No matching profiles"].waitForExistence(timeout: 5))
+        app.buttons["Clear search"].firstMatch.click()
+        XCTAssertTrue(app.buttons["Edit Travel details"].waitForExistence(timeout: 5))
+        selectTab("Signatures")
+        XCTAssertTrue(app.buttons["Import Signature…"].waitForExistence(timeout: 5))
+        capture("Identity Vault signature onboarding")
+        selectTab("Sharing History")
+        XCTAssertTrue(app.staticTexts["No sharing yet"].waitForExistence(timeout: 5))
+    }
+
+    private func selectTab(_ title: String) {
+        let tab = app.radioButtons[title].firstMatch
+        if tab.exists { tab.click() } else { app.buttons[title].firstMatch.click() }
+    }
+
+    func testVaultVersionsAndPrivateImagePreview() {
+        app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "identity-vault"
+        app.launchEnvironment["LOCUS_UI_TESTING_IDENTITY_CONTENT"] = "1"
+        app.launch()
+        XCTAssertTrue(element("identity.allVersions").waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Resume.pdf"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "Resume.pdf").count, 1)
+        element("identity.allVersions").click()
+        XCTAssertEqual(app.buttons.matching(identifier: "Resume.pdf").count, 2)
+        capture("Vault document versions")
+        app.buttons["Resume.pdf"].firstMatch.click()
+        XCTAssertTrue(element("library.pdf.page").waitForExistence(timeout: 5))
+        capture("Private PDF preview")
+        app.typeKey(.escape, modifierFlags: [])
+        selectTab("Signatures")
+        app.buttons["Signature.png"].firstMatch.click()
+        XCTAssertTrue(element("preview.image.zoomIn").waitForExistence(timeout: 5))
+        element("preview.image.actualSize").click()
+        element("preview.image.zoomIn").click()
+        XCTAssertTrue(pageCaption(element("preview.image.zoom")).contains("125%"))
+        capture("Private signature preview")
     }
 
     private func useConnectedFixtureWhenAvailable() {

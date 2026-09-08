@@ -1,0 +1,54 @@
+# locus Docs
+
+## Docs
+
+- [Locus](https://locus-3.gitbook.io/locus-docs/locus.md): A native macOS workspace for building with local or hosted AI models.
+- [Getting Started](https://locus-3.gitbook.io/locus-docs/getting-started.md): Install Locus 2.1, choose a model route, open a workspace, and complete a safe first request.
+- [Install Locus](https://locus-3.gitbook.io/locus-docs/getting-started/install-locus.md): Requirements, Locus 2.1 installation, ChatGPT components, and update channels.
+- [Your First Workspace](https://locus-3.gitbook.io/locus-docs/getting-started/your-first-workspace.md): Open a project folder, choose a model, and complete your first supervised Locus 2.1 request.
+- [Just Chat, Work, Plan & Grill](https://locus-3.gitbook.io/locus-docs/getting-started/chat-work-plan-and-build.md): Choose conversation, adaptive work, planning, or a one-question-at-a-time Grill interview.
+- [Working in Locus](https://locus-3.gitbook.io/locus-docs/working-in-locus.md): Conversations, Notebook, Browser, Git, Terminal, schedules, mobile access, and everyday controls.
+- [Conversations & Context](https://locus-3.gitbook.io/locus-docs/working-in-locus/conversations-and-context.md): Organize, search, split, export, and give models the right project context.
+- [The Inspector](https://locus-3.gitbook.io/locus-docs/working-in-locus/the-inspector.md): Keep overview, files, diffs, terminal, browser, notes, runs, routing, and proxies beside the conversation.
+- [Git Changes & Terminal](https://locus-3.gitbook.io/locus-docs/working-in-locus/git-changes-and-console.md): Review and ship Git changes, then run interactive project commands in the retained terminal.
+- [Browser & Dev Servers](https://locus-3.gitbook.io/locus-docs/working-in-locus/browser-and-dev-servers.md): Drive real web pages, inspect applications, use guarded Autofill, and manage named development servers.
+- [Mobile, Schedules & Background Work](https://locus-3.gitbook.io/locus-docs/working-in-locus/mobile-schedules-and-background-work.md): Continue work from your phone, schedule tasks, and supervise durable background activity.
+- [Shortcuts & Slash Commands](https://locus-3.gitbook.io/locus-docs/working-in-locus/shortcuts-and-slash-commands.md): Navigate Locus 2.1 and control a session from the keyboard.
+- [Models & Accounts](https://locus-3.gitbook.io/locus-docs/models-and-accounts.md): Configure Ollama, ChatGPT plans, API providers, reasoning, routing scorecards, usage, and proxy profiles.
+- [Local Ollama Models](https://locus-3.gitbook.io/locus-docs/models-and-accounts/local-ollama-models.md): Run Locus locally with Ollama, manage model files, and understand practical context windows.
+- [Hosted & Custom Models](https://locus-3.gitbook.io/locus-docs/models-and-accounts/hosted-and-custom-models.md): Add a ChatGPT plan, OpenAI API, Claude, Kimi, or compatible custom endpoint.
+- [Usage, Router & Proxy Profiles](https://locus-3.gitbook.io/locus-docs/models-and-accounts/usage-router-and-proxy-profiles.md): Understand usage, model-routing scorecards, and health-ranked proxy profiles.
+- [Agent Teams](https://locus-3.gitbook.io/locus-docs/agent-teams.md): Choose adaptive Solo work or configure explicit, durable multi-model teams.
+- [Set Up a Team](https://locus-3.gitbook.io/locus-docs/agent-teams/set-up-a-team.md): Create profiles, define a bounded team, and explicitly allow hosted routing.
+- [Run & Monitor Team Work](https://locus-3.gitbook.io/locus-docs/agent-teams/run-and-monitor-team-work.md): Approve a dependency plan and supervise durable, run-scoped Solo and team activity.
+- [Recovery & Evaluation](https://locus-3.gitbook.io/locus-docs/agent-teams/recovery-and-evaluation.md): Resume interrupted work, run durable background services, and compare agent configurations safely.
+- [Extensions & MCP](https://locus-3.gitbook.io/locus-docs/extensions-and-mcp.md): Add plugins, skills, MCP tools, Notebook workflows, and private continuity without expanding permissions.
+- [Manage Extensions & MCP](https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/manage-extensions-and-mcp.md): Install extensions and define per-agent MCP access in Locus V2.
+- [Workspace Knowledge & Memory](https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/workspace-knowledge-and-memory.md): Search local project knowledge and carry forward only user-approved, encrypted memory.
+- [Bundled Workflows, Notebook & Continuity](https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/bundled-workflows-notes-and-continuity.md): Use bundled development workflows, Notebook and Notes, and private cross-chat continuity.
+- [Safety & Privacy](https://locus-3.gitbook.io/locus-docs/safety-and-privacy.md): Permissions, credentials, Browser, Autofill, Locus Vault, mobile access, proxies, and local persistence.
+- [Permission Modes](https://locus-3.gitbook.io/locus-docs/safety-and-privacy/permission-modes.md): Control when V2 edits, commands, fetches, browser actions, MCP, and UI control require approval.
+- [Credentials & Local Data](https://locus-3.gitbook.io/locus-docs/safety-and-privacy/credentials-and-local-data.md): Understand what Locus stores locally, what leaves the Mac, and how credentials, notes, Autofill, and wallet material are handled.
+- [Native Computer Control](https://locus-3.gitbook.io/locus-docs/safety-and-privacy/native-computer-control.md): Let a foreground writer operate Mac interfaces within V2's guarded boundaries.
+- [Network Proxies](https://locus-3.gitbook.io/locus-docs/safety-and-privacy/network-proxies.md): Route V2 traffic through named proxy profiles with strict tunnel and health-ranked failover.
+- [Troubleshooting](https://locus-3.gitbook.io/locus-docs/troubleshooting.md): Fix common Locus 2.1 runtime, component, model, browser, Notebook, Vault, run, mobile, proxy, and recovery problems.
+- [Release Notes](https://locus-3.gitbook.io/locus-docs/release-notes.md): Product changes across Locus 2.1, 2.0, and the V2 update line.
+- [Developer Guide](https://locus-3.gitbook.io/locus-docs/developer-guide.md): Build, test, package, and understand the native Locus app and bundled agent.
+- [Build & Test](https://locus-3.gitbook.io/locus-docs/developer-guide/build-and-test.md): Prepare the Locus V2 native app, bundled agent, mobile companion, and optional Codex component.
+- [Architecture & Protocol](https://locus-3.gitbook.io/locus-docs/developer-guide/architecture-and-protocol.md): Understand the 2.1 feature-owned native client, domain-owned agent service, Codex component, persistence, and companion boundary.
+
+
+---
+
+# Agent Instructions
+This documentation is published with GitBook. GitBook is the documentation platform designed so that both humans and AI agents can read, navigate, and reason over technical content effectively. Learn more at gitbook.com.
+
+## Querying This Documentation
+If you need additional information, you can query the documentation dynamically by asking a question.
+Perform an HTTP GET request on a page URL with the `ask` query parameter:
+```
+GET https://locus-3.gitbook.io/locus-docs/locus.md?ask=<question>
+```
+The question should be specific, self-contained, and written in natural language.
+The response will contain a direct answer to the question and relevant excerpts and sources from the documentation.
+Use this mechanism when the answer is not explicitly present in the current page, you need clarification or additional context, or you want to retrieve related documentation sections.

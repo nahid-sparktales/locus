@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Library, Documents &amp; Outputs</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Add document knowledge</h2>
+
+<p>Turn on <strong>Document knowledge</strong> for the workspace to discover supported documents. This is separate from text and code indexing. <strong>Import</strong> copies external files into the visible <code>Locus Documents</code> folder and chooses a new name if one already exists.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Format</th>
+  <th>What is indexed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>PDF</td>
+  <td>Page text, with local text recognition for pages without useful text</td>
+</tr>
+<tr>
+  <td>DOCX</td>
+  <td>Body paragraphs and tables, with source locations</td>
+</tr>
+<tr>
+  <td>XLSX</td>
+  <td>Visible sheets and cells using cached formula values</td>
+</tr>
+<tr>
+  <td>CSV and TSV</td>
+  <td>UTF-8 delimited tables</td>
+</tr>
+</tbody>
+</table>
+
+<p>Convert older DOC and XLS files first. Word headers, footers, footnotes, endnotes, and text in images are not indexed. Hidden spreadsheet sheets and formulas without saved values are omitted with warnings; Locus does not calculate formulas.</p>
+
+<p>For PDFs with an unreliable text layer, use <strong>Recognize all pages</strong>. Recognition runs locally and depends on scan quality; it does not reconstruct the original page layout or tables.</p>
+
+<p>Attaching a document to a chat uses temporary extraction and does not opt the workspace into persistent document knowledge.</p>
+
+<h2>Search and check sources</h2>
+
+<p>Search results identify the source and location. PDF results open the cited page; Word and table results open the extracted section. Locus identifies a source that has changed since it was cited. Document previews offer <strong>Open in App</strong> and <strong>Reveal</strong>.</p>
+
+<p>Extraction supports files up to 100 MB, 500 PDF pages, 200,000 spreadsheet cells, and 5 MB of extracted text. Partial results and failures remain visible. Cancel or retry a job as needed. Unchanged files are skipped during refresh; failed files retry after their contents change or you choose Retry. Temporary jobs expire after 24 hours.</p>
+
+<h2>Keep output versions</h2>
+
+<p>Outputs saves immutable snapshots of captured deliverables and links them to their source chats. Identical content does not create another version. The default storage budget is <strong>2 GB per workspace</strong>, adjustable in Outputs, with a <strong>100 MB per-file limit</strong>.</p>
+
+<p>If a storage limit is reached, existing history remains available and Locus identifies content it could not save. History is never silently purged. Removing output history does not delete the original workspace file.</p>
+
+<p>Earlier output entries with an available source file receive <strong>Imported current version</strong>. Missing files remain visible as unavailable entries; older versions are not reconstructed. Websites remain live links, while local HTML files can be saved as snapshots.</p>
+
+<h2>Review or revise a deliverable</h2>
+
+<ol>
+<li>Select an output and version to preview or export it.</li>
+<li>Compare it with a previous version when available.</li>
+<li>Choose <strong>Revise</strong> to open a draft in the output's workspace with the selected snapshot attached and the destination stated.</li>
+<li>Review and send the draft through the normal agent workflow.</li>
+</ol>
+
+<p>The saved reference stays unchanged. A successful edit can produce a new version for later comparison.</p>
+</body></html>

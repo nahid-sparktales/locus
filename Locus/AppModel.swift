@@ -142,6 +142,7 @@ final class AppModel: ObservableObject {
         get { transcriptPresentation.snapshot.sessionID }
         set {
             guard currentSessionID != newValue else { return }
+            dismissOverview()
             invalidatePendingTranscriptTransition()
             if transcriptInputState == .loading { transcriptInputState = .unavailable }
             commitTranscriptIdentityTransition {
@@ -299,6 +300,7 @@ final class AppModel: ObservableObject {
             // inspector's prior state so leaving Chat restores exactly what
             // the user had before, regardless of which mode control they use.
             if selectedMode == .ask, oldValue != .ask {
+                dismissOverview()
                 restoreInspectorAfterJustChat = !inspectorCollapsed
                 inspectorCollapsed = true
             } else if selectedMode != .ask, oldValue == .ask {
@@ -319,9 +321,15 @@ final class AppModel: ObservableObject {
     /// independent of the open chat: selecting an agent changes its inspector
     /// and New Chat target without replacing the conversation in the centre.
     @Published var selectedAgentID: String?
+    /// Transient and never restored across launches.
+    @Published var overviewPresented = false
+    @Published var overviewActivityVisible = false
+    var requestOverviewVisible: Bool {
+        overviewActivityVisible && inspectorCollapsed && !justChatEnabled
+    }
     /// Only `selectInspectorTab(_:)` may change this. Backend events set a
     /// badge instead, so a run can never yank the panel out from under you.
-    @Published var inspectorTab: InspectorTab = .plan  // internal(for: AppModel+UITestFixtures)
+    @Published var inspectorTab: InspectorTab = .files  // internal(for: AppModel+UITestFixtures)
     /// Ordered, de-duplicated tabs currently kept open in the inspector.
     /// Selection and closure flow through the methods in the Inspector section
     /// so persistence and fallback behavior cannot drift apart.
@@ -332,7 +340,7 @@ final class AppModel: ObservableObject {
     }
     /// Session-local destination for the rail's reopen control. Persistence
     /// continues to describe tabs that are actually open; a fresh launch has
-    /// no closed-tab history and therefore falls back to Overview.
+    /// no closed-tab history and therefore falls back to Files.
     var lastClosedInspectorTab: InspectorTab?  // internal(for: AppModel extension files)
     @Published var inspectorCollapsed = true {
         didSet {

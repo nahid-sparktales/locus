@@ -125,9 +125,11 @@ struct AsyncWorkspaceImageArtifactView: View {
     /// host card can be exercised without exposing its internals.
     var accessibilityIdentifierPrefix: String? = nil
     @State private var image: NSImage?
+    @State private var imageLoaded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
+            Button(action: onOpen) {
             Group {
                 if let image {
                     SwiftUI.Image(nsImage: image)
@@ -136,7 +138,10 @@ struct AsyncWorkspaceImageArtifactView: View {
                 } else {
                     ZStack {
                         LocusTheme.paperDeep
-                        ProgressView().controlSize(.small)
+                        if imageLoaded {
+                            Label("Open image preview", systemImage: "photo")
+                                .foregroundStyle(LocusTheme.textSecondary)
+                        } else { ProgressView().controlSize(.small) }
                     }
                     .frame(height: 160)
                 }
@@ -147,6 +152,10 @@ struct AsyncWorkspaceImageArtifactView: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
             }
+            }.buttonStyle(.locus())
+                .help("Open a larger image with zoom controls")
+                .accessibilityLabel("Preview image, \(reference.relativePath)")
+                .accessibilityIdentifier(identifier("preview"))
 
             HStack(spacing: 8) {
                 if let selectionStore, let selectionSpan {
@@ -163,7 +172,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 } else if !caption.isEmpty {
                     Text(caption)
-                        .font(.locus(size: 9, weight: .medium))
+                        .font(.locus(size: 11, weight: .medium))
                         .foregroundStyle(LocusTheme.muted)
                         .textSelection(.enabled)
                 }
@@ -177,7 +186,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                             }
                         } label: {
                             Label(entry.title, systemImage: entry.symbol)
-                                .font(.locus(size: 9, weight: .semibold))
+                                .font(.locus(size: 11, weight: .semibold))
                         }
                         .menuStyle(.borderlessButton).fixedSize()
                         .foregroundStyle(LocusTheme.muted)
@@ -196,12 +205,15 @@ struct AsyncWorkspaceImageArtifactView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Image artifact, \(reference.relativePath)")
         .task(id: "\(reference.url.path)|\(displayScale)") {
+            image = nil
+            imageLoaded = false
             let loaded = await ArtifactThumbnailStore.shared.image(
                 for: reference.url,
                 displayScale: displayScale
             )
             guard !Task.isCancelled else { return }
             image = loaded
+            imageLoaded = true
         }
     }
 
@@ -213,7 +225,7 @@ struct AsyncWorkspaceImageArtifactView: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
-                .font(.locus(size: 9, weight: .semibold))
+                .font(.locus(size: 11, weight: .semibold))
         }
         .buttonStyle(.locus())
         .foregroundStyle(LocusTheme.muted)

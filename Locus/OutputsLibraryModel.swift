@@ -38,11 +38,12 @@ final class OutputsLibraryModel: ObservableObject {
     init(store: OutputsLibraryStore = OutputsLibraryStore()) { self.store = store }
 
     var visibleItems: [LibraryOutput] {
-        items.filter { (typeFilter == "all" || $0.kind == typeFilter)
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return items.filter { (typeFilter == "all" || $0.kind == typeFilter)
             && $0.versions.contains { version in
                 version.belongsTo(sessionID: sourceSessionID, runID: sourceRunID)
             }
-            && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.target.localizedCaseInsensitiveContains(query)) }
+            && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.target.localizedCaseInsensitiveContains(search)) }
     }
     var selectedItem: LibraryOutput? { items.first { $0.id == selectedItemID } }
     var selectedVersion: OutputVersion? {

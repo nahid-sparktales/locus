@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Install Locus</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Requirements</h2>
+
+<ul>
+<li>Apple Silicon Mac running macOS 14 or later.</li>
+<li>One model source: local Ollama with a downloaded model, an eligible ChatGPT plan, or a supported API account.</li>
+</ul>
+
+<p>The packaged app includes its Python agent runtime. You do not need a separate Python installation, Homebrew, Rust, Codex CLI, or a running ChatGPT or Codex app. Ollama and model weights are separate installations.</p>
+
+<h2>Install and open</h2>
+
+<ol>
+<li>Download <strong>Locus-macOS.zip</strong> from the <a href="https://github.com/nahid-sparktales/locus/releases/tag/v2.6.0">2.6.0 release</a>.</li>
+<li>Unzip it and move <strong>Locus.app</strong> to Applications.</li>
+<li>Open Locus and follow Getting Started. Existing users can reopen setup from <strong>Help → Getting Started</strong>.</li>
+<li>Choose local Ollama or connect your account under <strong>Settings → Models &amp; Providers</strong>.</li>
+<li>Choose a workspace and review your permission mode before sending a request.</li>
+</ol>
+
+<h2>ChatGPT-plan components</h2>
+
+<p>ChatGPT-plan access uses pinned Codex helpers. Direct release builds normally offer them as a separate component download when you add that account. Ollama and API-key accounts do not need the component. Downloaded components must pass checksum and SparkTales code-signature checks before installation or execution. A failed check preserves the previous installation.</p>
+
+<p>Debug and Mac App Store builds bundle the helpers; direct builds can also explicitly bundle them. Use <strong>Settings → Updates</strong> for the component's available controls.</p>
+
+<h2>Updating 2.6.0</h2>
+
+<p><strong>Locus 2.6.0 uses manual app updates.</strong> Download and install the desired release yourself. The old signed app feed remains available to earlier wallet-era installations and does not automatically move them to wallet-free Locus. Component downloads are separate from app updates.</p>
+
+<p>Installing the standard Locus app preserves existing Locus chats, accounts, settings, and browser data. Wallet files and Keychain entries are left untouched and are not automatically imported. Follow the release notes for the version you install.</p>
+
+<h2>Locus and LocusX</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Edition</th>
+  <th>Wallet functionality</th>
+  <th>App data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Locus</td>
+  <td>Excluded</td>
+  <td>Keeps the existing Locus profile</td>
+</tr>
+<tr>
+  <td>LocusX</td>
+  <td>Separate optional wallet implementation</td>
+  <td>Independent chats, accounts, settings, and browser profile</td>
+</tr>
+<tr>
+  <td>Mac App Store build target</td>
+  <td>Excluded</td>
+  <td>Uses the sandboxed app distribution</td>
+</tr>
+</tbody>
+</table>
+
+<p>The direct-download distribution supports optional Computer Control; the Mac App Store target excludes it. The built-in browser is available in both. The existence of a build target does not imply a currently available App Store listing.</p>
+</body></html>

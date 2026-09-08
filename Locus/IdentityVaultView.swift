@@ -80,6 +80,7 @@ struct IdentityVaultView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var importReview: IdentityImportRequest?
     @State private var deleteDocument: IdentityVaultDocument?
+    @State private var showAllVersions = false
 
     init(vault: IdentityVaultModel) { self.vault = vault; self.store = vault.store }
 
@@ -88,9 +89,11 @@ struct IdentityVaultView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("Identity Vault", systemImage: "person.text.rectangle").font(.title2.bold())
-                    Text("Private profiles and documents, encrypted on this Mac.").foregroundStyle(LocusTheme.textTertiary)
+                    Text("Keep your details ready. Choose what to share, each time.").foregroundStyle(LocusTheme.textSecondary)
                 }
                 Spacer()
+                Label("Encrypted on this Mac", systemImage: "lock.shield")
+                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(22)
             Picker("Identity Vault", selection: $vault.tab) {
@@ -111,6 +114,7 @@ struct IdentityVaultView: View {
                     HStack(alignment: .top) {
                         Text(notice).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
                         Button { vault.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.locus(.icon))
+                            .accessibilityLabel("Dismiss notice")
                     }.padding(12).background(LocusTheme.warningForeground.opacity(0.10)).padding(.horizontal)
                 }
                 if vault.isWorking { ProgressView("Processing locally…").padding(12) }
@@ -130,12 +134,12 @@ struct IdentityVaultView: View {
             deleteDocument = nil
         }
         .sheet(item: $vault.profileEditor) { profile in
-            IdentityProfileEditor(profile: profile) { edited in
-                do { _ = try store.saveProfile(edited); vault.profileEditor = nil }
-                catch { vault.notice = error.localizedDescription }
+            IdentityProfileEditor(profile: profile, isNew: !store.profiles.contains(where: { $0.id == profile.id })) { edited in
+                _ = try store.saveProfile(edited)
+                vault.profileEditor = nil
             } onDelete: {
-                do { try store.deleteProfile(profile.id); vault.profileEditor = nil }
-                catch { vault.notice = error.localizedDescription }
+                try store.deleteProfile(profile.id)
+                vault.profileEditor = nil
             }
         }
         .sheet(item: $importReview) { request in
@@ -167,13 +171,14 @@ struct IdentityVaultView: View {
                 deleteDocument = nil
             }
         } message: { Text("Other versions remain available. Copies already exported or shared are unaffected.") }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("identity.vault")
     }
 
     private var toolbar: some View {
+        VStack(alignment: .leading, spacing: 12) {
         HStack {
-            TextField("Search this vault", text: $vault.query).textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("identity.search")
+            LibrarySearchField(prompt: "Search \(vault.tab.rawValue.lowercased())", text: $vault.query, identifier: "identity.search")
             if vault.tab == .profiles {
                 Menu {
                     ForEach(IdentityVaultProfileKind.allCases) { kind in
@@ -190,28 +195,71 @@ struct IdentityVaultView: View {
                 }
             }
         }.padding(16)
+            HStack {
+                Text(tabDescription).font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                Spacer(minLength: 8)
+                if vault.tab == .documents || vault.tab == .signatures {
+                    Toggle("Show all versions", isOn: $showAllVersions).toggleStyle(.checkbox)
+                        .accessibilityIdentifier("identity.allVersions")
+                }
+            }.padding(.horizontal, 18).padding(.bottom, 12)
+        }
     }
 
-    private func matches(_ text: String) -> Bool { vault.query.isEmpty || text.localizedCaseInsensitiveContains(vault.query) }
+    private var tabDescription: String {
+        switch vault.tab {
+        case .profiles: "Reusable details for forms, applications, and private tasks."
+        case .documents: "Saved files and editable drafts. Preview before you share."
+        case .signatures: "Signature images you can choose when filling a document."
+        case .history: "Review what you shared, when, and with whom."
+        }
+    }
+    private var isSearching: Bool { !vault.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private func matches(_ text: String) -> Bool {
+        !isSearching || text.localizedCaseInsensitiveContains(vault.query.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    private var noSearchResults: some View {
+        ContentUnavailableView {
+            Label("No matching \(vault.tab.rawValue.lowercased())", systemImage: "magnifyingglass")
+        } description: { Text("Try a different name or clear your search to see everything in this tab.") }
+        actions: { Button("Clear search") { vault.query = "" } }
+    }
 
     private var profiles: some View {
-        Group {
-            if store.profiles.isEmpty {
-                ContentUnavailableView("Make information reusable", systemImage: "person.crop.rectangle.badge.plus",
-                    description: Text("Create a personal, business, or career profile. Every field stays private until you choose to share it."))
+        let items = store.profiles.filter { matches($0.name + " " + $0.kind.title + " " + $0.fields.map(\.value).joined(separator: " ")) }
+        return Group {
+            if items.isEmpty && isSearching { noSearchResults }
+            else if store.profiles.isEmpty {
+                ContentUnavailableView {
+                    Label("Your details, ready when you need them", systemImage: "person.crop.rectangle.badge.plus")
+                } description: {
+                    Text("Start with a personal, business, or career profile. You can leave any field blank and add more later.")
+                } actions: {
+                    HStack {
+                        ForEach(IdentityVaultProfileKind.allCases) { kind in
+                            Button(kind.title, systemImage: kind.symbol) { vault.profileEditor = .init(name: kind.title, kind: kind) }
+                        }
+                    }
+                }
             } else {
-                List(store.profiles.filter { matches($0.name + " " + $0.fields.map(\.value).joined(separator: " ")) }) { profile in
+                List(items) { profile in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Label(profile.name, systemImage: profile.kind.symbol).font(.headline)
+                            Image(systemName: profile.kind.symbol).font(.title2)
+                                .frame(width: 40, height: 40).background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 9))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(profile.name).font(.headline)
+                                Text(profile.kind.title).font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                            }
                             Spacer()
-                            Text(profile.kind.title).foregroundStyle(LocusTheme.textTertiary)
                             Button("Edit") { vault.profileEditor = profile }
+                                .accessibilityLabel("Edit \(profile.name)")
                         }
-                        Text("\(profile.fields.filter { !$0.value.isEmpty }.count) saved fields · Private by default")
-                            .font(.subheadline).foregroundStyle(LocusTheme.textTertiary)
+                        Text("\(profile.fields.filter { !$0.value.isEmpty }.count) saved fields · Updated \(profile.updatedAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
                         HStack {
-                            Button("Use in Private Task", systemImage: "lock.shield") { model.startIdentityTask(profileID: profile.id) }
+                            Button("Start Private Task", systemImage: "lock.shield") { model.startIdentityTask(profileID: profile.id) }
+                                .help("Start a task with this profile. You choose which details to share.")
                             if profile.kind == .career {
                                 Menu("Write with AI", systemImage: "pencil") {
                                     Button("Résumé") { startWriting(profile, coverLetter: false) }
@@ -227,24 +275,49 @@ struct IdentityVaultView: View {
     }
 
     private var documents: some View {
-        let items = store.documents.filter {
-            ($0.kind == .signature) == (vault.tab == .signatures) && matches($0.name + " " + $0.extractedText)
+        let latestIDs = Set(Dictionary(grouping: store.documents, by: \.groupID).values.compactMap { $0.max(by: { $0.version < $1.version })?.id })
+        let items = store.documents.filter { document in
+            (document.kind == .signature) == (vault.tab == .signatures)
+                && (showAllVersions || latestIDs.contains(document.id))
+                && matches(document.name + " " + document.kind.title + " " + document.extractedText + " "
+                    + (store.profiles.first { $0.id == document.profileID }?.name ?? ""))
         }.sorted { $0.createdAt > $1.createdAt }
-        return List {
-            if items.isEmpty {
-                ContentUnavailableView(vault.tab == .signatures ? "Keep a signature image privately" : "Save résumés and documents",
-                    systemImage: vault.tab == .signatures ? "signature" : "doc.text",
-                    description: Text("Import a file to store an encrypted copy. Originals remain unchanged."))
-            }
+        let drafts = vault.tab == .documents ? store.drafts.filter { matches($0.title) } : []
+        return Group {
+            if items.isEmpty && drafts.isEmpty && isSearching { noSearchResults }
+            else if items.isEmpty && drafts.isEmpty {
+                ContentUnavailableView {
+                    Label(vault.tab == .signatures ? "Add your signature" : "Keep your important documents together",
+                        systemImage: vault.tab == .signatures ? "signature" : "doc.text")
+                } description: {
+                    Text(vault.tab == .signatures
+                        ? "Import a PNG or JPEG of your signature. A transparent PNG works well on forms."
+                        : "Import a résumé, letter, or identity document, or start an editable draft.")
+                } actions: {
+                    Button(vault.tab == .signatures ? "Import Signature…" : "Import Document…", systemImage: "plus") { beginImport() }
+                        .disabled(vault.isWorking)
+                }
+            } else {
+            List {
+            if !items.isEmpty { Section("\(showAllVersions ? "Saved versions" : "Latest documents") · \(items.count)") {
             ForEach(items) { document in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: document.kind == .signature ? "signature" : "doc.text").font(.title2).frame(width: 30)
+                    Image(systemName: document.kind == .signature ? "signature" : document.mimeType.hasPrefix("image/") ? "photo" : "doc.text")
+                        .font(.title2).foregroundStyle(LocusTheme.textSecondary).frame(width: 38, height: 42)
                     VStack(alignment: .leading, spacing: 5) {
                         Button(document.name) { vault.previewDocument = document }.buttonStyle(.locus()).font(.headline)
                         Text("\(document.kind.title) · Version \(document.version) · \(ByteCountFormatter.string(fromByteCount: Int64(document.byteCount), countStyle: .file))")
-                            .font(.subheadline).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                        HStack(spacing: 8) {
+                            if let profile = store.profiles.first(where: { $0.id == document.profileID }) {
+                                Label(profile.name, systemImage: "person.crop.circle")
+                            }
+                            Text(document.createdAt.formatted(date: .abbreviated, time: .omitted))
+                        }.font(.caption).foregroundStyle(LocusTheme.textSecondary)
                     }
                     Spacer()
+                    Button("Preview") { vault.previewDocument = document }
+                        .accessibilityIdentifier("identity.document.preview.\(document.id)")
                     Menu {
                         Button("Preview") { vault.previewDocument = document }
                         Button("Export this version…") { exportDocument(document) }
@@ -255,29 +328,35 @@ struct IdentityVaultView: View {
                         Divider()
                         Button("Delete this version", role: .destructive) { deleteDocument = document }
                     } label: { Image(systemName: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Actions for \(document.name)")
                 }.padding(.vertical, 8)
             }
-            if vault.tab == .documents, !store.drafts.isEmpty {
+            } }
+            if !drafts.isEmpty {
                 Section("Editable drafts") {
-                    ForEach(store.drafts.filter { matches($0.title) }) { draft in
+                    ForEach(drafts) { draft in
                         HStack {
                             Label(draft.title, systemImage: "square.and.pencil")
                             Spacer()
-                            Button("Edit & Create Files") { vault.draftEditor = draft }
+                            Button("Edit Draft") { vault.draftEditor = draft }
                         }.padding(.vertical, 6)
                     }
                 }
             }
         }.listStyle(.inset)
+            }
+        }
     }
 
     private var history: some View {
-        List {
-            if store.disclosures.isEmpty {
-                ContentUnavailableView("Sharing stays inspectable", systemImage: "clock.arrow.circlepath",
+        let items = store.disclosures.reversed().filter { matches($0.summary + " " + $0.recipientLabel) }
+        return Group {
+            if items.isEmpty && isSearching { noSearchResults }
+            else if store.disclosures.isEmpty {
+                ContentUnavailableView("No sharing yet", systemImage: "clock.arrow.circlepath",
                     description: Text("Approved AI sharing, website fills, attachments, and exports appear here."))
-            }
-            ForEach(store.disclosures.reversed().filter { matches($0.summary + " " + $0.recipientLabel) }) { disclosure in
+            } else {
+            List(items) { disclosure in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(disclosure.recipientLabel).font(.headline)
@@ -291,8 +370,9 @@ struct IdentityVaultView: View {
                         Button("Revoke future access") { vault.revoke(disclosure) }.font(.callout)
                     }
                 }.padding(.vertical, 8)
+            }.listStyle(.inset)
             }
-        }.listStyle(.inset)
+        }
     }
 
     private func beginImport(replacing: IdentityVaultDocument? = nil) {
@@ -301,7 +381,8 @@ struct IdentityVaultView: View {
         panel.title = "Import into Identity Vault"
         panel.message = "Locus stores an encrypted copy locally. This does not share the document with AI."
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = ["pdf", "docx", "txt", "png", "jpg", "jpeg"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = (vault.tab == .signatures ? ["png", "jpg", "jpeg"] : ["pdf", "docx", "txt", "png", "jpg", "jpeg"])
+            .compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, let url = panel.url,
               vault.lifecycleGeneration == generation, store.isReady else { return }
         vault.isWorking = true
@@ -397,18 +478,26 @@ struct IdentityVaultView: View {
 
 private struct IdentityProfileEditor: View {
     @State var profile: IdentityVaultProfile
-    let save: (IdentityVaultProfile) -> Void
-    let onDelete: () -> Void
+    let isNew: Bool
+    let save: (IdentityVaultProfile) throws -> Void
+    let onDelete: () throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDelete = false
+    @State private var error: String?
+    @State private var fieldQuery = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("\(profile.kind.title) profile").font(.title2.bold())
             Text("Fields stay private. You review exactly what is sent to a website or AI provider.").foregroundStyle(LocusTheme.textTertiary)
+            Text("All fields are optional. Add what is useful now; you can come back later.").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
             TextField("Profile name", text: $profile.name).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("identity.profile.name")
+            LibrarySearchField(prompt: "Find a field, such as email or education", text: $fieldQuery, identifier: "identity.profile.fieldSearch")
+            if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(LocusTheme.dangerForeground) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach($profile.fields) { $field in
+                        if fieldQuery.isEmpty || field.label.localizedCaseInsensitiveContains(fieldQuery) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 if field.key.hasPrefix("custom_") { TextField("Field label", text: $field.label) }
@@ -416,6 +505,7 @@ private struct IdentityProfileEditor: View {
                                 Spacer()
                                 if field.key.hasPrefix("custom_") {
                                     Button { profile.fields.removeAll { $0.id == field.id } } label: { Image(systemName: "minus.circle") }
+                                        .accessibilityLabel("Remove \(field.label)")
                                 }
                             }
                             if field.kind == .multiline {
@@ -427,27 +517,35 @@ private struct IdentityProfileEditor: View {
                                     .frame(minHeight: 70).border(LocusTheme.separator)
                             } else { TextField(field.label, text: $field.value).textFieldStyle(.roundedBorder) }
                         }
+                        }
                     }
                     HStack {
-                        Button("Add Custom Field") { profile.fields.append(.init(key: "custom_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""), label: "Custom field", kind: .multiline)) }
+                        Button("Add Custom Field") {
+                            fieldQuery = ""
+                            profile.fields.append(.init(key: "custom_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""), label: "Custom field", kind: .multiline))
+                        }
                         if profile.kind == .career {
-                            Button("Add Employment") { profile.appendCareerEntry(education: false) }
-                            Button("Add Education") { profile.appendCareerEntry(education: true) }
+                            Button("Add Employment") { fieldQuery = ""; profile.appendCareerEntry(education: false) }
+                            Button("Add Education") { fieldQuery = ""; profile.appendCareerEntry(education: true) }
                         }
                     }
                 }.padding(2)
             }
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Delete Profile", role: .destructive) { confirmDelete = true }
+                if !isNew { Button("Delete Profile", role: .destructive) { confirmDelete = true } }
                 Spacer()
-                Button("Save Profile") { save(profile) }.buttonStyle(.borderedProminent).tint(LocusTheme.ink).disabled(profile.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Save Profile") {
+                    do { try save(profile) } catch { self.error = error.localizedDescription }
+                }.buttonStyle(.borderedProminent).tint(LocusTheme.ink).disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("identity.profile.save")
             }
         }.padding(22).frame(width: 670, height: 650).modifier(IdentityPrivateSurface())
             .alert("Delete this profile?", isPresented: $confirmDelete) {
                 Button("Cancel", role: .cancel) {}
-                Button("Delete", role: .destructive) { onDelete() }
+                Button("Delete", role: .destructive) {
+                    do { try onDelete() } catch { self.error = error.localizedDescription }
+                }
             } message: { Text("Document versions remain in the vault.") }
     }
 }
@@ -497,31 +595,41 @@ private struct IdentityDocumentPreview: View {
     let document: IdentityVaultDocument
     let data: Data
     @Environment(\.dismiss) private var dismiss
+    @State private var showText = false
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             HStack {
-                Label(document.name, systemImage: "lock.doc").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(document.name, systemImage: "lock.doc").font(.headline).lineLimit(1)
+                    Text("\(document.kind.title) · Version \(document.version) · Private preview")
+                        .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                }
                 Spacer()
+                if !document.extractedText.isEmpty && (document.mimeType == "application/pdf" || document.mimeType.hasPrefix("image/")) {
+                    Picker("View", selection: $showText) {
+                        Text("Original").tag(false)
+                        Text("Text").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 150)
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-            if document.mimeType == "application/pdf" {
-                IdentityPDFPreview(data: data)
-            } else if document.mimeType.hasPrefix("image/"), let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().scaledToFit()
+            }.padding(18)
+            Divider()
+            if data.isEmpty {
+                ContentUnavailableView("Preview unavailable", systemImage: "lock.doc",
+                    description: Text("Close this preview and reopen the document from your vault."))
+            } else if !showText && document.mimeType == "application/pdf" {
+                DocumentPDFReader(data: data).id(document.id)
+            } else if !showText && document.mimeType.hasPrefix("image/") {
+                DocumentImagePreview(data: data).id(document.id)
+            } else if !document.extractedText.isEmpty {
+                ScrollView { Text(document.extractedText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(22) }
             } else {
-                ScrollView { Text(document.extractedText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                ContentUnavailableView("No text preview", systemImage: "doc.text",
+                    description: Text("The original is saved in your vault. Export this version from the document’s menu to open it in another app."))
             }
-            Text("Private preview · Version \(document.version)").font(.caption).foregroundStyle(LocusTheme.textTertiary)
-        }.padding(20).frame(width: 760, height: 700).modifier(IdentityPrivateSurface())
+        }.frame(minWidth: 700, idealWidth: 880, minHeight: 520, idealHeight: 700)
+            .background(LocusTheme.paper).foregroundStyle(LocusTheme.ink).modifier(IdentityPrivateSurface())
     }
-}
-
-private struct IdentityPDFPreview: NSViewRepresentable {
-    let data: Data
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView(); view.autoScales = true; view.document = PDFDocument(data: data); return view
-    }
-    func updateNSView(_ view: PDFView, context: Context) {}
 }
 
 private struct IdentityDraftEditor: View {

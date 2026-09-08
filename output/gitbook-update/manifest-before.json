@@ -1,0 +1,206 @@
+[
+  {
+    "title": "Locus",
+    "url": "https://locus-3.gitbook.io/locus-docs/locus.md",
+    "path": "locus.md",
+    "description": "A native macOS workspace for building with local or hosted AI models."
+  },
+  {
+    "title": "Getting Started",
+    "url": "https://locus-3.gitbook.io/locus-docs/getting-started.md",
+    "path": "getting-started.md",
+    "description": "Install Locus 2.1, choose a model route, open a workspace, and complete a safe first request."
+  },
+  {
+    "title": "Install Locus",
+    "url": "https://locus-3.gitbook.io/locus-docs/getting-started/install-locus.md",
+    "path": "getting-started/install-locus.md",
+    "description": "Requirements, Locus 2.1 installation, ChatGPT components, and update channels."
+  },
+  {
+    "title": "Your First Workspace",
+    "url": "https://locus-3.gitbook.io/locus-docs/getting-started/your-first-workspace.md",
+    "path": "getting-started/your-first-workspace.md",
+    "description": "Open a project folder, choose a model, and complete your first supervised Locus 2.1 request."
+  },
+  {
+    "title": "Just Chat, Work, Plan & Grill",
+    "url": "https://locus-3.gitbook.io/locus-docs/getting-started/chat-work-plan-and-build.md",
+    "path": "getting-started/chat-work-plan-and-build.md",
+    "description": "Choose conversation, adaptive work, planning, or a one-question-at-a-time Grill interview."
+  },
+  {
+    "title": "Working in Locus",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus.md",
+    "path": "working-in-locus.md",
+    "description": "Conversations, Notebook, Browser, Git, Terminal, schedules, mobile access, and everyday controls."
+  },
+  {
+    "title": "Conversations & Context",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/conversations-and-context.md",
+    "path": "working-in-locus/conversations-and-context.md",
+    "description": "Organize, search, split, export, and give models the right project context."
+  },
+  {
+    "title": "The Inspector",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/the-inspector.md",
+    "path": "working-in-locus/the-inspector.md",
+    "description": "Keep overview, files, diffs, terminal, browser, notes, runs, routing, and proxies beside the conversation."
+  },
+  {
+    "title": "Git Changes & Terminal",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/git-changes-and-console.md",
+    "path": "working-in-locus/git-changes-and-console.md",
+    "description": "Review and ship Git changes, then run interactive project commands in the retained terminal."
+  },
+  {
+    "title": "Browser & Dev Servers",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/browser-and-dev-servers.md",
+    "path": "working-in-locus/browser-and-dev-servers.md",
+    "description": "Drive real web pages, inspect applications, use guarded Autofill, and manage named development servers."
+  },
+  {
+    "title": "Mobile, Schedules & Background Work",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/mobile-schedules-and-background-work.md",
+    "path": "working-in-locus/mobile-schedules-and-background-work.md",
+    "description": "Continue work from your phone, schedule tasks, and supervise durable background activity."
+  },
+  {
+    "title": "Shortcuts & Slash Commands",
+    "url": "https://locus-3.gitbook.io/locus-docs/working-in-locus/shortcuts-and-slash-commands.md",
+    "path": "working-in-locus/shortcuts-and-slash-commands.md",
+    "description": "Navigate Locus 2.1 and control a session from the keyboard."
+  },
+  {
+    "title": "Models & Accounts",
+    "url": "https://locus-3.gitbook.io/locus-docs/models-and-accounts.md",
+    "path": "models-and-accounts.md",
+    "description": "Configure Ollama, ChatGPT plans, API providers, reasoning, routing scorecards, usage, and proxy profiles."
+  },
+  {
+    "title": "Local Ollama Models",
+    "url": "https://locus-3.gitbook.io/locus-docs/models-and-accounts/local-ollama-models.md",
+    "path": "models-and-accounts/local-ollama-models.md",
+    "description": "Run Locus locally with Ollama, manage model files, and understand practical context windows."
+  },
+  {
+    "title": "Hosted & Custom Models",
+    "url": "https://locus-3.gitbook.io/locus-docs/models-and-accounts/hosted-and-custom-models.md",
+    "path": "models-and-accounts/hosted-and-custom-models.md",
+    "description": "Add a ChatGPT plan, OpenAI API, Claude, Kimi, or compatible custom endpoint."
+  },
+  {
+    "title": "Usage, Router & Proxy Profiles",
+    "url": "https://locus-3.gitbook.io/locus-docs/models-and-accounts/usage-router-and-proxy-profiles.md",
+    "path": "models-and-accounts/usage-router-and-proxy-profiles.md",
+    "description": "Understand usage, model-routing scorecards, and health-ranked proxy profiles."
+  },
+  {
+    "title": "Agent Teams",
+    "url": "https://locus-3.gitbook.io/locus-docs/agent-teams.md",
+    "path": "agent-teams.md",
+    "description": "Choose adaptive Solo work or configure explicit, durable multi-model teams."
+  },
+  {
+    "title": "Set Up a Team",
+    "url": "https://locus-3.gitbook.io/locus-docs/agent-teams/set-up-a-team.md",
+    "path": "agent-teams/set-up-a-team.md",
+    "description": "Create profiles, define a bounded team, and explicitly allow hosted routing."
+  },
+  {
+    "title": "Run & Monitor Team Work",
+    "url": "https://locus-3.gitbook.io/locus-docs/agent-teams/run-and-monitor-team-work.md",
+    "path": "agent-teams/run-and-monitor-team-work.md",
+    "description": "Approve a dependency plan and supervise durable, run-scoped Solo and team activity."
+  },
+  {
+    "title": "Recovery & Evaluation",
+    "url": "https://locus-3.gitbook.io/locus-docs/agent-teams/recovery-and-evaluation.md",
+    "path": "agent-teams/recovery-and-evaluation.md",
+    "description": "Resume interrupted work, run durable background services, and compare agent configurations safely."
+  },
+  {
+    "title": "Extensions & MCP",
+    "url": "https://locus-3.gitbook.io/locus-docs/extensions-and-mcp.md",
+    "path": "extensions-and-mcp.md",
+    "description": "Add plugins, skills, MCP tools, Notebook workflows, and private continuity without expanding permissions."
+  },
+  {
+    "title": "Manage Extensions & MCP",
+    "url": "https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/manage-extensions-and-mcp.md",
+    "path": "extensions-and-mcp/manage-extensions-and-mcp.md",
+    "description": "Install extensions and define per-agent MCP access in Locus V2."
+  },
+  {
+    "title": "Workspace Knowledge & Memory",
+    "url": "https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/workspace-knowledge-and-memory.md",
+    "path": "extensions-and-mcp/workspace-knowledge-and-memory.md",
+    "description": "Search local project knowledge and carry forward only user-approved, encrypted memory."
+  },
+  {
+    "title": "Bundled Workflows, Notebook & Continuity",
+    "url": "https://locus-3.gitbook.io/locus-docs/extensions-and-mcp/bundled-workflows-notes-and-continuity.md",
+    "path": "extensions-and-mcp/bundled-workflows-notes-and-continuity.md",
+    "description": "Use bundled development workflows, Notebook and Notes, and private cross-chat continuity."
+  },
+  {
+    "title": "Safety & Privacy",
+    "url": "https://locus-3.gitbook.io/locus-docs/safety-and-privacy.md",
+    "path": "safety-and-privacy.md",
+    "description": "Permissions, credentials, Browser, Autofill, Locus Vault, mobile access, proxies, and local persistence."
+  },
+  {
+    "title": "Permission Modes",
+    "url": "https://locus-3.gitbook.io/locus-docs/safety-and-privacy/permission-modes.md",
+    "path": "safety-and-privacy/permission-modes.md",
+    "description": "Control when V2 edits, commands, fetches, browser actions, MCP, and UI control require approval."
+  },
+  {
+    "title": "Credentials & Local Data",
+    "url": "https://locus-3.gitbook.io/locus-docs/safety-and-privacy/credentials-and-local-data.md",
+    "path": "safety-and-privacy/credentials-and-local-data.md",
+    "description": "Understand what Locus stores locally, what leaves the Mac, and how credentials, notes, Autofill, and wallet material are handled."
+  },
+  {
+    "title": "Native Computer Control",
+    "url": "https://locus-3.gitbook.io/locus-docs/safety-and-privacy/native-computer-control.md",
+    "path": "safety-and-privacy/native-computer-control.md",
+    "description": "Let a foreground writer operate Mac interfaces within V2's guarded boundaries."
+  },
+  {
+    "title": "Network Proxies",
+    "url": "https://locus-3.gitbook.io/locus-docs/safety-and-privacy/network-proxies.md",
+    "path": "safety-and-privacy/network-proxies.md",
+    "description": "Route V2 traffic through named proxy profiles with strict tunnel and health-ranked failover."
+  },
+  {
+    "title": "Troubleshooting",
+    "url": "https://locus-3.gitbook.io/locus-docs/troubleshooting.md",
+    "path": "troubleshooting.md",
+    "description": "Fix common Locus 2.1 runtime, component, model, browser, Notebook, Vault, run, mobile, proxy, and recovery problems."
+  },
+  {
+    "title": "Release Notes",
+    "url": "https://locus-3.gitbook.io/locus-docs/release-notes.md",
+    "path": "release-notes.md",
+    "description": "Product changes across Locus 2.1, 2.0, and the V2 update line."
+  },
+  {
+    "title": "Developer Guide",
+    "url": "https://locus-3.gitbook.io/locus-docs/developer-guide.md",
+    "path": "developer-guide.md",
+    "description": "Build, test, package, and understand the native Locus app and bundled agent."
+  },
+  {
+    "title": "Build & Test",
+    "url": "https://locus-3.gitbook.io/locus-docs/developer-guide/build-and-test.md",
+    "path": "developer-guide/build-and-test.md",
+    "description": "Prepare the Locus V2 native app, bundled agent, mobile companion, and optional Codex component."
+  },
+  {
+    "title": "Architecture & Protocol",
+    "url": "https://locus-3.gitbook.io/locus-docs/developer-guide/architecture-and-protocol.md",
+    "path": "developer-guide/architecture-and-protocol.md",
+    "description": "Understand the 2.1 feature-owned native client, domain-owned agent service, Codex component, persistence, and companion boundary."
+  }
+]

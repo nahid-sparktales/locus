@@ -822,3 +822,19 @@ def test_missing_state_file_is_not_an_error(tmp_path):
     # permanently disable orphan reclamation.
     fresh = ExtensionManager(str(tmp_path), root=tmp_path / "nothing-here", sandboxed=False)
     assert fresh.snapshot()["errors"] == []
+
+
+def test_context_schema_usage_separates_active_and_deferred_mcp(tmp_path):
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    registry = ToolRegistry(manager, _FakeMCP())
+    before = registry.context_schema_usage()
+    assert before["deferred_mcp"]
+    assert before["mcp_tools"] == []
+    assert sum(item["tokens"] for item in before["system_tools"]) == registry.schema_tokens()
+    qualified = before["deferred_mcp"][0]["id"]
+    registry._active_mcp.add(qualified)
+    after = registry.context_schema_usage()
+    assert after["deferred_mcp"] == []
+    assert after["mcp_tools"][0]["id"] == qualified
+    assert sum(item["tokens"] for group in ("system_tools", "mcp_tools")
+               for item in after[group]) == registry.schema_tokens()

@@ -1,0 +1,207 @@
+{
+  "site": "https://locus-3.gitbook.io/locus-docs/",
+  "site_id": "site_vzJcu",
+  "space_id": "dQ03BivzJFZ7fKsPFhiD",
+  "release": "2.6.0",
+  "status": "prepared-not-published",
+  "pages": [
+    {
+      "path": "agent-teams.md",
+      "action": "update",
+      "title": "Agent Teams",
+      "sha256": "2beebb9031473de520c28a544c80ef03752dce186aebd7fff26a9e1afd164131"
+    },
+    {
+      "path": "developer-guide/architecture-and-protocol.md",
+      "action": "update",
+      "title": "Architecture & Protocol",
+      "sha256": "6f19c1f3688fbbd8160585118933fc0763036ff97fec3834b0d0923557295c29"
+    },
+    {
+      "path": "developer-guide/build-and-test.md",
+      "action": "update",
+      "title": "Build & Test",
+      "sha256": "8bd362b533253bcbc42141aed1d9ed4c15e77cffa233fb2c91233501c8adda97"
+    },
+    {
+      "path": "developer-guide.md",
+      "action": "update",
+      "title": "Developer Guide",
+      "sha256": "c1816fd5ef4e734c579ed3da1844a4df1cf18d78bf9c4772e612fe1dbf45fc5e"
+    },
+    {
+      "path": "extensions-and-mcp/bundled-workflows-notes-and-continuity.md",
+      "action": "update",
+      "title": "Bundled Workflows, Notebook & Continuity",
+      "sha256": "9f5444fb0c3920aad26b3262aedfeef1b068282377b38212ba2198bccbc5d5f4"
+    },
+    {
+      "path": "extensions-and-mcp/workspace-knowledge-and-memory.md",
+      "action": "update",
+      "title": "Workspace Knowledge & Memory",
+      "sha256": "a15316d86eaf1e0f47608b47352f1f3baa1dd385545ce3e0c339b0637d2d506d"
+    },
+    {
+      "path": "extensions-and-mcp.md",
+      "action": "update",
+      "title": "Extensions & MCP",
+      "sha256": "6fd166a425d83ba2b67e4fcab1ef6e0952b4469df51942d5972d4f142e656d6f"
+    },
+    {
+      "path": "getting-started/chat-work-plan-and-build.md",
+      "action": "update",
+      "title": "Ask, Work, Plan & Grill",
+      "sha256": "ecb49d59f517abbf2c69fbdd0c9dacdf61f2f1fa05878513bdaf0933ab23efec"
+    },
+    {
+      "path": "getting-started/install-locus.md",
+      "action": "update",
+      "title": "Install Locus",
+      "sha256": "b26977ec708030e39fc4363ba98ca5c85086c89ea6c9b3e8e62315d056255b8f"
+    },
+    {
+      "path": "getting-started/your-first-workspace.md",
+      "action": "update",
+      "title": "Your First Workspace",
+      "sha256": "443b764413bd47ebdc89537784dfc7c061120e483d07871e062b2b7cbe5ba6ff"
+    },
+    {
+      "path": "getting-started.md",
+      "action": "update",
+      "title": "Getting Started",
+      "sha256": "fd3f111b13ef0e283d29ee5a06d397540d852c3b82e7a38047c0a45ae1e82111"
+    },
+    {
+      "path": "locus.md",
+      "action": "update",
+      "title": "Locus",
+      "sha256": "d4605f3cb199311aea4aa23346f4b1126f29affb6ce2fe900a2dba579e8d3284"
+    },
+    {
+      "path": "models-and-accounts/hosted-and-custom-models.md",
+      "action": "update",
+      "title": "Hosted & Custom Models",
+      "sha256": "9758585a8844dba71bcd53da6cefb578623566c01b5f0413f28e72d33aa526e2"
+    },
+    {
+      "path": "models-and-accounts/usage-router-and-proxy-profiles.md",
+      "action": "update",
+      "title": "Usage, Router & Proxy Profiles",
+      "sha256": "7aab94c9a1da69e9be1d1977b39d19e64b860115f10d7de3c5352c5c680ca848"
+    },
+    {
+      "path": "models-and-accounts.md",
+      "action": "update",
+      "title": "Models & Accounts",
+      "sha256": "a79ed9a6eaeed88548b6e4629bbbb80c7ab8c3c6fc6a7214b73179b1553733d3"
+    },
+    {
+      "path": "release-notes.md",
+      "action": "update",
+      "title": "Release Notes",
+      "sha256": "b559411de8d3924c89105f93b9c639a74af78f00eba8a06d36d0646576bfdafd"
+    },
+    {
+      "path": "safety-and-privacy/credentials-and-local-data.md",
+      "action": "update",
+      "title": "Credentials & Local Data",
+      "sha256": "96c628073929ad07755d1fa74abb867a0b754baf3367dd405e59fd2292c16fc7"
+    },
+    {
+      "path": "safety-and-privacy/identity-vault.md",
+      "action": "add",
+      "title": "Identity Vault",
+      "sha256": "90e466374a92831829917317bf3d588f3ad9d04baf31f83f5089c81c85b04234"
+    },
+    {
+      "path": "safety-and-privacy/permission-modes.md",
+      "action": "update",
+      "title": "Permission Modes",
+      "sha256": "dc887c94118df5ecf58cb21d56ace251483f659fb5a5b2af2b5034deb5fa5963"
+    },
+    {
+      "path": "safety-and-privacy.md",
+      "action": "update",
+      "title": "Safety & Privacy",
+      "sha256": "23fdccc65f7e7aad79fcf47f485e249119914e6748606977596be6ebdb7b98d9"
+    },
+    {
+      "path": "troubleshooting.md",
+      "action": "update",
+      "title": "Troubleshooting",
+      "sha256": "1b18931de5aede030eab040f6bc5f1794281a2f31f2160e2b365435ec86e8993"
+    },
+    {
+      "path": "working-in-locus/agents-and-automation.md",
+      "action": "add",
+      "title": "Agents & Automation",
+      "sha256": "f55f40cc495ad48a7ccf13ea0eaf8a1e1be9080b7869a9c42996b87184ff8c38"
+    },
+    {
+      "path": "working-in-locus/browser-and-dev-servers.md",
+      "action": "update",
+      "title": "Browser & Dev Servers",
+      "sha256": "fb23155a7a726bbaf545f5f289f01e9e1b2343e47ec3fc067b8000aeca8b3302"
+    },
+    {
+      "path": "working-in-locus/conversations-and-context.md",
+      "action": "update",
+      "title": "Conversations & Context",
+      "sha256": "170b131c19ef26cf23938f13bb7c38b7867a552d95cfd6ed1026b0b773153fd8"
+    },
+    {
+      "path": "working-in-locus/git-changes-and-console.md",
+      "action": "update",
+      "title": "Git Changes & Terminal",
+      "sha256": "dc7a9434e8b321c178a6f7c2342b97609bc073a7dca33a97265bf47594db229f"
+    },
+    {
+      "path": "working-in-locus/library-documents-and-outputs.md",
+      "action": "add",
+      "title": "Library, Documents & Outputs",
+      "sha256": "79ce1d3b4ebbd3d0eefbbfa3878893aae533fd286d4eab0a2dcfd2e488f924f9"
+    },
+    {
+      "path": "working-in-locus/mobile-schedules-and-background-work.md",
+      "action": "update",
+      "title": "Mobile, Schedules & Background Work",
+      "sha256": "9a21f4c7f98814cf109d01fee22f8df24ec88e1f807202205d5110499e22c5d2"
+    },
+    {
+      "path": "working-in-locus/persistent-goals.md",
+      "action": "add",
+      "title": "Persistent Goals",
+      "sha256": "9aa12fe825d2f29110d44e014909b32f1692bda2453a04e6294a42825e2b6a82"
+    },
+    {
+      "path": "working-in-locus/shortcuts-and-slash-commands.md",
+      "action": "update",
+      "title": "Shortcuts & Slash Commands",
+      "sha256": "bbd4ab3eaa9d921a8cc9ddda16acbb525e9ac5059565ed9f7485adfefe2f97e1"
+    },
+    {
+      "path": "working-in-locus/task-capsules.md",
+      "action": "add",
+      "title": "Task Capsules",
+      "sha256": "cd4ef7922408c4a3ee43e5bf75dcba7cd88ea8e82be9977ad09a9ced56568917"
+    },
+    {
+      "path": "working-in-locus/the-inspector.md",
+      "action": "update",
+      "title": "The Inspector",
+      "sha256": "fdc456e4dd268e987e29ea1cb9af996d96370567792b10e5b9140c06d0c61fc5"
+    },
+    {
+      "path": "working-in-locus.md",
+      "action": "update",
+      "title": "Working in Locus",
+      "sha256": "e8653f1a6664516b100cb493adcc8440e8c09f27ec9cdce7576bc9181d855556"
+    }
+  ],
+  "assets": [
+    "locus-workspace-dark.png",
+    "locus-plan-dark.png",
+    "locus-settings-dark.png",
+    "locus-schedules-dark.png"
+  ]
+}

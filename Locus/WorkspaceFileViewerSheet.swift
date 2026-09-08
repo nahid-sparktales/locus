@@ -11,6 +11,7 @@ struct WorkspaceFileViewerSheet: View {
     let request: WorkspaceFileViewerRequest
 
     @State private var contents: String?
+    @State private var textSize: CGFloat = 13
 
     /// Reading gets a higher ceiling than the inspector peek: this surface
     /// exists for files worth more than a glance.
@@ -19,12 +20,23 @@ struct WorkspaceFileViewerSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            HStack(spacing: 10) {
+                Text("Text size").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                Button { textSize = max(11, textSize - 1) } label: { Image(systemName: "textformat.size.smaller") }
+                    .disabled(textSize <= 11).accessibilityLabel("Decrease text size")
+                Text("\(Int(textSize))").monospacedDigit()
+                Button { textSize = min(22, textSize + 1) } label: { Image(systemName: "textformat.size.larger") }
+                    .disabled(textSize >= 22).accessibilityLabel("Increase text size")
+                Spacer()
+                Text("Read only").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+            }.padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
             if let contents {
                 WorkspaceSourceTextView(
                     contents: contents,
                     location: request.location,
-                    textSize: 11,
-                    numberSize: 9,
+                    textSize: textSize,
+                    numberSize: 11,
                     numberColumnWidth: 44
                 )
                 .accessibilityIdentifier("fileViewer.source")
@@ -34,7 +46,7 @@ struct WorkspaceFileViewerSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(width: 880, height: 620)
+        .frame(minWidth: 700, idealWidth: 920, minHeight: 500, idealHeight: 680)
         .background(LocusTheme.panel)
         .onExitCommand { dismiss() }
         .task(id: request.id) {
@@ -48,6 +60,7 @@ struct WorkspaceFileViewerSheet: View {
     }
 
     private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
@@ -69,22 +82,13 @@ struct WorkspaceFileViewerSheet: View {
                     }
                 }
                 Text(request.relativePath)
-                    .font(.locus(size: 9, design: .monospaced))
+                    .font(.locus(size: 11, design: .monospaced))
                     .foregroundStyle(LocusTheme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.head)
                     .textSelection(.enabled)
             }
             Spacer(minLength: 12)
-            headerAction("Add to Context", symbol: "plus.circle") {
-                model.addWorkspaceFileToContext(request.relativePath)
-            }
-            headerAction("Reveal in Finder", symbol: "folder") {
-                NSWorkspace.shared.activateFileViewerSelecting([request.url])
-            }
-            headerAction("Open in Default App", symbol: "arrow.up.forward.app") {
-                NSWorkspace.shared.open(request.url)
-            }
             Button {
                 dismiss()
             } label: {
@@ -93,6 +97,19 @@ struct WorkspaceFileViewerSheet: View {
             .buttonStyle(.locus())
             .accessibilityLabel("Close file viewer")
             .accessibilityIdentifier("fileViewer.close")
+        }
+            HStack(spacing: 16) {
+                headerAction("Add to Context", symbol: "plus.circle") {
+                    model.addWorkspaceFileToContext(request.relativePath)
+                }
+                headerAction("Show in Finder", symbol: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([request.url])
+                }
+                headerAction("Open in Default App", symbol: "arrow.up.forward.app") {
+                    NSWorkspace.shared.open(request.url)
+                }
+                Spacer(minLength: 0)
+            }
         }
         .padding(16)
         .overlay(alignment: .bottom) {
@@ -106,9 +123,7 @@ struct WorkspaceFileViewerSheet: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.locus(size: 12))
-                .frame(width: 26, height: 26)
+            Label(title, systemImage: symbol).font(.subheadline)
         }
         .buttonStyle(.locus())
         .foregroundStyle(LocusTheme.muted)

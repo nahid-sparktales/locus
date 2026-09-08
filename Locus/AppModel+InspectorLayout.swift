@@ -18,6 +18,10 @@ extension AppModel {
             return
         }
         guard !justChatEnabled else { return }
+        if tab == .plan {
+            presentRequestOverview(replacingInspector: true)
+            return
+        }
         if !openInspectorTabs.contains(tab) {
             openInspectorTabs.append(tab)
         }
@@ -25,7 +29,6 @@ extension AppModel {
         if inspectorCollapsed {
             inspectorCollapsed = false
         }
-        if tab == .plan { planHasUnseenUpdate = false }
         if tab == .changes {
             gitWorkspace.changesHaveUnseenUpdate = false
             gitWorkspace.refreshStatus()
@@ -61,13 +64,13 @@ extension AppModel {
     }
 
     /// The Agent tab belongs to Agents mode. Entering that mode with the
-    /// panel open on Overview swaps to the agent, and leaving it takes the
-    /// tab away again so Ask mode's inspector looks the way it did before.
+    /// panel open on Files swaps to the agent, and leaving it restores a
+    /// workspace panel. Overview stays a separate conversation popup.
     /// A collapsed panel is a preference and stays collapsed either way.
     func syncInspectorWithSidebarDestination() {
         switch sidebarDestination {
         case .agents:
-            guard !inspectorCollapsed, inspectorTab == .plan, !justChatEnabled else { return }
+            guard !inspectorCollapsed, inspectorTab == .files, !justChatEnabled else { return }
             selectInspectorTab(.agent)
         case .ask:
             guard openInspectorTabs.contains(.agent) || inspectorTab == .agent else { return }
@@ -75,7 +78,7 @@ extension AppModel {
             openInspectorTabs = remaining
             if lastClosedInspectorTab == .agent { lastClosedInspectorTab = nil }
             guard inspectorTab == .agent else { return }
-            let fallback = remaining.contains(.plan) ? .plan : (remaining.first ?? .plan)
+            let fallback = remaining.first ?? .files
             if inspectorCollapsed || justChatEnabled {
                 // Move the selection without opening anything: a collapsed
                 // panel stays collapsed, and Just Chat has no panel to show.
@@ -150,13 +153,12 @@ extension AppModel {
     }
 
     /// The dedicated rail control closes the current panel and reopens the
-    /// last selected destination. A fresh model starts on Overview, so the
-    /// first use always has a useful destination even when no tab was closed.
+    /// last selected destination. With no saved panel it opens Files.
     func toggleInspectorPanel() {
         guard !justChatEnabled else { return }
         if inspectorCollapsed {
             let destination = lastClosedInspectorTab
-                ?? (openInspectorTabs.contains(inspectorTab) ? inspectorTab : .plan)
+                ?? (openInspectorTabs.contains(inspectorTab) && inspectorTab != .plan ? inspectorTab : .files)
             selectInspectorTab(destination)
         } else {
             lastClosedInspectorTab = inspectorTab
@@ -164,7 +166,30 @@ extension AppModel {
         }
     }
 
+    /// Request activity shares the right-hand space with workspace panels.
+    /// Automatic updates never interrupt an open panel; an explicit Overview
+    /// command closes it while preserving its tabs for the reopen control.
+    func presentRequestOverview(replacingInspector: Bool = false) {
+        guard !justChatEnabled else { return }
+        if replacingInspector, !inspectorCollapsed {
+            lastClosedInspectorTab = inspectorTab
+            inspectorCollapsed = true
+        }
+        overviewActivityVisible = true
+        overviewPresented = true
+        planHasUnseenUpdate = false
+    }
+
+    func dismissOverview() {
+        overviewPresented = false
+        overviewActivityVisible = false
+    }
+
     func presentInspectorForSentRequest(isTeam: Bool, runID: String? = nil) {
+        guard isTeam else {
+            presentRequestOverview()
+            return
+        }
         // Just Chat deliberately has no workspace inspector, so it should not
         // consume the first-run choice for a panel that cannot be shown.
         guard !justChatEnabled else { return }
@@ -206,6 +231,11 @@ extension AppModel {
     /// panel; anything else selects the tab (which opens the panel if needed).
     func toggleInspectorTab(_ tab: InspectorTab) {
         guard !justChatEnabled else { return }
+        if tab == .plan {
+            if overviewPresented && requestOverviewVisible { dismissOverview() }
+            else { presentRequestOverview(replacingInspector: true) }
+            return
+        }
         if !inspectorCollapsed, inspectorTab == tab {
             lastClosedInspectorTab = tab
             inspectorCollapsed = true
@@ -223,7 +253,7 @@ extension AppModel {
         if zoomed {
             guard !justChatEnabled else { return }
             if openInspectorTabs.isEmpty {
-                selectInspectorTab(inspectorTab)
+                selectInspectorTab(inspectorTab == .plan ? .files : inspectorTab)
             } else if inspectorCollapsed {
                 inspectorCollapsed = false
             }

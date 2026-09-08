@@ -861,8 +861,8 @@ final class AgentOverviewTests: XCTestCase {
         let inboxChat = session("inbox-chat", triggerID: "inbox", name: "Inbox", age: 120)
         model.sessions = [weatherChat, inboxChat]
         model.currentSessionID = weatherChat.id
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = false
 
         XCTAssertEqual(model.inspectedAgentID, "weather")
@@ -883,34 +883,34 @@ final class AgentOverviewTests: XCTestCase {
     }
 
     @MainActor
-    func testAgentsModeSwapsAnOpenOverviewForTheAgentTabAndAskTakesItBack() {
+    func testAgentsModeSwapsFilesForTheAgentTabAndWorkTakesItBack() {
         let model = AppModel(startImmediately: false)
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = false
 
         model.sidebarDestination = .agents
         XCTAssertEqual(model.inspectorTab, .agent)
-        XCTAssertEqual(model.openInspectorTabs, [.plan, .agent])
+        XCTAssertEqual(model.openInspectorTabs, [.files, .agent])
         XCTAssertFalse(model.inspectorCollapsed)
 
         model.sidebarDestination = .ask
-        XCTAssertEqual(model.inspectorTab, .plan)
-        XCTAssertEqual(model.openInspectorTabs, [.plan])
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertEqual(model.openInspectorTabs, [.files])
         XCTAssertFalse(model.inspectorCollapsed)
     }
 
     @MainActor
     func testAgentsModeLeavesACollapsedOrBusyInspectorAlone() {
         let model = AppModel(startImmediately: false)
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = true
 
         model.sidebarDestination = .agents
         XCTAssertTrue(model.inspectorCollapsed, "a collapsed panel is a preference")
-        XCTAssertEqual(model.inspectorTab, .plan)
-        XCTAssertEqual(model.openInspectorTabs, [.plan])
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertEqual(model.openInspectorTabs, [.files])
 
         model.sidebarDestination = .ask
         model.inspectorCollapsed = false
@@ -923,23 +923,23 @@ final class AgentOverviewTests: XCTestCase {
     @MainActor
     func testLeavingAgentsModeWhileOnAnotherTabOnlyDropsTheAgentTab() {
         let model = AppModel(startImmediately: false)
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = false
         model.sidebarDestination = .agents
         model.selectInspectorTab(.terminal)
-        XCTAssertEqual(model.openInspectorTabs, [.plan, .agent, .terminal])
+        XCTAssertEqual(model.openInspectorTabs, [.files, .agent, .terminal])
 
         model.sidebarDestination = .ask
         XCTAssertEqual(model.inspectorTab, .terminal)
-        XCTAssertEqual(model.openInspectorTabs, [.plan, .terminal])
+        XCTAssertEqual(model.openInspectorTabs, [.files, .terminal])
     }
 
     @MainActor
     func testLeavingAgentsModeKeepsACollapsedPanelCollapsed() {
         let model = AppModel(startImmediately: false)
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = false
         model.sidebarDestination = .agents
         XCTAssertEqual(model.inspectorTab, .agent)
@@ -947,23 +947,23 @@ final class AgentOverviewTests: XCTestCase {
 
         model.sidebarDestination = .ask
         XCTAssertTrue(model.inspectorCollapsed, "leaving Agents mode must not reopen the panel")
-        XCTAssertEqual(model.inspectorTab, .plan)
-        XCTAssertEqual(model.openInspectorTabs, [.plan])
-        XCTAssertEqual(model.settings.inspectorLastTab, InspectorTab.plan.rawValue)
+        XCTAssertEqual(model.inspectorTab, .files)
+        XCTAssertEqual(model.openInspectorTabs, [.files])
+        XCTAssertEqual(model.settings.inspectorLastTab, InspectorTab.files.rawValue)
     }
 
     @MainActor
     func testLeavingAgentsModeUnderJustChatMovesTheSelectionWithoutOpening() {
         let model = AppModel(startImmediately: false)
-        model.openInspectorTabs = [.plan]
-        model.inspectorTab = .plan
+        model.openInspectorTabs = [.files]
+        model.inspectorTab = .files
         model.inspectorCollapsed = false
         model.sidebarDestination = .agents
         model.setJustChatEnabled(true)
         XCTAssertTrue(model.inspectorCollapsed)
 
         model.sidebarDestination = .ask
-        XCTAssertEqual(model.inspectorTab, .plan)
+        XCTAssertEqual(model.inspectorTab, .files)
         XCTAssertFalse(model.openInspectorTabs.contains(.agent))
         XCTAssertTrue(model.inspectorCollapsed)
     }
@@ -972,13 +972,13 @@ final class AgentOverviewTests: XCTestCase {
         var settings = AppSettings()
         settings.inspectorLastTab = InspectorTab.agent.rawValue
         settings.inspectorOpenTabs = [
-            InspectorTab.plan.rawValue,
+            InspectorTab.files.rawValue,
             InspectorTab.agent.rawValue,
             InspectorTab.terminal.rawValue,
         ]
         XCTAssertEqual(settings.resolvedInspectorTab, .plan)
-        XCTAssertEqual(settings.resolvedInspectorOpenTabs, [.plan, .terminal])
-        XCTAssertEqual(settings.resolvedRestoredInspectorTab, .plan)
+        XCTAssertEqual(settings.resolvedInspectorOpenTabs, [.files, .terminal])
+        XCTAssertEqual(settings.resolvedRestoredInspectorTab, .files)
     }
 
     @MainActor

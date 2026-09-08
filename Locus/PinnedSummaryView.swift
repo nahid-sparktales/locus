@@ -356,8 +356,12 @@ struct PinnedSummaryCard: View {
 
     @ViewBuilder
     private var sourcesMenuItems: some View {
-        Button("Attach files or folders", systemImage: "paperclip") { model.addContext() }
+        Button("Attach files or folders", systemImage: "paperclip") {
+            model.dismissOverview()
+            model.addContext()
+        }
         Button("Skills & MCP", systemImage: "puzzlepiece.extension") {
+            model.dismissOverview()
             model.presentSettings(.extensions)
         }
     }
@@ -511,16 +515,16 @@ struct SummarySection<Trailing: View, Content: View>: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.locus(size: 9, weight: .bold))
+                        .font(.locus(size: 11, weight: .bold))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(1)
                     if isCollapsed, let count, count > 0 {
                         Text("\(count)")
-                            .font(.locus(size: 9))
+                            .font(.locus(size: 11))
                             .foregroundStyle(LocusTheme.muted)
                     }
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.locus(size: 8, weight: .semibold))
+                        .font(.locus(size: 10, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                         .opacity(hovering || isCollapsed ? 1 : 0)
                         .accessibilityHidden(true)
@@ -656,7 +660,7 @@ struct SummaryList<Item: Identifiable, Row: View>: View {
                     }
                 } label: {
                     Text(remaining == 0 ? "Show less" : "Show \(min(remaining, PinnedSummary.visibleItemIncrement)) more")
-                        .font(.locus(size: 9, weight: .semibold))
+                        .font(.locus(size: 11, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                         .padding(.horizontal, 8)
                         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -746,20 +750,20 @@ struct SummaryRow: View {
                 .frame(width: 18, height: 18)
                 .accessibilityHidden(true)
             Text(label)
-                .font(.locus(size: 10, weight: .semibold))
+                .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(LocusTheme.ink)
                 .lineLimit(1)
                 .truncationMode(truncation)
             Spacer(minLength: 6)
             if let meta {
                 Text(meta)
-                    .font(.locus(size: 8))
+                    .font(.locus(size: 10))
                     .foregroundStyle(metaColor)
                     .lineLimit(1)
             }
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.locus(size: 8, weight: .semibold))
+                    .font(.locus(size: 10, weight: .semibold))
                     .foregroundStyle(LocusTheme.muted)
                     .accessibilityHidden(true)
             }
@@ -804,7 +808,7 @@ struct SummaryEmptyRow<Items: View>: View {
                         .accessibilityHidden(true)
                 }
                 Text(title)
-                    .font(.locus(size: 10, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.inkSoft)
                 Spacer(minLength: 0)
             }

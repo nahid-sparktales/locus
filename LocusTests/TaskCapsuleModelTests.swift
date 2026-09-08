@@ -201,6 +201,29 @@ final class TaskCapsuleModelTests: XCTestCase {
         }
     }
 
+    func testComposerPrefillPreservesUnfinishedCapsulesAndResetsAcrossWorkspaces() async throws {
+        try registerBackend(capsules: [capsule])
+        let model = makeModel()
+        model.open(prefillingRequest: "  Current chat draft  ")
+        await model.refresh()
+        XCTAssertEqual(model.draftRequest, "Current chat draft")
+        model.draftRequest = "Unfinished capsule"
+        model.open(prefillingRequest: "Another chat draft")
+        XCTAssertEqual(model.draftRequest, "Unfinished capsule")
+        model.draftRequest = ""
+        model.selectedID = capsule.id
+        model.open(prefillingRequest: "Do not replace this plan")
+        XCTAssertEqual(model.selectedID, capsule.id)
+        XCTAssertEqual(model.draftRequest, "")
+        workspace = "/tmp/another-capsule-workspace"
+        model.open(prefillingRequest: "New workspace request")
+        await model.refresh()
+        XCTAssertNil(model.selectedID)
+        XCTAssertEqual(model.draftRequest, "New workspace request")
+        XCTAssertTrue(planningRequests.isEmpty)
+        XCTAssertTrue(executionRequests.isEmpty)
+    }
+
     func testReadOnlyProfileCannotBecomeImplementationDefault() async throws {
         try registerBackend()
         let model = makeModel()

@@ -2228,15 +2228,11 @@ struct SettingsView: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Picker(
-                    "Solo requests — Context & Plan",
-                    selection: $draft.soloPlanPresentationRaw
-                ) {
-                    ForEach(AutomaticInspectorPresentation.allCases) { presentation in
-                        Text(presentation.title).tag(presentation.rawValue)
-                    }
-                }
-                .accessibilityIdentifier("settings.soloPlanPresentation")
+                Text("Request overview appears on the right when work starts. Opening a right-side panel replaces it; closing the panel reveals it again. Minimize or dismiss the overview, or reopen it with ⌘1 or the More panels menu.")
+                    .accessibilityIdentifier("settings.requestOverview")
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Picker(
                     "Team requests — Runs",
@@ -2248,7 +2244,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.teamRunsPresentation")
 
-                Text("Solo and team choices are independent. Choosing “Ask the first time” shows the matching explanation when that kind of request is first sent.")
+                Text("Choosing “Ask the first time” explains the Runs panel when you first send a team request.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                 }

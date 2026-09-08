@@ -325,6 +325,7 @@ extension AppModel {
     func beginSessionFileCapture(runID: String? = nil) {
         synchronizeSessionIdentity()
         sessionOverview.emit(.requestStarted(at: Self.sessionTimestamp))
+        presentRequestOverview()
         fileCaptureSessionID = sessionOverview.activeSessionID
         fileCaptureStartedAt = Self.sessionTimestamp
         fileCaptureUntil = .max
