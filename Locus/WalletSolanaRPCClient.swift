@@ -3070,7 +3070,22 @@ actor WalletSolanaRPCClient {
         let raw = try await rpc(
             method: "getRecentPrioritizationFees", params: [writableAccounts]
         )
-        guard let rows = raw as? [Any], !rows.isEmpty, rows.count <= 150 else {
+        // A node's prioritization-fee cache lists at most 150 recent blocks,
+        // and only blocks that carried a non-vote transaction. Every shape
+        // outside that documented envelope fails closed, but each bound is
+        // named separately: an endpoint with no fee evidence is a different
+        // fault from one returning more history than the protocol produces.
+        guard let rows = raw as? [Any] else {
+            throw WalletRPCError.invalidResponse(
+                "getRecentPrioritizationFees did not return an array"
+            )
+        }
+        guard !rows.isEmpty else {
+            throw WalletRPCError.invalidResponse(
+                "getRecentPrioritizationFees returned no recent fee evidence"
+            )
+        }
+        guard rows.count <= 150 else {
             throw WalletRPCError.invalidResponse(
                 "getRecentPrioritizationFees returned excessive data"
             )
