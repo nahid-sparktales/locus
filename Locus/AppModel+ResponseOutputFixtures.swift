@@ -111,7 +111,7 @@ extension AppModel {
             let fallback = files.map { "- [\($0.0)](\($0.0)) — \($0.1)" }.joined(separator: "\n")
                 + "\n\n" + writing.originalWriting + "\n\n" + table
                 + "\n\n[Audit findings report](audit_findings_report.pdf)\n\n[Python documentation](https://docs.python.org/3/)"
-                + "\n\n![Harbour at dusk](Locus%20Images/fixture.png)\n\nHarbour at dusk"
+                + "\n\n" + ResponseExportProjection.fallbackImageLink(for: image) + "\n\nHarbour at dusk"
             blocks = [
                 ChatBlock(id: UUID(uuidString: "00000000-0000-0000-0000-000000004001")!, kind: .user,
                     text: "Show the workspace files, outreach draft, and audit results."),
