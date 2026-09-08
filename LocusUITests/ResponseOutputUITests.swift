@@ -34,9 +34,11 @@ final class ResponseOutputUITests: XCTestCase {
         let count = element("files.count")
         // SwiftUI Text is exposed through AXValue on macOS 15. Match the
         // complete visible count on either supported accessibility surface.
+        // The root holds the ten fixture files plus the `Locus Images` folder
+        // the generated-image fixture writes, and the browser counts folders.
         XCTAssertTrue(waitUntil {
-            count.label == "10 items in workspace root"
-                || count.value as? String == "10 items in workspace root"
+            count.label == "11 items in workspace root"
+                || count.value as? String == "11 items in workspace root"
         })
         for filename in ["AGENTS.md", "audit_findings_report.pdf", "code_audit_report.pdf", "storyboobible-influencer-intro-email.pdf", "reddit_latest.py"] {
             XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "files.row.", filename)).firstMatch.exists, filename)
@@ -108,6 +110,65 @@ final class ResponseOutputUITests: XCTestCase {
         XCTAssertTrue(app.textFields["Search outputs"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(element("library.output.versions").waitForExistence(timeout: 10))
         capture("Response artifact opens its saved version")
+    }
+
+    func testGeneratedImageCardOffersEditInChatAndAttachesToComposer() {
+        launch(focus: "image")
+        let card = element("message.generatedImage")
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.hasPrefix("Generated image, Harbour at dusk, 480 by 320"))
+        XCTAssertTrue(element("message.generatedImage.open").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("message.generatedImage.reveal").exists)
+        XCTAssertTrue(element("message.generatedImage.more").exists)
+        XCTAssertFalse(element("message.generatedImage.unavailable").exists)
+        let edit = element("message.generatedImage.edit")
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        XCTAssertTrue(edit.isEnabled)
+        XCTAssertEqual(edit.label, "Edit in chat Locus Images/fixture.png")
+        capture("Response generated image card")
+        clickInTranscript(edit)
+        // The chip container carries "Attachment <name>"; its remove button
+        // is the one control inside it and names the file as well.
+        let chip = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@", "composer.attachmentChip.", ".remove"))
+            .firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        XCTAssertEqual(chip.label, "Attachment fixture.png")
+        let remove = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "composer.attachmentChip.", ".remove"))
+            .firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        XCTAssertEqual(remove.label, "Remove fixture.png")
+        let input = element("composer.input")
+        XCTAssertTrue(waitUntil { (input.value as? String ?? "").contains("Locus Images/fixture.png") })
+        capture("Response generated image attached for editing")
+    }
+
+    func testInteractiveAnswerRendersSummaryOpensLargerAndClosesWithEscape() {
+        launch(focus: "interactive")
+        let card = element("message.interactiveAnswer")
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.hasPrefix("Interactive explanation, Binary search, step by step"), card.label)
+        let openLarger = element("message.interactiveAnswer.openLarger")
+        XCTAssertTrue(openLarger.waitForExistence(timeout: 10))
+        for id in ["message.interactiveAnswer.copy", "message.interactiveAnswer.save"] {
+            let control = element(id)
+            XCTAssertTrue(control.exists, id)
+            XCTAssertFalse(control.label.isEmpty, id)
+        }
+        XCTAssertFalse(element("message.interactiveAnswer.reload").exists)
+        XCTAssertFalse(element("message.interactiveAnswer.show").exists)
+        capture("Response interactive answer card")
+        // Open larger stays disabled until the sealed host has loaded the
+        // widget; on a cold runner that outlasts the button's appearance.
+        XCTAssertTrue(waitUntil { openLarger.isEnabled }, "interactive host did not become ready")
+        clickInTranscript(openLarger)
+        let sheet = element("message.interactiveAnswer.sheet")
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        capture("Response interactive answer enlarged")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !sheet.exists })
+        XCTAssertTrue(card.exists)
     }
 
     func testLightDarkAndNarrowControlsRemainLabeledAndReachable() {

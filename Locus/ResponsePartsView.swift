@@ -8,6 +8,10 @@ struct ResponseOutputContext {
     var outputs: OutputsLibraryModel? = nil
     var showFiles: (String, Bool?) -> Void = { _, _ in }
     var openVersion: (String, String, String) -> Void = { _, _, _ in }
+    /// Attaches a workspace image to the composer for `edit_image`.
+    var attachImage: (WorkspaceArtifactReference) -> Void = { _ in }
+    var allowsImageEditing = false
+    var interactiveAnswersEnabled = true
 }
 
 private struct ResponseOutputContextKey: EnvironmentKey {
@@ -79,6 +83,8 @@ enum ResponseSelectionProjection {
         case "writing": return part.originalWriting
         case "artifact": return [part.title ?? part.path, part.description].compactMap { $0 }.joined(separator: "\n\n")
         case "sources": return (part.references ?? []).map { "[\($0.label)](\($0.destination?.absoluteString ?? ""))" }.joined(separator: "\n\n")
+        case "image": return [part.title?.nilIfEmpty ?? part.alt?.nilIfEmpty ?? part.path, part.prompt].compactMap { $0 }.joined(separator: "\n\n")
+        case "interactive": return "### \(part.interactiveTitle)\n\n\(part.summary ?? "")"
         default: return ""
         }
     }
@@ -111,6 +117,16 @@ struct ResponsePartsView: View {
                             original: { markdown(part, index: index) })
                     } else { markdown(part, index: index) }
                 case "sources": sourceList(part, index: index)
+                case "image":
+                    ResponseImageView(part: part, workspacePath: workspacePath,
+                        onOpenWorkspaceReference: onOpenWorkspaceReference,
+                        original: { markdown(part, index: index) })
+                case "interactive":
+                    InteractiveAnswerView(title: part.interactiveTitle, summary: part.summary ?? "",
+                        html: part.html ?? "", height: part.interactiveHeight,
+                        isEnabled: context.interactiveAnswersEnabled,
+                        identity: interactiveViewIdentity(part),
+                        original: { markdown(part, index: index) })
                 default: EmptyView()
                 }
             }
@@ -118,6 +134,15 @@ struct ResponsePartsView: View {
         .accessibilityElement(children: .contain)
         .environment(\.responseRegisteredSources, document.sources)
         .accessibilityIdentifier("message.structuredResponse")
+    }
+
+    /// The sealed web view is keyed by durable provider identity plus the
+    /// fragment itself, so a regenerated answer with different HTML restarts
+    /// its host instead of showing the old page under a new title.
+    private func interactiveViewIdentity(_ part: ResponsePart) -> String {
+        ResponseIdentity.key(workspace: workspacePath, sessionID: context.sessionID,
+            itemID: block.sourceItemID ?? "", partID: part.id)
+            + "|" + String((part.html ?? "").hashValue)
     }
 
     private func writingViewIdentity(_ part: ResponsePart) -> String {

@@ -280,6 +280,12 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
         ),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
         .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], isAdvanced: true),
+        .init(
+            "settings.imageGeneration",
+            page: .accounts,
+            title: "Image generation",
+            keywords: ["images", "pictures", "generate", "edit image", "gpt-image", "OpenAI", "interactive answers", "widgets"]
+        ),
         .init("settings.agents.primary", page: .agents, title: "Primary agent", keywords: ["behavior", "model"]),
         .init("settings.agents.quickTeam", page: .agents, title: "Create a quick team", keywords: ["dispatcher", "specialist"]),
         .init("settings.agents.scheduler", page: .agents, title: "Agent scheduler", keywords: ["concurrency", "simultaneous"], isAdvanced: true),

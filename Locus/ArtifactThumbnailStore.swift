@@ -102,6 +102,17 @@ final class ArtifactThumbnailStore {
     }
 }
 
+/// An extra control a host places beside the standard Open and Reveal
+/// actions of an inline workspace image. `items` turns the entry into an
+/// overflow menu instead of a single button.
+struct WorkspaceImageAction: Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    var items: [WorkspaceImageAction]? = nil
+    var action: () -> Void = {}
+}
+
 struct AsyncWorkspaceImageArtifactView: View {
     @Environment(\.displayScale) private var displayScale
     let reference: WorkspaceArtifactReference
@@ -109,6 +120,10 @@ struct AsyncWorkspaceImageArtifactView: View {
     let selectionStore: TranscriptSelectionStore?
     let selectionSpan: TranscriptSelectionSpan?
     let onOpen: () -> Void
+    var additionalActions: [WorkspaceImageAction] = []
+    /// When set, every control is identifiable as `<prefix>.<action>` so a
+    /// host card can be exercised without exposing its internals.
+    var accessibilityIdentifierPrefix: String? = nil
     @State private var image: NSImage?
 
     var body: some View {
@@ -146,15 +161,34 @@ struct AsyncWorkspaceImageArtifactView: View {
                         store: selectionStore
                     )
                     .fixedSize(horizontal: false, vertical: true)
-                } else {
+                } else if !caption.isEmpty {
                     Text(caption)
                         .font(.locus(size: 9, weight: .medium))
                         .foregroundStyle(LocusTheme.muted)
                         .textSelection(.enabled)
                 }
                 Spacer(minLength: 8)
-                artifactAction("Open", symbol: "arrow.up.forward.app", action: onOpen)
-                artifactAction("Reveal", symbol: "folder") {
+                ForEach(additionalActions) { entry in
+                    if let items = entry.items {
+                        Menu {
+                            ForEach(items) { item in
+                                Button(item.title, action: item.action)
+                                    .accessibilityIdentifier(identifier(item.id))
+                            }
+                        } label: {
+                            Label(entry.title, systemImage: entry.symbol)
+                                .font(.locus(size: 9, weight: .semibold))
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityLabel("\(entry.title) \(reference.relativePath)")
+                        .accessibilityIdentifier(identifier(entry.id))
+                    } else {
+                        artifactAction(entry.title, symbol: entry.symbol, id: entry.id, action: entry.action)
+                    }
+                }
+                artifactAction("Open", symbol: "arrow.up.forward.app", id: "open", action: onOpen)
+                artifactAction("Reveal", symbol: "folder", id: "reveal") {
                     NSWorkspace.shared.activateFileViewerSelecting([reference.url])
                 }
             }
@@ -174,6 +208,7 @@ struct AsyncWorkspaceImageArtifactView: View {
     private func artifactAction(
         _ title: String,
         symbol: String,
+        id: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -183,5 +218,12 @@ struct AsyncWorkspaceImageArtifactView: View {
         .buttonStyle(.locus())
         .foregroundStyle(LocusTheme.muted)
         .accessibilityLabel("\(title) \(reference.relativePath)")
+        .accessibilityIdentifier(identifier(id))
+    }
+
+    /// Identifiers only exist for a host that asked for them; the Markdown
+    /// path keeps its anonymous controls.
+    private func identifier(_ suffix: String) -> String {
+        accessibilityIdentifierPrefix.map { "\($0).\(suffix)" } ?? ""
     }
 }

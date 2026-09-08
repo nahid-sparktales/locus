@@ -23,6 +23,25 @@ def test_capability_flags_are_independent_and_default_on(monkeypatch):
     assert enabled("unknown") is False
 
 
+def test_image_and_interactive_capabilities_default_on_and_disable_independently(monkeypatch):
+    for variable in CAPABILITY_ENV.values():
+        monkeypatch.delenv(variable, raising=False)
+    assert enabled("image_generation_v1") is True
+    assert enabled("interactive_answers_v1") is True
+    assert CAPABILITY_ENV["image_generation_v1"] == "LOCUS_CAPABILITY_IMAGE_GENERATION_V1"
+    assert CAPABILITY_ENV["interactive_answers_v1"] == "LOCUS_CAPABILITY_INTERACTIVE_ANSWERS_V1"
+
+    monkeypatch.setenv(CAPABILITY_ENV["image_generation_v1"], "0")
+    assert enabled("image_generation_v1") is False
+    assert enabled("interactive_answers_v1") is True
+    assert snapshot()["image_generation_v1"] is False
+
+    monkeypatch.delenv(CAPABILITY_ENV["image_generation_v1"])
+    monkeypatch.setenv(CAPABILITY_ENV["interactive_answers_v1"], "disabled")
+    assert enabled("image_generation_v1") is True
+    assert enabled("interactive_answers_v1") is False
+
+
 def test_disabled_capabilities_remove_model_tools(tmp_path, monkeypatch):
     monkeypatch.setenv(CAPABILITY_ENV["workspace_knowledge"], "0")
     monkeypatch.setenv(CAPABILITY_ENV["modern_mcp"], "false")

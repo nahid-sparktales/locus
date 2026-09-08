@@ -20,6 +20,8 @@ CAPABILITY_ENV = {
     "transcript_search": "LOCUS_CAPABILITY_TRANSCRIPT_SEARCH",
     "event_triggers": "LOCUS_CAPABILITY_EVENT_TRIGGERS",
     "automation_workflows_v1": "LOCUS_CAPABILITY_AUTOMATION_WORKFLOWS_V1",
+    "image_generation_v1": "LOCUS_CAPABILITY_IMAGE_GENERATION_V1",
+    "interactive_answers_v1": "LOCUS_CAPABILITY_INTERACTIVE_ANSWERS_V1",
 }
 
 

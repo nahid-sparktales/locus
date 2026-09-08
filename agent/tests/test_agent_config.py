@@ -106,6 +106,19 @@ def test_answer_contract_is_locked_for_tool_modes_and_absent_from_just_chat():
         # Typed outputs replace mandatory annotated file bullets and recaps.
         # Plain Markdown remains a supported fallback.
         assert "validated parts appear after your final prose" in prompt
+        # One static bullet teaches images and interactive answers; it names
+        # the setting to point at when no image tool is configured, so the
+        # model says so instead of pretending or improvising a picture.
+        assert (
+            "- For file inventories, generated writing, deliverables, sources, workspace images "
+            "and interactive explanations, use attach_output_parts when available; a "
+            "self-contained interactive part is for a diagram or small simulation that "
+            "explains better than prose. Images from generate_image or edit_image are attached "
+            "automatically; when no image tool is available and the user asks for a picture, "
+            "say so in one sentence and point to Settings › Models & Providers › Image "
+            "generation. Its validated parts appear after your final prose; do not repeat "
+            "their contents in prose or Markdown."
+        ) in ANSWER_CONTRACT
         # The editable layer cannot quietly cancel it: the contract is composed
         # into the locked half, which the runtime declares outranks user text.
         assert prompt.index("Locked answer contract") < prompt.index(
@@ -118,6 +131,7 @@ def test_answer_contract_is_locked_for_tool_modes_and_absent_from_just_chat():
     ]
     assert "attach_output_parts" not in chat_prompt
     assert "validated parts appear after your final prose" not in chat_prompt
+    assert "generate_image" not in chat_prompt and "Image generation" not in chat_prompt
 
 
 def test_agent_configuration_round_trips_as_versioned_additive_payload():

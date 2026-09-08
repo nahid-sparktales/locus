@@ -89,6 +89,11 @@ extension AppModel {
                 != newSettings.voiceCloudTranscriptionModel
             || settings.voiceCloudSpeechModel != newSettings.voiceCloudSpeechModel
             || settings.voiceCloudVoiceIdentifier != newSettings.voiceCloudVoiceIdentifier
+        let imageProviderChanged = settings.imageGenerationAccountID
+            != newSettings.imageGenerationAccountID
+            || settings.imageGenerationModel != newSettings.imageGenerationModel
+            || settings.imageGenerationSize != newSettings.imageGenerationSize
+            || settings.imageGenerationQuality != newSettings.imageGenerationQuality
         let proxyChanged = proxyCredentialChanged
             || settings.proxyModeRaw != newSettings.proxyModeRaw
             || settings.proxyTypeRaw != newSettings.proxyTypeRaw
@@ -207,6 +212,11 @@ extension AppModel {
         } else {
             if providerChanged {
                 Task { await applyProvider() }
+            }
+            // A relaunch re-sends the image provider with the chat provider,
+            // so only the no-restart path pushes it here.
+            if imageProviderChanged {
+                Task { await applyImageProvider(announce: true) }
             }
         }
         if iterationLimitChanged {

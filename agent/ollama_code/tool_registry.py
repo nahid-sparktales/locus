@@ -17,6 +17,7 @@ from .collaboration_tools import (
 )
 from .extensions import ExtensionError, ExtensionManager
 from .identity import IDENTITY_ACTIONS
+from .image_generation import IMAGE_TOOL_NAMES, IMAGE_TOOL_SCHEMAS
 from .solo_swarm import DELEGATE_READ_ONLY_SCHEMA
 from .tools import ASK_QUESTION_SCHEMA, SAFE_TOOLS, TOOL_SCHEMAS, ToolContext, execute_tool
 
@@ -884,6 +885,13 @@ class ToolRegistry:
         #: settings*, but defaulting it on here would make the headless CLI and
         #: every evaluation core advertise tools whose executor is ``None``.
         self.browser_enabled = False
+        #: Off until the app configures an image provider through
+        #: ``POST /api/images/provider``; the CLI and evaluation cores never
+        #: advertise tools whose executor is ``None``.
+        self.image_generation_enabled = False
+        #: Mirrored from ``AgentCore.agent_mode``: Plan mode modifies no files,
+        #: so the image tools leave both the classic and the parity surface.
+        self.plan_mode = False
         self.identity_enabled = False
         self.identity_mode = False
         # History is a separate opt-in inside Browser Settings. Keeping this
@@ -1082,6 +1090,12 @@ class ToolRegistry:
             return False
         if name in _BROWSER_TOOL_NAMES and not policy.get("network", True):
             return False
+        # A generated image both leaves the Mac (the prompt) and lands in the
+        # workspace (the file), so either switch removes the tools.
+        if name in IMAGE_TOOL_NAMES and not (
+            policy.get("network", True) and policy.get("workspace_write", True)
+        ):
+            return False
         if (
             name in _SAFE_EXTENSION_TOOLS or name in self._mcp_by_qualified
         ) and not policy.get("mcp", True):
@@ -1152,6 +1166,7 @@ class ToolRegistry:
             schema for schema in self.connector_schemas()
             if self._user_allows(schema["function"]["name"])
         )
+        schemas.extend(self.image_schemas())
         if (
             self._solo_swarm_enabled
             and self._agent_access_ceiling != "read_only"
@@ -1217,6 +1232,9 @@ class ToolRegistry:
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted
         )
+        if not plan_mode:
+            # Plan mode modifies no files; the image tools write one.
+            schemas.extend(self.image_schemas())
         # Outside the `plan_mode` gate below, unlike `submit_plan`: a
         # clarifying question belongs in every non-Ask mode.
         if self._offers_ask_question():
@@ -1235,6 +1253,31 @@ class ToolRegistry:
             if self._user_allows(schema["function"]["name"])
         )
         return schemas
+
+    def image_schemas(self) -> list[dict[str, Any]]:
+        """The image tools this agent may see; empty until a provider is configured."""
+        return [
+            schema for schema in IMAGE_TOOL_SCHEMAS
+            if self.image_tool_allowed(schema["function"]["name"])
+        ]
+
+    def image_tool_allowed(self, name: str) -> bool:
+        """Re-checked at dispatch: schema omission is not a boundary."""
+        return self.image_tool_refusal(name) is None
+
+    def image_tool_refusal(self, name: str) -> str | None:
+        """Why ``name`` is unavailable (``image_generation.refusal_message`` keys), or ``None``."""
+        if name not in IMAGE_TOOL_NAMES or not self.image_generation_enabled:
+            return "unconfigured"
+        if not capability_enabled("image_generation_v1"):
+            return "capability"
+        if self.plan_mode:
+            return "plan"
+        if self._agent_access_ceiling == "read_only":
+            return "read_only"
+        if not self._user_allows(name):
+            return "policy"
+        return None
 
     def simulator_schemas(self) -> list[dict[str, Any]]:
         if not self.simulator_enabled:
@@ -1714,6 +1757,11 @@ class ToolRegistry:
             return {
                 "origin": "browser",
                 "annotations": {"readOnlyHint": name in _READ_ONLY_BROWSER_TOOLS},
+            }
+        if self.image_generation_enabled and name in IMAGE_TOOL_NAMES:
+            return {
+                "origin": "builtin",
+                "annotations": {"readOnlyHint": False, "openWorldHint": True},
             }
         if self.notes_enabled and name in _NOTES_TOOL_NAMES:
             return {

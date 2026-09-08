@@ -475,4 +475,165 @@ final class ResponseOutputTests: XCTestCase {
         let available = try await store.responseVersionAvailable(unavailable, workspace: workspace.path)
         XCTAssertFalse(available)
     }
+
+    private func imageDictionary(workspace: String) -> [String: Any] {
+        ["type": "image", "id": "picture", "title": "Harbour at dusk", "workspace": workspace,
+         "path": "Locus Images/harbour.png", "alt": "A harbour", "prompt": "A quiet harbour at dusk",
+         "source_path": "Locus Images/source.png", "width": 1024, "height": 768, "format": "png", "size": 123_456]
+    }
+
+    private func interactiveDictionary(height: Any? = 420, html: String = "<div id=\"widget\"><button>Step</button></div>") -> [String: Any] {
+        var value: [String: Any] = ["type": "interactive", "id": "widget", "title": "Binary search",
+                                    "summary": "Step through a search over seven numbers.", "html": html]
+        if let height { value["height"] = height }
+        return value
+    }
+
+    func testImageAndInteractivePartsDecodeRoundTripAndProjectTheirFallbackShape() throws {
+        let (_, workspace) = try fixture()
+        let payload: [String: Any] = ["version": 1, "parts": [imageDictionary(workspace: workspace.path), interactiveDictionary()]]
+        let document = try JSONDecoder().decode(ResponseDocument.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertTrue(document.isSupported)
+        let image = try XCTUnwrap(document.parts.first)
+        XCTAssertEqual(image.alt, "A harbour")
+        XCTAssertEqual(image.prompt, "A quiet harbour at dusk")
+        XCTAssertEqual(image.sourcePath, "Locus Images/source.png")
+        XCTAssertEqual(image.width, 1024)
+        XCTAssertEqual(image.height, 768)
+        XCTAssertEqual(image.format, "png")
+        XCTAssertEqual(image.byteSize, 123_456)
+        let interactive = try XCTUnwrap(document.parts.last)
+        XCTAssertEqual(interactive.summary, "Step through a search over seven numbers.")
+        XCTAssertEqual(interactive.html, "<div id=\"widget\"><button>Step</button></div>")
+        XCTAssertEqual(interactive.interactiveHeight, 420)
+
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(document)) as? [String: Any]
+        let encodedParts = try XCTUnwrap(encoded?["parts"] as? [[String: Any]])
+        XCTAssertEqual(encodedParts.first?["source_path"] as? String, "Locus Images/source.png")
+        XCTAssertEqual(encodedParts.first?["size"] as? Int, 123_456)
+        XCTAssertNil(encodedParts.first?["byteSize"])
+        XCTAssertEqual(try JSONDecoder().decode(ResponseDocument.self, from: JSONEncoder().encode(document)), document)
+        let history = try self.history(content: "fallback", metadata: payload)
+        XCTAssertEqual(history.responseParts, document)
+        let block = try XCTUnwrap(ChatTranscriptBuilder.blocks(from: [history]).first)
+        XCTAssertEqual(try JSONDecoder().decode(ChatBlock.self, from: JSONEncoder().encode(block)).responseParts, document)
+
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: image), "Harbour at dusk\n\nA quiet harbour at dusk")
+        var untitled = image
+        untitled.title = ""
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: untitled), "A harbour\n\nA quiet harbour at dusk", "an empty title reads as absent, like imageTitle and the export label")
+        untitled.title = nil
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: untitled), "A harbour\n\nA quiet harbour at dusk")
+        untitled.alt = nil
+        untitled.prompt = nil
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: untitled), "Locus Images/harbour.png")
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: interactive), "### Binary search\n\nStep through a search over seven numbers.")
+        var anonymous = interactive
+        anonymous.title = nil
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: anonymous), "### Interactive explanation\n\nStep through a search over seven numbers.")
+        let spans = ResponseSelectionProjection.spans(document: document, rowID: "row")
+            .sorted { $0.treePath.lexicographicallyPrecedes($1.treePath) }
+        XCTAssertEqual(spans.map(\.displayedText), ["Harbour at dusk", "A quiet harbour at dusk", "Binary search", "Step through a search over seven numbers."])
+        XCTAssertEqual(spans.map { Array($0.treePath.prefix(2)) }, [[0, 0], [0, 0], [0, 1], [0, 1]])
+    }
+
+    func testInteractiveHeightDefaultsAndClampsWithoutRejectingTheDocument() {
+        XCTAssertEqual(ResponsePart(type: "interactive", id: "w", summary: "s", html: "<p>x</p>").interactiveHeight, 360)
+        XCTAssertEqual(ResponsePart(type: "interactive", id: "w", height: 160, summary: "s", html: "<p>x</p>").interactiveHeight, 160)
+        XCTAssertEqual(ResponsePart(type: "interactive", id: "w", height: 720, summary: "s", html: "<p>x</p>").interactiveHeight, 720)
+        XCTAssertEqual(ResponsePart(type: "interactive", id: "w", height: 5000, summary: "s", html: "<p>x</p>").interactiveHeight, 720)
+        XCTAssertEqual(ResponsePart(type: "interactive", id: "w", height: 12, summary: "s", html: "<p>x</p>").interactiveHeight, 160)
+    }
+
+    func testMalformedImageAndInteractiveShapesKeepTheOrdinaryAnswer() throws {
+        let (_, workspace) = try fixture()
+        let fallback = "The **complete answer** remains available.\n"
+        var imageWithoutWorkspace = imageDictionary(workspace: workspace.path)
+        imageWithoutWorkspace.removeValue(forKey: "workspace")
+        var imageWithoutPath = imageDictionary(workspace: workspace.path)
+        imageWithoutPath["path"] = ""
+        var interactiveWithoutHTML = interactiveDictionary()
+        interactiveWithoutHTML.removeValue(forKey: "html")
+        var interactiveWithoutSummary = interactiveDictionary()
+        interactiveWithoutSummary["summary"] = ""
+        let oversize = interactiveDictionary(html: String(repeating: "x", count: ResponsePart.maxInteractiveHTMLBytes + 1))
+        let malformed: [[String: Any]] = [
+            imageWithoutWorkspace, imageWithoutPath, interactiveWithoutHTML, interactiveWithoutSummary,
+            interactiveDictionary(height: 5000), interactiveDictionary(height: 40), oversize,
+        ]
+        for part in malformed {
+            let metadata: [String: Any] = ["version": 1, "parts": [part]]
+            let decoded = try history(content: fallback, metadata: metadata)
+            XCTAssertFalse(decoded.responseParts?.isSupported == true, "\(part["type"] ?? "") must fall back")
+            let block = try XCTUnwrap(ChatTranscriptBuilder.blocks(from: [decoded]).first)
+            let checkpoint = try JSONDecoder().decode(ChatBlock.self, from: JSONEncoder().encode(block))
+            let visible = TranscriptPresentation.items(from: [checkpoint], toolVisibility: .collapsed, thinkingVisibility: .hidden)
+                .compactMap { item -> String? in
+                    if case .assistantSegment(let segment) = item { return segment.text }
+                    return nil
+                }.joined()
+            XCTAssertEqual(visible, fallback)
+            XCTAssertEqual(checkpoint.text, fallback)
+        }
+        let limit = interactiveDictionary(html: String(repeating: "x", count: ResponsePart.maxInteractiveHTMLBytes))
+        let exact = try history(content: fallback, metadata: ["version": 1, "parts": [limit]])
+        XCTAssertTrue(exact.responseParts?.isSupported == true, "Exactly the limit is still a supported document")
+        let unicode = interactiveDictionary(html: String(repeating: "é", count: ResponsePart.maxInteractiveHTMLBytes / 2 + 1))
+        let overByBytes = try history(content: fallback, metadata: ["version": 1, "parts": [unicode]])
+        XCTAssertFalse(overByBytes.responseParts?.isSupported == true, "The limit counts UTF-8 bytes, not characters")
+    }
+
+    func testToolActivityFamilyRecognisesImageGenerationTools() {
+        func tool(_ id: String, _ name: String, label: String? = nil) -> ToolPayload {
+            ToolPayload(toolID: id, tool: name, summary: "", detail: "", status: .done, activityLabel: label)
+        }
+        let generated = CompactToolActivitySummary(tools: [tool("g", "generate_image")])
+        XCTAssertEqual(generated.title, "Created image")
+        XCTAssertEqual(generated.systemImage, "photo")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool("e", "edit_image")]).title, "Created image")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool("g", "generate_image"), tool("e", "edit_image")]).title, "Created images")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool("n", "codex.generate_image")]).systemImage, "photo")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool("e", "edit_image", label: "Edited image Locus Images/harbour.png")]).title,
+                       "Edited image Locus Images/harbour.png")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool("f", "edit_file")]).title, "Edited file",
+                       "edit_image must not pull ordinary file edits into the image family")
+    }
+
+    /// The generated-image card and a prose `![alt](path)` share one action
+    /// builder, so a script's chart offers the same Edit / Copy / Save as a
+    /// generated picture — Edit only where the host permits editing.
+    func testWorkspaceImageActionsOfferEditOnlyWhenTheHostAllowsEditing() throws {
+        let (_, workspace) = try fixture()
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: workspace.appendingPathComponent("chart.png"))
+        let reference = try XCTUnwrap(WorkspaceArtifactReference.classify("chart.png", workspacePath: workspace.path))
+        var attached: [String] = []
+        var context = ResponseOutputContext()
+        context.attachImage = { attached.append($0.relativePath) }
+
+        context.allowsImageEditing = false
+        let readOnly = WorkspaceImageAction.responseActions(for: reference, context: context)
+        XCTAssertEqual(readOnly.map(\.id), ["more"])
+        XCTAssertEqual(readOnly.first?.items?.map(\.id), ["copy", "save"])
+        XCTAssertEqual(readOnly.first?.items?.map(\.title), ["Copy Image", "Save As…"])
+
+        context.allowsImageEditing = true
+        let editable = WorkspaceImageAction.responseActions(for: reference, context: context)
+        XCTAssertEqual(editable.map(\.id), ["edit", "more"])
+        XCTAssertEqual(editable.first?.title, "Edit in chat")
+        XCTAssertNil(editable.first?.items, "Edit is a button, not a menu")
+        editable.first?.action()
+        XCTAssertEqual(attached, ["chart.png"], "Edit in chat hands the host the workspace reference")
+        XCTAssertEqual(editable.last?.items?.map(\.id), ["copy", "save"])
+
+        // Copy reports through the error sink: a real file clears it, an
+        // unreadable one names the file.
+        var reported: [String?] = []
+        let missing = WorkspaceArtifactReference(
+            url: workspace.appendingPathComponent("gone.png"), relativePath: "gone.png",
+            kind: .image, byteCount: nil, sourceLocation: nil
+        )
+        let actions = WorkspaceImageAction.responseActions(for: missing, context: context) { reported.append($0) }
+        actions.last?.items?.first?.action()
+        XCTAssertEqual(reported, ["Could not read gone.png"])
+    }
 }

@@ -7722,11 +7722,22 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
 
 
 def test_a_small_window_still_compacts_rather_than_giving_up(tmp_path):
-    """The reply allowance scales with the window. Reserving a flat 4k of an 8k
+    """The reply allowance scales with the window. Reserving a flat 4k of a 9k
     window would leave a budget below the system prompt, and compacting on
-    every turn while never getting under it is worse than not compacting."""
+    every turn while never getting under it is worse than not compacting.
+
+    This ran at 8k until the default tool surface (image/interactive answer
+    parts) and the answer contract (image teaching) pushed an 8k window's
+    budget below the compaction floor: at 8k the conversation's share is now
+    smaller than the system prompt plus a summary, so compaction cannot win
+    anything back and is correctly skipped. 9k is the smallest window where
+    the scaled allowance still compacts and a flat 4k reservation still
+    would not."""
+    from ollama_code.core import RESERVED_REPLY_TOKENS
+
     core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)])
-    core.context_limit = 8_192
+    core.context_limit = 9_216
+    assert core._reply_room() < RESERVED_REPLY_TOKENS
     core.messages = [
         core.system_message(),
         {"role": "user", "content": "x" * 20_000},

@@ -1270,6 +1270,10 @@ extension AppModel {
             if updated.id.uuidString == settings.activeAccountID {
                 await applyProvider(announce: false)
             }
+            // Same for the image provider, which holds its own copy of the key.
+            if updated.id.uuidString == settings.imageGenerationAccountID {
+                await applyImageProvider(announce: false)
+            }
         }
         showToast("Saved \(updated.displayName)")
         return true
@@ -1282,6 +1286,13 @@ extension AppModel {
         credentialStore.remove(account: account.credentialAccount)
         providerAccountsModel.persistProviderAccounts()
         providerAccountsModel.forgetAccountCatalog(account.id)
+        if account.id.uuidString == settings.imageGenerationAccountID {
+            // The agent is holding this account's key for the image tools;
+            // clearing the choice and pushing it revokes that copy too.
+            settings.imageGenerationAccountID = nil
+            persistSettings()
+            Task { await applyImageProvider(announce: false) }
+        }
         guard account.id.uuidString == settings.activeAccountID else {
             showToast("Removed \(account.displayName)")
             return

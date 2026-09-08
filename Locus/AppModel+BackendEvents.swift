@@ -811,6 +811,7 @@ extension AppModel {
             // Before the queue drains: a model chosen mid-turn is meant for
             // the messages waiting behind it.
             applyPendingProviderSwitchIfNeeded()
+            applyPendingImageProviderIfNeeded()
             if let replacement = pendingStopAndSend {
                 pendingStopAndSend = nil
                 send(replacement, preservingDraftOnFailure: false, requeueingOnFailure: true)
@@ -889,6 +890,7 @@ extension AppModel {
         case "slash_result":
             isBusy = false
             applyPendingProviderSwitchIfNeeded()
+            applyPendingImageProviderIfNeeded()
             if event["command"] as? String == "clear" {
                 blocks = []
                 todos = []

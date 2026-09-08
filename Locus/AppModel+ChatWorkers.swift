@@ -164,6 +164,10 @@ extension AppModel {
             runtime.needsConnectorCapabilitySync = !self.sendConnectorCapability(
                 to: runtime.service
             )
+            Task { @MainActor [weak self, weak runtime] in
+                guard let self, let runtime else { return }
+                await self.pushImageProvider(to: runtime.service)
+            }
             self.prepareChatWorkerForNextDispatch(runtime)
         }
         runtime.service.onEvent = { [weak self, weak runtime] event in
@@ -208,6 +212,11 @@ extension AppModel {
             }
             return nil
         }
+        // The image provider rides the same handoff: this process holds its
+        // own copy of the key, and without it the image tools are absent from
+        // every turn the worker runs. A failure costs the tools, not the
+        // worker.
+        await pushImageProvider(to: runtime.service)
         runtime.service.connect()
         runtime.identityProvider = capturedIdentityProvider
         for _ in 0..<40 where !runtime.isConnected {
@@ -835,6 +844,16 @@ extension AppModel {
                 + guidance
             )
         }
+        if mode != .ask, !imageNames.isEmpty, Self.namesWorkspaceImagePath(text) {
+            // Edit in chat attaches the file and names its workspace path; the
+            // tool wants that path, not the attachment, so the edit stays a
+            // workspace operation and needs no upload of the attached bytes.
+            sections.append(
+                "To edit an attached image that also exists in the workspace, pass the "
+                + "backticked workspace image path from the request as the source of edit_image; "
+                + "an attached image with no workspace path is passed as attachment:<name>."
+            )
+        }
         let applicationSnapshots = chatAttachments.compactMap { attachment -> String? in
             guard attachment.kind == .applicationSnapshot,
                   attachment.isAvailable,
@@ -883,5 +902,17 @@ extension AppModel {
 
         sections.append("User request:\n\(text)")
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Whether the request names a workspace image by its relative path, the
+    /// form Edit in chat prefills: any backticked workspace-relative path with
+    /// an image extension. Edits land beside their source and `filename` can
+    /// target any folder, so this is not limited to `Locus Images/`; an
+    /// absolute or home-relative path is not a workspace path.
+    static func namesWorkspaceImagePath(_ text: String) -> Bool {
+        text.range(
+            of: "`(?![/~])[^`]+\\.(png|jpe?g|gif|webp)`",
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
     }
 }

@@ -60,6 +60,8 @@ from .config import (
 )
 from .extensions import ExtensionManager
 from .identity import IDENTITY_ACTIONS, IDENTITY_SYSTEM_PROMPT, source_references
+from .image_generation import IMAGE_TOOL_NAMES
+from .image_generation import refusal_message as image_refusal_message
 from .mcp_runtime import MCPManager
 from .ollama import (
     DEFAULT_HOST,
@@ -110,6 +112,10 @@ _SOLO_ROOT_ONLY_TOOLS = {
     "spawn_agent", "list_agents", "read_agent", "send_agent_message", "followup_agent",
     "interrupt_agent", "resume_agent", "wait_agents", "integrate_agent", "ask_question_async",
     "delegate_read_only", "get_goal", "update_goal", "attach_output_parts",
+    # Image tools write one new file of their own and stage under the parts
+    # lock, so skipping `tool_action_lock` here is safe; the executor itself
+    # exists only on the visible root chat.
+    "generate_image", "edit_image",
     # Only the visible root chat has a user to ask.
     "ask_question",
     "todo_write",
@@ -462,9 +468,12 @@ class AgentCore:
         self.active_tool_call_id = ""
         self._output_run_id = ""
         self._classic_item_id = ""
-        self._response_parts_lock = threading.RLock()
+        # One lock shared with tools that stage parts on their own (image
+        # generation): the context owns it so both sides hold the same object.
+        self._response_parts_lock = self.tool_ctx.response_parts_lock
         self._tool_activity_labels: dict[int, str] = {}
         self.tool_ctx.should_stop = self._interrupt.is_set
+        self.tool_ctx.stage_response_parts = self._stage_response_parts
         self._last_user_message: str | None = None
         #: The server's ground-truth size of the last completed model call
         #: (prompt + reply tokens) and the message count at that moment. The
@@ -776,6 +785,20 @@ class AgentCore:
         else:
             provider_label = "local Ollama"
         return f"{self.model or 'not yet selected'} via {provider_label}"
+
+    @property
+    def agent_mode(self) -> str:
+        return self._agent_mode
+
+    @agent_mode.setter
+    def agent_mode(self, value: str) -> None:
+        # Mirrored into the registry so the classic tool list hides the image
+        # tools in Plan mode exactly as `parity_schemas(plan_mode=...)` does,
+        # whether the mode arrives through `configure_agent` or a direct set.
+        self._agent_mode = value
+        registry = getattr(self, "tool_registry", None)
+        if registry is not None:
+            registry.plan_mode = value == "plan"
 
     def configure_agent(
         self,
@@ -1675,6 +1698,10 @@ class AgentCore:
         self.tool_ctx.response_parts.clear()
         self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
+        self.tool_ctx.image_generations_this_turn = 0
+        self.tool_ctx.image_generations_this_session = 0
+        self.tool_ctx.turn_attachments = []
+        self.tool_ctx.last_image_result = None
         self._output_run_id = ""
         self._last_user_message = None
         self._pending_computer_screenshot = None
@@ -2082,6 +2109,14 @@ class AgentCore:
         self.tool_ctx.response_parts.clear()
         self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
+        self.tool_ctx.image_generations_this_turn = 0
+        self.tool_ctx.turn_attachments = []
+        self.tool_ctx.last_image_result = None
+        # The native route hands images straight to the helper as input items;
+        # keep the validated list here so edit_image can name one as a source.
+        self.tool_ctx.turn_attachments = [
+            dict(item) for item in (attachments or []) if isinstance(item, dict)
+        ]
         self._last_user_message = user_text
         if allow_tools:
             self.reload_context()
@@ -2823,6 +2858,9 @@ class AgentCore:
         self.tool_ctx.response_parts.clear()
         self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
+        self.tool_ctx.image_generations_this_turn = 0
+        self.tool_ctx.turn_attachments = []
+        self.tool_ctx.last_image_result = None
         self._last_user_message = user_text
         # Stale counts from a previous turn must not leak into this turn's
         # budget projection.
@@ -2852,6 +2890,7 @@ class AgentCore:
                 # JSONL transcript. Persisting base64 would make session files
                 # enormous and is unnecessary for rendering chat history.
                 user_message["attachments"] = [dict(item) for item in attachments]
+                self.tool_ctx.turn_attachments = [dict(item) for item in attachments]
                 persisted = {
                     "role": "user",
                     "content": user_text,
@@ -3117,6 +3156,9 @@ class AgentCore:
         self.tool_ctx.response_parts.clear()
         self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
         self.tool_ctx.questions_asked_this_turn = 0
+        self.tool_ctx.image_generations_this_turn = 0
+        self.tool_ctx.turn_attachments = []
+        self.tool_ctx.last_image_result = None
         # Branch onto a fresh saved session so the original transcript survives.
         self.session = self._new_session_store()
         for message in self.messages[1:]:
@@ -3879,7 +3921,27 @@ class AgentCore:
             track_active=False,
         )
 
+    def _stage_response_parts(self, parts: Any) -> str:
+        """Validate and stage ``parts`` for the next final answer, under the parts lock.
+
+        Shared by the ``attach_output_parts`` call path and by tools that stage
+        a part of their own through ``ToolContext.stage_response_parts``; both
+        journal the provisional document so a crash mid-turn is diagnosable.
+        """
+        with self._response_parts_lock:
+            result = execute_tool("attach_output_parts", {"parts": parts}, self.tool_ctx)
+            if not result.startswith("Error:"):
+                self.session.append({"type": "response_parts_staged", "run_id": self._output_run_id,
+                                     "parts": list(self.tool_ctx.response_parts.values())})
+            return result
+
     def _verified_activity_label(self, tc: ToolCall, effects: list[dict[str, Any]]) -> str:
+        if tc.name in IMAGE_TOOL_NAMES:
+            last = self.tool_ctx.last_image_result
+            if not isinstance(last, dict) or last.get("name") != tc.name or not last.get("path"):
+                return ""
+            verb = "Edited" if tc.name == "edit_image" else "Created"
+            return f"{verb} image {' '.join(str(last['path']).split())}"
         if tc.name == "apply_patch":
             return f"Updated {len(effects)} file{'s' if len(effects) != 1 else ''}" if effects else ""
         verb = {"list_dir": "Checked", "read_file": "Read", "write_file": "Updated",
@@ -3908,12 +3970,18 @@ class AgentCore:
             if (self.identity_mode or not self._turn_allows_tools or self.agent_role_contract
                     or not track_active or getattr(self, "helper_allowed_tools", None) is not None):
                 return "Error: presentation output belongs only to the visible workspace turn."
-            with self._response_parts_lock:
-                result = execute_tool(tc.name, tc.arguments, self.tool_ctx)
-                if not result.startswith("Error:"):
-                    self.session.append({"type": "response_parts_staged", "run_id": self._output_run_id,
-                                         "parts": list(self.tool_ctx.response_parts.values())})
-                return result
+            return self._stage_response_parts(
+                tc.arguments.get("parts") if isinstance(tc.arguments, dict) else None
+            )
+        if tc.name in IMAGE_TOOL_NAMES:
+            if (self.identity_mode or not self._turn_allows_tools or self.agent_role_contract
+                    or not track_active or getattr(self, "helper_allowed_tools", None) is not None):
+                return "Error: image tools belong only to the visible workspace turn."
+            # `tool_info` names no origin for an unconfigured builtin, so the
+            # policy re-check lives here rather than at the executor.
+            refusal = self.tool_registry.image_tool_refusal(tc.name)
+            if refusal is not None:
+                return image_refusal_message(tc.name, refusal)
         if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
             return "Error: goal tools belong only to the active goal coordinator."
         if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():
@@ -4495,6 +4563,10 @@ class AgentCore:
             raise FileNotFoundError(f"session not found: {session_id}")
         messages = SessionStore.load(path)
         self.tool_ctx.response_parts.clear()
+        self.tool_ctx.image_generations_this_session = 0
+        self.tool_ctx.image_generations_this_turn = 0
+        self.tool_ctx.turn_attachments = []
+        self.tool_ctx.last_image_result = None
         self._output_run_id = ""
         self.identity_mode = (SessionMeta.get(session_id).get("identity_mode") is True
                               or any(message.get("identity_mode") is True for message in messages))
