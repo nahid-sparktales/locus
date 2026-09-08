@@ -11,8 +11,13 @@
   for permission and names the prompt, model, provider host, and destination;
   edits always ask. Images are saved to `Locus Images` inside the workspace,
   captured in Outputs, and exported with the chat.
-- Image cards and inline workspace images offer Edit in chat, Copy Image, and
-  Save As…, and Edit in chat attaches the picture with a prefilled request.
+- Image cards and inline workspace images referenced in prose offer Edit in
+  chat, Copy Image, and Save As…, and Edit in chat attaches the picture with a
+  prefilled request naming its workspace path.
+- The chosen image account reaches every agent process — the main agent on
+  launch and each chat worker as it starts — and a change made while a turn is
+  running is applied once that turn ends. A custom model name is pushed once
+  per committed value rather than on every keystroke.
 - Interactive visual explanations. An answer can include a self-contained
   interactive widget rendered in a sealed, offline web view with a written
   summary that stands in for it on the phone, in exports, and when interactive
