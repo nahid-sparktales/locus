@@ -61,16 +61,11 @@ enum ChatExportRenderer {
         var assetDirectory: URL?
         var assetDirectoryName: String?
         let attachments = document.messages.flatMap { $0.attachments ?? [] }
-        if !attachments.isEmpty {
-            let base = url.deletingPathExtension().lastPathComponent + "-assets"
-            let parent = url.deletingLastPathComponent()
-            var candidate = parent.appendingPathComponent(base, isDirectory: true)
-            var suffix = 2
-            while fileManager.fileExists(atPath: candidate.path) {
-                candidate = parent.appendingPathComponent("\(base)-\(suffix)", isDirectory: true)
-                suffix += 1
-            }
-            try fileManager.createDirectory(at: candidate, withIntermediateDirectories: false)
+        let hasParts = document.messages.contains {
+            !ResponseExportProjection.imageParts($0).isEmpty || !ResponseExportProjection.interactiveParts($0).isEmpty
+        }
+        if !attachments.isEmpty || hasParts {
+            let candidate = try makeAssetDirectory(for: url)
             assetDirectory = candidate
             assetDirectoryName = candidate.lastPathComponent
         }
@@ -81,12 +76,50 @@ enum ChatExportRenderer {
             for message in document.messages {
                 lines.append(markdownHeading(for: message))
                 lines.append("")
+                var content = message.content
+                var trailing: [String] = []
+                // Typed parts first: an image replaces the backend's exact
+                // fallback link in place so the reader sees the sidecar copy
+                // where the picture was, and anything unmatched follows the
+                // prose the way attachments do.
+                for part in ResponseExportProjection.imageParts(message) {
+                    attachmentIndex += 1
+                    let replacement: String
+                    if let source = ResponseExportProjection.imageFileURL(for: part),
+                       let data = try? Data(contentsOf: source),
+                       let assetDirectory, let assetDirectoryName {
+                        let name = uniqueAttachmentName(source.lastPathComponent,
+                            mimeType: "image/\(part.format ?? "png")", index: attachmentIndex)
+                        try data.write(to: assetDirectory.appendingPathComponent(name), options: .atomic)
+                        replacement = "![\(ResponseExportProjection.markdownLabel(ResponseExportProjection.imageLabel(for: part)))](\(assetDirectoryName)/\(name))"
+                    } else {
+                        replacement = ResponseExportProjection.unavailableImageLine(for: part)
+                    }
+                    let link = ResponseExportProjection.fallbackImageLink(for: part)
+                    if content.contains(link) {
+                        content = content.replacingOccurrences(of: link, with: replacement)
+                    } else {
+                        trailing.append(replacement)
+                    }
+                }
+                for part in ResponseExportProjection.interactiveParts(message) {
+                    guard let assetDirectory, let assetDirectoryName else { continue }
+                    attachmentIndex += 1
+                    let name = ResponseExportProjection.interactiveFileName(for: part, index: attachmentIndex)
+                    try ResponseExportProjection.interactiveDocument(for: part)
+                        .write(to: assetDirectory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                    trailing.append(ResponseExportProjection.interactiveLink(for: part, directory: assetDirectoryName, name: name))
+                }
                 if message.role == "tool" {
                     lines.append("```")
-                    lines.append(message.content)
+                    lines.append(content)
                     lines.append("```")
                 } else {
-                    lines.append(message.content)
+                    lines.append(content)
+                }
+                for line in trailing {
+                    lines.append("")
+                    lines.append(line)
                 }
                 if let reasoning = resolvedReasoning(for: message) {
                     lines.append("")
@@ -121,11 +154,27 @@ enum ChatExportRenderer {
         }
     }
 
+    /// The sidecar folder beside an export that carries its binary assets.
+    /// Never reuses an existing folder, so a repeated export cannot mix files.
+    private static func makeAssetDirectory(for url: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let base = url.deletingPathExtension().lastPathComponent + "-assets"
+        let parent = url.deletingLastPathComponent()
+        var candidate = parent.appendingPathComponent(base, isDirectory: true)
+        var suffix = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = parent.appendingPathComponent("\(base)-\(suffix)", isDirectory: true)
+            suffix += 1
+        }
+        try fileManager.createDirectory(at: candidate, withIntermediateDirectories: false)
+        return candidate
+    }
+
     private static func plainText(_ document: ChatExportDocument) -> String {
         var lines = metadataLines(document, markdown: false)
         for message in document.messages {
             lines.append(textHeading(for: message))
-            lines.append(message.content)
+            lines.append(plainContent(for: message))
             if let reasoning = resolvedReasoning(for: message) {
                 lines.append("Reasoning:")
                 lines.append(reasoning)
@@ -136,6 +185,24 @@ enum ChatExportRenderer {
             lines.append("")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Message text for the text-only formats: the backend's image link is
+    /// replaced by a readable line, and an image the prose never mentioned is
+    /// listed after it. Interactive parts already appear as title + summary.
+    private static func plainContent(for message: ChatExportMessage) -> String {
+        var content = message.content
+        var trailing: [String] = []
+        for part in ResponseExportProjection.imageParts(message) {
+            let link = ResponseExportProjection.fallbackImageLink(for: part)
+            let line = ResponseExportProjection.plainTextImageLine(for: part)
+            if content.contains(link) {
+                content = content.replacingOccurrences(of: link, with: line)
+            } else {
+                trailing.append(line)
+            }
+        }
+        return ([content] + trailing).joined(separator: "\n\n")
     }
 
     private static func writePDF(_ document: ChatExportDocument, to url: URL) throws {
@@ -197,15 +264,35 @@ enum ChatExportRenderer {
             ]))
         }
 
+        func appendImage(_ image: NSImage, name: String, width: CGFloat) {
+            let attachmentCell = NSTextAttachmentCell(imageCell: image)
+            let original = image.size
+            let scale = min(1, width / max(original.width, 1), 320 / max(original.height, 1))
+            attachmentCell.image?.size = NSSize(width: original.width * scale, height: original.height * scale)
+            let textAttachment = NSTextAttachment()
+            textAttachment.attachmentCell = attachmentCell
+            result.append(NSAttributedString(attachment: textAttachment))
+            append("\n\(name)\n", font: detail, color: secondary, spacing: 9)
+        }
+
         append(document.title + "\n", font: title, spacing: 10)
         let metadata = metadataLines(document, markdown: false).dropFirst(2).joined(separator: "\n")
         append(metadata + "\n\n", font: detail, color: secondary, spacing: 9)
         for message in document.messages {
             append(textHeading(for: message) + "\n", font: heading, spacing: 3)
-            append(message.content + "\n", font: message.role == "tool" ? mono : body, spacing: 8)
+            append(plainContent(for: message) + "\n", font: message.role == "tool" ? mono : body, spacing: 8)
             if let reasoning = resolvedReasoning(for: message) {
                 append("Reasoning\n", font: heading, color: secondary, spacing: 2)
                 append(reasoning + "\n", font: detail, color: secondary, spacing: 8)
+            }
+            for part in ResponseExportProjection.imageParts(message) {
+                guard let source = ResponseExportProjection.imageFileURL(for: part),
+                      let image = NSImage(contentsOf: source)
+                else {
+                    append(ResponseExportProjection.unavailableImageLine(for: part) + "\n", font: detail, color: secondary)
+                    continue
+                }
+                appendImage(image, name: part.imageTitle, width: width)
             }
             for attachment in message.attachments ?? [] {
                 guard let data = decodedAttachmentData(attachment.data),
@@ -214,14 +301,7 @@ enum ChatExportRenderer {
                     append("[Attachment: \(attachment.name)]\n", font: detail, color: secondary)
                     continue
                 }
-                let attachmentCell = NSTextAttachmentCell(imageCell: image)
-                let original = image.size
-                let scale = min(1, width / max(original.width, 1), 320 / max(original.height, 1))
-                attachmentCell.image?.size = NSSize(width: original.width * scale, height: original.height * scale)
-                let textAttachment = NSTextAttachment()
-                textAttachment.attachmentCell = attachmentCell
-                result.append(NSAttributedString(attachment: textAttachment))
-                append("\n\(attachment.name)\n", font: detail, color: secondary, spacing: 9)
+                appendImage(image, name: attachment.name, width: width)
             }
             append("\n", font: body, spacing: 4)
         }

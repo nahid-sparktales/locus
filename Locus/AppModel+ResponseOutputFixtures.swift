@@ -42,6 +42,22 @@ extension AppModel {
                     try content.write(to: url, atomically: true, encoding: .utf8)
                 }
             }
+            // A real PNG where generate_image would put one, so the card,
+            // Outputs capture and Edit in chat all see an ordinary workspace file.
+            let imagesDirectory = root.appendingPathComponent("Locus Images", isDirectory: true)
+            try FileManager.default.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
+            let illustration = NSImage(size: NSSize(width: 480, height: 320))
+            illustration.lockFocus()
+            NSColor(calibratedRed: 0.15, green: 0.42, blue: 0.55, alpha: 1).setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 480, height: 320)).fill()
+            ("Harbour at dusk" as NSString).draw(at: NSPoint(x: 36, y: 220), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 28), .foregroundColor: NSColor.white,
+            ])
+            illustration.unlockFocus()
+            guard let tiff = illustration.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+                  let png = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+            let imagePath = "Locus Images/fixture.png"
+            try png.write(to: root.appendingPathComponent(imagePath))
             let workspace = root.standardizedFileURL.resolvingSymlinksInPath().path
             let sessionID = "seed-response-output"
             sessionInfo = SessionInfo(model: "qwen3:8b", host: "http://localhost:11434", cwd: workspace,
@@ -78,19 +94,24 @@ extension AppModel {
                 ResponseSource(id: "python-docs", title: "Python documentation", url: "https://docs.python.org/3/"),
             ])
             let tablePart = ResponsePart(type: "markdown", id: "long-table", text: table)
+            let image = ResponsePart(type: "image", id: "generated-image", title: "Harbour at dusk", workspace: workspace,
+                path: imagePath, alt: "Harbour at dusk", prompt: "A quiet harbour at dusk with warm lights on the water.",
+                width: 480, height: 320, format: "png", byteSize: png.count)
             // All variants contain all parts. Put the tested control near the
             // tail so launch scroll position is deterministic at small sizes.
             let focus = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RESPONSE_FOCUS"] ?? "files"
             let ordered: [ResponsePart]
             switch focus {
-            case "writing": ordered = [collection, tablePart, artifact, sources, writing]
-            case "table": ordered = [collection, writing, artifact, sources, tablePart]
-            case "artifact": ordered = [collection, writing, tablePart, sources, artifact]
-            default: ordered = [writing, tablePart, artifact, sources, collection]
+            case "writing": ordered = [image, collection, tablePart, artifact, sources, writing]
+            case "table": ordered = [image, collection, writing, artifact, sources, tablePart]
+            case "artifact": ordered = [image, collection, writing, tablePart, sources, artifact]
+            case "image": ordered = [collection, writing, tablePart, artifact, sources, image]
+            default: ordered = [image, writing, tablePart, artifact, sources, collection]
             }
             let fallback = files.map { "- [\($0.0)](\($0.0)) — \($0.1)" }.joined(separator: "\n")
                 + "\n\n" + writing.originalWriting + "\n\n" + table
                 + "\n\n[Audit findings report](audit_findings_report.pdf)\n\n[Python documentation](https://docs.python.org/3/)"
+                + "\n\n" + ResponseExportProjection.fallbackImageLink(for: image) + "\n\nHarbour at dusk"
             blocks = [
                 ChatBlock(id: UUID(uuidString: "00000000-0000-0000-0000-000000004001")!, kind: .user,
                     text: "Show the workspace files, outreach draft, and audit results."),
@@ -101,6 +122,8 @@ extension AppModel {
             outputsLibrary.configure(emitter: SessionStateEmitter(), enabled: true)
             outputsLibrary.activate(workspace: workspace)
             outputsLibrary.capture(workspace: workspace, path: "audit_findings_report.pdf",
+                sessionID: sessionID, runID: "response-output-fixture-run")
+            outputsLibrary.capture(workspace: workspace, path: imagePath,
                 sessionID: sessionID, runID: "response-output-fixture-run")
             isBusy = false
             draftText = ""

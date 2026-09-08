@@ -346,7 +346,8 @@ struct CompactToolActivitySummary: Equatable {
             } else if name.contains("update_plan") || name.contains("todo_write")
                         || name.contains("submit_plan") {
                 self = .plan
-            } else if name.contains("imagegen") || name.contains("image_gen") {
+            } else if name.contains("imagegen") || name.contains("image_gen")
+                        || name.contains("generate_image") || name.contains("edit_image") {
                 self = .image
             } else if name.contains("browser") || name.contains("web_fetch")
                         || name.contains("web__run") || name.contains("web.run") {

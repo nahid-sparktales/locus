@@ -8,6 +8,10 @@ struct ResponseOutputContext {
     var outputs: OutputsLibraryModel? = nil
     var showFiles: (String, Bool?) -> Void = { _, _ in }
     var openVersion: (String, String, String) -> Void = { _, _, _ in }
+    /// Attaches a workspace image to the composer for `edit_image`.
+    var attachImage: (WorkspaceArtifactReference) -> Void = { _ in }
+    var allowsImageEditing = false
+    var interactiveAnswersEnabled = true
 }
 
 private struct ResponseOutputContextKey: EnvironmentKey {
@@ -79,6 +83,8 @@ enum ResponseSelectionProjection {
         case "writing": return part.originalWriting
         case "artifact": return [part.title ?? part.path, part.description].compactMap { $0 }.joined(separator: "\n\n")
         case "sources": return (part.references ?? []).map { "[\($0.label)](\($0.destination?.absoluteString ?? ""))" }.joined(separator: "\n\n")
+        case "image": return [part.title ?? part.alt ?? part.path, part.prompt].compactMap { $0 }.joined(separator: "\n\n")
+        case "interactive": return "### \(part.interactiveTitle)\n\n\(part.summary ?? "")"
         default: return ""
         }
     }
@@ -111,6 +117,10 @@ struct ResponsePartsView: View {
                             original: { markdown(part, index: index) })
                     } else { markdown(part, index: index) }
                 case "sources": sourceList(part, index: index)
+                case "image":
+                    ResponseImageView(part: part, workspacePath: workspacePath,
+                        onOpenWorkspaceReference: onOpenWorkspaceReference,
+                        original: { markdown(part, index: index) })
                 default: EmptyView()
                 }
             }

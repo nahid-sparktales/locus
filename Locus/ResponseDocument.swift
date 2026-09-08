@@ -35,11 +35,27 @@ struct ResponsePart: Codable, Hashable, Identifiable, Sendable {
     var path: String? = nil
     var description: String? = nil
     var references: [ResponseSource]? = nil
+    var alt: String? = nil
+    var prompt: String? = nil
+    var sourcePath: String? = nil
+    var width: Int? = nil
+    var height: Int? = nil
+    var format: String? = nil
+    var byteSize: Int? = nil
+    var summary: String? = nil
+    var html: String? = nil
+
+    static let maxInteractiveHTMLBytes = 262_144
+    static let interactiveHeightRange: ClosedRange<Int> = 160...720
+    static let defaultInteractiveHeight = 360
 
     enum CodingKeys: String, CodingKey {
         case type, id, text, title, workspace, entries, complete, collapsed, variant, subject, body, path, description, references
+        case alt, prompt, width, height, format, summary, html
         case totalCount = "total_count"
         case showHidden = "show_hidden"
+        case sourcePath = "source_path"
+        case byteSize = "size"
     }
 
     var isSupported: Bool {
@@ -53,9 +69,25 @@ struct ResponsePart: Codable, Hashable, Identifiable, Sendable {
         case "writing": return body != nil && ["email", "chat", "chat_message", "document", "standard", "social_post"].contains(variant ?? "standard")
         case "artifact": return !(path ?? "").isEmpty && !(workspace ?? "").isEmpty
         case "sources": return references?.allSatisfy(\.isSupported) == true
+        case "image": return !(path ?? "").isEmpty && !(workspace ?? "").isEmpty
+        case "interactive":
+            guard let summary, !summary.isEmpty, let html, !html.isEmpty,
+                  html.utf8.count <= Self.maxInteractiveHTMLBytes else { return false }
+            return height.map { Self.interactiveHeightRange.contains($0) } ?? true
         default: return false
         }
     }
+
+    /// The fixed height of an interactive answer's web view. Out-of-range
+    /// values are clamped rather than rejected so an older document with a
+    /// slightly different limit still renders.
+    var interactiveHeight: CGFloat {
+        let range = Self.interactiveHeightRange
+        return CGFloat(min(range.upperBound, max(range.lowerBound, height ?? Self.defaultInteractiveHeight)))
+    }
+
+    var interactiveTitle: String { title?.nilIfEmpty ?? "Interactive explanation" }
+    var imageTitle: String { title?.nilIfEmpty ?? alt?.nilIfEmpty ?? ((path ?? "") as NSString).lastPathComponent }
 
     var writingTitle: String { title?.nilIfEmpty ?? (variant == "email" ? "Email draft" : "Writing") }
     var originalWriting: String {
