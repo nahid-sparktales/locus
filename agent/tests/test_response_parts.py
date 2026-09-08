@@ -56,6 +56,20 @@ def test_staging_replaces_ids_and_is_atomic_on_validation_error(tmp_path):
     assert ctx.response_parts['draft']['body'] == 'Second'
 
 
+def test_merge_staged_rejects_over_limit_without_mutating_input(tmp_path):
+    from ollama_code.response_parts import MAX_PARTS, merge_staged
+    existing = {f'part-{n}': {'id': f'part-{n}', 'type': 'writing', 'variant': 'standard', 'body': 'x'}
+                for n in range(MAX_PARTS)}
+    replaced = merge_staged(existing, [{'id': 'part-0', 'type': 'writing', 'variant': 'standard', 'body': 'new'}])
+    assert replaced['part-0']['body'] == 'new' and list(replaced) == list(existing)
+    assert existing['part-0']['body'] == 'x'
+    with pytest.raises(ResponsePartsError, match='response document limit'):
+        merge_staged(existing, [{'id': 'one-too-many', 'type': 'writing', 'variant': 'standard', 'body': 'y'}])
+    with pytest.raises(ResponsePartsError, match='response document limit'):
+        merge_staged({}, [{'id': 'huge', 'type': 'writing', 'variant': 'standard', 'body': 'z' * 1_000_001}])
+    assert len(existing) == MAX_PARTS and 'one-too-many' not in existing
+
+
 def test_long_typed_output_survives_live_history_checkpoint_and_export(tmp_path):
     body = 'Long writing.\n' * 1500
     core = _core(tmp_path, [

@@ -217,6 +217,18 @@ def markdown_fallback(document: dict) -> str:
     return '\n\n'.join(text for text in output if text.strip())
 
 
+def merge_staged(existing: dict[str, dict], parts: list[dict]) -> dict[str, dict]:
+    """``existing`` with ``parts`` staged over it, re-checked against the document limits.
+
+    A repeated id replaces the earlier part in place; a new id is appended. The
+    input mapping is never mutated, so a rejected merge leaves prior staging intact.
+    """
+    updated = {**existing, **{part['id']: part for part in parts}}
+    if len(updated) > MAX_PARTS or len(json.dumps(updated, ensure_ascii=False).encode()) > MAX_DOCUMENT_BYTES:
+        raise ResponsePartsError('staged output exceeds the response document limit')
+    return updated
+
+
 def response_document(prose: str, parts: list[dict]) -> dict:
     result = list(parts)
     if prose.strip():

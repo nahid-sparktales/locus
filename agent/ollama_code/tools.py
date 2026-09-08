@@ -120,6 +120,29 @@ class ToolContext:
     ask_question: Callable[[dict[str, Any]], str] | None = None
     #: Per-turn question budget, reset wherever ``read_files`` is cleared.
     questions_asked_this_turn: int = 0
+    #: Guards ``response_parts`` between the root turn and any tool that
+    #: stages a part on its own. The core aliases this same lock.
+    response_parts_lock: threading.RLock = field(default_factory=threading.RLock)
+    #: Core-installed staging entry point: validates raw parts under the
+    #: lock, merges them and journals the provisional document. Returns the
+    #: ``attach_output_parts`` result text. None outside an AgentCore.
+    stage_response_parts: Callable[[list[dict[str, Any]]], str] | None = None
+    #: App-owned image generation executor ``(tool_name, arguments) -> result``.
+    #: Installed by the visible chat's service only; the CLI, evaluation cores
+    #: and helpers leave it None so the tools answer "unavailable".
+    image_generation: Callable[[str, dict[str, Any]], str] | None = None
+    #: Public (secret-free) description of the configured image provider, so
+    #: permission previews can name the model and host. Never holds the key.
+    image_provider: dict[str, Any] | None = None
+    #: The validated image attachments of the current user turn, so
+    #: ``edit_image`` can take ``attachment:<name>`` as a source. Cleared at
+    #: every turn boundary together with the per-turn counters.
+    turn_attachments: list[dict[str, Any]] = field(default_factory=list)
+    image_generations_this_turn: int = 0
+    image_generations_this_session: int = 0
+    #: What the last successful image tool call produced, for the verified
+    #: activity label. Paths and dimensions only, never bytes.
+    last_image_result: dict[str, Any] | None = None
 
     def stopped(self) -> bool:
         return bool(self.should_stop and self.should_stop())
@@ -897,15 +920,12 @@ def _impl_git_diff(args: dict[str, Any], ctx: ToolContext) -> str:
 
 
 def _impl_attach_output_parts(args: dict[str, Any], ctx: ToolContext) -> str:
-    from .response_parts import MAX_DOCUMENT_BYTES, MAX_PARTS, ResponsePartsError, normalize_parts
+    from .response_parts import ResponsePartsError, merge_staged, normalize_parts
     if not ctx.response_parts_enabled:
         return "Error: presentation output is unavailable to this worker or mode."
     try:
         parts = normalize_parts(args.get("parts"), ctx.cwd, allow_workspace=ctx.response_parts_allow_workspace)
-        updated = {**ctx.response_parts, **{part["id"]: part for part in parts}}
-        if len(updated) > MAX_PARTS or len(json.dumps(updated, ensure_ascii=False).encode()) > MAX_DOCUMENT_BYTES:
-            raise ResponsePartsError("staged output exceeds the response document limit")
-        ctx.response_parts = updated
+        ctx.response_parts = merge_staged(ctx.response_parts, parts)
         return f"Staged {len(parts)} output parts. They will follow your final prose; do not repeat their contents."
     except (ResponsePartsError, OSError, RuntimeError, ValueError) as error:
         return f"Error: {error}"
