@@ -464,6 +464,7 @@ def test_image_part_rejects_missing_non_image_escaping_oversize_and_foreign_work
     other = tmp_path.parent / 'elsewhere'
     other.mkdir(exist_ok=True)
     (other / 'chart.png').write_bytes(png_bytes())
+    (folder / 'dangling.png').symlink_to(folder / 'gone.png')
     for raw, reason in [
         (_image_part(path='Locus Images/absent.png'), 'existing file'),
         (_image_part(path='Locus Images'), 'existing file'),
@@ -474,7 +475,9 @@ def test_image_part_rejects_missing_non_image_escaping_oversize_and_foreign_work
         (_image_part(workspace=str(other)), 'does not match'),
         (_image_part(alt='a' * 401), 'at most 400'),
         (_image_part(prompt='p' * 4001), 'at most 4000'),
-        (_image_part(source_path='Locus Images/absent.png'), 'source_path must exist'),
+        (_image_part(source_path='Locus Images/absent.png'), 'source_path must be an existing file'),
+        (_image_part(source_path='Locus Images'), 'source_path must be an existing file'),
+        (_image_part(source_path='Locus Images/dangling.png'), 'source_path must be an existing file'),
         (_image_part(source_path='../elsewhere/chart.png'), 'inside the current workspace'),
     ]:
         with pytest.raises(ResponsePartsError, match=reason):
@@ -486,6 +489,76 @@ def test_image_part_rejects_missing_non_image_escaping_oversize_and_foreign_work
     os.truncate(big, 50_000_001)
     with pytest.raises(ResponsePartsError, match='50 MB'):
         normalize_parts([_image_part(path='Locus Images/huge.png')], str(tmp_path))
+
+
+def test_image_alt_derived_from_a_long_title_is_truncated_to_the_alt_cap(tmp_path):
+    from test_image_files import png_bytes
+
+    from ollama_code.response_parts import MAX_ALT_CHARS
+    (tmp_path / 'Locus Images').mkdir()
+    (tmp_path / 'Locus Images' / 'chart.png').write_bytes(png_bytes())
+    title = 'T' * 2000
+    part = normalize_parts([_image_part(title=title)], str(tmp_path))[0]
+    assert part['title'] == title, 'the title itself stays intact'
+    assert len(part['alt']) == MAX_ALT_CHARS == 400 and part['alt'] == title[:400]
+    padded = normalize_parts([_image_part(title='word ' * 100)], str(tmp_path))[0]
+    assert len(padded['alt']) <= MAX_ALT_CHARS and not padded['alt'].endswith(' ')
+    explicit = normalize_parts([_image_part(title=title, alt='short')], str(tmp_path))[0]
+    assert explicit['alt'] == 'short'
+    fallback = markdown_fallback(response_document('', [part]))
+    assert fallback.startswith('![' + 'T' * 400 + '](')
+
+
+def test_image_source_path_must_be_a_regular_file_like_path(tmp_path):
+    from test_image_files import png_bytes
+    folder = tmp_path / 'Locus Images'
+    folder.mkdir()
+    (folder / 'chart.png').write_bytes(png_bytes())
+    (folder / 'source.png').write_bytes(png_bytes())
+    (folder / 'alias.png').symlink_to(folder / 'source.png')
+    part = normalize_parts([_image_part(source_path='Locus Images/source.png')], str(tmp_path))[0]
+    assert part['source_path'] == 'Locus Images/source.png'
+    # Directories and symlinks (even to a real file) are refused exactly as ``path`` refuses them.
+    for source in ('Locus Images', 'Locus Images/alias.png', 'Locus Images/gone.png'):
+        with pytest.raises(ResponsePartsError, match='source_path must be an existing file'):
+            normalize_parts([_image_part(source_path=source)], str(tmp_path))
+
+
+def test_python_quoting_and_fallback_link_match_the_swift_export_pins(tmp_path):
+    """Pinned on both sides: LocusTests/ChatExportPartsTests.swift
+    (``testPythonQuotedMatchesUrllibAndFallbackLinkMatchesPython``) mirrors these
+    literals for ``ResponseExportProjection.pythonQuoted`` / ``fallbackImageLink``."""
+    from urllib.parse import quote
+
+    path = '/Users/nahid/My Workspace (test)/Locus Images/café #1 [v2]\\draft.png'
+    assert quote(path, safe='/') == (
+        '/Users/nahid/My%20Workspace%20%28test%29/Locus%20Images/caf%C3%A9%20%231%20%5Bv2%5D%5Cdraft.png'
+    )
+    assert quote('/plain/ok_path-1.2~x', safe='/') == '/plain/ok_path-1.2~x'
+    assert quote('a b\nc?d=e&f%', safe='/') == 'a%20b%0Ac%3Fd%3De%26f%25'
+    part = {'type': 'image', 'id': 'picture', 'workspace': '/tmp/ws/', 'path': 'Locus Images/harbour.png',
+            'alt': 'Harbour [dusk]\\night', 'title': 'Harbour at dusk'}
+    fallback = markdown_fallback(response_document('', [part]))
+    assert fallback == (
+        '![Harbour \\[dusk\\]\\\\night](/tmp/ws/Locus%20Images/harbour.png)\n\nHarbour at dusk'
+    )
+
+
+def test_attach_output_parts_schema_names_every_injected_css_variable():
+    """Mirrors ``LocusTheme.cssVariableNames`` in Locus/Theme+CSS.swift."""
+    import json
+
+    from ollama_code.response_parts import ATTACH_OUTPUT_PARTS_SCHEMA, INTERACTIVE_CSS_VARIABLES
+    expected = ('--locus-ink', '--locus-ink-soft', '--locus-paper', '--locus-paper-deep', '--locus-panel',
+                '--locus-line', '--locus-muted', '--locus-accent', '--locus-danger', '--locus-success',
+                '--locus-warning', '--locus-font', '--locus-mono')
+    assert INTERACTIVE_CSS_VARIABLES == expected
+    html = ATTACH_OUTPUT_PARTS_SCHEMA['function']['parameters']['properties']['parts']['items']['properties']['html']
+    for name in expected:
+        assert name + ',' in html['description'] + ',' or name + ';' in html['description'], name
+    text = json.dumps(ATTACH_OUTPUT_PARTS_SCHEMA)
+    assert 'no document/base/link/iframe/object tags' in text and 'keyboard-operable' in text
+    assert 'generate_image stages its own' in text
 
 
 def test_disabled_image_capability_rejects_image_parts_only(tmp_path, monkeypatch):
@@ -521,6 +594,8 @@ def test_interactive_part_defaults_title_and_height_and_falls_back_to_summary(tm
     assert '<input' not in fallback
     custom = normalize_parts([_interactive_part(title='Binary search', height=500.0)], str(tmp_path))[0]
     assert custom['title'] == 'Binary search' and custom['height'] == 500
+    # A JSON ``null`` means unset, like every other optional field here.
+    assert normalize_parts([_interactive_part(height=None)], str(tmp_path))[0]['height'] == 360
 
 
 def test_interactive_part_requires_summary_and_html_and_bounds_bytes_and_height(tmp_path):

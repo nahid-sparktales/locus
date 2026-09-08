@@ -25,11 +25,12 @@ Part types:
   `path`, optional `content_hash` and `location` (the existing document locator).
 - `image`: `id`, `workspace`, `path` (workspace-relative, an existing PNG, JPEG, GIF
   or WebP file of at most 50 MB), runtime-derived `width`, `height`, `format`
-  (`png`, `jpeg`, `gif`, `webp`) and `size`, `alt` (model-provided, at most 400
-  characters, defaulting to the title or filename), optional `title`, `prompt` (at
-  most 4000 characters) and `source_path` (an existing workspace file the image was
-  edited from). Dimensions and format always come from the file header; values in
-  the tool input are ignored. `generate_image` and `edit_image` stage this part on
+  (`png`, `jpeg`, `gif`, `webp`) and `size`, `alt` (at most 400 characters; when
+  omitted it is derived from the title, truncated to 400 characters, or else the
+  filename), optional `title`, `prompt` (at most 4000 characters) and `source_path`
+  (the existing regular workspace file the image was edited from; a directory or a
+  symlink is refused exactly as `path` refuses them). Dimensions and format always
+  come from the file header; values in the tool input are ignored. `generate_image` and `edit_image` stage this part on
   their own; scripts stage a chart through `attach_output_parts`. Gated by the
   `image_generation_v1` capability. Fallback: `![alt](absolute path)` followed by a
   caption paragraph (`title`, else `prompt`, else `Image saved to <path>`, with
@@ -37,12 +38,15 @@ Part types:
 - `interactive`: `id`, `title` (1–200 characters, default `Interactive explanation`),
   required `summary` (1–4000 characters), `html` (a self-contained body fragment of
   at most 262,144 bytes; inline `<style>`/`<script>` only) and `height` (an integer
-  160–720, default 360). The fragment is rejected when it contains a document, base,
-  link, iframe, frame, object, embed or applet tag or the `http-equiv` token; inline
-  SVG `<metadata>` is fine. Locus for Mac renders it inside a sealed offline web view
-  with Locus CSS variables; every other client shows the fallback: `### title`, the
-  summary, and `Interactive version available in Locus for Mac.` Gated by the
-  `interactive_answers_v1` capability.
+  160–720, default 360; `null` means unset, a Boolean is refused). The fragment is
+  rejected when it contains a document, base, link, iframe, frame, object, embed or
+  applet tag or the `http-equiv` token; inline SVG `<metadata>` is fine. Locus for Mac
+  renders it inside a sealed offline web view that injects the CSS variables the tool
+  schema names (`--locus-ink`, `--locus-ink-soft`, `--locus-paper`, `--locus-paper-deep`,
+  `--locus-panel`, `--locus-line`, `--locus-muted`, `--locus-accent`, `--locus-danger`,
+  `--locus-success`, `--locus-warning`, `--locus-font`, `--locus-mono`); every other
+  client shows the fallback: `### title`, the summary, and `Interactive version
+  available in Locus for Mac.` Gated by the `interactive_answers_v1` capability.
 
 `attach_output_parts({parts: [...]})` stages validated parts in the active visible
 workspace turn. A repeated part ID replaces its prior value while retaining its

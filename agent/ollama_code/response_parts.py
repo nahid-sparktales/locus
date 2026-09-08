@@ -31,6 +31,13 @@ MAX_PROMPT_CHARS = 4_000
 MAX_INTERACTIVE_HTML_BYTES = 262_144
 INTERACTIVE_HEIGHT = (160, 360, 720)
 INTERACTIVE_DEFAULT_TITLE = 'Interactive explanation'
+#: The variables the sealed host injects (``LocusTheme.cssVariableNames`` in
+#: Locus/Theme+CSS.swift); the schema names them so the model can use them.
+INTERACTIVE_CSS_VARIABLES = (
+    '--locus-ink', '--locus-ink-soft', '--locus-paper', '--locus-paper-deep', '--locus-panel',
+    '--locus-line', '--locus-muted', '--locus-accent', '--locus-danger', '--locus-success',
+    '--locus-warning', '--locus-font', '--locus-mono',
+)
 #: Tags that would turn a fragment into a document, change its base, or pull
 #: in another document. ``<meta`` is deliberately not here: inline SVG
 #: carries ``<metadata>``. ``http-equiv`` is refused as a token because a meta
@@ -214,13 +221,17 @@ def _image(raw: dict, workspace: str) -> dict:
     alt = raw.get('alt')
     if alt is not None:
         alt = _text(alt, MAX_ALT_CHARS).strip()
-    result['alt'] = alt or (_text(raw.get('title')).strip() if raw.get('title') is not None else '') or verified['name']
+    # A derived alt is truncated rather than refused: a long title is a valid
+    # title, and the cap is a property of the alt text, whatever its source.
+    title = raw.get('title')
+    derived = _text(title).strip()[:MAX_ALT_CHARS].rstrip() if title is not None else ''
+    result['alt'] = alt or derived or verified['name']
     if raw.get('prompt') is not None:
         result['prompt'] = _text(raw['prompt'], MAX_PROMPT_CHARS)
     if raw.get('source_path') is not None:
         source = _file({'path': raw['source_path']}, workspace)
-        if not source['exists']:
-            raise ResponsePartsError('image source_path must exist inside the workspace')
+        if source.get('kind') != 'file':
+            raise ResponsePartsError('image source_path must be an existing file inside the workspace')
         result['source_path'] = source['path']
     return result
 
@@ -243,7 +254,9 @@ def _interactive(raw: dict, title: str | None) -> dict:
     if _INTERACTIVE_FORBIDDEN.search(html):
         raise ResponsePartsError('interactive html must be a body fragment without document, base, link, frame or object tags')
     minimum, default, maximum = INTERACTIVE_HEIGHT
-    height = raw.get('height', default)
+    height = raw.get('height')
+    if height is None:
+        height = default
     if isinstance(height, float) and height.is_integer():
         height = int(height)
     if isinstance(height, bool) or not isinstance(height, int) or not minimum <= height <= maximum:
@@ -337,8 +350,8 @@ ATTACH_OUTPUT_PARTS_SCHEMA = {
         'description': (
             'Stage native file collections, reusable writing, artifacts, sources, workspace images or interactive explanations for the next final answer. '
             'IDs replace earlier staged parts. Do not repeat these contents in the final prose. File metadata is verified by the runtime; supply directory on a collection only for an exact nonrecursive directory listing. '
-            'image: a workspace PNG/JPEG/WebP/GIF, e.g. a chart from your script. '
-            'interactive: html plus a required plain summary, for something a reader should manipulate; label every control.'
+            'image: a workspace PNG/JPEG/WebP/GIF, e.g. a chart from your script; generate_image stages its own. '
+            'interactive: html plus a required plain summary, for something a reader should manipulate.'
         ),
         'parameters': {'type': 'object', 'properties': {
             'parts': {'type': 'array', 'minItems': 1, 'maxItems': MAX_PARTS,
@@ -350,7 +363,11 @@ ATTACH_OUTPUT_PARTS_SCHEMA = {
                           'collapsed': {'type': 'boolean'}, 'show_hidden': {'type': 'boolean'},
                           'alt': {'type': 'string'}, 'prompt': {'type': 'string'}, 'source_path': {'type': 'string'},
                           'summary': {'type': 'string'}, 'height': {'type': 'integer'},
-                          'html': {'type': 'string', 'description': 'Self-contained body fragment: inline style/script only, no network or external resources, max 256 KB; style with the --locus-* CSS variables.'},
+                          'html': {'type': 'string', 'description': (
+                              'Self-contained body fragment: inline style/script only, no network or external resources, '
+                              'no document/base/link/iframe/object tags, max 256 KB. Style with the CSS variables '
+                              + ', '.join(INTERACTIVE_CSS_VARIABLES)
+                              + '; label every control and keep it keyboard-operable.')},
                           'entries': {'type': 'array', 'items': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'description': {'type': 'string'}}, 'required': ['path']}},
                           'references': {'type': 'array', 'items': {'type': 'object', 'properties': {'id': {'type': 'string'}, 'title': {'type': 'string'}, 'url': {'type': 'string'}, 'document': {'type': 'object'}}, 'required': ['id']}},
                       }, 'required': ['id', 'type']}},
