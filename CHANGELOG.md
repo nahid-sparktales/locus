@@ -18,6 +18,10 @@
   launch and each chat worker as it starts — and a change made while a turn is
   running is applied once that turn ends. A custom model name is pushed once
   per committed value rather than on every keystroke.
+- Stop interrupts an in-flight image generation immediately, while the
+  provider is still working and not only once the picture is streaming back.
+  An image API key pasted with a line break or other control character is
+  rejected with a clear error instead of failing later at the provider.
 - Interactive visual explanations. An answer can include a self-contained
   interactive widget rendered in a sealed, offline web view with a written
   summary that stands in for it on the phone, in exports, and when interactive

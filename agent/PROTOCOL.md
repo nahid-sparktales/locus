@@ -425,6 +425,13 @@ by any route, never part of `provider_state` or any event. Configuring or
 clearing changes the advertised tool set, which restarts a live Codex-native
 thread once. Returns the `GET` payload. Errors: 409 busy, 422 invalid body.
 
+Every agent process holds its own copy, so the app pushes this route to each
+one it runs: the main agent on launch and after every restart, and each chat
+worker when it is spawned, when it reconnects to a fresh process, and on every
+Settings or key change while it is alive. A push refused with 409 because a
+turn is running is not queued by the agent — the route keeps answering 409 —
+and the app retries it once that turn ends.
+
 While configured, the tools appear in classic and Codex-parity schemas only for
 the visible root chat, only outside Plan mode and read-only roles, and only
 while both the `network` and `workspace_write` capability switches are on. A
@@ -434,8 +441,10 @@ names its cause (no provider configured — with the Settings hint —, the
 capability policy). `generate_image` asks for permission (and may be allowed for the session);
 `edit_image` uploads user pixels and asks every time. Both are refused in
 scheduled, event-triggered and workflow runs, are capped at 4 calls per turn
-and 24 per session, write a PNG under `Locus Images/` (never overwriting), and
-stage an `image` response part. `permission_request` previews name the prompt,
+and 24 per session, write a PNG (never overwriting) under `Locus Images/` — an
+edit lands beside its source instead, and the source may be any backticked
+workspace-relative `.png`/`.jpg`/`.jpeg`/`.gif`/`.webp` path the request names,
+not only one under `Locus Images/` — and stage an `image` response part. `permission_request` previews name the prompt,
 model, size, quality, provider host, destination and counters; `tool_result`
 carries `file_effects` (`create`) and an `activity_label` (`Created image
 <path>` / `Edited image <path>`).
