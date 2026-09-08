@@ -520,6 +520,8 @@ final class ResponseOutputTests: XCTestCase {
 
         XCTAssertEqual(ResponseSelectionProjection.markdown(for: image), "Harbour at dusk\n\nA quiet harbour at dusk")
         var untitled = image
+        untitled.title = ""
+        XCTAssertEqual(ResponseSelectionProjection.markdown(for: untitled), "A harbour\n\nA quiet harbour at dusk", "an empty title reads as absent, like imageTitle and the export label")
         untitled.title = nil
         XCTAssertEqual(ResponseSelectionProjection.markdown(for: untitled), "A harbour\n\nA quiet harbour at dusk")
         untitled.alt = nil
@@ -595,5 +597,43 @@ final class ResponseOutputTests: XCTestCase {
                        "Edited image Locus Images/harbour.png")
         XCTAssertEqual(CompactToolActivitySummary(tools: [tool("f", "edit_file")]).title, "Edited file",
                        "edit_image must not pull ordinary file edits into the image family")
+    }
+
+    /// The generated-image card and a prose `![alt](path)` share one action
+    /// builder, so a script's chart offers the same Edit / Copy / Save as a
+    /// generated picture — Edit only where the host permits editing.
+    func testWorkspaceImageActionsOfferEditOnlyWhenTheHostAllowsEditing() throws {
+        let (_, workspace) = try fixture()
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: workspace.appendingPathComponent("chart.png"))
+        let reference = try XCTUnwrap(WorkspaceArtifactReference.classify("chart.png", workspacePath: workspace.path))
+        var attached: [String] = []
+        var context = ResponseOutputContext()
+        context.attachImage = { attached.append($0.relativePath) }
+
+        context.allowsImageEditing = false
+        let readOnly = WorkspaceImageAction.responseActions(for: reference, context: context)
+        XCTAssertEqual(readOnly.map(\.id), ["more"])
+        XCTAssertEqual(readOnly.first?.items?.map(\.id), ["copy", "save"])
+        XCTAssertEqual(readOnly.first?.items?.map(\.title), ["Copy Image", "Save As…"])
+
+        context.allowsImageEditing = true
+        let editable = WorkspaceImageAction.responseActions(for: reference, context: context)
+        XCTAssertEqual(editable.map(\.id), ["edit", "more"])
+        XCTAssertEqual(editable.first?.title, "Edit in chat")
+        XCTAssertNil(editable.first?.items, "Edit is a button, not a menu")
+        editable.first?.action()
+        XCTAssertEqual(attached, ["chart.png"], "Edit in chat hands the host the workspace reference")
+        XCTAssertEqual(editable.last?.items?.map(\.id), ["copy", "save"])
+
+        // Copy reports through the error sink: a real file clears it, an
+        // unreadable one names the file.
+        var reported: [String?] = []
+        let missing = WorkspaceArtifactReference(
+            url: workspace.appendingPathComponent("gone.png"), relativePath: "gone.png",
+            kind: .image, byteCount: nil, sourceLocation: nil
+        )
+        let actions = WorkspaceImageAction.responseActions(for: missing, context: context) { reported.append($0) }
+        actions.last?.items?.first?.action()
+        XCTAssertEqual(reported, ["Could not read gone.png"])
     }
 }

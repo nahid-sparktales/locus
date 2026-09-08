@@ -1319,6 +1319,8 @@ struct ComposerView: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(LocusTheme.line, lineWidth: 1)
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Attachment \(attachment.name)")
                     .accessibilityIdentifier("composer.attachmentChip.\(attachment.id.uuidString)")
                 }
                 if let target = model.currentLiveApplicationTarget {

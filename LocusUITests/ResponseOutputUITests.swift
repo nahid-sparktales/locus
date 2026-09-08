@@ -125,11 +125,18 @@ final class ResponseOutputUITests: XCTestCase {
         XCTAssertEqual(edit.label, "Edit in chat Locus Images/fixture.png")
         capture("Response generated image card")
         clickInTranscript(edit)
+        // The chip container carries "Attachment <name>"; its remove button
+        // is the one control inside it and names the file as well.
         let chip = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@", "composer.attachmentChip.", ".remove"))
             .firstMatch
         XCTAssertTrue(chip.waitForExistence(timeout: 10))
-        XCTAssertTrue(chip.label.contains("fixture.png"), chip.label)
+        XCTAssertEqual(chip.label, "Attachment fixture.png")
+        let remove = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "composer.attachmentChip.", ".remove"))
+            .firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        XCTAssertEqual(remove.label, "Remove fixture.png")
         let input = element("composer.input")
         XCTAssertTrue(waitUntil { (input.value as? String ?? "").contains("Locus Images/fixture.png") })
         capture("Response generated image attached for editing")
@@ -150,6 +157,9 @@ final class ResponseOutputUITests: XCTestCase {
         XCTAssertFalse(element("message.interactiveAnswer.reload").exists)
         XCTAssertFalse(element("message.interactiveAnswer.show").exists)
         capture("Response interactive answer card")
+        // Open larger stays disabled until the sealed host has loaded the
+        // widget; on a cold runner that outlasts the button's appearance.
+        XCTAssertTrue(waitUntil { openLarger.isEnabled }, "interactive host did not become ready")
         clickInTranscript(openLarger)
         let sheet = element("message.interactiveAnswer.sheet")
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))

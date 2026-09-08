@@ -1098,6 +1098,7 @@ struct StreamingMarkdownBodyView: View {
 @MainActor
 private struct MarkdownBlocksView: View {
     @Environment(\.responseRegisteredSources) private var registeredSources
+    @Environment(\.responseOutputContext) private var outputContext
     @Environment(\.locusAccent) private var accent
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
     @State private var artifactCache = WorkspaceArtifactRenderCache()
@@ -1146,7 +1147,10 @@ private struct MarkdownBlocksView: View {
                     caption: runs.map(\.text).joined(),
                     selectionStore: selectionStore,
                     selectionSpan: selectionSpan(at: path),
-                    onOpen: { open(artifact) }
+                    onOpen: { open(artifact) },
+                    additionalActions: WorkspaceImageAction.responseActions(
+                        for: artifact, context: outputContext
+                    )
                 )
             } else {
                 // Ordinary file references are prose; only an inventory or an

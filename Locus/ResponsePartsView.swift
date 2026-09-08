@@ -83,7 +83,7 @@ enum ResponseSelectionProjection {
         case "writing": return part.originalWriting
         case "artifact": return [part.title ?? part.path, part.description].compactMap { $0 }.joined(separator: "\n\n")
         case "sources": return (part.references ?? []).map { "[\($0.label)](\($0.destination?.absoluteString ?? ""))" }.joined(separator: "\n\n")
-        case "image": return [part.title ?? part.alt ?? part.path, part.prompt].compactMap { $0 }.joined(separator: "\n\n")
+        case "image": return [part.title?.nilIfEmpty ?? part.alt?.nilIfEmpty ?? part.path, part.prompt].compactMap { $0 }.joined(separator: "\n\n")
         case "interactive": return "### \(part.interactiveTitle)\n\n\(part.summary ?? "")"
         default: return ""
         }

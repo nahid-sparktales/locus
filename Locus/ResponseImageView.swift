@@ -52,7 +52,9 @@ struct ResponseImageView<Original: View>: View {
                 AsyncWorkspaceImageArtifactView(
                     reference: reference, caption: "", selectionStore: nil, selectionSpan: nil,
                     onOpen: { onOpenWorkspaceReference?(reference) },
-                    additionalActions: actions(for: reference),
+                    additionalActions: WorkspaceImageAction.responseActions(
+                        for: reference, context: context, onError: { saveError = $0 }
+                    ),
                     accessibilityIdentifierPrefix: "message.generatedImage"
                 )
             } else {
@@ -83,7 +85,20 @@ struct ResponseImageView<Original: View>: View {
         .accessibilityIdentifier("message.generatedImage")
     }
 
-    private func actions(for reference: WorkspaceArtifactReference) -> [WorkspaceImageAction] {
+}
+
+extension WorkspaceImageAction {
+    /// The controls every workspace image in an answer offers — the generated
+    /// image card and a picture the prose references alike: Edit in chat when
+    /// the host allows editing, and a More menu with Copy Image and Save As….
+    /// `onError` receives a message when a copy or save fails, nil once one
+    /// succeeds.
+    @MainActor
+    static func responseActions(
+        for reference: WorkspaceArtifactReference,
+        context: ResponseOutputContext,
+        onError: @escaping (String?) -> Void = { _ in }
+    ) -> [WorkspaceImageAction] {
         var result: [WorkspaceImageAction] = []
         if context.allowsImageEditing {
             result.append(WorkspaceImageAction(id: "edit", title: "Edit in chat", symbol: "wand.and.stars") {
@@ -91,23 +106,29 @@ struct ResponseImageView<Original: View>: View {
             })
         }
         result.append(WorkspaceImageAction(id: "more", title: "More", symbol: "ellipsis", items: [
-            WorkspaceImageAction(id: "copy", title: "Copy Image", symbol: "doc.on.doc") { copyImage(at: reference.url) },
-            WorkspaceImageAction(id: "save", title: "Save As…", symbol: "square.and.arrow.down") { saveImage(at: reference.url) },
+            WorkspaceImageAction(id: "copy", title: "Copy Image", symbol: "doc.on.doc") {
+                copyImage(at: reference.url, onError: onError)
+            },
+            WorkspaceImageAction(id: "save", title: "Save As…", symbol: "square.and.arrow.down") {
+                saveImage(at: reference.url, onError: onError)
+            },
         ]))
         return result
     }
 
-    private func copyImage(at url: URL) {
+    @MainActor
+    private static func copyImage(at url: URL, onError: (String?) -> Void) {
         guard let image = NSImage(contentsOf: url) else {
-            saveError = "Could not read \(url.lastPathComponent)"
+            onError("Could not read \(url.lastPathComponent)")
             return
         }
-        saveError = nil
+        onError(nil)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([image])
     }
 
-    private func saveImage(at url: URL) {
+    @MainActor
+    private static func saveImage(at url: URL, onError: (String?) -> Void) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = url.lastPathComponent
         panel.canCreateDirectories = true
@@ -121,9 +142,9 @@ struct ResponseImageView<Original: View>: View {
                 try fileManager.removeItem(at: destination)
             }
             try fileManager.copyItem(at: url, to: destination)
-            saveError = nil
+            onError(nil)
         } catch {
-            saveError = "Could not save the image: \(error.localizedDescription)"
+            onError("Could not save the image: \(error.localizedDescription)")
         }
     }
 }

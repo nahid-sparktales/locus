@@ -13,12 +13,17 @@ struct ImageGenerationSettingsView: View {
     let onAddAccount: () -> Void
 
     @State private var customModelSelected = false
+    /// The custom model name while it is being typed. The draft — and with it
+    /// the push to the agent — takes the value once it is committed, not on
+    /// every keystroke.
+    @State private var customModelText = ""
+    @FocusState private var customModelFocused: Bool
 
     private static let otherModelTag = "__other__"
 
     var body: some View {
         Section("Image generation") {
-            if capabilityDisabled {
+            if imageControlsDisabled {
                 Text("The local agent has image generation switched off (image_generation_v1).")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.warning)
@@ -26,57 +31,84 @@ struct ImageGenerationSettingsView: View {
                     .accessibilityIdentifier("settings.imageGeneration.capabilityNote")
             }
 
-            Picker("Image account", selection: $draft.imageGenerationAccountID) {
-                Text("None (off)").tag(String?.none)
-                ForEach(eligibleAccounts) { account in
-                    Text(account.displayName).tag(Optional(account.id.uuidString))
+            Group {
+                Picker("Image account", selection: $draft.imageGenerationAccountID) {
+                    Text("None (off)").tag(String?.none)
+                    ForEach(eligibleAccounts) { account in
+                        Text(account.displayName).tag(Optional(account.id.uuidString))
+                    }
                 }
-            }
-            .accessibilityIdentifier("settings.imageGeneration.account")
+                .accessibilityIdentifier("settings.imageGeneration.account")
 
-            if eligibleAccounts.isEmpty {
-                HStack {
-                    Text("Add an OpenAI API account to generate images.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.warning)
-                        .accessibilityIdentifier("settings.imageGeneration.empty")
-                    Spacer()
-                    Button("Add Account…", action: onAddAccount)
-                        .accessibilityIdentifier("settings.imageGeneration.addAccount")
+                if eligibleAccounts.isEmpty {
+                    HStack {
+                        Text("Add an OpenAI API account to generate images.")
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.warning)
+                            .accessibilityIdentifier("settings.imageGeneration.empty")
+                        Spacer()
+                        Button("Add Account…", action: onAddAccount)
+                            .accessibilityIdentifier("settings.imageGeneration.addAccount")
+                    }
                 }
-            }
 
-            Picker("Model", selection: modelSelection) {
-                ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
-                    Text(name).tag(name)
+                Picker("Model", selection: modelSelection) {
+                    ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                    Text("Other…").tag(Self.otherModelTag)
                 }
-                Text("Other…").tag(Self.otherModelTag)
-            }
-            .accessibilityIdentifier("settings.imageGeneration.model")
+                .accessibilityIdentifier("settings.imageGeneration.model")
 
-            if customModelSelected {
-                TextField("Model name", text: $draft.imageGenerationModel)
-                    .accessibilityIdentifier("settings.imageGeneration.customModel")
-            }
-
-            Picker("Default size", selection: $draft.imageGenerationSize) {
-                ForEach(ImageGenerationSize.allCases) { size in
-                    Text(size.title).tag(size.rawValue)
+                if customModelSelected {
+                    TextField("Model name", text: $customModelText)
+                        .focused($customModelFocused)
+                        .onSubmit(commitCustomModel)
+                        .onChange(of: customModelFocused) { _, focused in
+                            if !focused { commitCustomModel() }
+                        }
+                        .onAppear { customModelText = draft.imageGenerationModel }
+                        .onDisappear {
+                            // Picking a curated name hides this field after the
+                            // picker has already written the draft; only a
+                            // field that leaves while still "Other…" commits.
+                            if customModelSelected { commitCustomModel() }
+                        }
+                        .accessibilityIdentifier("settings.imageGeneration.customModel")
                 }
-            }
-            .accessibilityIdentifier("settings.imageGeneration.size")
 
-            Picker("Default quality", selection: $draft.imageGenerationQuality) {
-                ForEach(ImageGenerationQuality.allCases) { quality in
-                    Text(quality.title).tag(quality.rawValue)
+                Picker("Default size", selection: $draft.imageGenerationSize) {
+                    ForEach(ImageGenerationSize.allCases) { size in
+                        Text(size.title).tag(size.rawValue)
+                    }
                 }
-            }
-            .accessibilityIdentifier("settings.imageGeneration.quality")
+                .accessibilityIdentifier("settings.imageGeneration.size")
 
+                Picker("Default quality", selection: $draft.imageGenerationQuality) {
+                    ForEach(ImageGenerationQuality.allCases) { quality in
+                        Text(quality.title).tag(quality.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("settings.imageGeneration.quality")
+            }
+            .disabled(imageControlsDisabled)
+
+            if interactiveToggleDisabled {
+                Text("The local agent has interactive answers switched off (interactive_answers_v1).")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.imageGeneration.interactiveCapabilityNote")
+            }
+
+            // Governed by its own capability: interactive answers render with
+            // or without an image provider.
             Toggle("Render interactive answers", isOn: $draft.interactiveAnswersEnabled)
+                .disabled(interactiveToggleDisabled)
                 .accessibilityIdentifier("settings.imageGeneration.interactiveAnswers")
 
             statusRow
+                .disabled(imageControlsDisabled)
 
             Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. The API key is handed to the local agent in memory and never written to its config.")
                 .font(.locus(size: 9))
@@ -85,15 +117,45 @@ struct ImageGenerationSettingsView: View {
                 .accessibilityIdentifier("settings.imageGeneration.footer")
         }
         .id("settings.imageGeneration")
-        .disabled(capabilityDisabled)
         .onAppear {
             customModelSelected = !ProviderKind.curatedImageModels
                 .contains(draft.imageGenerationModel)
+            customModelText = draft.imageGenerationModel
         }
     }
 
-    private var capabilityDisabled: Bool {
-        model.backendCapabilities["image_generation_v1"] == false
+    private var imageControlsDisabled: Bool {
+        Self.imageControlsDisabled(capabilities: model.backendCapabilities)
+    }
+
+    private var interactiveToggleDisabled: Bool {
+        Self.interactiveToggleDisabled(capabilities: model.backendCapabilities)
+    }
+
+    /// The image controls follow `image_generation_v1`; an absent flag is an
+    /// older agent that has the feature on.
+    static func imageControlsDisabled(capabilities: [String: Bool]) -> Bool {
+        capabilities["image_generation_v1"] == false
+    }
+
+    /// The interactive kill switch follows `interactive_answers_v1` alone.
+    static func interactiveToggleDisabled(capabilities: [String: Bool]) -> Bool {
+        capabilities["interactive_answers_v1"] == false
+    }
+
+    private func commitCustomModel() {
+        Self.commitCustomModel(customModelText, into: &draft)
+    }
+
+    /// Writes a typed model name into the draft once: trimmed, never empty,
+    /// and only when it differs, so a committed value causes at most one push
+    /// and an unchanged or blank one causes none. Returns whether it changed.
+    @discardableResult
+    static func commitCustomModel(_ text: String, into draft: inout AppSettings) -> Bool {
+        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != draft.imageGenerationModel else { return false }
+        draft.imageGenerationModel = name
+        return true
     }
 
     private var eligibleAccounts: [ProviderAccount] {

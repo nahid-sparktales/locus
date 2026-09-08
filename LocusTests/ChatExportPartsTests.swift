@@ -9,8 +9,12 @@ import XCTest
 final class ChatExportPartsTests: XCTestCase {
     private var root: URL!
     private var workspace: URL!
+    /// The production wrapper, put back after each test: the property is
+    /// process-wide, and another suite may rely on the CSP shell it adds.
+    private var originalWrapInteractiveHTML: ((String) -> String)!
 
     override func setUpWithError() throws {
+        originalWrapInteractiveHTML = ResponseExportProjection.wrapInteractiveHTML
         root = FileManager.default.temporaryDirectory.appendingPathComponent("ChatExportPartsTests-\(UUID())")
         workspace = root.appendingPathComponent("My Workspace (test)")
         try FileManager.default.createDirectory(at: workspace.appendingPathComponent("Locus Images"), withIntermediateDirectories: true)
@@ -18,7 +22,7 @@ final class ChatExportPartsTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        ResponseExportProjection.wrapInteractiveHTML = { $0 }
+        ResponseExportProjection.wrapInteractiveHTML = originalWrapInteractiveHTML
         try? FileManager.default.removeItem(at: root)
     }
 
