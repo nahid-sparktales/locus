@@ -1,5 +1,8 @@
 import XCTest
 @testable import Locus
+#if LOCUS_DIRECT_DOWNLOAD
+import Sparkle
+#endif
 
 @MainActor
 private final class FakeUpdateDriver: AppUpdateDriving {
@@ -27,6 +30,90 @@ private final class FakeUpdateDriver: AppUpdateDriving {
 
 @MainActor
 final class AppUpdateControllerTests: XCTestCase {
+    private var automaticInfo: [String: Any] {
+        [
+            "LocusEdition": "locus", "CFBundleIdentifier": "io.sparktales.locus",
+            "LocusUpdateMode": "automatic", "SUFeedURL": AppUpdateConfiguration.locusFeedURL,
+            "SUEnableAutomaticChecks": true, "SUAutomaticallyUpdate": true,
+            "SUAllowsAutomaticUpdates": true,
+        ]
+    }
+
+    func testInvalidBundleConfigurationCannotEnableUpdatesEvenWithSavedPreferences() {
+        for key in ["LocusEdition", "CFBundleIdentifier", "LocusUpdateMode", "SUFeedURL"] {
+            for value in [nil, "", "unknown"] as [String?] {
+                var info = automaticInfo
+                info[key] = value
+                let driver = FakeUpdateDriver()
+                let controller = AppUpdateController(
+                    distribution: .directDownload, updateMode: .automatic,
+                    bundleInfo: info, driver: driver
+                )
+                XCTAssertNil(AppUpdateConfiguration(info: info))
+                XCTAssertFalse(controller.isAvailable)
+                controller.checkForUpdates()
+                controller.setAutomaticallyChecksForUpdates(false)
+                controller.setAutomaticallyDownloadsUpdates(false)
+                XCTAssertEqual(driver.checkCount, 0)
+                XCTAssertTrue(driver.automaticallyChecksForUpdates)
+                XCTAssertTrue(driver.automaticallyDownloadsUpdates)
+            }
+        }
+        var info = automaticInfo
+        info["SUFeedURL"] = "https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml"
+        XCTAssertNil(AppUpdateConfiguration(info: info))
+        info = automaticInfo
+        info["LocusEdition"] = "locusx"
+        info["CFBundleIdentifier"] = "io.sparktales.locusx"
+        XCTAssertNil(AppUpdateConfiguration(info: info))
+    }
+
+    func testValidBundleConfigurationEnablesUpdatesWithoutAnOverride() {
+        let controller = AppUpdateController(
+            distribution: .directDownload, bundleInfo: automaticInfo,
+            driver: FakeUpdateDriver(automaticChecks: false, automaticDownloads: false)
+        )
+        XCTAssertTrue(controller.isAvailable)
+        XCTAssertFalse(controller.automaticallyChecksForUpdates)
+        XCTAssertFalse(controller.automaticallyDownloadsUpdates)
+    }
+
+    #if LOCUS_DIRECT_DOWNLOAD
+    func testSparkleUsesSealedFeedAndRetainsSavedOptOuts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".app")
+        let contents = directory.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let identifier = "io.sparktales.updater-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: identifier))
+        defer {
+            defaults.removePersistentDomain(forName: identifier)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        var info = automaticInfo
+        info["CFBundleIdentifier"] = identifier
+        info["CFBundleName"] = "Updater Test"
+        info["CFBundleVersion"] = "27"
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"))
+        let bundle = try XCTUnwrap(Bundle(url: directory))
+        let driver = SparkleUpdateDriver(
+            configuration: try XCTUnwrap(AppUpdateConfiguration(info: automaticInfo)), startImmediately: false
+        )
+        let userDriver = SPUStandardUserDriver(hostBundle: bundle, delegate: nil)
+        let updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: userDriver, delegate: driver)
+        XCTAssertTrue(updater.automaticallyChecksForUpdates)
+        XCTAssertTrue(updater.automaticallyDownloadsUpdates)
+        defaults.set("https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml", forKey: "SUFeedURL")
+        updater.automaticallyChecksForUpdates = false
+        updater.automaticallyDownloadsUpdates = false
+        let relaunched = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: userDriver, delegate: driver)
+        XCTAssertEqual(relaunched.feedURL?.absoluteString, AppUpdateConfiguration.locusFeedURL)
+        XCTAssertFalse(relaunched.automaticallyChecksForUpdates)
+        XCTAssertFalse(relaunched.automaticallyDownloadsUpdates)
+        XCTAssertFalse(relaunched.canCheckForUpdates, "Tests must never start Sparkle")
+    }
+    #endif
+
     func testManualUpdatesIgnorePreviouslyEnabledUpdaterPreferences() {
         let driver = FakeUpdateDriver()
         let controller = AppUpdateController(
@@ -72,6 +159,7 @@ final class AppUpdateControllerTests: XCTestCase {
             startImmediately: false,
             distribution: .directDownload,
             updateMode: .automatic,
+            bundleInfo: automaticInfo,
             driver: driver
         )
 
@@ -95,6 +183,7 @@ final class AppUpdateControllerTests: XCTestCase {
             startImmediately: false,
             distribution: .directDownload,
             updateMode: .automatic,
+            bundleInfo: automaticInfo,
             driver: driver
         )
 
@@ -114,6 +203,7 @@ final class AppUpdateControllerTests: XCTestCase {
             startImmediately: false,
             distribution: .directDownload,
             updateMode: .automatic,
+            bundleInfo: automaticInfo,
             driver: driver
         )
 
@@ -131,6 +221,8 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(
             startImmediately: false,
             distribution: .appStore,
+            updateMode: .automatic,
+            bundleInfo: automaticInfo,
             driver: driver
         )
 
@@ -154,6 +246,7 @@ final class AppUpdateControllerTests: XCTestCase {
             startImmediately: false,
             distribution: .directDownload,
             updateMode: .automatic,
+            bundleInfo: automaticInfo,
             driver: driver
         )
         let lifecycle = ApplicationLifecycleCoordinator()

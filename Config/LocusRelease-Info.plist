@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.sparktales.locus.mcp-oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>locus</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.sparktales.locus.google-oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow websites you approve in the Locus browser to use the camera.</string>
+	<key>LocusComponentFeedURL</key>
+	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
+	<key>LocusSourceRevision</key>
+	<string>$(LOCUS_SOURCE_REVISION)</string>
+	<key>LocusGitHubOAuthClientID</key>
+	<string>$(LOCUS_GITHUB_OAUTH_CLIENT_ID)</string>
+	<key>LocusGoogleOAuthClientID</key>
+	<string>$(LOCUS_GOOGLE_OAUTH_CLIENT_ID)</string>
+	<key>LocusGoogleOAuthCallbackScheme</key>
+	<string>$(LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID)</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_locus-remote._tcp</string>
+	</array>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Locus needs access to save browser downloads and open files or projects you choose from Downloads.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 SparkTales Inc.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Locus uses the microphone for dictation, voice conversations, and websites you explicitly allow.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Locus turns speech into editable dictation or voice messages when you use a voice control.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUPublicEDKey</key>
+	<string>S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUScheduledImpatientCheckInterval</key>
+	<integer>604800</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>LocusEdition</key>
+	<string>locus</string>
+	<key>LocusUpdateMode</key>
+	<string>automatic</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/appcast-locus.xml</string>
+</dict>
+</plist>

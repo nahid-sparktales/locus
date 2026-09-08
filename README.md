@@ -84,10 +84,15 @@ target is also wallet-free. Existing wallet files and Keychain entries are left
 untouched; wallet data is not automatically imported or migrated. LocusX Gmail sign-in
 is unavailable until its separate Google OAuth registration is configured.
 
-Current editions use **manual app updates**. They do not start the legacy
-app updater, including when old automatic-update preferences are present.
-The previous signed feed stays available to older apps and does not automatically
-move them to the new edition. Separate automatic update feeds remain unconfigured. See the
+Locus release builds support **automatic app updates**: daily checks, background
+downloads, and installation when the app quits. Settings preserves your existing
+update preferences and includes a manual check button. Development builds and
+LocusX remain manual; App Store builds update through the store.
+
+Existing manual installations, including 2.6.0, need one manual upgrade to the
+first update-enabled release. The new Locus feed is separate from the preserved
+legacy feed, so older wallet-era apps are not automatically moved to wallet-free
+Locus. See the
 [editions guide](Docs/Editions.md) for build boundaries and profile details.
 
 ## Models and requirements
