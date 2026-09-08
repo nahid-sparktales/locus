@@ -111,6 +111,7 @@
 		1273672D68D3A3A2DB0A8F15 /* VoiceControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C052048E0CEFC4C54FAFA74 /* VoiceControlTests.swift */; };
 		1273928E24E36F78DD0CB5FB /* ImageGenerationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBA4A0FF9DC4195CDBE16AFE /* ImageGenerationModel.swift */; };
 		12922E6A286F076123170033 /* AppFeatureEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A14E63C34A77899861E73ED /* AppFeatureEnvironment.swift */; };
+		12DA10307C2B2ED3DF35490E /* ImageGenerationSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D373902520FD39125C9999 /* ImageGenerationSettingsTests.swift */; };
 		1327F0052815FE37CB52DBB0 /* AgentOverviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C163C259D6DC40F66844B991 /* AgentOverviewTests.swift */; };
 		1336AFA91E24B07553583812 /* DiffHunks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE116E00D831A9EE4433A893 /* DiffHunks.swift */; };
 		138464868A00FD0D7E1F6DFD /* TaskCapsuleModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0859AE2BE28976342875740B /* TaskCapsuleModelTests.swift */; };
@@ -166,6 +167,7 @@
 		1DBD84BA860AEB279138AF09 /* BrowserCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */; };
 		1DD0DB4130717DE4189D0090 /* AppModel+RunQueueAndActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F806C35C762C83FB3B82CD9 /* AppModel+RunQueueAndActivity.swift */; };
 		1DF54A14E57DB41A9E2B7496 /* BrowserInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A65386A2C6C14183D519D510 /* BrowserInput.swift */; };
+		1E653F0EE72E2ED825084B41 /* ImageGenerationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */; };
 		1EAF62C39D4DA4D3BEF78F6A /* WalletConnectorDriverFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D5D058C7E87CAA303A47B7 /* WalletConnectorDriverFactory.swift */; };
 		1ECCDF20AF574867EC663003 /* CompanionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FE2B3114660DB1F97EBB87C /* CompanionSettingsView.swift */; };
 		1ECEC64ACFB44AD66CFCE85D /* VoiceControlModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A5811352C474AF542A44CBE /* VoiceControlModel.swift */; };
@@ -384,6 +386,7 @@
 		49BF0C5B81AF34373026C462 /* AppModel+AgentInspectorFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CD2C38322FD76F1641174D0 /* AppModel+AgentInspectorFixtures.swift */; };
 		49F0C605A917B94FBFCCD74F /* AppModel+OptionalQuestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10380F5BBBBE6D681FCED4C0 /* AppModel+OptionalQuestions.swift */; };
 		4A3E4D669D6CB6BEC3DF7A11 /* MarkdownSourceScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5672B99C6FBD0D262EFA27AD /* MarkdownSourceScanner.swift */; };
+		4A8F95EBEF628858E7B80D37 /* ImageGenerationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */; };
 		4AB418BA99EAA4EB10E6EB51 /* IdentityVaultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0254E0825A63A8D542C4C5DD /* IdentityVaultStore.swift */; };
 		4AB9ADC0B2590E7F0EF2E446 /* TaskCapsuleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D24DBC53D478768A5D6CE7FD /* TaskCapsuleView.swift */; };
 		4AC15A73049A6460C7BD6AE1 /* IdentityVaultTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDFBA9B2706255E035E95F8 /* IdentityVaultTypes.swift */; };
@@ -434,6 +437,7 @@
 		5627AA36AB80C56737D53F05 /* LocalRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */; };
 		56500EC131B4B8B45993170E /* OptionalQuestionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1848343E1C619FEB8D805CF5 /* OptionalQuestionModel.swift */; };
 		56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */; };
+		56CC9FF0BA58D2A01B24D7B9 /* ImageGenerationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */; };
 		575358BF914A21EAAE6CAEED /* WorkspaceKnowledgeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C871BE1CE3BB959EC438EAE /* WorkspaceKnowledgeModelTests.swift */; };
 		576D00B8A24D3BD2750ADF83 /* WorkspaceFileModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1BE5F3B4FAC99BFE48D4CBD /* WorkspaceFileModelTests.swift */; };
 		57A5FBA0EAC487DEF91FA166 /* BrowserTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56FECEBA1B6010F77BC07D7 /* BrowserTestSupport.swift */; };
@@ -584,6 +588,7 @@
 		7E0B38C59FEFB081EAB457E5 /* AppModel+AgentTeamsFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7261686C41E5A17833AC6E /* AppModel+AgentTeamsFacade.swift */; };
 		7E6EB4217147C77970023671 /* AppModel+BackendEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BAFC6DFED15705B38AC0CE2 /* AppModel+BackendEvents.swift */; };
 		7E9DA32A7B26823E2C8E203D /* WalletDappRequestRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69EBB143E110A8AEE017EBAE /* WalletDappRequestRouter.swift */; };
+		7EF03575A46195FA0506CA76 /* ImageGenerationSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D373902520FD39125C9999 /* ImageGenerationSettingsTests.swift */; };
 		7F9953DE0E3D298F11FC2E0E /* ApplicationLifecycleCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A119AF362322FDA5B7F02E8D /* ApplicationLifecycleCoordinator.swift */; };
 		7FB9CA10129643CE5198F806 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95947ACE0751337457A57CD /* TerminalSession.swift */; };
 		7FE1F4FE610F4E45D1EAED23 /* BrowserAnnotationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F07D2B0078D88B65F9AA0FE /* BrowserAnnotationTests.swift */; };
@@ -950,6 +955,7 @@
 		CBCADD63489D5EBE091BCAF4 /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		CBD579D8154FE66BDCA1E95A /* WalletDecoderFuzzTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9763DED34F5F90F0B56F42F9 /* WalletDecoderFuzzTests.swift */; };
 		CC01B1F497617D1F1B57C824 /* BrowserInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A24FCB395145B7670EAC9D /* BrowserInteractionTests.swift */; };
+		CC124FC78E5C4561812D6CF8 /* ImageGenerationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */; };
 		CC34DB49F0794EFC59213A34 /* ModelLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */; };
 		CCE0C9F7DA04FE0F2ED8D51E /* RemoteEndpointTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EE3ED166C864419A854532 /* RemoteEndpointTester.swift */; };
 		CCF73FB9EA3B4EF6F74C4E87 /* AgentManagementPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9101B0FC031593F78262CC9 /* AgentManagementPresentation.swift */; };
@@ -1330,6 +1336,7 @@
 		0FD380D5B75F9C2A4824A7B8 /* WalletPairingURIIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletPairingURIIntake.swift; sourceTree = "<group>"; };
 		10380F5BBBBE6D681FCED4C0 /* AppModel+OptionalQuestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+OptionalQuestions.swift"; sourceTree = "<group>"; };
 		10A999C66F8CAAF92D26A8DD /* WalletReleaseActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletReleaseActivation.swift; sourceTree = "<group>"; };
+		10D373902520FD39125C9999 /* ImageGenerationSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationSettingsTests.swift; sourceTree = "<group>"; };
 		10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorFilesTab.swift; sourceTree = "<group>"; };
 		10F1EF0CB327CD486A0EFECD /* WalletConnections.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = WalletConnections.html; sourceTree = "<group>"; };
 		1107B5AE8736B7D66F24D696 /* LibraryWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryWorkspaceView.swift; sourceTree = "<group>"; };
@@ -1467,6 +1474,7 @@
 		6B79DE5F9CB391F43F1F5534 /* BrowserServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserServiceTests.swift; sourceTree = "<group>"; };
 		6BCF449F84DAC40AAF04616D /* OnboardingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingModel.swift; sourceTree = "<group>"; };
 		6DB7D5C3B690107D4BF13186 /* AppModel+Onboarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Onboarding.swift"; sourceTree = "<group>"; };
+		6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationSettingsView.swift; sourceTree = "<group>"; };
 		6ED8A0344BFA876DAEAC402F /* GoalRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalRoutingTests.swift; sourceTree = "<group>"; };
 		70017AB3BFB7BC69CBD1CC85 /* BrowserAnnotationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserAnnotationView.swift; sourceTree = "<group>"; };
 		7128A98CCDB47A9F298DEF81 /* companion-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "companion-v1.json"; sourceTree = "<group>"; };
@@ -1821,6 +1829,7 @@
 				C25674117391294D54F7B75D /* IdentityApplicationBrowserTests.swift */,
 				3AF5D84E90C61DF600758768 /* IdentityVaultCoordinatorTests.swift */,
 				A5FFB32261738DA9AA241104 /* IdentityVaultStoreTests.swift */,
+				10D373902520FD39125C9999 /* ImageGenerationSettingsTests.swift */,
 				26C94997668FDA620F006087 /* NotebookEditorTests.swift */,
 				2EC88909073BDCF25DC61A04 /* NotebookModelTests.swift */,
 				5C0AF4E168BA368E9200A6FD /* NotebookStorageTests.swift */,
@@ -2081,6 +2090,7 @@
 				ACDFBA9B2706255E035E95F8 /* IdentityVaultTypes.swift */,
 				B0913B533492F79EF861D382 /* IdentityVaultView.swift */,
 				FBA4A0FF9DC4195CDBE16AFE /* ImageGenerationModel.swift */,
+				6EB93CD077106FFA5A907ACB /* ImageGenerationSettingsView.swift */,
 				BE7F27B06F0AA98E893C2E9B /* Info.plist */,
 				2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */,
 				DC810CE30AC24EDB05F14614 /* InspectorAgentTab.swift */,
@@ -3062,6 +3072,7 @@
 				55911F076DD8FAC91234D645 /* IdentityVaultTypes.swift in Sources */,
 				291E745E2403CA862FBAC159 /* IdentityVaultView.swift in Sources */,
 				81AFAC89C584AA6842170731 /* ImageGenerationModel.swift in Sources */,
+				4A8F95EBEF628858E7B80D37 /* ImageGenerationSettingsView.swift in Sources */,
 				03156C7E49A2DD4A553D93EA /* InspectorAgentTab.swift in Sources */,
 				36384BA5284C663BD6A63663 /* InspectorAgentsTab.swift in Sources */,
 				97F2562933C86827EB91C779 /* InspectorBrowserTab.swift in Sources */,
@@ -3239,6 +3250,7 @@
 				1D09E37578ABA39508AE74E6 /* IdentityApplicationBrowserTests.swift in Sources */,
 				E896DC617F62FFEB10306733 /* IdentityVaultCoordinatorTests.swift in Sources */,
 				857FBE84FA4FF5A7D57DABA8 /* IdentityVaultStoreTests.swift in Sources */,
+				12DA10307C2B2ED3DF35490E /* ImageGenerationSettingsTests.swift in Sources */,
 				D068E33CEBE44D96F97C0E57 /* NotebookEditorTests.swift in Sources */,
 				3BF2B9B49A0CFB1ECD3CBEF7 /* NotebookModelTests.swift in Sources */,
 				8921918B2A8D855F1C33F1A2 /* NotebookStorageTests.swift in Sources */,
@@ -3416,6 +3428,7 @@
 				4AC15A73049A6460C7BD6AE1 /* IdentityVaultTypes.swift in Sources */,
 				9932E13E8B5C651D21B70C56 /* IdentityVaultView.swift in Sources */,
 				FE5C2D4259A0F6C40ABF2C87 /* ImageGenerationModel.swift in Sources */,
+				CC124FC78E5C4561812D6CF8 /* ImageGenerationSettingsView.swift in Sources */,
 				F130548428D07DAD6385A41A /* InspectorAgentTab.swift in Sources */,
 				3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */,
 				2EAD3C52012BDCE207BFED7B /* InspectorBrowserTab.swift in Sources */,
@@ -3645,6 +3658,7 @@
 				DD7523B487FBC43F29005836 /* IdentityVaultTypes.swift in Sources */,
 				B54DF7367CF4E9FFC6CEC54E /* IdentityVaultView.swift in Sources */,
 				1273928E24E36F78DD0CB5FB /* ImageGenerationModel.swift in Sources */,
+				1E653F0EE72E2ED825084B41 /* ImageGenerationSettingsView.swift in Sources */,
 				A09D92EBB5A0F9AB18E5A8E4 /* InspectorAgentTab.swift in Sources */,
 				E93509193D03839A222A7B5F /* InspectorAgentsTab.swift in Sources */,
 				8869F371B1A9A520350F754A /* InspectorBrowserTab.swift in Sources */,
@@ -3820,6 +3834,7 @@
 				31AEC53B9C866B78D7F0F8EA /* IdentityApplicationBrowserTests.swift in Sources */,
 				C0D32E55CC440505EB4544A7 /* IdentityVaultCoordinatorTests.swift in Sources */,
 				FA9DAB409A286A6C1278ED33 /* IdentityVaultStoreTests.swift in Sources */,
+				7EF03575A46195FA0506CA76 /* ImageGenerationSettingsTests.swift in Sources */,
 				FC7B23ED0312EFF20A88BB93 /* NotebookEditorTests.swift in Sources */,
 				D7625DCFD368AD3AC703F929 /* NotebookModelTests.swift in Sources */,
 				9EC8030067030713E00C35ED /* NotebookStorageTests.swift in Sources */,
@@ -4008,6 +4023,7 @@
 				CA2EA0AAF6CAAB192359F75F /* IdentityVaultTypes.swift in Sources */,
 				677B045BE2D5374CBEF8D418 /* IdentityVaultView.swift in Sources */,
 				45233767CBA2473CA903673D /* ImageGenerationModel.swift in Sources */,
+				56CC9FF0BA58D2A01B24D7B9 /* ImageGenerationSettingsView.swift in Sources */,
 				3B66F8B864D8F868715E8F3F /* InspectorAgentTab.swift in Sources */,
 				3505B7E8B43F37E67EC4226C /* InspectorAgentsTab.swift in Sources */,
 				B4B7EA02063B248A2F466628 /* InspectorBrowserTab.swift in Sources */,
