@@ -44,8 +44,17 @@ if [[ "${public_manual_release}" == "1" ]]; then
 elif [[ "${update_mode}" == "manual" && "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
     echo "error: local editions require a separate release/feed setup before publication" >&2; exit 1
 fi
+public_locus_release=0
+if [[ "${edition}" == "locus" && "${update_mode}" == "automatic" && "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    public_locus_release=1
+    # Validate routing and the first publishable build before changing the app.
+    python3 "${repo_root}/Tools/LocusUpdateFeed.py" plan "${info_plist}" >/dev/null
+    [[ ! -e "${zip_out:h}/appcast-locus.xml" ]] || {
+        echo "error: new Locus feed output already exists" >&2; exit 1
+    }
+fi
 legacy_feed_sha=""
-if [[ "${public_manual_release}" == "1" ]]; then
+if [[ "${public_manual_release}" == "1" || "${public_locus_release}" == "1" ]]; then
     legacy_feed_sha="$(python3 "${repo_root}/Tools/VerifyLegacyAppcast.py" \
         "${zip_out:h}/appcast.xml" "${info_plist}")"
 fi
@@ -437,7 +446,10 @@ fi
 /usr/bin/shasum -a 256 "${zip_out}"
 /bin/ls -lh "${zip_out}"
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
-    if [[ "${public_manual_release}" == "1" ]]; then
+    if [[ "${public_locus_release}" == "1" ]]; then
+        "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast-locus.xml" locus
+    fi
+    if [[ "${public_manual_release}" == "1" || "${public_locus_release}" == "1" ]]; then
         # Recheck both signature and bytes after the notarization wait. Never
         # rewrite or re-sign the feed copied from the prior public release.
         final_feed_sha="$(python3 "${repo_root}/Tools/VerifyLegacyAppcast.py" \
@@ -445,9 +457,15 @@ if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
         [[ "${final_feed_sha}" == "${legacy_feed_sha}" ]] || {
             echo "error: preserved legacy appcast changed during packaging" >&2; exit 1
         }
-        echo "Preserved the signed legacy appcast; this manual release is not offered by Sparkle."
+        echo "Preserved the signed legacy appcast; this release is never offered on the old feed."
     else
         "${repo_root}/Tools/GenerateAppcast.sh" "${zip_out}" "${zip_out:h}/appcast.xml" stable
+    fi
+    # Recheck companion assets after signing/notarization, before declaring the
+    # staging directory ready to upload.
+    "${repo_root}/Tools/VerifyComponentAssets.sh" "${zip_out:h}" >/dev/null
+    if [[ "${public_locus_release}" == "1" ]]; then
+        echo "Include the new appcast-locus.xml alongside the preserved appcast.xml."
     fi
     echo "Upload Locus-macOS.zip, appcast.xml, components.json, and" \
         "${(j:, :)component_archives} to the same draft GitHub release."

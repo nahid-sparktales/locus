@@ -297,6 +297,9 @@ targets:
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
+        Release:
+          INFOPLIST_FILE: Config/LocusRelease-Info.plist
+          LOCUS_UPDATE_MODE: automatic
     scheme:
       testTargets:
         - LocusTests
@@ -495,6 +498,19 @@ targets:
         TEST_TARGET_NAME: LocusMAS
         GENERATE_INFOPLIST_FILE: YES
 schemes:
+  # Release UI verification must not compile the Debug-only unit-test helpers.
+  LocusReleaseUpdates:
+    build:
+      targets:
+        Locus: all
+    run:
+      config: Release
+    test:
+      config: Release
+      environmentVariables:
+        LOCUS_EXPECT_AUTOMATIC_UPDATES: "1"
+      targets:
+        - LocusUITests
   LocusExperimental:
     build:
       targets:

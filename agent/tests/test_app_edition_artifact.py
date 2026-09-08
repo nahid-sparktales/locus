@@ -8,6 +8,7 @@ import pytest
 from artifact_fixtures import make_synthetic_app, write_info
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "Tools"))
 SPEC = importlib.util.spec_from_file_location("app_edition_audit", ROOT / "Tools/AuditAppEdition.py")
 audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)

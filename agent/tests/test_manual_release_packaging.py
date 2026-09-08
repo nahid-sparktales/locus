@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "Tools"))
 SPEC = importlib.util.spec_from_file_location("legacy_appcast", ROOT / "Tools/VerifyLegacyAppcast.py")
 legacy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(legacy)
@@ -63,11 +64,11 @@ def test_legacy_feed_cannot_offer_the_new_manual_build(version, build):
 
 
 @pytest.mark.parametrize("changes", [
-    {"LocusEdition": "locusx"}, {"LocusUpdateMode": "automatic"},
+    {"LocusEdition": "locusx"}, {"LocusUpdateMode": "unknown"},
     {"CFBundleIdentifier": "io.sparktales.locusx"},
 ])
 def test_legacy_feed_preservation_cannot_publish_another_edition(changes):
-    with pytest.raises(ValueError, match="wallet-free manual Locus"):
+    with pytest.raises(ValueError, match="wallet-free Locus"):
         legacy.validate(feed(), info(**changes))
 
 
@@ -238,3 +239,23 @@ def test_manual_public_archive_requires_canonical_app_name(signed_app):
     app.rename(renamed)
     with pytest.raises(ValueError, match="contain Locus.app"):
         public_app.verify(renamed)
+
+
+def test_automatic_release_preserves_only_the_frozen_legacy_feed(verifier, monkeypatch):
+    from test_locus_update_feed import release_info
+
+    path, tools, _ = verifier
+    original = path.read_bytes()
+    monkeypatch.setattr(legacy, "LEGACY_FEED_SHA256", hashlib.sha256(original).hexdigest())
+    assert legacy.verify(path, release_info(), tools) == legacy.LEGACY_FEED_SHA256
+    path.write_bytes(original + b"\n")
+    with pytest.raises(ValueError, match="byte-for-byte identical to v2.6.0"):
+        legacy.verify(path, release_info(), tools)
+
+
+def test_automatic_release_cannot_preserve_legacy_feed_with_legacy_routing(verifier):
+    from test_locus_update_feed import release_info
+
+    path, tools, _ = verifier
+    with pytest.raises(ValueError, match="separate appcast-locus.xml"):
+        legacy.verify(path, release_info(SUFeedURL="https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml"), tools)

@@ -807,40 +807,7 @@ else
             echo "error: local edition must not register an update feed" >&2; exit 1
         }
     else
-    expected_feed="https://github.com/nahid-sparktales/locus/releases/latest/download/appcast.xml"
-    [[ "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${app}/Contents/Info.plist")" \
-        == "${expected_feed}" ]] || {
-        echo "error: direct-download update feed does not match ${expected_feed}" >&2
-        exit 1
-    }
-    [[ "$(/usr/bin/plutil -extract SUPublicEDKey raw -o - "${app}/Contents/Info.plist")" \
-        == "S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4=" ]] || {
-        echo "error: direct-download Sparkle public key is missing or unexpected" >&2
-        exit 1
-    }
-    for boolean_key in \
-        SUAllowsAutomaticUpdates \
-        SUEnableAutomaticChecks \
-        SUAutomaticallyUpdate \
-        SURequireSignedFeed \
-        SUVerifyUpdateBeforeExtraction
-    do
-        [[ "$(/usr/bin/plutil -extract "${boolean_key}" raw -o - \
-            "${app}/Contents/Info.plist")" == "true" ]] || {
-            echo "error: direct-download updater requires ${boolean_key}=true" >&2
-            exit 1
-        }
-    done
-    [[ "$(/usr/bin/plutil -extract SUEnableSystemProfiling raw -o - \
-        "${app}/Contents/Info.plist")" == "false" ]] || {
-        echo "error: direct-download updater must disable anonymous system profiling" >&2
-        exit 1
-    }
-    [[ "$(/usr/bin/plutil -extract SUScheduledCheckInterval raw -o - \
-        "${app}/Contents/Info.plist")" == "86400" ]] || {
-        echo "error: direct-download updater must check every 24 hours" >&2
-        exit 1
-    }
+        python3 "${repo_root}/Tools/LocusUpdateFeed.py" configuration "${info_plist}"
     fi
     /usr/bin/codesign --verify --deep --strict "${sparkle}" || {
         echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2

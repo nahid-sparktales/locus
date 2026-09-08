@@ -6,6 +6,22 @@ import AppKit
 import Sparkle
 #endif
 
+/// Only the released standard app can opt into the new feed. Read this from
+/// the sealed bundle, never UserDefaults (which may retain the legacy feed).
+struct AppUpdateConfiguration: Equatable {
+    static let locusFeedURL = "https://github.com/nahid-sparktales/locus/releases/latest/download/appcast-locus.xml"
+
+    let feedURL: String
+
+    init?(info: [String: Any]) {
+        guard info["LocusEdition"] as? String == "locus",
+              info["CFBundleIdentifier"] as? String == "io.sparktales.locus",
+              info["LocusUpdateMode"] as? String == "automatic",
+              info["SUFeedURL"] as? String == Self.locusFeedURL else { return nil }
+        feedURL = Self.locusFeedURL
+    }
+}
+
 @MainActor
 protocol AppUpdateRelaunchHandling: AnyObject {
     func shouldAllowUpdateRelaunch() -> Bool
@@ -62,6 +78,7 @@ final class AppUpdateController: ObservableObject {
         startImmediately: Bool = true,
         distribution: Distribution? = nil,
         updateMode: UpdateMode? = nil,
+        bundleInfo: [String: Any]? = nil,
         driver: AppUpdateDriving? = nil
     ) {
         #if LOCUS_DIRECT_DOWNLOAD
@@ -70,17 +87,19 @@ final class AppUpdateController: ObservableObject {
         let resolvedDistribution = distribution ?? .appStore
         #endif
         self.distribution = resolvedDistribution
-        let resolvedMode = updateMode ?? .configured(
-            bundleValue: Bundle.main.object(forInfoDictionaryKey: "LocusUpdateMode") as? String
-        )
+        let info = bundleInfo ?? Bundle.main.infoDictionary ?? [:]
+        let configuration = AppUpdateConfiguration(info: info)
+        let requestedMode = updateMode ?? .configured(bundleValue: info["LocusUpdateMode"] as? String)
+        let resolvedMode: UpdateMode = requestedMode == .automatic && configuration != nil ? .automatic : .manual
         self.updateMode = resolvedMode
 
         if let driver {
             self.driver = driver
         } else {
             #if LOCUS_DIRECT_DOWNLOAD
-            if resolvedDistribution == .directDownload && resolvedMode == .automatic {
-                self.driver = SparkleUpdateDriver(startImmediately: startImmediately)
+            if resolvedDistribution == .directDownload && resolvedMode == .automatic,
+               let configuration {
+                self.driver = SparkleUpdateDriver(configuration: configuration, startImmediately: startImmediately)
             } else {
                 self.driver = AppStoreUpdateDriver()
             }
@@ -136,11 +155,12 @@ private final class AppStoreUpdateDriver: AppUpdateDriving {
 
 #if LOCUS_DIRECT_DOWNLOAD
 @MainActor
-private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate {
+final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate {
     var stateDidChange: (() -> Void)?
     weak var relaunchHandler: AppUpdateRelaunchHandling?
 
     private var controller: SPUStandardUpdaterController!
+    private let configuration: AppUpdateConfiguration
     private var canCheckObservation: AnyCancellable?
     private var automaticCheckObservation: AnyCancellable?
     private var automaticDownloadObservation: AnyCancellable?
@@ -149,7 +169,8 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
     private var requestedSafetyUpdate = false
     #endif
 
-    init(startImmediately: Bool) {
+    init(configuration: AppUpdateConfiguration, startImmediately: Bool) {
+        self.configuration = configuration
         super.init()
         controller = SPUStandardUpdaterController(
             startingUpdater: startImmediately,
@@ -212,12 +233,6 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
         }
     }
 
-    func feedURLString(for updater: SPUUpdater) -> String? {
-        guard WalletCandidateUpdateAuthority.isCandidate() else { return nil }
-        if requestedSafetyUpdate { return Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String }
-        return WalletCandidateUpdateAuthority.selection()?.feedURL
-    }
-
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
         if requestedSafetyUpdate { return [] }
         guard let channel = WalletCandidateUpdateAuthority.selection()?.channel else { return [] }
@@ -250,6 +265,16 @@ private final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterD
         requestedSafetyUpdate = false
     }
     #endif
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        #if LOCUS_WALLET
+        if WalletCandidateUpdateAuthority.isCandidate() {
+            if requestedSafetyUpdate { return Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String }
+            return WalletCandidateUpdateAuthority.selection()?.feedURL
+        }
+        #endif
+        return configuration.feedURL
+    }
 
     func updater(
         _ updater: SPUUpdater,

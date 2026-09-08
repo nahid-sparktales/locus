@@ -1225,11 +1225,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reusable workflows"].exists)
     }
 
-    func testUpdatesSettingsShowManualLocalControls() {
+    func testUpdatesSettingsMatchTheBuildDistribution() {
+        let automatic = ProcessInfo.processInfo.environment["LOCUS_EXPECT_AUTOMATIC_UPDATES"] == "1"
         app.menuBars.menuBarItems[productName].firstMatch.click()
         XCTAssertTrue(app.menuItems["Settings…"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.menuItems["Check for Updates…"].exists,
-            "Manual local editions must not offer the legacy app-feed command")
+        XCTAssertEqual(app.menuItems["Check for Updates…"].exists, automatic)
+        if automatic {
+            XCTAssertFalse(app.menuItems["Check for Updates…"].isEnabled,
+                "UI tests expose the controls without starting Sparkle")
+        }
         app.typeKey(.escape, modifierFlags: [])
 
         anyElement("workspace.modelPicker").click()
@@ -1242,10 +1246,12 @@ final class LocusUITests: XCTestCase {
         updatesPage.click()
 
         XCTAssertTrue(anyElement("settings.updateVersion").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("settings.manualUpdates").waitForExistence(timeout: 3))
-        XCTAssertFalse(anyElement("settings.automaticUpdateChecks").exists)
-        XCTAssertFalse(anyElement("settings.automaticUpdateDownloads").exists)
-        XCTAssertFalse(anyElement("settings.checkForUpdates").exists)
+        let expected = automatic ? "settings.automaticUpdateChecks" : "settings.manualUpdates"
+        XCTAssertTrue(anyElement(expected).waitForExistence(timeout: 3))
+        XCTAssertEqual(anyElement("settings.manualUpdates").exists, !automatic)
+        XCTAssertEqual(anyElement("settings.automaticUpdateChecks").exists, automatic)
+        XCTAssertEqual(anyElement("settings.automaticUpdateDownloads").exists, automatic)
+        XCTAssertEqual(anyElement("settings.checkForUpdates").exists, automatic)
         XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 

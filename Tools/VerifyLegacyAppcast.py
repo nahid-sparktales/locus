@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only gate for retaining an old signed feed beside a manual Locus release.
+"""Read-only gate for retaining the legacy feed beside a wallet-free Locus release.
 
 Old installed apps still request releases/latest/download/appcast.xml. Every
 enclosure must remain pinned to an earlier release, never the new latest ZIP.
@@ -18,10 +18,15 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from LocusUpdateFeed import validate_configuration
+
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 PUBLIC_KEY = "S/F9z1jR20s26+oHOxVjFend/ajDH04OY8Ietw+IDl4="
 KEY_ACCOUNT = "io.sparktales"
 RELEASE_ROOT = "https://github.com/nahid-sparktales/locus/releases/download"
+# The exact signed feed retained by public v2.6.0. Automatic Locus must never
+# replace this with a newly signed feed, even one that contains older builds.
+LEGACY_FEED_SHA256 = "fabc1d4450afce04a5931bde6dc9630994f7748d512d73a8a600630b52696ece"
 
 
 def require(condition: bool, message: str) -> None:
@@ -35,12 +40,17 @@ def version_tuple(value: str) -> tuple[int, ...]:
 
 
 def validate(feed: bytes, info: dict) -> None:
+    automatic = info.get("LocusUpdateMode") == "automatic"
     require(
         info.get("LocusEdition") == "locus"
-        and info.get("LocusUpdateMode") == "manual"
+        and info.get("LocusUpdateMode") in {"manual", "automatic"}
         and info.get("CFBundleIdentifier") == "io.sparktales.locus",
-        "preserving the legacy feed is limited to wallet-free manual Locus",
+        "preserving the legacy feed is limited to wallet-free Locus",
     )
+    if automatic:
+        validate_configuration(info)
+        require(hashlib.sha256(feed).hexdigest() == LEGACY_FEED_SHA256,
+                "legacy appcast must remain byte-for-byte identical to v2.6.0")
     current_version = version_tuple(str(info.get("CFBundleShortVersionString", "")))
     current_build = str(info.get("CFBundleVersion", ""))
     require(current_build.isascii() and current_build.isdecimal(), "invalid release build")

@@ -4,14 +4,25 @@
 # it is never accepted on the command line or written inside the repository.
 set -euo pipefail
 
-zip_path="${1:?usage: GenerateAppcast.sh <Locus-macOS.zip> <new appcast.xml> <stable|canary>}"
+zip_path="${1:?usage: GenerateAppcast.sh <Locus-macOS.zip> <new feed.xml> <locus|stable|canary>}"
 appcast_out="${2:?set an explicit new channel-specific appcast output}"
-update_channel="${3:?set the explicit stable or canary update channel}"
-[[ "${update_channel}" == "stable" || "${update_channel}" == "canary" ]] || {
+update_channel="${3:?set the explicit locus, stable, or canary update channel}"
+[[ "${update_channel}" == "locus" || "${update_channel}" == "stable" || "${update_channel}" == "canary" ]] || {
     echo "error: unsupported update channel" >&2; exit 1
 }
 [[ ! -e "${appcast_out}" ]] || { echo "error: appcast output already exists" >&2; exit 1; }
 repo_root="${0:A:h:h}"
+feed_filename="appcast.xml"
+validation_tool="${repo_root}/Tools/WalletUpdateChannel.py"
+validation_arguments=("${update_channel}")
+if [[ "${update_channel}" == "locus" ]]; then
+    feed_filename="appcast-locus.xml"
+    validation_tool="${repo_root}/Tools/LocusUpdateFeed.py"
+    validation_arguments=()
+fi
+[[ "${appcast_out:t}" == "${feed_filename}" ]] || {
+    echo "error: ${update_channel} feed output must be named ${feed_filename}" >&2; exit 1
+}
 sparkle_version="2.9.6"
 sparkle_revision="ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a"
 sparkle_archive_sha256="52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192"
@@ -34,7 +45,7 @@ first_updater_build=17
 # Missing components fail a public (notarized) run outright; a feed-generation
 # dry run only warns, so it does not require building the component first.
 if ! "${repo_root}/Tools/VerifyComponentAssets.sh" "${zip_path:h}" >/dev/null; then
-    if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
+    if [[ "${LOCUS_NOTARIZE:-0}" == "1" || "${update_channel}" == "locus" ]]; then
         echo "error: refusing to prepare a public appcast without the component assets above." >&2
         exit 1
     fi
@@ -96,6 +107,12 @@ info="${app}/Contents/Info.plist"
     echo "error: local editions cannot be published through the legacy appcast" >&2
     exit 1
 }
+if [[ "${update_channel}" == "locus" ]]; then
+    python3 "${repo_root}/Tools/AuditAppEdition.py" "${app}" --edition locus
+    python3 "${repo_root}/Tools/VerifyLegacyAppcast.py" "${zip_path:h}/appcast.xml" "${info}" >/dev/null
+elif [[ "$(/usr/bin/plutil -extract LocusEdition raw -o - "${info}" 2>/dev/null || true)" == "locus" ]]; then
+    echo "error: wallet-free Locus must use the separate locus feed" >&2; exit 1
+fi
 /usr/bin/codesign --verify --deep --strict "${app}" || {
     echo "error: archived app has an invalid code-signature seal" >&2
     exit 1
@@ -138,7 +155,7 @@ embedded_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "${info
     echo "error: archived app has unexpected bundle identifier ${bundle_identifier}" >&2
     exit 1
 }
-python3 "${repo_root}/Tools/WalletUpdateChannel.py" plan "${info}" "${update_channel}" > "${stage}/update-plan.json"
+python3 "${validation_tool}" plan "${info}" "${validation_arguments[@]}" > "${stage}/update-plan.json"
 feed_url="$(/usr/bin/plutil -extract feedURL raw -o - "${stage}/update-plan.json")"
 archive_url="$(/usr/bin/plutil -extract archiveURL raw -o - "${stage}/update-plan.json")"
 if [[ "${update_channel}" == "stable" \
@@ -181,7 +198,7 @@ sparkle_info="${app}/Contents/Frameworks/Sparkle.framework/Resources/Info.plist"
     echo "error: archived app does not contain Sparkle ${sparkle_version}" >&2
     exit 1
 }
-[[ ! -e "${app}/Contents/PlugIns/LocusTests.xctest" ]] || {
+[[ -z "$(/usr/bin/find "${app}" -name '*.xctest' -print)" ]] || {
     echo "error: update archive contains an embedded test bundle" >&2
     exit 1
 }
@@ -214,27 +231,36 @@ notes="${archive_dir}/Locus-macOS.md"
 if (( build > first_updater_build )) || [[ "${update_channel}" == "canary" ]]; then
     echo "Fetching the current signed feed so release history is preserved…"
     http_status="$(/usr/bin/curl --location --show-error --proto '=https' --proto-redir '=https' \
-        --write-out '%{http_code}' "${feed_url}" --output "${archive_dir}/appcast.xml")"
-    if [[ "${http_status}" == "404" && "${update_channel}" == "canary" \
+        --write-out '%{http_code}' "${feed_url}" --output "${archive_dir}/${feed_filename}")"
+    if [[ "${update_channel}" == "locus" ]]; then
+        history_action="$(python3 "${validation_tool}" history-action "${http_status}" "${LOCUS_APPCAST_INITIAL_CHANNEL:-}")"
+    else
+        history_action="verify"
+    fi
+    if [[ "${history_action}" == "initialize" ]] || [[ "${http_status}" == "404" && "${update_channel}" == "canary" \
         && "${LOCUS_APPCAST_INITIAL_CHANNEL:-}" == "canary" ]]; then
-        /bin/rm "${archive_dir}/appcast.xml"
+        /bin/rm "${archive_dir}/${feed_filename}"
     elif [[ "${http_status}" == "200" ]]; then
-        "${sign_update}" --account "${sparkle_key_account}" --verify "${archive_dir}/appcast.xml" >/dev/null || {
+        "${sign_update}" --account "${sparkle_key_account}" --verify "${archive_dir}/${feed_filename}" >/dev/null || {
             echo "error: previous channel feed signature is invalid" >&2; exit 1
         }
-        python3 "${repo_root}/Tools/WalletUpdateChannel.py" verify-feed "${archive_dir}/appcast.xml" "${update_channel}"
+        python3 "${validation_tool}" verify-feed "${archive_dir}/${feed_filename}" "${validation_arguments[@]}"
     else
         echo "error: channel history is unavailable; first canary requires explicit initialization and HTTP 404" >&2; exit 1
     fi
 fi
-if [[ -f "${archive_dir}/appcast.xml" ]]; then
-    previous_build="$(/usr/bin/xmllint --xpath \
-        'string(/*[local-name()="rss"]/*[local-name()="channel"]/*[local-name()="item"][1]/*[local-name()="version"])' \
-        "${archive_dir}/appcast.xml")"
-    [[ "${previous_build}" == <-> && "${build}" -gt "${previous_build}" ]] || {
-        echo "error: build ${build} must be greater than published build ${previous_build:-unknown}" >&2
-        exit 1
-    }
+if [[ -f "${archive_dir}/${feed_filename}" ]]; then
+    if [[ "${update_channel}" == "locus" ]]; then
+        python3 "${validation_tool}" verify-feed "${archive_dir}/${feed_filename}" --newer-build "${build}"
+    else
+        previous_build="$(/usr/bin/xmllint --xpath \
+            'string(/*[local-name()="rss"]/*[local-name()="channel"]/*[local-name()="item"][1]/*[local-name()="version"])' \
+            "${archive_dir}/${feed_filename}")"
+        [[ "${previous_build}" == <-> && "${build}" -gt "${previous_build}" ]] || {
+            echo "error: build ${build} must be greater than published build ${previous_build:-unknown}" >&2
+            exit 1
+        }
+    fi
 fi
 
 download_prefix="${archive_url%Locus-macOS.zip}"
@@ -250,9 +276,9 @@ channel_arguments=()
     --link "https://locushost.co" \
     "${archive_dir}"
 
-generated="${archive_dir}/appcast.xml"
+generated="${archive_dir}/${feed_filename}"
 /usr/bin/xmllint --noout "${generated}"
-python3 "${repo_root}/Tools/WalletUpdateChannel.py" verify-feed "${generated}" "${update_channel}" --info "${info}"
+python3 "${validation_tool}" verify-feed "${generated}" "${validation_arguments[@]}" --info "${info}"
 latest_build="$(/usr/bin/xmllint --xpath \
     'string(/*[local-name()="rss"]/*[local-name()="channel"]/*[local-name()="item"][1]/*[local-name()="version"])' \
     "${generated}")"

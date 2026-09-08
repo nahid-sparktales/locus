@@ -4969,7 +4969,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(LOCUS_DIRECT_ENTITLEMENTS)";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Locus/Info.plist;
+				INFOPLIST_FILE = "Config/LocusRelease-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -4979,7 +4979,7 @@
 				LOCUS_GITHUB_OAUTH_CLIENT_ID = Iv23liCL3tit1VOgBjWF;
 				LOCUS_GOOGLE_OAUTH_CLIENT_ID = "976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov.apps.googleusercontent.com";
 				LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID = "com.googleusercontent.apps.976511349544-lvn16ildgj3pu9pd3e45qgoueg17seov";
-				LOCUS_UPDATE_MODE = manual;
+				LOCUS_UPDATE_MODE = automatic;
 				PRODUCT_BUNDLE_IDENTIFIER = io.sparktales.locus;
 				PRODUCT_MODULE_NAME = Locus;
 				PRODUCT_NAME = Locus;

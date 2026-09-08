@@ -175,12 +175,28 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
           app="$RUNNER_TEMP/locus-standard-release/Build/Products/$EDITION_CONFIGURATION/Locus.app"
           python3 Tools/AuditAppEdition.py "$app" --edition locus --allow-missing-runtime
+      - name: Released Locus update controls
+        if: matrix.scheme == 'Locus'
+        run: >-
+          xcodebuild test
+          -project Locus.xcodeproj
+          -scheme LocusReleaseUpdates
+          -configuration Release
+          -destination 'platform=macOS'
+          -derivedDataPath "$RUNNER_TEMP/locus-release-update-ui"
+          -only-testing:LocusUITests/LocusUITests/testUpdatesSettingsMatchTheBuildDistribution
+          CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+          ENABLE_HARDENED_RUNTIME=NO
+          ENABLE_TESTABILITY=YES
+          LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
       - name: Retain standard unit-test evidence
         if: always() && matrix.scheme == 'Locus'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: locus-standard-macos15-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/locus-standard-tests/Logs/Test/*.xcresult/**
+          path: |
+            ${{ runner.temp }}/locus-standard-tests/Logs/Test/*.xcresult/**
+            ${{ runner.temp }}/locus-release-update-ui/Logs/Test/*.xcresult/**
           if-no-files-found: error
           retention-days: 90
 
