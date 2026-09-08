@@ -39,7 +39,8 @@ refused unless the capability is configured.
   "capabilities": {
     "durable_runs": true, "recovery_controls": true, "evaluations": true,
     "adaptive_routing": true, "workspace_knowledge": true, "modern_mcp": true,
-    "browser": true, "transcript_search": true
+    "browser": true, "transcript_search": true,
+    "image_generation_v1": true, "interactive_answers_v1": true
   }
 }
 ```
@@ -396,6 +397,44 @@ workers, and evaluations keep the legacy Locus contract regardless of the
 toggle. `web_search` (parity turns only) sets the helper's
 `web_search = "cached"`, letting the model use OpenAI's web search; toggling
 either setting restarts the helper and the conversation's thread context.
+
+### `GET/POST /api/images/provider`
+
+The image-generation provider used by the `generate_image` and `edit_image`
+tools. It is configured separately from the chat provider and is off until the
+app pushes an account. Gated by the `image_generation_v1` capability (404 when
+disabled).
+
+`GET` returns the public state and never the key:
+
+```json
+{ "configured": true, "host": "api.openai.com", "model": "gpt-image-1",
+  "size": "auto", "quality": "auto", "account_id": "acct-1",
+  "account_label": "OpenAI — Work", "has_api_key": true }
+```
+
+`POST` accepts `{"enabled": false}` to clear the provider, or `enabled: true`
+with `account_id`, `account_label`, `base_url`, `api_key`, `model`, `size`
+(`auto`, `1024x1024`, `1536x1024`, `1024x1536`) and `quality` (`auto`, `low`,
+`medium`, `high`). The base URL is normalised like a remote chat endpoint and
+must be HTTPS unless it is on this Mac; `model` is 1–128 characters of letters,
+digits, `.`, `_`, `:` and `-`; the key is at most 4096 characters. The key is
+held in memory by the chat service only — it is never persisted, never echoed
+by any route, never part of `provider_state` or any event. Configuring or
+clearing changes the advertised tool set, which restarts a live Codex-native
+thread once. Returns the `GET` payload. Errors: 409 busy, 422 invalid body.
+
+While configured, the tools appear in classic and Codex-parity schemas only for
+the visible root chat, only outside Plan mode and read-only roles, and only
+while both the `network` and `workspace_write` capability switches are on.
+`generate_image` asks for permission (and may be allowed for the session);
+`edit_image` uploads user pixels and asks every time. Both are refused in
+scheduled, event-triggered and workflow runs, are capped at 4 calls per turn
+and 24 per session, write a PNG under `Locus Images/` (never overwriting), and
+stage an `image` response part. `permission_request` previews name the prompt,
+model, size, quality, provider host, destination and counters; `tool_result`
+carries `file_effects` (`create`) and an `activity_label` (`Created image
+<path>` / `Edited image <path>`).
 
 ### Managed ChatGPT account API
 

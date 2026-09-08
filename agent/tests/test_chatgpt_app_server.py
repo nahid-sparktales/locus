@@ -667,6 +667,33 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     assert all("[Locus mode:" not in text for text in texts)
 
 
+def test_parity_tools_gain_image_tools_only_when_configured_and_keep_the_thread(tmp_path):
+    """Configuring a provider changes the tool set once; the thread then stays put."""
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    core.run_turn(DECORATED)
+    default = [item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]]
+    assert default == ["shell", "apply_patch", "update_plan", "ask_user_question", "attach_output_parts"]
+
+    # What `POST /api/images/provider` flips on the registry once a key is held
+    # by the service; the key itself never reaches the thread contract.
+    core.tool_registry.image_generation_enabled = True
+    core.tool_ctx.image_provider = {"host": "images.example.com", "model": "gpt-image-1"}
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1", "thread-2"]
+    configured = [item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]]
+    assert configured == default + ["generate_image", "edit_image"]
+
+    core.run_turn(DECORATED)
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1", "thread-2"]
+
+    core.tool_registry.image_generation_enabled = False
+    core.run_turn(DECORATED)
+    assert runtime.started == ["thread-1", "thread-2", "thread-3"]
+    assert [item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]] == default
+
+
 def test_parity_thread_survives_identical_turns_and_effort_changes(tmp_path):
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)

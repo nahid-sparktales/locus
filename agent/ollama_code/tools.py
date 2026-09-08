@@ -931,6 +931,22 @@ def _impl_attach_output_parts(args: dict[str, Any], ctx: ToolContext) -> str:
         return f"Error: {error}"
 
 
+def _run_image_tool(name: str, args: dict[str, Any], ctx: ToolContext) -> str:
+    # The executor is installed by the visible chat's service once a provider
+    # is configured; everywhere else (CLI, helpers, evaluations) it is None.
+    if ctx.image_generation is None:
+        return "Error: image generation is unavailable in this session."
+    return ctx.image_generation(name, args)
+
+
+def _impl_generate_image(args: dict[str, Any], ctx: ToolContext) -> str:
+    return _run_image_tool("generate_image", args, ctx)
+
+
+def _impl_edit_image(args: dict[str, Any], ctx: ToolContext) -> str:
+    return _run_image_tool("edit_image", args, ctx)
+
+
 def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     title = str(args.get("title") or "Implementation plan").strip()[:160]
     summary = str(args.get("summary") or "").strip()[:4_000]
@@ -1308,6 +1324,8 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "git_diff": _impl_git_diff,
     "submit_plan": _impl_submit_plan,
     "attach_output_parts": _impl_attach_output_parts,
+    "generate_image": _impl_generate_image,
+    "edit_image": _impl_edit_image,
     "submit_workflow_result": _impl_submit_workflow_result,
     "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,

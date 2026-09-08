@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..codex_app_server import CodexAppServerError
 from ..config import context_window
@@ -421,8 +422,36 @@ def models(service: ServiceDependency) -> dict[str, Any]:
     return {"models": out, "current": service.core.model}
 
 
+def _require_image_capability() -> None:
+    if not capability_enabled("image_generation_v1"):
+        raise HTTPException(404, "capability is disabled: image_generation_v1")
+
+
+def get_image_provider(service: ServiceDependency) -> dict[str, Any]:
+    """The configured image provider without its key."""
+    _require_image_capability()
+    return service.image_generation.state()
+
+
+def set_image_provider(
+    service: ServiceDependency,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Configure (``enabled: true`` + account fields) or clear (``enabled: false``)."""
+    _require_image_capability()
+    try:
+        with service.state_mutation():
+            return service.configure_image_provider(body)
+    except AgentBusyError as error:
+        raise _busy_http() from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/provider", get_provider, methods=["GET"])
+    router.add_api_route("/api/images/provider", get_image_provider, methods=["GET"])
+    router.add_api_route("/api/images/provider", set_image_provider, methods=["POST"])
     router.add_api_route(
         "/api/model-router/decision", model_router_decision, methods=["POST"]
     )

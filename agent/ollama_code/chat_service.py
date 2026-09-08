@@ -22,6 +22,7 @@ from .core import AgentCore
 from .devserver import DevServerError, DevServerManager
 from .evaluations import EvaluationStore
 from .identity import context_sources, source_references
+from .image_generation import ImageGenerationService, ImageProviderConfig
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
     OrchestrationError,
@@ -206,6 +207,12 @@ class ChatService:
         self.core.tool_ctx.ask_question_async = self.ask_user_question_async
         self.core.tool_registry.set_ask_question_enabled(True)
         self.core.tool_registry.product_features.bind(self)
+        # The provider key lives here and nowhere else: not in `core.config`
+        # (which `save_config` writes), not in any event. The executor is
+        # installed on the visible chat's core only, so helpers, evaluation
+        # cores and the CLI keep answering "unavailable".
+        self.image_generation = ImageGenerationService()
+        self.core.tool_ctx.image_generation = self._execute_image_tool
 
     @property
     def codex(self) -> Any:
@@ -1084,6 +1091,44 @@ class ChatService:
             return f"Error: {error}"
         text = str(result.get("text") or "")
         return truncate_output(text) if text else "Notes action completed."
+
+    def _execute_image_tool(self, tool: str, arguments: dict[str, Any]) -> str:
+        """Run an image tool for the visible chat; refuse unattended runs."""
+        run = self.run_store.run(self.active_run_id) if self.active_run_id else None
+        manifest = run.get("manifest") if isinstance(run, dict) else {}
+        manifest = manifest if isinstance(manifest, dict) else {}
+        if (
+            manifest.get("event_triggered")
+            or manifest.get("automation_workflow")
+            or manifest.get("scheduled")
+        ):
+            # Nobody is there to approve the spend or read the picture.
+            return (
+                "Error: image generation is unavailable in unattended runs (schedules, "
+                "event triggers and workflows); ask the user to request the image in chat."
+            )
+        return self.image_generation.execute(tool, arguments, self.core.tool_ctx)
+
+    def configure_image_provider(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Apply ``POST /api/images/provider``; the caller holds ``state_mutation``.
+
+        ``ValueError`` means an invalid body. Changing the tool set restarts a
+        live Codex-native thread once, exactly like any other schema change.
+        """
+        registry = self.core.tool_registry
+        enabled = body.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a Boolean")
+        if not enabled:
+            self.image_generation.clear()
+            registry.image_generation_enabled = False
+            self.core.tool_ctx.image_provider = None
+            return self.image_generation.state()
+        config = ImageProviderConfig.parse(body)
+        self.image_generation.configure(config)
+        registry.image_generation_enabled = True
+        self.core.tool_ctx.image_provider = config.public()
+        return self.image_generation.state()
 
     def execute_connector(
         self,

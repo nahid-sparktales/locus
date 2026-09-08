@@ -60,6 +60,8 @@ from .config import (
 )
 from .extensions import ExtensionManager
 from .identity import IDENTITY_ACTIONS, IDENTITY_SYSTEM_PROMPT, source_references
+from .image_generation import IMAGE_TOOL_NAMES
+from .image_generation import SETUP_HINT as IMAGE_SETUP_HINT
 from .mcp_runtime import MCPManager
 from .ollama import (
     DEFAULT_HOST,
@@ -110,6 +112,10 @@ _SOLO_ROOT_ONLY_TOOLS = {
     "spawn_agent", "list_agents", "read_agent", "send_agent_message", "followup_agent",
     "interrupt_agent", "resume_agent", "wait_agents", "integrate_agent", "ask_question_async",
     "delegate_read_only", "get_goal", "update_goal", "attach_output_parts",
+    # Image tools write one new file of their own and stage under the parts
+    # lock, so skipping `tool_action_lock` here is safe; the executor itself
+    # exists only on the visible root chat.
+    "generate_image", "edit_image",
     # Only the visible root chat has a user to ask.
     "ask_question",
     "todo_write",
@@ -3916,6 +3922,12 @@ class AgentCore:
             return result
 
     def _verified_activity_label(self, tc: ToolCall, effects: list[dict[str, Any]]) -> str:
+        if tc.name in IMAGE_TOOL_NAMES:
+            last = self.tool_ctx.last_image_result
+            if not isinstance(last, dict) or last.get("name") != tc.name or not last.get("path"):
+                return ""
+            verb = "Edited" if tc.name == "edit_image" else "Created"
+            return f"{verb} image {' '.join(str(last['path']).split())}"
         if tc.name == "apply_patch":
             return f"Updated {len(effects)} file{'s' if len(effects) != 1 else ''}" if effects else ""
         verb = {"list_dir": "Checked", "read_file": "Read", "write_file": "Updated",
@@ -3947,6 +3959,14 @@ class AgentCore:
             return self._stage_response_parts(
                 tc.arguments.get("parts") if isinstance(tc.arguments, dict) else None
             )
+        if tc.name in IMAGE_TOOL_NAMES:
+            if (self.identity_mode or not self._turn_allows_tools or self.agent_role_contract
+                    or not track_active or getattr(self, "helper_allowed_tools", None) is not None):
+                return "Error: image tools belong only to the visible workspace turn."
+            # `tool_info` names no origin for an unconfigured builtin, so the
+            # policy re-check lives here rather than at the executor.
+            if not self.tool_registry.image_tool_allowed(tc.name):
+                return f"Error: {tc.name} is not available in this session; {IMAGE_SETUP_HINT}."
         if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
             return "Error: goal tools belong only to the active goal coordinator."
         if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():

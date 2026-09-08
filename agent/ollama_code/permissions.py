@@ -106,6 +106,10 @@ class PermissionManager:
         """
         if tool_name.startswith("browser_"):
             return _browser_requires_confirmation(tool_name, args)
+        if tool_name == "edit_image":
+            # Uploads the user's own pixels to a hosted provider: the same
+            # class the hosted-screenshot consent gates, so never "Always".
+            return True
         if not tool_name.startswith("computer_"):
             return False
         text = json.dumps(args, ensure_ascii=False).lower()
@@ -547,6 +551,10 @@ def build_preview(
             target = str(args.get("name") or "every server")
             return f"stop dev server ({target})", ""
         return "list dev servers", ""
+    if name in {"generate_image", "edit_image"} and ctx is not None:
+        from .image_generation import build_image_preview
+
+        return build_image_preview(name, args, ctx)
     if name == "git_status":
         return "git status", ""
     if name == "git_diff":
@@ -628,6 +636,14 @@ def file_effects(
                 effect = {"A": "create", "D": "delete"}.get(marker, "edit")
                 effects.append({"path": target, "effect": effect})
             return effects
+        if name in {"generate_image", "edit_image"} and ctx is not None:
+            from .image_generation import plan_destination
+
+            _, planned = plan_destination(
+                ctx, args.get("filename"), args.get("prompt"),
+                source=args.get("source") if name == "edit_image" else None,
+            )
+            return [{"path": planned, "effect": "create"}]
     except (OSError, RuntimeError, ValueError):
         return []
     return []
