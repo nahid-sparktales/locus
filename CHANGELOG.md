@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.7.0 — Unreleased
+
+### Added
+
+- Image generation and editing inside the conversation. With an OpenAI API or
+  compatible account chosen under Settings › Models & Providers › Image
+  generation, the agent can create a picture from a prompt or edit an existing
+  image, and the result appears in the answer as an image card. Each call asks
+  for permission and names the prompt, model, provider host, and destination;
+  edits always ask. Images are saved to `Locus Images` inside the workspace,
+  captured in Outputs, and exported with the chat.
+- Image cards and inline workspace images offer Edit in chat, Copy Image, and
+  Save As…, and Edit in chat attaches the picture with a prefilled request.
+- Interactive visual explanations. An answer can include a self-contained
+  interactive widget rendered in a sealed, offline web view with a written
+  summary that stands in for it on the phone, in exports, and when interactive
+  rendering is switched off. Open larger, Copy HTML, and Save As… are available
+  on the card.
+
+### Changed
+
+- The answer contract teaches the agent when to generate an image, when to
+  attach an interactive explanation, and how to explain that image generation
+  is not set up.
+- Markdown, plain-text, and PDF exports include generated images and the
+  interactive HTML beside the exported chat.
+
 ## 2.6.0 — 2026-09-07
 
 ### Added

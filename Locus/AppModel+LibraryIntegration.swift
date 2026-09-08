@@ -11,7 +11,13 @@ extension AppModel {
                 self.selectInspectorTab(.files)
             }, openVersion: { [weak self] outputID, versionID, workspace in
                 self?.openLibraryOutput(itemID: outputID, versionID: versionID, workspace: workspace)
-            })
+            }, attachImage: { [weak self] reference in
+                self?.attachWorkspaceImageForEditing(reference)
+            },
+            // Edit in chat needs a tool-bearing mode to act on the attachment; the
+            // backend flag is absent (not false) until the first health probe.
+            allowsImageEditing: backendCapabilities["image_generation_v1"] != false && !justChatEnabled,
+            interactiveAnswersEnabled: settings.interactiveAnswersEnabled)
     }
 
     func configureLibraryFeatures() {

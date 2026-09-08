@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// How typed answer parts appear in an exported transcript. The backend
@@ -6,10 +7,16 @@ import Foundation
 /// it can replace it with the sidecar copy instead of guessing at the text.
 enum ResponseExportProjection {
     /// Wraps an interactive fragment in the sealed document shell before it
-    /// is written beside an export. The composition root points this at
-    /// `InteractiveAnswerDocument.wrap`; the identity default keeps the
-    /// projection free of any web-view dependency.
-    nonisolated(unsafe) static var wrapInteractiveHTML: (String) -> String = { $0 }
+    /// is written beside an export, so the saved file keeps its Content
+    /// Security Policy and stays offline in any browser. Exported pages are
+    /// light paper even when the workspace is dark, like the PDF export.
+    /// Settable so tests can observe the projection without WebKit.
+    nonisolated(unsafe) static var wrapInteractiveHTML: (String) -> String = { fragment in
+        InteractiveAnswerDocument.savedDocument(
+            html: fragment,
+            appearance: NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()
+        )
+    }
 
     /// Mirrors Python's `urllib.parse.quote(value, safe='/')`: every UTF-8
     /// byte outside `A-Za-z0-9_.-~/` becomes `%XX` with upper-case hex.

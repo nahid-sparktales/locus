@@ -174,6 +174,7 @@ and interface checks are defined in the [CI workflow](.github/workflows/ci.yml).
 
 - [Architecture and ownership](Docs/Architecture.md)
 - [Agent teams](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
+- [Image generation and interactive answers](Docs/LocusImageAndInteractiveAnswersImplementation.md)
 - [Backend development](agent/README.md) and [wire protocol](agent/PROTOCOL.md)
 - [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile)
 - [Changelog](CHANGELOG.md) and [earlier releases](https://github.com/nahid-sparktales/locus/releases)

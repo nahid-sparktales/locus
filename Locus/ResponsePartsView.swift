@@ -121,6 +121,12 @@ struct ResponsePartsView: View {
                     ResponseImageView(part: part, workspacePath: workspacePath,
                         onOpenWorkspaceReference: onOpenWorkspaceReference,
                         original: { markdown(part, index: index) })
+                case "interactive":
+                    InteractiveAnswerView(title: part.interactiveTitle, summary: part.summary ?? "",
+                        html: part.html ?? "", height: part.interactiveHeight,
+                        isEnabled: context.interactiveAnswersEnabled,
+                        identity: interactiveViewIdentity(part),
+                        original: { markdown(part, index: index) })
                 default: EmptyView()
                 }
             }
@@ -128,6 +134,15 @@ struct ResponsePartsView: View {
         .accessibilityElement(children: .contain)
         .environment(\.responseRegisteredSources, document.sources)
         .accessibilityIdentifier("message.structuredResponse")
+    }
+
+    /// The sealed web view is keyed by durable provider identity plus the
+    /// fragment itself, so a regenerated answer with different HTML restarts
+    /// its host instead of showing the old page under a new title.
+    private func interactiveViewIdentity(_ part: ResponsePart) -> String {
+        ResponseIdentity.key(workspace: workspacePath, sessionID: context.sessionID,
+            itemID: block.sourceItemID ?? "", partID: part.id)
+            + "|" + String((part.html ?? "").hashValue)
     }
 
     private func writingViewIdentity(_ part: ResponsePart) -> String {

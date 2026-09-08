@@ -135,6 +135,30 @@ final class ResponseOutputUITests: XCTestCase {
         capture("Response generated image attached for editing")
     }
 
+    func testInteractiveAnswerRendersSummaryOpensLargerAndClosesWithEscape() {
+        launch(focus: "interactive")
+        let card = element("message.interactiveAnswer")
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.hasPrefix("Interactive explanation, Binary search, step by step"), card.label)
+        let openLarger = element("message.interactiveAnswer.openLarger")
+        XCTAssertTrue(openLarger.waitForExistence(timeout: 10))
+        for id in ["message.interactiveAnswer.copy", "message.interactiveAnswer.save"] {
+            let control = element(id)
+            XCTAssertTrue(control.exists, id)
+            XCTAssertFalse(control.label.isEmpty, id)
+        }
+        XCTAssertFalse(element("message.interactiveAnswer.reload").exists)
+        XCTAssertFalse(element("message.interactiveAnswer.show").exists)
+        capture("Response interactive answer card")
+        clickInTranscript(openLarger)
+        let sheet = element("message.interactiveAnswer.sheet")
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        capture("Response interactive answer enlarged")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !sheet.exists })
+        XCTAssertTrue(card.exists)
+    }
+
     func testLightDarkAndNarrowControlsRemainLabeledAndReachable() {
         for appearance in ["light", "dark"] {
             app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance
