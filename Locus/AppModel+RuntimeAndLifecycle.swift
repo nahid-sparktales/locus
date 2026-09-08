@@ -200,6 +200,10 @@ extension AppModel {
             agentRuntimePhase = .recovering("Restoring the model provider…")
             return false
         }
+        // The image provider rides the same handoff: its key, too, lives only
+        // in the app's credential file and the agent's memory. A failure here
+        // costs the image tools, not the session, so it does not gate online.
+        await applyImageProvider(announce: false)
         agentRuntimePhase = .online
         backend.connect()
         return true
