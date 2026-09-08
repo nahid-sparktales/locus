@@ -1315,7 +1315,7 @@ private struct AgentBehaviorEditor: View {
                 Toggle("Skills and MCP integrations", isOn: $draft.capabilityPolicy.mcp)
                 Toggle("Computer control", isOn: $draft.capabilityPolicy.computerControl)
                 Toggle("iOS Simulator control", isOn: $draft.capabilityPolicy.simulatorControl)
-                Text("These switches can only remove access. The selected mode, permission policy, and team role can narrow it further.")
+                Text("These switches can only remove access. The selected mode, permission policy, and team role can narrow it further. Image generation needs both Workspace editing and Network and browser.")
                     .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
             }
             Divider()

@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
     let providerAccountsModel: ProviderAccountsModel
     private var providerAccountsCapabilityObservation: AnyCancellable?
     let voiceControl = VoiceControlModel()
+    let imageGeneration = ImageGenerationModel()
 
     #if !LOCUS_APP_STORE
     /// The ChatGPT-plan helpers ship as a downloadable component in the direct
@@ -1118,6 +1119,7 @@ final class AppModel: ObservableObject {
             toastHandler: { [weak self] message in self?.showToast(message) }
         )
         transcriptSearch.configure(backend: backend)
+        imageGeneration.configure(backend: backend)
         schedule.configure(
             backend: backend,
             persistenceEnabled: persistenceEnabled,

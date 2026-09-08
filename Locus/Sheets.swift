@@ -1905,6 +1905,9 @@ struct SettingsView: View {
             draft.voiceAppleNetworkRecognitionAllowed.description,
             draft.voiceSendBehaviorRaw, draft.voiceCloudTranscriptionModel,
             draft.voiceCloudSpeechModel, draft.voiceCloudVoiceIdentifier,
+            draft.imageGenerationAccountID ?? "", draft.imageGenerationModel,
+            draft.imageGenerationSize, draft.imageGenerationQuality,
+            draft.interactiveAnswersEnabled.description,
             draft.browserViewportRaw, draft.browserPersistProfile.description,
             draft.browserRealInput.description, draft.browserEmulateDevice.description,
             draft.browserWebInspector.description, draft.webSearchDestinationRaw,
@@ -3098,6 +3101,12 @@ struct SettingsView: View {
                 }
 
             }
+
+            ImageGenerationSettingsView(
+                imageGeneration: model.imageGeneration,
+                draft: $draft,
+                onAddAccount: { addingAccount = ProviderAccount(kind: .codex) }
+            )
 
             Section {
                 SettingsAdvancedDisclosureRow(

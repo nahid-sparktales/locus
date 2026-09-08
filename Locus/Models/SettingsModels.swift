@@ -203,6 +203,20 @@ struct AppSettings: Codable, Hashable {
     var voiceCloudTranscriptionModel = "gpt-4o-mini-transcribe"
     var voiceCloudSpeechModel = "gpt-4o-mini-tts"
     var voiceCloudVoiceIdentifier = "alloy"
+    /// The provider account whose Images API generates and edits pictures, as
+    /// a UUID string, or nil for off. Only OpenAI API and OpenAI-compatible
+    /// custom accounts qualify; the key never rides the settings payload.
+    var imageGenerationAccountID: String?
+    /// Curated names plus free text: the Images API has no catalog worth
+    /// fetching, and the chat model filter deliberately drops image models.
+    var imageGenerationModel = "gpt-image-1"
+    /// `auto` lets the provider choose; the other values are fixed enums the
+    /// agent validates, so a typo cannot reach the provider.
+    var imageGenerationSize = "auto"
+    var imageGenerationQuality = "auto"
+    /// The kill switch for the sealed web view: off renders an interactive
+    /// answer as its native summary only.
+    var interactiveAnswersEnabled = true
     /// Registers the main application with macOS login items. Off by default;
     /// registration is applied only after Settings is saved successfully.
     var launchAtLogin = false
@@ -555,6 +569,11 @@ struct AppSettings: Codable, Hashable {
         voiceCloudTranscriptionModel = draft.voiceCloudTranscriptionModel
         voiceCloudSpeechModel = draft.voiceCloudSpeechModel
         voiceCloudVoiceIdentifier = draft.voiceCloudVoiceIdentifier
+        imageGenerationAccountID = draft.imageGenerationAccountID
+        imageGenerationModel = draft.imageGenerationModel
+        imageGenerationSize = draft.imageGenerationSize
+        imageGenerationQuality = draft.imageGenerationQuality
+        interactiveAnswersEnabled = draft.interactiveAnswersEnabled
         browserEnabled = draft.browserEnabled
         #if LOCUS_WALLET
         walletSepoliaRPCURL = draft.walletSepoliaRPCURL
@@ -769,6 +788,21 @@ struct AppSettings: Codable, Hashable {
         voiceCloudVoiceIdentifier = try container.decodeIfPresent(
             String.self, forKey: .voiceCloudVoiceIdentifier
         ) ?? defaults.voiceCloudVoiceIdentifier
+        imageGenerationAccountID = try container.decodeIfPresent(
+            String.self, forKey: .imageGenerationAccountID
+        )
+        imageGenerationModel = try container.decodeIfPresent(
+            String.self, forKey: .imageGenerationModel
+        ) ?? defaults.imageGenerationModel
+        imageGenerationSize = try container.decodeIfPresent(
+            String.self, forKey: .imageGenerationSize
+        ) ?? defaults.imageGenerationSize
+        imageGenerationQuality = try container.decodeIfPresent(
+            String.self, forKey: .imageGenerationQuality
+        ) ?? defaults.imageGenerationQuality
+        interactiveAnswersEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .interactiveAnswersEnabled
+        ) ?? defaults.interactiveAnswersEnabled
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
             ?? defaults.launchAtLogin
         mobileAccessEnabled = try container.decodeIfPresent(

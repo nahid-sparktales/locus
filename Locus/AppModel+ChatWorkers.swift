@@ -835,6 +835,16 @@ extension AppModel {
                 + guidance
             )
         }
+        if mode != .ask, !imageNames.isEmpty, Self.namesWorkspaceImagePath(text) {
+            // Edit in chat attaches the file and names its workspace path; the
+            // tool wants that path, not the attachment, so the edit stays a
+            // workspace operation and needs no upload of the attached bytes.
+            sections.append(
+                "To edit an attached image that also exists in the workspace, pass the "
+                + "backticked `Locus Images/…` path from the request as the source of edit_image; "
+                + "an attached image with no workspace path is passed as attachment:<name>."
+            )
+        }
         let applicationSnapshots = chatAttachments.compactMap { attachment -> String? in
             guard attachment.kind == .applicationSnapshot,
                   attachment.isAvailable,
@@ -883,5 +893,11 @@ extension AppModel {
 
         sections.append("User request:\n\(text)")
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Whether the request names a generated image by its workspace path, the
+    /// form Edit in chat prefills: a backticked `Locus Images/…` path.
+    static func namesWorkspaceImagePath(_ text: String) -> Bool {
+        text.range(of: "`Locus Images/[^`]+`", options: .regularExpression) != nil
     }
 }

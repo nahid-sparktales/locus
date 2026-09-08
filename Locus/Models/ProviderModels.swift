@@ -193,6 +193,60 @@ struct ProviderStateResponse: Codable {
     }
 }
 
+/// `GET`/`POST /api/images/provider`: the public half of the image provider
+/// configuration. The key itself never comes back — only whether one is held.
+struct ImageProviderStateResponse: Codable, Hashable {
+    let configured: Bool
+    let host: String
+    let model: String
+    let size: String
+    let quality: String
+    let accountID: String
+    let accountLabel: String
+    let hasAPIKey: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case configured, host, model, size, quality
+        case accountID = "account_id"
+        case accountLabel = "account_label"
+        case hasAPIKey = "has_api_key"
+    }
+
+    init(
+        configured: Bool,
+        host: String = "",
+        model: String = "",
+        size: String = "",
+        quality: String = "",
+        accountID: String = "",
+        accountLabel: String = "",
+        hasAPIKey: Bool = false
+    ) {
+        self.configured = configured
+        self.host = host
+        self.model = model
+        self.size = size
+        self.quality = quality
+        self.accountID = accountID
+        self.accountLabel = accountLabel
+        self.hasAPIKey = hasAPIKey
+    }
+
+    // Tolerant: an unconfigured provider may report its string fields as
+    // null, and that must read as "off", not as a decoding failure.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        configured = try container.decodeIfPresent(Bool.self, forKey: .configured) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        size = try container.decodeIfPresent(String.self, forKey: .size) ?? ""
+        quality = try container.decodeIfPresent(String.self, forKey: .quality) ?? ""
+        accountID = try container.decodeIfPresent(String.self, forKey: .accountID) ?? ""
+        accountLabel = try container.decodeIfPresent(String.self, forKey: .accountLabel) ?? ""
+        hasAPIKey = try container.decodeIfPresent(Bool.self, forKey: .hasAPIKey) ?? false
+    }
+}
+
 struct ChatGPTAccountResponse: Codable, Hashable {
     let status: String
     let runtimeAvailable: Bool
