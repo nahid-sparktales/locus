@@ -120,6 +120,75 @@ final class ResponseEventTests: XCTestCase {
     }
 }
 
+extension ResponseEventTests {
+    private func imageAndInteractive(workspace: String) -> [String: Any] {
+        ["version": 1, "parts": [
+            ["type": "image", "id": "picture", "title": "Harbour at dusk", "workspace": workspace,
+             "path": "Locus Images/harbour.png", "alt": "A harbour", "prompt": "A quiet harbour",
+             "source_path": "Locus Images/source.png", "width": 1024, "height": 1024, "format": "png", "size": 2048],
+            ["type": "interactive", "id": "widget", "title": "Binary search", "summary": "Step through the search.",
+             "html": "<div><button>Step</button></div>", "height": 420],
+        ]]
+    }
+
+    func testClassicAndNativeCompletionsAttachImageAndInteractiveParts() throws {
+        for native in [false, true] {
+            let model = AppModel(startImmediately: false)
+            var final: [String: Any] = ["type": native ? "assistant_item_end" : "message_end",
+                "item_id": "final", "run_id": "run", "kind": "message", "phase": "final_answer",
+                "response_parts": imageAndInteractive(workspace: "/tmp/workspace")]
+            final[native ? "text" : "content"] = "![A harbour](/tmp/workspace/Locus%20Images/harbour.png)\n\nHarbour at dusk"
+            model.handleEventForTesting(final)
+            let block = try XCTUnwrap(model.blocks.onlyAssistant, native ? "native" : "classic")
+            let document = try XCTUnwrap(block.responseParts)
+            XCTAssertTrue(document.isSupported)
+            XCTAssertEqual(document.parts.map(\.type), ["image", "interactive"])
+            XCTAssertEqual(document.parts[0].width, 1024)
+            XCTAssertEqual(document.parts[0].byteSize, 2048)
+            XCTAssertEqual(document.parts[0].sourcePath, "Locus Images/source.png")
+            XCTAssertEqual(document.parts[1].interactiveHeight, 420)
+            XCTAssertEqual(document.parts[1].summary, "Step through the search.")
+            XCTAssertTrue(block.text.hasPrefix("![A harbour]"), "The Markdown fallback stays the message text")
+        }
+    }
+
+    func testToolResultFileEffectsCaptureGeneratedImageIntoOutputs() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ResponseEventTests-\(UUID())")
+        let workspace = root.appendingPathComponent("workspace")
+        try FileManager.default.createDirectory(at: workspace.appendingPathComponent("Locus Images"), withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + Data(repeating: 0, count: 64)
+        try png.write(to: workspace.appendingPathComponent("Locus Images/sunset.png"))
+        let store = OutputsLibraryStore(directory: root.appendingPathComponent("library"))
+        let outputs = OutputsLibraryModel(store: store)
+        outputs.configure(emitter: SessionStateEmitter(), enabled: true)
+        outputs.activate(workspace: workspace.path)
+        outputs.beginRun(workspace: workspace.path, sessionID: "chat", runID: "run")
+        let event: [String: Any] = ["type": "tool_result", "id": "image-call", "tool": "generate_image", "ok": true,
+            "run_id": "run", "result": "Created image Locus Images/sunset.png (1024×1024 PNG, 72 bytes, gpt-image-1).",
+            "activity_label": "Created image Locus Images/sunset.png",
+            "file_effects": [["path": "Locus Images/sunset.png", "effect": "create"]]]
+        outputs.recordToolEffects(event, workspace: workspace.path, sessionID: "chat", runID: "run")
+        outputs.endRun(sessionID: "chat")
+        await outputs.flush()
+        let items = try await store.list(workspace: workspace.path)
+        XCTAssertEqual(items.map(\.target), ["Locus Images/sunset.png"])
+        XCTAssertEqual(items.first?.kind, "image")
+        XCTAssertTrue(items.first?.latest?.belongsTo(sessionID: "chat", runID: "run") == true)
+        XCTAssertEqual(items.first?.latest?.byteCount, Int64(png.count))
+
+        let model = AppModel(startImmediately: false)
+        model.handleEventForTesting(["type": "tool_call_proposed", "id": "image-call", "tool": "generate_image", "auto": true,
+                                     "summary": "generate image: \"sunset\"", "detail": ""])
+        model.handleEventForTesting(event)
+        let tool = try XCTUnwrap(model.blocks.last?.tool)
+        XCTAssertEqual(tool.status, .done)
+        XCTAssertEqual(tool.activityLabel, "Created image Locus Images/sunset.png")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool]).title, "Created image Locus Images/sunset.png")
+        XCTAssertEqual(CompactToolActivitySummary(tools: [tool]).systemImage, "photo")
+    }
+}
+
 private extension Array where Element == ChatBlock {
     var onlyAssistant: ChatBlock? {
         let values = filter { $0.kind == .assistant }

@@ -110,6 +110,31 @@ final class ResponseOutputUITests: XCTestCase {
         capture("Response artifact opens its saved version")
     }
 
+    func testGeneratedImageCardOffersEditInChatAndAttachesToComposer() {
+        launch(focus: "image")
+        let card = element("message.generatedImage")
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.hasPrefix("Generated image, Harbour at dusk, 480 by 320"))
+        XCTAssertTrue(element("message.generatedImage.open").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("message.generatedImage.reveal").exists)
+        XCTAssertTrue(element("message.generatedImage.more").exists)
+        XCTAssertFalse(element("message.generatedImage.unavailable").exists)
+        let edit = element("message.generatedImage.edit")
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        XCTAssertTrue(edit.isEnabled)
+        XCTAssertEqual(edit.label, "Edit in chat Locus Images/fixture.png")
+        capture("Response generated image card")
+        clickInTranscript(edit)
+        let chip = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@", "composer.attachmentChip.", ".remove"))
+            .firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        XCTAssertTrue(chip.label.contains("fixture.png"), chip.label)
+        let input = element("composer.input")
+        XCTAssertTrue(waitUntil { (input.value as? String ?? "").contains("Locus Images/fixture.png") })
+        capture("Response generated image attached for editing")
+    }
+
     func testLightDarkAndNarrowControlsRemainLabeledAndReachable() {
         for appearance in ["light", "dark"] {
             app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance
