@@ -33,7 +33,12 @@ extension AppModel {
         capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil
     ) {
         guard admitTranscriptInput() else { return }
-        let pendingCapsule = taskCapsules.pendingPlanningRequest(for: currentSessionID)
+        if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
+            sendDuo(rawText, includeAttachments: includeAttachments)
+            return
+        }
+        let pendingCapsule = (selectedMode != .duo && duoTask != nil)
+            ? nil : taskCapsules.pendingPlanningRequest(for: currentSessionID)
         let capsuleDispatch = explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
         if pendingCapsule != nil, capsuleDispatch == nil { return }
         if capsuleDispatch != nil, isBusy || hasPendingPermission {
@@ -894,6 +899,8 @@ extension AppModel {
     }
 
     func drainQueuedMessages() {
+        if selectedMode == .duo, let phase = duoTask?.phase,
+           phase != .planning && phase != .completed { return }
         guard canAcceptTranscriptInput, !goals.isDiscardingUserInput(sessionID: currentSessionID),
               !isBusy, !hasPendingPermission, !planApprovalPending,
               pendingUserQuestion == nil, !queuedMessages.isEmpty else {
@@ -989,6 +996,10 @@ extension AppModel {
 
     func retryLastResponse() {
         guard admitTranscriptInput() else { return }
+        if selectedMode == .duo {
+            showToast("Use Duo's Resume, Revise, or New plan action to continue")
+            return
+        }
         guard !isBusy, !hasPendingPermission,
               blocks.contains(where: { $0.kind == .user })
         else { return }

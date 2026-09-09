@@ -13,6 +13,11 @@ extension AppModel {
         guard let type = event["type"] as? String else { return }
         if source == nil || source === backend {
             goals.handleEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID)
+            let owner = event["session_id"] as? String ?? currentSessionID
+            if taskCapsules.activeStageSessions[owner] != nil {
+                duo.handleEvent(event, sessionID: owner)
+                taskCapsules.handleEvent(event, sessionID: owner)
+            }
         }
         if handleOptionalQuestionEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID) { return }
         if ["identity_action_request", "identity_context_request", "identity_cancelled"].contains(type) {
@@ -925,6 +930,9 @@ extension AppModel {
         defer { transcriptSessionMetadataDidBecomeReady() }
         pendingTranscriptTransition = nil
         let previousSessionID = currentSessionID
+        defer {
+            if previousSessionID != currentSessionID, duoTask != nil { selectedMode = .duo }
+        }
         let isDuplicateAcknowledgement = currentSessionID == info.sessionID
             && !pendingSessionReset
             && !pendingRetry

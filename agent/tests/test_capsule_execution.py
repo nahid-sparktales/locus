@@ -533,3 +533,43 @@ def test_generic_team_resume_keeps_existing_checkpoint_path(monkeypatch, tmp_pat
     response = asyncio.run(runs_api._resume_orchestration(service, _no_model, record["id"], {"manifest": {"team": {"id": "team-one"}}}, action="resume"))
     assert response["state"] == "queued"
     assert starts[0][1][-1]["_resume"] == record["checkpoint"]["state"]
+
+
+def test_duo_followup_uses_work_mode_and_execution_allowance(capsule_setup, monkeypatch):
+    from ollama_code.capsule_progress import CapsuleProgressStore
+    workspace, store, capsule, profiles = capsule_setup
+    service, events = _service(workspace)
+    monkeypatch.setattr(CapsuleProgressStore, "list", lambda self, capsule_id: [{"state": "completed"}])
+    calls = []
+    run_capsule_request(service, "Polish the result", _context(capsule, profiles, "followup"), None, None,
+                        "followup-one", run_user=lambda *args: calls.append(args), run_team=_no_model)
+    assert len(calls) == 1
+    assert calls[0][5] == "work"
+    assert calls[0][-1] == capsule["recipe"]["execution_call_limit"]
+    assert "Polish the result" in calls[0][1]
+    assert "Preserve the public API" in calls[0][1]
+    assert not [event for event in events if event["type"] == "error"]
+    assert store.get(capsule["id"])["runs"][-1]["stage"] == "followup"
+
+
+def test_duo_followup_cannot_bypass_unfinished_build(capsule_setup, monkeypatch):
+    from ollama_code.capsule_progress import CapsuleProgressStore
+    workspace, store, capsule, profiles = capsule_setup
+    service, events = _service(workspace)
+    monkeypatch.setattr(CapsuleProgressStore, "list", lambda self, capsule_id: [{"state": "paused"}])
+    run_capsule_request(service, "Continue", _context(capsule, profiles, "followup"), None, None,
+                        "followup-too-early", run_user=_no_model, run_team=_no_model)
+    assert any("resume the saved build" in event.get("message", "") for event in events)
+    assert store.get(capsule["id"])["runs"] == []
+
+
+def test_duplicate_duo_handoff_does_not_create_another_attempt(capsule_setup):
+    from ollama_code.capsule_progress import CapsuleProgressStore
+    workspace, store, capsule, profiles = capsule_setup
+    service, events = _service(workspace)
+    store.record_run(capsule["id"], "first-run", "execute", "completed", expected_revision=1,
+                     reserve=True, handoff_id="same-acceptance")
+    context = {**_context(capsule, profiles), "handoff_id": "same-acceptance"}
+    run_capsule_request(service, "Build", context, None, None, "duplicate-run", run_user=_no_model, run_team=_no_model)
+    assert any("already started" in event.get("message", "") for event in events)
+    assert CapsuleProgressStore(service.run_store).list(capsule["id"]) == []

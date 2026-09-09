@@ -307,3 +307,41 @@ def test_run_conversation_link_requires_available_run_in_capsule_workspace(works
         assert "session_id" not in presented_run()
     finally:
         client.close()
+
+
+def test_duo_acceptance_reserves_one_run_even_with_different_run_ids(workspace, payload):
+    store = CapsuleStore(str(workspace))
+    capsule = store.create(payload)
+
+    def reserve(index):
+        try:
+            return store.record_run(capsule["id"], f"duo-run-{index}", "execute", "running",
+                                    expected_revision=1, reserve=True, handoff_id="accepted-plan-once")
+        except CapsuleError as error:
+            assert error.status_code == 409
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(reserve, range(4)))
+    winners = [result for result in results if result]
+    assert len(winners) == 1
+    winner = winners[0]
+    store.record_run(capsule["id"], winner["run_id"], "execute", "completed")
+    reopened = CapsuleStore(str(workspace))
+    with pytest.raises(CapsuleError, match="already started"):
+        reopened.record_run(capsule["id"], "after-restart", "execute", "running",
+                            expected_revision=1, reserve=True, handoff_id="accepted-plan-once")
+    assert len(reopened.get(capsule["id"])["runs"]) == 1
+    assert reopened.get(capsule["id"])["runs"][0]["handoff_id"] == "accepted-plan-once"
+
+
+def test_duo_handoff_rejects_stale_revision_and_non_execution_stage(workspace, payload):
+    store = CapsuleStore(str(workspace))
+    capsule = store.create(payload)
+    store.update(capsule["id"], {"title": "Revised"}, 1)
+    with pytest.raises(CapsuleError, match="changed"):
+        store.record_run(capsule["id"], "stale", "execute", "running", expected_revision=1,
+                         reserve=True, handoff_id="accept-old")
+    with pytest.raises(CapsuleError, match="only execution"):
+        store.record_run(capsule["id"], "plan", "plan", "running", reserve=True, handoff_id="accept-old")
+    assert store.get(capsule["id"])["runs"] == []

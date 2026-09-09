@@ -362,7 +362,7 @@ class CapsuleStore:
                 changes.append({"path": previous["path"], "reason": "unsafe", "detail": str(exc)})
         return {"valid": not changes, "capsule_id": capsule_id, "revision": capsule["revision"], "changes": changes, "checked_files": len(capsule["source_fingerprints"])}
 
-    def record_run(self, capsule_id: str, run_id: str, stage: str, state: str, expected_revision: int | None = None, *, continuation_of_run_id: str | None = None, reserve: bool = False, attempt_id: str | None = None) -> dict[str, Any]:
+    def record_run(self, capsule_id: str, run_id: str, stage: str, state: str, expected_revision: int | None = None, *, continuation_of_run_id: str | None = None, reserve: bool = False, attempt_id: str | None = None, handoff_id: str | None = None) -> dict[str, Any]:
         run_id = _identifier(run_id, "run_id")
         stage = _identifier(stage, "stage")
         state = _identifier(state, "state")
@@ -370,6 +370,10 @@ class CapsuleStore:
             _integer(expected_revision, "expected_revision", high=2**31 - 1)
         if attempt_id is not None:
             attempt_id = _identifier(attempt_id, "attempt_id")
+        if handoff_id is not None:
+            handoff_id = _identifier(handoff_id, "handoff_id")
+            if stage != "execute":
+                raise CapsuleError("only execution can reserve a plan handoff")
         if continuation_of_run_id is not None:
             continuation_of_run_id = _identifier(continuation_of_run_id, "continuation_of_run_id")
             if stage != "escalate" or continuation_of_run_id == run_id:
@@ -380,6 +384,8 @@ class CapsuleStore:
             if expected_revision is not None and capsule["revision"] != expected_revision:
                 raise CapsuleError("capsule changed before execution was linked", 409)
             previous = next((item for item in capsule["runs"] if item["run_id"] == run_id), None)
+            if reserve and handoff_id and any(item.get("handoff_id") == handoff_id for item in capsule["runs"]):
+                raise CapsuleError("This accepted plan was already started. Refresh and resume its saved attempt.", 409)
             if previous and reserve:
                 raise CapsuleError("this capsule run was already started", 409)
             if previous and previous["stage"] != stage:
@@ -402,11 +408,13 @@ class CapsuleStore:
             link = {"run_id": run_id, "stage": stage, "state": state, "revision": previous["revision"] if previous else capsule["revision"], "updated_at": _now()}
             if attempt_id is not None:
                 link["attempt_id"] = attempt_id
+            if handoff_id is not None:
+                link["handoff_id"] = handoff_id
             if parent is not None:
                 link["continuation_of_run_id"] = parent["run_id"]
                 link["escalation_root_run_id"] = parent.get("escalation_root_run_id", parent["run_id"])
             elif previous:
-                for field in ("continuation_of_run_id", "escalation_root_run_id", "attempt_id"):
+                for field in ("continuation_of_run_id", "escalation_root_run_id", "attempt_id", "handoff_id"):
                     if field in previous:
                         link[field] = previous[field]
             connection.execute("INSERT INTO capsule_runs VALUES(?,?,?) ON CONFLICT(capsule_id,run_id) DO UPDATE SET payload=excluded.payload", (capsule_id, run_id, json.dumps(link)))

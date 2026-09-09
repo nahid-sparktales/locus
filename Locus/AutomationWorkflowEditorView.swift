@@ -258,7 +258,7 @@ private struct WorkflowStepCard: View {
         Picker("Work mode", selection: Binding(
             get: { step.mode ?? .work }, set: { step.mode = $0 }
         )) {
-            ForEach(WorkMode.allCases) { Text($0.title).tag($0) }
+            ForEach(WorkMode.automationCases) { Text($0.title).tag($0) }
         }
         VStack(alignment: .leading, spacing: 5) {
             HStack {

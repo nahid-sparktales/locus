@@ -31,10 +31,18 @@ extension AppModel {
     }
 
     func configureTaskCapsules() {
+        taskCapsules.didSavePlan = { [weak self] capsule, request in
+            self?.duo.planSaved(capsule, request: request)
+        }
+        taskCapsules.didFailToSavePlan = { [weak self] request in
+            guard let self, let id = request.originSessionID, var task = duo.saved.tasks[id] else { return }
+            task.error = "The plan could not be saved. Retry saving before accepting it."
+            duo.put(task)
+        }
         taskCapsules.configure(
             backend: backend,
             workspacePathProvider: { [weak self] in self?.workspacePath ?? "" },
-            profilesProvider: { [weak self] in self?.agentProfiles ?? [] },
+            profilesProvider: { [weak self] in self?.capsuleProfiles ?? [] },
             profileLabelProvider: { [weak self] profile in
                 let account = self?.providerAccounts.first { $0.id == profile.route.accountID }
                 return "\(profile.name) · \(profile.model) · \(account?.displayName ?? "Local Ollama")"
@@ -101,23 +109,25 @@ extension AppModel {
     }
 
     func capsulePlanningDispatch(_ request: TaskCapsulePlanningRequest) -> TaskCapsuleDispatch? {
-        var context: [String: Any] = ["stage": request.capsuleID == nil ? "plan" : "escalate",
+        let stage = request.capsuleID == nil || request.revisionOnly == true ? "plan" : "escalate"
+        var context: [String: Any] = ["stage": stage,
                                       "call_limit": request.recipe.planningCallLimit]
         if let id = request.capsuleID { context["id"] = id }
         if let revision = request.expectedRevision { context["revision"] = revision }
-        if request.capsuleID != nil, let runID = request.originRunID {
+        if stage == "escalate", let runID = request.originRunID {
             context["continuation_of_run_id"] = runID
         }
         return capsuleDispatch(profileID: request.recipe.plannerProfileID, context: context, mode: .plan)
     }
 
-    func startCapsuleStage(_ capsule: TaskCapsule, stage: String, resumeAttemptID: String? = nil, checksOnly: Bool = false) {
+    func startCapsuleStage(_ capsule: TaskCapsule, stage: String, resumeAttemptID: String? = nil, checksOnly: Bool = false, handoffID: String? = nil) {
         guard !isIdentityTask, !isBusy, !hasPendingPermission, isAgentOnline,
               TaskCapsuleModel.canonicalWorkspace(capsule.workspaceRoot) == TaskCapsuleModel.canonicalWorkspace(workspacePath) else {
             taskCapsules.error = "Open an idle regular task in this capsule's workspace and connect the agent."
             return
         }
         var context: [String: Any] = ["id": capsule.id, "revision": capsule.revision, "stage": stage]
+        if let handoffID { context["handoff_id"] = handoffID }
         if let resumeAttemptID {
             context["resume_attempt_id"] = resumeAttemptID
             context["checks_only"] = checksOnly
@@ -145,8 +155,8 @@ extension AppModel {
              consumeMatchingDraft: false, allowLocalCommands: false, capsuleDispatch: dispatch)
     }
 
-    private func capsuleDispatch(profileID: String, context: [String: Any], mode: WorkMode) -> TaskCapsuleDispatch? {
-        guard let profile = agentProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(profileID) == .orderedSame }),
+    func capsuleDispatch(profileID: String, context: [String: Any], mode: WorkMode) -> TaskCapsuleDispatch? {
+        guard let profile = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(profileID) == .orderedSame }),
               let resolved = capsuleProvider(profile) else { return nil }
         return TaskCapsuleDispatch(profile: profile, provider: resolved.provider, accountID: resolved.accountID,
                                    providerBody: resolved.body, context: context, mode: mode)
@@ -188,7 +198,7 @@ extension AppModel {
     }
 
     private func capsuleProfilePayload(id: String) -> [String: Any]? {
-        guard let profile = agentProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }),
+        guard let profile = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }),
               let resolved = capsuleProvider(profile) else { return nil }
         var route = resolved.body
         if resolved.provider == "ollama" { route["host"] = lastOllamaHost }

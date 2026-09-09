@@ -5,7 +5,11 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
     case ask
     case work
     case plan
+    case duo
     case grill
+
+    /// Duo needs an interactive acceptance and a task-owned model pair.
+    static var automationCases: [WorkMode] { allCases.filter { $0 != .duo } }
 
     var id: String { rawValue }
 
@@ -32,6 +36,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .ask: "Ask"
         case .work: "Work"
         case .plan: "Plan"
+        case .duo: "Duo"
         case .grill: "Grill"
         }
     }
@@ -41,6 +46,7 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .ask: "Answers without workspace access"
         case .work: "Chooses the right approach for the request"
         case .plan: "Maps the work before editing"
+        case .duo: "Plan with one model, build with another"
         case .grill: "Stress-tests an idea one question at a time"
         }
     }
@@ -51,6 +57,8 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
             "Answer conversationally using only the conversation and files or images the user explicitly attached to this message. Do not inspect attachment paths or browse, read, search, or modify any other workspace files. Do not call tools, skills, or external integrations."
         case .work:
             "Solve the request using the workspace and tools when useful. Choose whether to answer, inspect, plan, or implement from the request itself. Follow the current permission policy for every action."
+        case .duo:
+            WorkMode.plan.instruction + " Prepare a handoff for the user's selected implementation model. Execution starts only after the user accepts the saved plan."
         case .plan:
             "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed by calling ask_question with your options and recommended answer. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
         case .grill:
