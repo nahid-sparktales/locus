@@ -294,6 +294,7 @@ final class ScheduleModel: ObservableObject {
     }
 
     func startScheduleCoordinator() {
+        guard !RuntimeInstallation.enabled else { return }
         guard persistenceEnabled, scheduleCoordinatorTask == nil else { return }
         scheduleCoordinatorTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -305,6 +306,7 @@ final class ScheduleModel: ObservableObject {
     }
 
     func processDueSchedules(now: Date = Date()) async {
+        guard !RuntimeInstallation.enabled else { return }
         guard persistenceEnabled, !isDispatchingSchedules, !isShuttingDown() else { return }
         isDispatchingSchedules = true
         defer { isDispatchingSchedules = false }

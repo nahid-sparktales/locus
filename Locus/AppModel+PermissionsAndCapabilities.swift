@@ -454,7 +454,10 @@ extension AppModel {
     #endif
     @discardableResult
     func sendConnectorCapability(to transport: BackendService) -> Bool {
-        transport.send([
+        if RuntimeInstallation.enabled {
+            Task { await eventAutomations.provisionRuntimeCredentials() }
+        }
+        return transport.send([
             "type": "set_connector_control",
             "capability": eventAutomations.connectorCapability(),
         ])

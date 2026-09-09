@@ -140,6 +140,10 @@ targetTemplates:
         script: |
           "$SRCROOT/Tools/CleanStaleBuildProducts.sh"
     postBuildScripts:
+      - name: Build independent runtime helper
+        basedOnDependencyAnalysis: false
+        script: |
+          /bin/zsh "$SRCROOT/Tools/BuildRuntimeHelper.sh"
       - name: Build local document extractor
         basedOnDependencyAnalysis: false
         script: |

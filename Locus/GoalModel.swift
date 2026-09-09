@@ -357,6 +357,7 @@ final class GoalModel: ObservableObject {
     /// Wakeups are hints. A single coordinator checks authoritative state and
     /// root admission again after the claim before handing a run to dispatch.
     func wake() {
+        guard !RuntimeInstallation.enabled else { return }
         guard supportsGoals, !isStopped, !isShuttingDown() else { return }
         guard coordinator == nil else { wakeRequested = true; return }
         wakeRequested = false

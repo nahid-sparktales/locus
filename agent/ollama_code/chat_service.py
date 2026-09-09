@@ -859,7 +859,7 @@ class ChatService:
             "timeout_ms": 60_000,
         })
         try:
-            result = future.result(timeout=60)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else 60)
         except FutureTimeout:
             return "Error: native computer action timed out after 60 seconds."
         finally:
@@ -901,7 +901,7 @@ class ChatService:
             "timeout_ms": timeout * 1_000,
         })
         try:
-            result = future.result(timeout=timeout + 5)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else timeout + 5)
         except FutureTimeout:
             return f"Error: simulator action timed out after {timeout} seconds."
         finally:
@@ -1045,7 +1045,7 @@ class ChatService:
         })
         try:
             result = future.result(
-                timeout=budget_ms / 1000 + BROWSER_TIMEOUT_SLACK_SECONDS
+                timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else budget_ms / 1000 + BROWSER_TIMEOUT_SLACK_SECONDS
             )
         except FutureTimeout:
             return f"Error: the browser did not answer within {budget_ms // 1000} seconds."
@@ -1085,7 +1085,7 @@ class ChatService:
             "session_id": self.core.session.session_id,
         })
         try:
-            result = future.result(timeout=NOTES_BUDGET_MS / 1000 + 2)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else NOTES_BUDGET_MS / 1000 + 2)
         except FutureTimeout:
             return "Error: Notes did not answer within 15 seconds."
         finally:

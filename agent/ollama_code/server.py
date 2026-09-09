@@ -177,9 +177,14 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(restore_document_jobs)
     parent_pid = _configured_parent_pid()
     parent_watch = asyncio.create_task(_watch_parent(parent_pid)) if parent_pid else None
+    independent = getattr(app.state, "runtime", None)
+    if independent is not None:
+        await independent.start()
     try:
         yield
     finally:
+        if independent is not None:
+            await independent.close()
         from .document_library import stop_document_jobs
         await asyncio.to_thread(stop_document_jobs)
         if parent_watch is not None:

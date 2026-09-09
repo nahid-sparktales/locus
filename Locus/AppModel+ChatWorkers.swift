@@ -44,7 +44,28 @@ extension AppModel {
             workerEnvironment["LOCUS_CODEX_BROKER_URL"] = brokerURL
             workerEnvironment["LOCUS_CODEX_BROKER_TOKEN"] = BackendSecurity.launchToken
         }
-        let launch = process.start(
+        let launch: BackendLaunchResult
+        var serviceOverride: BackendService?
+        var attachingActiveWork = false
+        if RuntimeInstallation.enabled {
+            do {
+                let attachment: RuntimeWorkerAttachment = try await backend.post(
+                    "/api/runtime/workers",
+                    body: ["session_id": requestedSessionID, "workspace": workspaceRoot],
+                    timeout: 40, as: RuntimeWorkerAttachment.self
+                )
+                attachingActiveWork = attachment.active
+                let endpoint = backend.currentBaseURL.appending(path: attachment.pathPrefix)
+                process.attach(to: endpoint)
+                serviceOverride = BackendService(baseURL: endpoint,
+                    websocketPath: attachment.websocketPath)
+                launch = .running(endpoint)
+            } catch {
+                showToast("The independent runtime could not attach this chat: \(error.localizedDescription)")
+                return nil
+            }
+        } else {
+            launch = process.start(
             root: settings.backendRoot,
             port: 0,
             cwd: workspaceRoot,
@@ -55,6 +76,7 @@ extension AppModel {
                 providerAccountID: routedAccountID
             )
         )
+        }
         guard case .running(let endpoint) = launch else {
             if case .failed(let message) = launch { showToast(message) }
             return nil
@@ -63,7 +85,8 @@ extension AppModel {
             requestedSessionID: requestedSessionID,
             workspacePath: workspaceRoot,
             process: process,
-            endpoint: endpoint
+            endpoint: endpoint,
+            service: serviceOverride
         )
         let capturedIdentityProvider = identityProviderIdentity(accountID: routedAccountID, model: model)
         taskWorkers[requestedSessionID] = runtime
@@ -199,7 +222,7 @@ extension AppModel {
         // accepts a message, then ask the worker itself whether that provider is
         // usable. An HTTP 200 from /health only means the local server answered;
         // `ollama` is the compatibility field that reports model readiness.
-        if let failure = await prepareChatWorkerProvider(
+        if !attachingActiveWork, let failure = await prepareChatWorkerProvider(
             using: runtime.service,
             provider: provider,
             providerAccountID: providerAccountID,
@@ -216,7 +239,7 @@ extension AppModel {
         // own copy of the key, and without it the image tools are absent from
         // every turn the worker runs. A failure costs the tools, not the
         // worker.
-        await pushImageProvider(to: runtime.service)
+        if !attachingActiveWork { await pushImageProvider(to: runtime.service) }
         runtime.service.connect()
         runtime.identityProvider = capturedIdentityProvider
         for _ in 0..<40 where !runtime.isConnected {
@@ -271,7 +294,7 @@ extension AppModel {
         runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
             to: runtime.service
         )
-        _ = await syncPreferredPermissionModeAndWait(to: runtime.service)
+        if !attachingActiveWork { _ = await syncPreferredPermissionModeAndWait(to: runtime.service) }
         runtime.isAttaching = false
         syncBrowserProtectedSessions()
         return runtime
@@ -603,7 +626,7 @@ extension AppModel {
             runWalletAction(event, on: runtime.service)
         }
         #endif
-        if type == "connector_action_request" {
+        if type == "connector_action_request", !RuntimeInstallation.enabled {
             eventAutomations.handleAction(
                 event, workspacePath: runtime.workspacePath, on: runtime.service
             )

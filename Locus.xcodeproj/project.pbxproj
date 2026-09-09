@@ -345,6 +345,7 @@
 		3EB73A207975893878E53D8B /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
 		3F1986732F6154797F51186C /* companion-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = 7128A98CCDB47A9F298DEF81 /* companion-v1.json */; };
 		3F2145D5725D20FADBDE7249 /* BrowserSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7EC9F73687880887B6C9153 /* BrowserSettingsView.swift */; };
+		3F4C1FFC0F1C0662C4D3C9AC /* RuntimesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */; };
 		3F5893E197F61FF3311FCFE3 /* JSONBridging.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18DF12402ABC3DF35FEADFC /* JSONBridging.swift */; };
 		3F59DF9C3CD4ED07F3AE4650 /* ModelLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB88F08135C226D4D6AFF6A /* ModelLibraryView.swift */; };
 		3F68866037C1281300CEB9A3 /* AppModel+RuntimeAndLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68D6F1CB03EC460FC68F13FB /* AppModel+RuntimeAndLifecycle.swift */; };
@@ -406,6 +407,7 @@
 		4AD7B468E7DD24599918B418 /* PinnedSummaryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 535F3FB7D434799FB66DADAA /* PinnedSummaryModel.swift */; };
 		4B04DAA56E9627752AF635D3 /* OutputsLibraryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D992FBA0B5D1A66A4C0107B /* OutputsLibraryModel.swift */; };
 		4B62A8085DDB972D126F9B55 /* OnboardingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7319E19CEAC14B0E501AB68B /* OnboardingModelTests.swift */; };
+		4B92FF965EEF77ECC894491A /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */; };
 		4B97F600E5CDF68E3F77C0EA /* InteractiveAnswerHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3411DB72F172857D07DD4158 /* InteractiveAnswerHost.swift */; };
 		4BCD2B4D60FCD04EF981B118 /* EventConnectorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113F63D8FC35F53C8044F1A4 /* EventConnectorClient.swift */; };
 		4BE55FED33AE48A14754ABBF /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 6A124AD70DDAAAE3920F5741 /* Markdown */; };
@@ -464,6 +466,7 @@
 		5948239B18E86A0A7AABCA45 /* WalletSignerNotices.md in Resources */ = {isa = PBXBuildFile; fileRef = 5AC8014C64E4124F10C8756F /* WalletSignerNotices.md */; };
 		599F004A4ADC24585733B658 /* BrowserAnnotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 502310F907C376034E4FE9E3 /* BrowserAnnotation.swift */; };
 		59E949BA47DBF21B5C160D01 /* CompanionSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E940CB9835CFDD6B6864DD28 /* CompanionSecurity.swift */; };
+		59FAA9B5DF7BFDF84A8D838D /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */; };
 		5A1B0C67B21DDAD7059C832A /* WorkspaceKnowledgeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C871BE1CE3BB959EC438EAE /* WorkspaceKnowledgeModelTests.swift */; };
 		5ACC98F4EFF773A5F91C1941 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */; };
 		5AE5FD82013B8869721E1E04 /* BrowserBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D7A27ACF9B37EC8F79B9D7 /* BrowserBridge.swift */; };
@@ -488,6 +491,7 @@
 		613462B36BCAAA914F81BA32 /* AppModel+PermissionsAndCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F1D91E4EBBD0BE7E4027FD /* AppModel+PermissionsAndCapabilities.swift */; };
 		61463AE601806298E64E6C67 /* companion-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = 7128A98CCDB47A9F298DEF81 /* companion-v1.json */; };
 		6162A9BD4774296FD79CBAC4 /* BrowserHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428755E5B586F084930BCE41 /* BrowserHost.swift */; };
+		617DC040124A2D2083AFE7B8 /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */; };
 		61A2FCBF63BD1ADC41F5354B /* ArtifactThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F6E25E535172B15DB9718D /* ArtifactThumbnailStore.swift */; };
 		61D90A2AB0F07C46BE4B5B40 /* BlockingQuestionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 356CA22BE8188537F64A9D86 /* BlockingQuestionPromptView.swift */; };
 		6279DC80A88DB803A9A75CEF /* ResponseEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD4AFD13DD77EE4D9D02609 /* ResponseEventTests.swift */; };
@@ -545,6 +549,7 @@
 		6F1AE8D7CC8F06F66910E29E /* ExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 819B94A8EAA15CE9EDBDDC53 /* ExtensionModels.swift */; };
 		6FDB5F37C36EE733A8A7DD43 /* UsageDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC6B3A08FFA65A82439731 /* UsageDashboardView.swift */; };
 		6FF99DD158B1E68B8ED79912 /* AppModel+Workspaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */; };
+		6FFF947046133555C39A99E2 /* RuntimeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */; };
 		705899014FE0A88BE37D6D12 /* MarkdownTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */; };
 		7058A5FED667FEE26F0CDFAC /* ConnectorCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC319DECFC4BFE93E4E3AB5F /* ConnectorCredentialStore.swift */; };
 		707FB53154610E18F943F681 /* AppModel+ResponseOutputFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 396C4535C45E729833627F88 /* AppModel+ResponseOutputFixtures.swift */; };
@@ -677,6 +682,7 @@
 		8F674D1398BBBFEB043FB536 /* GitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06DD9A63C8FBDB42368F8A0C /* GitClient.swift */; };
 		905A0324EC1C01C7D0A0DEBB /* ActivityCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA846238A2408DF496777142 /* ActivityCenterModel.swift */; };
 		90667593E38291947FC2EEC8 /* CompanionGatewayDispatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB8D5DA2649A27A3EBA878A /* CompanionGatewayDispatchTests.swift */; };
+		90977CDF743223FCBAD2E25F /* RuntimesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */; };
 		90C2ED2DE9CA123B0A892707 /* AppLifecycleJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81270ABC0C4D667173248A3F /* AppLifecycleJournal.swift */; };
 		913FABF6E1B5B7322BDA1A1B /* EventConnectorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113F63D8FC35F53C8044F1A4 /* EventConnectorClient.swift */; };
 		9146D6CB161E11A01A66F82F /* BackendStubSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBABE255234EFEAAAE40D72 /* BackendStubSupport.swift */; };
@@ -930,6 +936,7 @@
 		C0F305A78BD17AAC4C3CE7F8 /* SessionOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4414AFBD9717B5359B81CE8B /* SessionOverviewView.swift */; };
 		C1DFA32682CED8A901DB5E39 /* IdentityApplicationBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5308D25BE0635877EDC86460 /* IdentityApplicationBrowser.swift */; };
 		C1F6EBE8E6C3A810B58D47C3 /* EventAutomationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7184FC675F98588E23686E11 /* EventAutomationsView.swift */; };
+		C214038A774BBC8774C0AE50 /* RuntimesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */; };
 		C214A77B64E488AE82DCFB59 /* WorkspaceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAAE8017A82BDD5DBCA5F587 /* WorkspaceAccess.swift */; };
 		C2C3D86073FE6CE86ED3E66D /* VoiceComposerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF0FF1E4DCB449530C8ACC2 /* VoiceComposerControls.swift */; };
 		C2CD2183CF803CE74B398E28 /* InspectorFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */; };
@@ -1078,6 +1085,7 @@
 		E0705B78079FC51F0121FAF3 /* AppModel+ActivityCenterFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16033E84DC973F0FD1BFA21 /* AppModel+ActivityCenterFacade.swift */; };
 		E0C4DE034C58C7E3A4FB6ED6 /* MarkdownTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374021875E8ACFCCC20B5D90 /* MarkdownTextKit.swift */; };
 		E0E698FFD0BF0458FBF964FB /* WalletConnectionProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87B232DBDE9D6E9C5B3189A2 /* WalletConnectionProtocol.swift */; };
+		E134BE339EC723C9F3620160 /* RuntimesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */; };
 		E14CFF21C8D30630199079C8 /* SessionCatalogModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098BDBE9B53A4C18575502B4 /* SessionCatalogModel.swift */; };
 		E187DD0522A5B15EE301D940 /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3D3389D598BBECBE77E38F /* InspectorView.swift */; };
 		E2372BA7017D4D309842EFBB /* WorkspaceLibraryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545B2CE438B65B82EEEC95F3 /* WorkspaceLibraryModel.swift */; };
@@ -1397,6 +1405,7 @@
 		1F7A61DF792D19E1D35A5A87 /* ResponsePartsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponsePartsView.swift; sourceTree = "<group>"; };
 		1FAD07F692C196220DEAD248 /* ResponseWritingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseWritingView.swift; sourceTree = "<group>"; };
 		206B1FB753D6028103FCB782 /* WalletSuiCanonicalTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSuiCanonicalTransaction.swift; sourceTree = "<group>"; };
+		20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeModel.swift; sourceTree = "<group>"; };
 		21E8E6AA564C3EC2A83957AA /* ResponseOutputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseOutputTests.swift; sourceTree = "<group>"; };
 		2289988300ECB315892091A6 /* WalletSubmittedTransactionReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSubmittedTransactionReconciler.swift; sourceTree = "<group>"; };
 		22DCECBAA7DADB611159A90E /* BrowserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserService.swift; sourceTree = "<group>"; };
@@ -1651,6 +1660,7 @@
 		C52BF62D925A367764AAAEE9 /* ChatExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExportRenderer.swift; sourceTree = "<group>"; };
 		C54FE5D2A0326696C2F35B14 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeCoordinator.swift; sourceTree = "<group>"; };
+		C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimesSettingsView.swift; sourceTree = "<group>"; };
 		CA782425EED25AF7E54297D6 /* ComposerWorkflowPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerWorkflowPopover.swift; sourceTree = "<group>"; };
 		CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutputWatcher.swift; sourceTree = "<group>"; };
 		CC7C7852A461B03BC55CDAB7 /* RecoverySignerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoverySignerClient.swift; sourceTree = "<group>"; };
@@ -2192,6 +2202,8 @@
 				0A10D4837E07C97D6925461E /* ResponseImageView.swift */,
 				1F7A61DF792D19E1D35A5A87 /* ResponsePartsView.swift */,
 				1FAD07F692C196220DEAD248 /* ResponseWritingView.swift */,
+				20EC31D7835B2AA3F859FCD3 /* RuntimeModel.swift */,
+				C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */,
 				F234376C385182244FC1AA19 /* ScheduleModel.swift */,
 				098BDBE9B53A4C18575502B4 /* SessionCatalogModel.swift */,
 				CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */,
@@ -2376,6 +2388,7 @@
 				3D126E6D0964BF8D319384BC /* Sources */,
 				DD475AF090311C77FAF727EA /* Resources */,
 				DEBCA3DC4F29E1709B9E6BB8 /* Frameworks */,
+				B80E5C3DA2E71F14B58A7F64 /* Build independent runtime helper */,
 				B660D6843EA12F001C9B70F7 /* Build local document extractor */,
 				4836D3ED752C1F2CAD3869A8 /* Build pinned Simulator bridge */,
 				314A6CA35922466E9F0C1B81 /* Bundle local agent runtime */,
@@ -2497,6 +2510,7 @@
 				59C5DE0DE3E0E96E926308EE /* Sources */,
 				9F6F41721AEA0044C23292C1 /* Resources */,
 				AE6F4D8B92F12D2248744F21 /* Frameworks */,
+				409A02264DC936C6D129C150 /* Build independent runtime helper */,
 				C0C1F9614FEFB5B97A83F304 /* Build local document extractor */,
 				02EFB3585FD1DEB74B5F3DBC /* Build pinned Simulator bridge */,
 				CA601F8C6A6AE68112132489 /* Bundle local agent runtime */,
@@ -2543,6 +2557,7 @@
 				7E1975B686E691ABEF460A54 /* CopyFiles */,
 				200E55B613D928CC634C891E /* Frameworks */,
 				5929D10133A48CEA71394DD0 /* Embed Dependencies */,
+				3235F6722D69AF64AAF01510 /* Build independent runtime helper */,
 				11AFB3797BC1CE310CA97FE6 /* Build local document extractor */,
 				8FD3051F8F893E6F1C43EBD7 /* Build pinned Simulator bridge */,
 				B975B32A6179A28339F7A45F /* Bundle local agent runtime */,
@@ -2820,6 +2835,25 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Tools/BundleBackend.sh\"\n";
 		};
+		3235F6722D69AF64AAF01510 /* Build independent runtime helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build independent runtime helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/zsh \"$SRCROOT/Tools/BuildRuntimeHelper.sh\"\n";
+		};
 		3F2B840E8999D307E5C8E07B /* Clean stale embedded test bundle */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -2857,6 +2891,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Tools/CleanStaleBuildProducts.sh\"\n";
+		};
+		409A02264DC936C6D129C150 /* Build independent runtime helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build independent runtime helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/zsh \"$SRCROOT/Tools/BuildRuntimeHelper.sh\"\n";
 		};
 		4836D3ED752C1F2CAD3869A8 /* Build pinned Simulator bridge */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -2933,6 +2986,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Tools/BuildDocumentExtractor.sh\"\n";
+		};
+		B80E5C3DA2E71F14B58A7F64 /* Build independent runtime helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build independent runtime helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/zsh \"$SRCROOT/Tools/BuildRuntimeHelper.sh\"\n";
 		};
 		B975B32A6179A28339F7A45F /* Bundle local agent runtime */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -3184,6 +3256,8 @@
 				CE9893BAC75151FA76DE8E3E /* ResponseImageView.swift in Sources */,
 				016D16FD7165F6EC1DB68C4C /* ResponsePartsView.swift in Sources */,
 				B813CA80843187C7DEFC3C82 /* ResponseWritingView.swift in Sources */,
+				6FFF947046133555C39A99E2 /* RuntimeModel.swift in Sources */,
+				90977CDF743223FCBAD2E25F /* RuntimesSettingsView.swift in Sources */,
 				2AFBF01E30EFAB45CC92085A /* ScheduleModel.swift in Sources */,
 				D94DE2C70DEEED6BE48E2DBF /* ScheduleModels.swift in Sources */,
 				155D0C77F5C28F93EDCEA73D /* SessionCatalogModel.swift in Sources */,
@@ -3549,6 +3623,8 @@
 				D290C5BB2D5577D55B7217CD /* ResponseImageView.swift in Sources */,
 				AFD9DC1F6947EFF2A1A1075E /* ResponsePartsView.swift in Sources */,
 				4536E31427BB48E9CC8FC1BD /* ResponseWritingView.swift in Sources */,
+				4B92FF965EEF77ECC894491A /* RuntimeModel.swift in Sources */,
+				E134BE339EC723C9F3620160 /* RuntimesSettingsView.swift in Sources */,
 				948EA5ADF173355649913DB4 /* ScheduleModel.swift in Sources */,
 				7B2082B330CFAE2C2D8D51D1 /* ScheduleModels.swift in Sources */,
 				3AEFFA65AC2FCC64061F9F9D /* SessionCatalogModel.swift in Sources */,
@@ -3786,6 +3862,8 @@
 				6C53381F7EC8F677E9C9313C /* ResponseImageView.swift in Sources */,
 				897275A0B8AC2F48E213F31B /* ResponsePartsView.swift in Sources */,
 				3D20FF434340BBC82A46B567 /* ResponseWritingView.swift in Sources */,
+				59FAA9B5DF7BFDF84A8D838D /* RuntimeModel.swift in Sources */,
+				C214038A774BBC8774C0AE50 /* RuntimesSettingsView.swift in Sources */,
 				BFDA43DEA4FD15631A0D8A54 /* ScheduleModel.swift in Sources */,
 				F931472E8E4FA66CB54043F5 /* ScheduleModels.swift in Sources */,
 				83EBDB8F13B284432B48E7AF /* SessionCatalogModel.swift in Sources */,
@@ -4160,6 +4238,8 @@
 				2C7352B42C23DF94C6796ED6 /* ResponseImageView.swift in Sources */,
 				2A3554E653A81B40E08FCDB9 /* ResponsePartsView.swift in Sources */,
 				EE549D5F795679230F227F8F /* ResponseWritingView.swift in Sources */,
+				617DC040124A2D2083AFE7B8 /* RuntimeModel.swift in Sources */,
+				3F4C1FFC0F1C0662C4D3C9AC /* RuntimesSettingsView.swift in Sources */,
 				1AC20FB9880AA80E65B474BD /* ScheduleModel.swift in Sources */,
 				5FFFA357C6439DB81AE80F97 /* ScheduleModels.swift in Sources */,
 				E14CFF21C8D30630199079C8 /* SessionCatalogModel.swift in Sources */,

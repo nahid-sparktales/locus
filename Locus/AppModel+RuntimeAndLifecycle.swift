@@ -11,6 +11,13 @@ import UserNotifications
 /// refresh.
 extension AppModel {
     func bootstrap() async {
+        runtimes.configure(backend: backend) { [weak self] in
+            self?.requestProxyRouteRestart()
+        }
+        if RuntimeInstallation.enabled {
+            backend.updateBaseURL(RuntimeInstallation.endpoint)
+            backend.updateAuthentication(BackendSecurity.launchToken)
+        }
         let recovery = scheduleRuntimeRecovery(
             reason: "Starting the local services…",
             immediate: true
@@ -124,6 +131,12 @@ extension AppModel {
     }
 
     private func performRuntimeRecovery(reason: String) async -> Bool {
+        if RuntimeInstallation.enabled {
+            backend.updateAuthentication(BackendSecurity.launchToken)
+            if backend.currentBaseURL != RuntimeInstallation.endpoint {
+                backend.updateBaseURL(RuntimeInstallation.endpoint)
+            }
+        }
         agentRuntimePhase = runtimeRecoveryAttempt == 0
             ? .starting(reason)
             : .recovering(reason)
@@ -216,6 +229,9 @@ extension AppModel {
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled, let self, !self.isShuttingDown else { return }
                 if await self.backendIsHealthy() {
+                    if RuntimeInstallation.enabled {
+                        let _: [String: Bool]? = try? await self.backend.post("/api/runtime/heartbeat", body: [:], as: [String: Bool].self)
+                    }
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
                     var ollamaFailure: RuntimePhase?
@@ -391,7 +407,7 @@ extension AppModel {
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }
         taskWorkers.removeAll()
-        ollamaRuntime.stopOwnedCLI()
+        if !RuntimeInstallation.enabled { ollamaRuntime.stopOwnedCLI() }
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil

@@ -99,6 +99,7 @@ final class AppModel: ObservableObject {
     let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
     let evaluations = EvaluationsModel()
+    let runtimes = RuntimeModel()
     let knowledge = WorkspaceKnowledgeModel()
     let activity = ActivityCenterModel()
     let schedule = ScheduleModel()

@@ -2,7 +2,10 @@ import Foundation
 
 enum BackendSecurity {
     /// Browser pages cannot discover or set this per-launch capability.
-    static let launchToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    private static let transientToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    static var launchToken: String {
+        RuntimeInstallation.enabled ? (RuntimeInstallation.token ?? transientToken) : transientToken
+    }
     static let header = "X-Locus-Token"
 }
 
@@ -31,7 +34,10 @@ final class BackendService {
     private var intentionallyClosed = false
     private var validatedConnection = false
     private var reconnectAttempt = 0
-    private let authToken: String
+    private var authToken: String
+    private let websocketPath: String
+    private var runtimeCursor: Int = 0
+    private var runtimeDecisions: [String: [String: Any]] = [:]
 
     var onEvent: EventHandler?
     var onConnectionChange: ConnectionHandler?
@@ -40,16 +46,24 @@ final class BackendService {
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:8791")!,
         authToken: String = BackendSecurity.launchToken,
+        websocketPath: String = "/ws/chat",
         session: URLSession? = nil
     ) {
         self.baseURL = baseURL
         self.authToken = authToken
+        self.websocketPath = websocketPath
         self.session = session ?? Self.makeSession()
     }
 
     func updateBaseURL(_ url: URL) {
         disconnect()
         baseURL = url
+    }
+
+    func updateAuthentication(_ token: String) {
+        guard authToken != token else { return }
+        disconnect()
+        authToken = token
     }
 
     func connect() {
@@ -60,7 +74,10 @@ final class BackendService {
 
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.scheme = baseURL.scheme == "https" ? "wss" : "ws"
-        components?.path = "/ws/chat"
+        components?.path = websocketPath
+        if websocketPath.hasPrefix("/ws/runtime/") {
+            components?.queryItems = [URLQueryItem(name: "after", value: String(runtimeCursor))]
+        }
         guard let socketURL = components?.url else { return }
 
         validatedConnection = false
@@ -87,6 +104,9 @@ final class BackendService {
 
     @discardableResult
     func send(_ payload: [String: Any]) -> Bool {
+        var payload = payload
+        let key = (payload["request_id"] as? String) ?? (payload["run_id"] as? String) ?? ""
+        if let decision = runtimeDecisions[key] { payload["runtime_decision"] = decision }
         guard validatedConnection,
               JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -218,6 +238,13 @@ final class BackendService {
                             self.validatedConnection = true
                             self.reconnectAttempt = 0
                             self.onConnectionChange?(true)
+                        }
+                        if let decision = event["runtime_decision"] as? [String: Any] {
+                            let key = (event["request_id"] as? String) ?? (event["run_id"] as? String) ?? ""
+                            self.runtimeDecisions[key] = decision
+                        }
+                        if let cursor = event["runtime_seq"] as? Int {
+                            self.runtimeCursor = max(self.runtimeCursor, cursor)
                         }
                         self.onEvent?(event)
                     }
