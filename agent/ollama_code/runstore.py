@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 17
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -157,6 +157,12 @@ class RunStore(AgentInspectorStore):
             self.read_only = True
             return
         try:
+            if disk_version is not None and disk_version < SCHEMA_VERSION:
+                backup = self.path.with_name(f"{self.path.name}.schema-{disk_version}.backup")
+                if not backup.exists():
+                    with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as destination:
+                        source.backup(destination)
+                    backup.chmod(0o600)
             self._initialize()
         except (OSError, sqlite3.DatabaseError) as exc:
             # A migration failure must not destroy history.  Reopen read-only
@@ -733,76 +739,93 @@ class RunStore(AgentInspectorStore):
             if version < 14:
                 from .task_state import initialize_schema as initialize_task_schema
                 initialize_task_schema(connection)
-            # A model turn that died with the previous app process is never
-            # silently replayed. Keep the session lease and make the exact
-            # step explicitly retryable in Attention.
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
-                " WHERE state IN ('advancing','awaiting_run')",
-                (
-                    "The app stopped between workflow steps. Retry this step when ready.",
-                    time.time(),
-                ),
-            )
-            interrupted = connection.execute(
-                """
-                SELECT attempts.execution_id, attempts.step_id, attempts.attempt,
-                       attempts.run_id, COALESCE(runs.owner_pid, 0) AS owner_pid
-                FROM automation_step_attempts AS attempts
-                JOIN automation_executions AS executions
-                  ON executions.id=attempts.execution_id
-                LEFT JOIN runs ON runs.id=attempts.run_id
-                WHERE attempts.state IN ('running', 'dispatching')
-                  AND executions.state='running'
-                """
-            ).fetchall()
-            for attempt in interrupted:
-                if _alive(int(attempt["owner_pid"] or 0)):
-                    continue
+            if version < 15:
+                from .runtime_store import initialize_schema as initialize_runtime_schema
+                initialize_runtime_schema(connection)
+                connection.execute("UPDATE schema_meta SET version=15 WHERE singleton=1")
+                connection.commit()
+            if version < 16:
+                from .usage_ledger import initialize_schema as initialize_usage_schema
+                initialize_usage_schema(connection)
+                connection.execute("UPDATE schema_meta SET version=16 WHERE singleton=1")
+                connection.commit()
+            if version < 17:
+                from .reusable_checks import initialize_schema as initialize_reusable_schema
+                initialize_reusable_schema(connection)
+                connection.execute("UPDATE schema_meta SET version=17 WHERE singleton=1")
+                connection.commit()
+            if not os.environ.get("LOCUS_RUNTIME_COORDINATOR") and not os.environ.get("LOCUS_RUNTIME_CHILD"):
+                # A model turn that died with the previous app process is never
+                # silently replayed. Keep the session lease and make the exact
+                # step explicitly retryable in Attention.
+                connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "UPDATE automation_step_attempts SET state='failed', error=?,"
-                    " completed_at=? WHERE execution_id=? AND step_id=? AND attempt=?",
+                    "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
+                    " WHERE state IN ('advancing','awaiting_run')",
                     (
-                        "The app stopped while this step was running. Retry it when ready.",
-                        time.time(), attempt["execution_id"], attempt["step_id"],
-                        attempt["attempt"],
+                        "The app stopped between workflow steps. Retry this step when ready.",
+                        time.time(),
                     ),
                 )
-                connection.execute(
-                    "UPDATE automation_executions SET state='failed', error=?,"
-                    " updated_at=? WHERE id=?",
-                    (
-                        "The app stopped while this step was running. Retry it when ready.",
-                        time.time(), attempt["execution_id"],
-                    ),
-                )
-            queued_workflow_runs = connection.execute(
-                "SELECT id, manifest_json FROM runs WHERE state='queued'"
-            ).fetchall()
-            for queued in queued_workflow_runs:
-                try:
-                    manifest = json.loads(queued["manifest_json"] or "{}")
-                except (TypeError, ValueError):
-                    continue
-                execution_id = str(manifest.get("workflow_execution_id") or "")
-                if not execution_id:
-                    continue
-                bound = connection.execute(
-                    "SELECT 1 FROM automation_step_attempts"
-                    " WHERE execution_id=? AND run_id=? LIMIT 1",
-                    (execution_id, queued["id"]),
-                ).fetchone()
-                if bound is None:
+                interrupted = connection.execute(
+                    """
+                    SELECT attempts.execution_id, attempts.step_id, attempts.attempt,
+                           attempts.run_id, COALESCE(runs.owner_pid, 0) AS owner_pid
+                    FROM automation_step_attempts AS attempts
+                    JOIN automation_executions AS executions
+                      ON executions.id=attempts.execution_id
+                    LEFT JOIN runs ON runs.id=attempts.run_id
+                    WHERE attempts.state IN ('running', 'dispatching')
+                      AND executions.state='running'
+                    """
+                ).fetchall()
+                for attempt in interrupted:
+                    if _alive(int(attempt["owner_pid"] or 0)):
+                        continue
                     connection.execute(
-                        "UPDATE runs SET state='cancelled', recoverable=0,"
-                        " recovery_reason=?, completed_at=?, updated_at=? WHERE id=?",
+                        "UPDATE automation_step_attempts SET state='failed', error=?,"
+                        " completed_at=? WHERE execution_id=? AND step_id=? AND attempt=?",
                         (
-                            "The app stopped before this workflow run was attached to its step.",
-                            time.time(), time.time(), queued["id"],
+                            "The app stopped while this step was running. Retry it when ready.",
+                            time.time(), attempt["execution_id"], attempt["step_id"],
+                            attempt["attempt"],
                         ),
                     )
-            connection.commit()
+                    connection.execute(
+                        "UPDATE automation_executions SET state='failed', error=?,"
+                        " updated_at=? WHERE id=?",
+                        (
+                            "The app stopped while this step was running. Retry it when ready.",
+                            time.time(), attempt["execution_id"],
+                        ),
+                    )
+                queued_workflow_runs = connection.execute(
+                    "SELECT id, manifest_json FROM runs WHERE state='queued'"
+                ).fetchall()
+                for queued in queued_workflow_runs:
+                    try:
+                        manifest = json.loads(queued["manifest_json"] or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    execution_id = str(manifest.get("workflow_execution_id") or "")
+                    if not execution_id:
+                        continue
+                    bound = connection.execute(
+                        "SELECT 1 FROM automation_step_attempts"
+                        " WHERE execution_id=? AND run_id=? LIMIT 1",
+                        (execution_id, queued["id"]),
+                    ).fetchone()
+                    if bound is None:
+                        connection.execute(
+                            "UPDATE runs SET state='cancelled', recoverable=0,"
+                            " recovery_reason=?, completed_at=?, updated_at=? WHERE id=?",
+                            (
+                                "The app stopped before this workflow run was attached to its step.",
+                                time.time(), time.time(), queued["id"],
+                            ),
+                        )
+                connection.commit()
+
             # Dispatch claims and run creation intentionally use separate
             # transactions. A crash between them is therefore recoverable:
             # link a run that was already created, otherwise make the event
@@ -3431,9 +3454,8 @@ class RunStore(AgentInspectorStore):
             ),
         }
 
-    @staticmethod
-    def _run_row(row: sqlite3.Row) -> dict[str, Any]:
-        return {
+    def _run_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        value = {
             "id": row["id"], "session_id": row["session_id"], "team_id": row["team_id"],
             "team_name": row["team_name"], "worker_id": row["worker_id"],
             "workspace_root": row["workspace_root"], "execution_path": row["execution_path"],
@@ -3460,6 +3482,15 @@ class RunStore(AgentInspectorStore):
             "occurrence_id": row["occurrence_id"],
             "scheduled_for": row["scheduled_for"],
         }
+
+        from .usage_ledger import UsageLedger
+        accounting = UsageLedger(self).summary(run_id=row["id"])
+        value["accounting"] = accounting
+        value["usage_source"] = "ledger" if accounting["invocations"] else "historical_aggregate"
+        if accounting["invocations"]:
+            value["usage"] = {**value["usage"], "model_calls": accounting["model_calls"], "metered_tokens": accounting["total_tokens"],
+                              "estimated_cost": accounting["estimated_api_cost"], "cost_coverage": accounting["cost_coverage"]}
+        return value
 
     def queue_run(
         self, run_id: str, *, session_id: str, message_id: str = "",
@@ -3921,10 +3952,14 @@ class RunStore(AgentInspectorStore):
                    ORDER BY estimated_cost DESC, created_at DESC LIMIT 10""",
                 (since,),
             ).fetchall()]
+        from .usage_ledger import UsageLedger
+        accounting = UsageLedger(self).dashboard(since)
         by_agent = [
             {**row, "local": bool(row.get("local"))} for row in by_agent
         ]
         return {
+            "accounting": accounting,
+            "aggregate_provenance": "Historical aggregates; use accounting for invocation totals",
             "since": since,
             "generated_at": time.time(),
             "read_only": self.read_only,

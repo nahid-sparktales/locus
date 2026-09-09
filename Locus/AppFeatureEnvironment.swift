@@ -369,6 +369,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.landingFlow)
             .environmentObject(model.runs)
             .environmentObject(model.evaluations)
+            .environmentObject(model.runtimes)
             .environmentObject(model.knowledge)
             .environmentObject(model.activity)
             .environmentObject(model.schedule)

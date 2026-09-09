@@ -25,6 +25,24 @@ final class EventAutomationModel: ObservableObject {
     /// is not in `triggers` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
 
+    func selectedRuntimeConnectors(_ identifiers: Set<String>) -> [[String: Any]] {
+        connections.filter { identifiers.contains($0.id) }.compactMap { connection in
+            guard let data = try? JSONEncoder().encode(connection),
+                  let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let secret = try? credentials.load(for: connection.id) else { return nil }
+            return ["id": connection.id, "configuration": secret, "connection": metadata]
+        }
+    }
+
+    func provisionRuntimeCredentials() async {
+        guard RuntimeInstallation.enabled, let backend else { return }
+        for connection in connections {
+            guard let secret = try? credentials.load(for: connection.id) else { continue }
+            let _: [String: Bool]? = try? await backend.post("/api/runtime/credentials",
+                body: ["kind": "connector", "id": connection.id, "configuration": secret], as: [String: Bool].self)
+        }
+    }
+
     private var backend: BackendService?
     private let credentials: any ConnectorCredentialStoring
     private let client: EventConnectorClient
@@ -101,6 +119,10 @@ final class EventAutomationModel: ObservableObject {
     }
 
     func start() {
+        guard !RuntimeInstallation.enabled else {
+            Task { await refresh(announceFailure: false) }
+            return
+        }
         guard dispatchTask == nil else { return }
         dispatcherStarted = true
         dispatchTask = Task { [weak self] in
@@ -618,11 +640,11 @@ final class EventAutomationModel: ObservableObject {
                     ], as: ConnectorConnection.self
                 )
                 connections.append(connection)
-                let base = tunnelURL.nilIfBlank ?? "http://127.0.0.1:\(port)"
+                let base = tunnelURL.nilIfBlank ?? (RuntimeInstallation.enabled ? RuntimeInstallation.endpoint.absoluteString : "http://127.0.0.1:\(port)")
                 webhookSetup = WebhookSetup(
                     id: identifier,
                     endpoint: base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                        + "/hooks/v1/\(identifier)",
+                        + (RuntimeInstallation.enabled ? "/api/runtime/webhooks/\(identifier)" : "/hooks/v1/\(identifier)"),
                     secret: secret
                 )
                 runtimeFingerprint = ""
@@ -817,6 +839,7 @@ final class EventAutomationModel: ObservableObject {
     }
 
     private func restartNativeRuntimeIfNeeded() {
+        guard !RuntimeInstallation.enabled else { return }
         let fingerprint = connections.map {
             "\($0.id):\($0.kind.rawValue):\($0.enabled):\($0.publicConfig.hashValue)"
         }.sorted().joined(separator: "|")
@@ -943,6 +966,7 @@ final class EventAutomationModel: ObservableObject {
     }
 
     private func processPendingDeliveries() async {
+        guard !RuntimeInstallation.enabled else { return }
         guard dispatcherStarted, let backend else { return }
         if isScanningPendingDeliveries {
             pendingDeliveryScanRequested = true

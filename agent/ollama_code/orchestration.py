@@ -2477,9 +2477,15 @@ class TeamOrchestrator:
                 }
         with self._scheduler_slot(run_id, profile, effective_stop):
             goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
-            response = client.chat_stream(
-                profile.model,
-                messages,
+            from .model_usage import tracked_chat
+            run = self.run_store.run(run_id) if self.run_store is not None else {}
+            owner = getattr(self, "usage_context", {})
+            context = {**owner, "task_id": owner.get("task_id") or ("goal:" + self.goal_runtime.goal_id if self.goal_runtime is not None else "run:" + run_id), "run_id": run_id, "session_id": (run or {}).get("session_id", ""),
+                       "provider": profile.route.get("provider", "remote"), "model": profile.model,
+                       "route": str(getattr(client, "base_url", getattr(client, "host", ""))),
+                       "agent_id": profile.id, "workspace": (run or {}).get("workspace_root", "")}
+            response = tracked_chat(None, client, profile.model, purpose="review" if profile.role == "reviewer" else "planning" if profile.role in {"dispatcher", "planner"} else "worker", context=context, runs=self.run_store,
+                messages=messages,
                 tools=tools or [],
                 on_token=stream,
                 should_stop=effective_stop,
@@ -2937,7 +2943,7 @@ class ChatGPTTeamClient:
         if on_token is not None and text:
             on_token(text)
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
+        last = usage.get("total") or usage.get("last") or {}
         response = ChatResponse(
             content_parts=[text],
             done=True,
@@ -2945,6 +2951,10 @@ class ChatGPTTeamClient:
             prompt_eval_count=int(last.get("inputTokens") or 0),
             eval_count=int(last.get("outputTokens") or 0),
         )
+        response.provider_fields.update(usage=last, usage_family="openai")
+        if (result.get("turn") or {}).get("status") in {"failed", "interrupted", "cancelled"}:
+            response.done = False
+            response.done_reason = "interrupted"
         if should_stop is not None and should_stop():
             raise InterruptedError("orchestration cancelled")
         return response

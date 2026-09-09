@@ -53,6 +53,7 @@ ignore = [
 [project.scripts]
 ollama-code = "ollama_code.app:main"
 ollama-code-server = "ollama_code.server:main"
+locus-runtime = "ollama_code.runtime:main"
 
 [tool.setuptools.packages.find]
 include = ["ollama_code*"]

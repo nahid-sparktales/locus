@@ -174,6 +174,7 @@ class ChatService:
         self.active_evaluation_core: AgentCore | None = None
         self.current_task: TaskCheckout | None = None
         self.run_store = RunStore()
+        self.core.usage_store = self.run_store
         self.core.mcp.task_store = self.run_store
         self.core.mcp.context_provider = self.mcp_context
         self.recoverable_runs = self.run_store.mark_abandoned(
@@ -200,6 +201,8 @@ class ChatService:
         # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
         self.core.tool_ctx.background_service = self._execute_background_service
+        self.core.tool_registry.runtime_wait_enabled = bool(os.environ.get("LOCUS_RUNTIME_CHILD"))
+        self.core.tool_ctx.wait_for_locus = self.wait_for_locus
         # A question needs somebody on the other end. Only a live chat session
         # has one, so the tool is installed and advertised here rather than in
         # `AgentCore`, which the CLI and every evaluation core also build.
@@ -323,6 +326,9 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        reusable = getattr(self, "reusable_run_checks", None)
+        if event_type == "turn_done" and reusable is not None:
+            event = reusable.terminal(event)
         if event_type == "compaction_usage" and not event.get("included_in_turn"):
             self._record_turn_usage({**event, "session_id": self.core.session.session_id,
                 "workspace_root": self.core.workspace_root, "provider": self.core.provider,
@@ -453,7 +459,7 @@ class ChatService:
             }.get(reason, "failed")
             try:
                 terminal_record = self.run_store.run(run_id) or {}
-                if terminal_record.get("run_kind") == "solo" or (
+                if reusable is not None or terminal_record.get("run_kind") == "solo" or (
                     terminal_record.get("run_kind") == "evaluation"
                     and terminal_record.get("state") in ACTIVE_NONRECOVERABLE_STATES
                 ):
@@ -836,6 +842,20 @@ class ChatService:
         for core in self._parallel_cores():
             core.mcp.cancel_pending_inputs()
 
+    def wait_for_locus(self, arguments):
+        capability = str(arguments.get("capability") or "")
+        reason = str(arguments.get("reason") or "").strip()[:2000]
+        if capability not in {"browser", "computer", "simulator", "notes", "identity"} or not reason:
+            return "Error: name the desktop capability and the remaining task step."
+        if getattr(self.core.tool_registry, capability + "_enabled", False):
+            return "The desktop capability is available. Use its tools with existing permissions."
+        self.emit({"type": "runtime_waiting_for_locus", "capability": capability, "reason": reason})
+        while not self.core._interrupt.wait(.2):
+            if getattr(self.core.tool_registry, capability + "_enabled", False):
+                self.emit({"type": "runtime_capability_ready", "capability": capability})
+                return "Locus reconnected this capability. Use its tools with existing permissions."
+        return "Error: waiting for Locus was interrupted. The required step has not been performed."
+
     def execute_computer(
         self,
         tool: str,
@@ -859,7 +879,7 @@ class ChatService:
             "timeout_ms": 60_000,
         })
         try:
-            result = future.result(timeout=60)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else 60)
         except FutureTimeout:
             return "Error: native computer action timed out after 60 seconds."
         finally:
@@ -901,7 +921,7 @@ class ChatService:
             "timeout_ms": timeout * 1_000,
         })
         try:
-            result = future.result(timeout=timeout + 5)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else timeout + 5)
         except FutureTimeout:
             return f"Error: simulator action timed out after {timeout} seconds."
         finally:
@@ -1045,7 +1065,7 @@ class ChatService:
         })
         try:
             result = future.result(
-                timeout=budget_ms / 1000 + BROWSER_TIMEOUT_SLACK_SECONDS
+                timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else budget_ms / 1000 + BROWSER_TIMEOUT_SLACK_SECONDS
             )
         except FutureTimeout:
             return f"Error: the browser did not answer within {budget_ms // 1000} seconds."
@@ -1085,7 +1105,7 @@ class ChatService:
             "session_id": self.core.session.session_id,
         })
         try:
-            result = future.result(timeout=NOTES_BUDGET_MS / 1000 + 2)
+            result = future.result(timeout=None if os.environ.get("LOCUS_RUNTIME_CHILD") else NOTES_BUDGET_MS / 1000 + 2)
         except FutureTimeout:
             return "Error: Notes did not answer within 15 seconds."
         finally:

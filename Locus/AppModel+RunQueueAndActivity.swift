@@ -472,6 +472,7 @@ extension AppModel {
     }
 
     func restorePersistedQueuedRuns() {
+        guard !RuntimeInstallation.enabled else { return }
         let queued = activity.activityRuns.filter { $0.state == "queued" && $0.manifest?["goal_id"] == nil }.sorted {
             ($0.queuePosition ?? .max) < ($1.queuePosition ?? .max)
         }

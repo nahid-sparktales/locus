@@ -11,6 +11,13 @@ import UserNotifications
 /// refresh.
 extension AppModel {
     func bootstrap() async {
+        runtimes.configure(backend: backend) { [weak self] in
+            self?.requestProxyRouteRestart()
+        }
+        if RuntimeInstallation.enabled {
+            backend.updateBaseURL(RuntimeInstallation.endpoint)
+            backend.updateAuthentication(BackendSecurity.launchToken)
+        }
         let recovery = scheduleRuntimeRecovery(
             reason: "Starting the local services…",
             immediate: true
@@ -124,6 +131,15 @@ extension AppModel {
     }
 
     private func performRuntimeRecovery(reason: String) async -> Bool {
+        if RuntimeInstallation.enabled {
+            // Enabling is restricted to idle agents; transfer an app-owned CLI
+            // before the supervisor becomes its sole lifecycle owner.
+            if ollamaRuntime.ownsRunningCLI { ollamaRuntime.stopOwnedCLI() }
+            backend.updateAuthentication(BackendSecurity.launchToken)
+            if backend.currentBaseURL != RuntimeInstallation.endpoint {
+                backend.updateBaseURL(RuntimeInstallation.endpoint)
+            }
+        }
         agentRuntimePhase = runtimeRecoveryAttempt == 0
             ? .starting(reason)
             : .recovering(reason)
@@ -216,6 +232,9 @@ extension AppModel {
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled, let self, !self.isShuttingDown else { return }
                 if await self.backendIsHealthy() {
+                    if RuntimeInstallation.enabled {
+                        let _: [String: Bool]? = try? await self.backend.post("/api/runtime/heartbeat", body: [:], as: [String: Bool].self)
+                    }
                     self.agentRuntimePhase = .online
                     self.runtimeRecoveryAttempt = 0
                     var ollamaFailure: RuntimePhase?
@@ -260,6 +279,14 @@ extension AppModel {
         modelRuntimePhase = modelRuntimePhase.isOnline
             ? .recovering("Restarting Ollama…")
             : .starting("Starting Ollama…")
+        if RuntimeInstallation.enabled {
+            do {
+                let result: [String: JSONValue] = try await backend.post("/api/runtime/providers/ollama", body: ["host": host.absoluteString], timeout: 30, as: [String: JSONValue].self)
+                backendLogHint = result["message"]?.string ?? "Ollama is running."
+                modelRuntimePhase = .online
+            } catch { modelRuntimePhase = .unavailable(error.localizedDescription) }
+            return
+        }
         switch await ollamaRuntime.ensureRunning(at: host) {
         case .online(let message):
             backendLogHint = message
@@ -391,7 +418,7 @@ extension AppModel {
         backendProcess.stop()
         taskWorkers.values.forEach { $0.stop() }
         taskWorkers.removeAll()
-        ollamaRuntime.stopOwnedCLI()
+        if !RuntimeInstallation.enabled { ollamaRuntime.stopOwnedCLI() }
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil

@@ -177,9 +177,14 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(restore_document_jobs)
     parent_pid = _configured_parent_pid()
     parent_watch = asyncio.create_task(_watch_parent(parent_pid)) if parent_pid else None
+    independent = getattr(app.state, "runtime", None)
+    if independent is not None:
+        await independent.start()
     try:
         yield
     finally:
+        if independent is not None:
+            await independent.close()
         from .document_library import stop_document_jobs
         await asyncio.to_thread(stop_document_jobs)
         if parent_watch is not None:
@@ -246,7 +251,8 @@ async def block_browser_origins(request: Request, call_next):
             {"detail": "cross-origin requests are not allowed"}, status_code=403
         )
     token = str(getattr(request.app.state, "auth_token", "") or "")
-    if token and request.headers.get("x-locus-token") != token:
+    runtime_webhook = bool(getattr(request.app.state, "runtime", None)) and request.url.path.startswith("/api/runtime/webhooks/") and request.method == "POST"
+    if token and not runtime_webhook and request.headers.get("x-locus-token") != token:
         return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
     with request_service_context(getattr(request.app.state, "service", None)):
         return await call_next(request)
@@ -599,6 +605,9 @@ def _run_user_turn(
                 "text": str(exc),
                 "solo_swarm_unavailable": True,
             })
+    if swarm is not None:
+        from .model_usage import context_for
+        swarm.usage_context = context_for(svc.core, "worker")
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)
@@ -621,6 +630,14 @@ def _run_user_turn(
                 svc.core._interrupt.wait(0.25)
             return None
         svc.core.before_finalize = wait_for_question
+    from .reusable_check_runtime import bind_run_checks
+    checks_runtime = bind_run_checks(svc, run_id, text) if not just_chat else None
+    if checks_runtime:
+        prior_finalize = svc.core.before_finalize
+        def finalize_checks():
+            additional = prior_finalize() if prior_finalize else None
+            return additional or checks_runtime.before_finalize()
+        svc.core.before_finalize = finalize_checks
     advertised = (svc.core.tool_registry.parity_schemas(plan_mode=mode == "plan")
                   if svc.core.chatgpt_parity_active(not just_chat) else svc.core.tool_registry.schemas())
     svc.emit({"type": "delegation_availability", "available": swarm is not None,
@@ -702,6 +719,7 @@ def _run_user_turn(
         svc.core.context_delivery_native_sent = None
         svc.core.context_delivery_native_unsent = None
         svc.core.before_finalize = None
+        svc.reusable_run_checks = None
         svc.active_collaboration = None
         svc.core.tool_registry.set_workflow_outputs(None)
         svc.core.tool_registry.set_workflow_result_only(False)
@@ -799,6 +817,8 @@ def _run_team_turn(
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
+        from .reusable_check_runtime import bind_run_checks
+        bind_run_checks(svc, run_id, text)
         # Each team member gets independently scoped, policy-bounded recall.
         # The generated context is injected only into this in-memory turn copy;
         # it is neither accepted from the client nor persisted in the run manifest.
@@ -840,6 +860,8 @@ def _run_team_turn(
             run_store=svc.run_store,
             approve_dispatch=svc.request_dispatch_approval,
         )
+        from .model_usage import context_for
+        orchestrator.usage_context = context_for(core)
         orchestrator.goal_runtime = getattr(svc, "goal_runtime", None)
         orchestrator.strict_completion = bool(manifest.get("capsule") or orchestrator.goal_runtime)
         svc.active_orchestrator = orchestrator
@@ -1152,6 +1174,27 @@ def _run_team_turn(
                     from .capsule_execution import review_request
                     if review_request(reviews):
                         raise TeamWriterBudgetPause("capsule-review", "review_required", "The reviewer found remaining issues after repair.")
+            reusable = getattr(svc, "reusable_run_checks", None)
+            if reusable:
+                while True:
+                    checked = reusable.verify()
+                    if checked["verification_status"] in {"passed", "not_applicable"}:
+                        break
+                    remaining = orchestrator.remaining_model_calls(prepared.team.budget)
+                    if checked["verification_status"] == "needs_review" or remaining <= 1 or not reusable.reserve_repair(max(prepared.team.budget.max_rounds - 1, 0)):
+                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", checked["verification_reason"])
+                    snapshot = _install_writer_route(core, prepared.writer)
+                    try:
+                        repair = _run_team_writer(svc, orchestrator, prepared, prepared.writer,
+                            "Repair the failed reusable checks with the existing files.\n" + checked["verification_reason"],
+                            persisted_user_text="[Reusable check repair]", job_id="reusable-check-repair",
+                            goal="Repair required checks", model_call_limit=remaining - 1)
+                    finally:
+                        _restore_writer_route(core, snapshot)
+                    if core.last_turn_result.get("reason") != "complete":
+                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", "The existing repair allowance is exhausted.")
+                    prepared.writer_results.append(repair)
+                    diff_text = _task_diff(svc, core.workspace_root, core.cwd)
             stage = "preparing the final handoff"
             core.begin_steerable_turn()
             synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
@@ -1393,6 +1436,7 @@ def _run_team_turn(
                 "iteration_limit": core.last_turn_result.get("iteration_limit"),
             })
         svc.emit(terminal_event)
+        svc.reusable_run_checks = None
         attach_goal_runtime(core, None)
         svc.goal_runtime = None
         core.tool_ctx.workflow_outputs = []
@@ -1704,6 +1748,9 @@ def _parallel_writer_core(
     core.tool_ctx.memory_workspace = checkout.workspace_root
     core.codex_manager = svc.codex
     core.mcp.task_store = svc.run_store
+    from .model_usage import context_for
+    core.usage_owner_task_id = context_for(svc.core)["task_id"]
+    core.usage_store = svc.run_store
     core.mcp.context_provider = lambda: {
         "run_id": prepared.run_id,
         "job_id": job.id,
@@ -2240,6 +2287,16 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     mtype = msg.get("type")
     core = svc.core
     loop = asyncio.get_running_loop()
+    runtime_broker = bool(os.environ.get("LOCUS_RUNTIME_CHILD")) and msg.get("runtime_broker") is True
+    if mtype == "runtime_desktop_disconnected" and runtime_broker:
+        for target in [core, *svc._parallel_cores()]:
+            for capability in ("computer", "browser", "simulator", "notes", "identity"):
+                setattr(target.tool_registry, capability + "_enabled", False)
+            target.tool_registry.browser_history_enabled = False
+            target.tool_registry.browser_autofill_categories = set()
+        # Pending native actions remain durable; never infer cancellation or
+        # repeat their external effects when the broker disappears.
+        return
     if mtype == "set_question_capability":
         svc.configure_async_questions(msg.get("async_questions_v1") is True or msg.get("enabled") is True)
         svc.collaboration_enabled = msg.get("collaboration_v1") is True
@@ -2406,7 +2463,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                     "run_id": str(msg.get("run_id") or "")[:160],
                 })
     elif mtype == "set_identity_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, str(mtype), "Wait for the active turn to finish.")
             return
         enabled = msg.get("enabled") is True
@@ -2474,7 +2531,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if bridge:
             bridge.broadcast_guidance(text)
     elif mtype == "set_computer_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_computer_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
@@ -2490,7 +2547,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # intentionally ignored.
         svc.answer_computer(request_id, result)
     elif mtype == "set_simulator_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_simulator_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
@@ -2512,7 +2569,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         result = raw if isinstance(raw, dict) else {"error": "invalid simulator result"}
         svc.answer_simulator(request_id, result)
     elif mtype == "set_browser_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_browser_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled"))
@@ -2544,7 +2601,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # than raising: Stop, timeout and reconnect all race the broker.
         svc.answer_browser(request_id, result)
     elif mtype == "set_notes_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_notes_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled"))

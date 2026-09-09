@@ -251,6 +251,7 @@ struct TaskCapsuleValidation: Decodable {
 }
 
 struct CapsuleAttempt: Codable, Hashable, Identifiable {
+    var accounting: UsageAccounting? = nil
     var id: String
     var state: String
     var steps: [String: CapsuleStepProgress]
@@ -270,7 +271,7 @@ struct CapsuleAttempt: Codable, Hashable, Identifiable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, state, steps, reason, usage
+        case id, state, steps, reason, usage, accounting
         case verificationStatus = "verification_status", uncertainAction = "uncertain_action"
         case pendingUsage = "pending_usage"
     }

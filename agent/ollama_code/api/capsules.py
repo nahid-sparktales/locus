@@ -33,6 +33,7 @@ def _present(service: ChatService, capsule: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(link)
         if run and run.get("workspace_root") and Path(run["workspace_root"]).resolve() == Path(capsule["workspace_root"]):
             usage = run.get("usage") or {}
+            enriched["accounting"] = run.get("accounting")
             enriched["usage"] = {
                 key: value for key in ("model_calls", "metered_tokens", "estimated_cost", "prompt_tokens", "completion_tokens")
                 if isinstance((value := usage.get(key)), (int, float)) and not isinstance(value, bool)
@@ -45,7 +46,9 @@ def _present(service: ChatService, capsule: dict[str, Any]) -> dict[str, Any]:
                 enriched["session_id"] = session_id
         runs.append(enriched)
     from ..capsule_progress import CapsuleProgressStore
-    return {**capsule, "runs": runs, "attempts": CapsuleProgressStore(service.run_store).list(capsule["id"])}
+    from ..usage_ledger import UsageLedger
+    attempts = [{**attempt, "accounting": UsageLedger(service.run_store).summary(task_id="capsule:" + attempt["id"])} for attempt in CapsuleProgressStore(service.run_store).list(capsule["id"])]
+    return {**capsule, "runs": runs, "attempts": attempts}
 
 
 def _origin_run(service: ChatService, body: dict[str, Any], store: CapsuleStore) -> dict[str, Any] | None:
