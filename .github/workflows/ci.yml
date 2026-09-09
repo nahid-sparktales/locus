@@ -491,10 +491,24 @@ jobs:
           --derived-data "$RUNNER_TEMP/locus-ui-derived"
           --output "$RUNNER_TEMP/locus-ui-evidence"
       - name: Retain requested IDs, exact counts, screenshots, and failures
+        id: retain_ui_evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: locus-ui-${{ matrix.edition }}-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/locus-ui-evidence
           if-no-files-found: error
           retention-days: 90
+      # A transient artifact-service DNS failure must not discard a completed
+      # hour-long UI run. Retry the same evidence once; a second failure still
+      # fails the job, including missing or incomplete local evidence.
+      - name: Retry UI evidence upload after a transport failure
+        if: always() && steps.retain_ui_evidence.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: locus-ui-${{ matrix.edition }}-macos15-compact-light-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/locus-ui-evidence
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true

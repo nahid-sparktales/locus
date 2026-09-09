@@ -1,4 +1,4 @@
- import AppKit
+import AppKit
 import WebKit
 import XCTest
 @testable import Locus
@@ -12,6 +12,10 @@ final class BrowserDialogTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         service = BrowserService(autofillVault: BrowserAutofillVault(inMemory: ()))
+        // Exercise the real WebKit dialog delegate synchronously through the
+        // page bridge. Native event delivery is asynchronous and has its own
+        // BrowserInputTests; it must not race this dialog-policy assertion.
+        service.realInputEnabled = false
     }
 
     override func tearDown() async throws {
