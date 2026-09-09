@@ -688,6 +688,7 @@ private struct RootViewUpdateProbe: NSViewRepresentable {
 /// then own both pointer and accessibility hits, without hiding the workspace.
 private struct CompactSidebarHost: NSViewRepresentable {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updates: AppUpdateController
 
     func makeNSView(context: Context) -> CompactSidebarHostingView {
         let view = CompactSidebarHostingView(rootView: content(environment: context.environment))
@@ -722,6 +723,7 @@ private struct CompactSidebarHost: NSViewRepresentable {
         AnyView(
             SessionSidebarView()
                 .appFeatureEnvironment(from: model)
+                .environmentObject(updates)
                 .environment(\.colorScheme, environment.colorScheme)
                 .environment(\.dynamicTypeSize, environment.dynamicTypeSize)
                 .environment(\.layoutDirection, environment.layoutDirection)
@@ -779,6 +781,27 @@ final class CompactSidebarHostingView: NSHostingView<AnyView> {
     }
 }
 
+/// Observe the transcript policy in this small modifier, keeping content
+/// commits out of RootView's layout calculations. Large chats take one exact
+/// layout step; short chats retain the panel motion across every entry point.
+private struct WorkspacePanelMotion: ViewModifier {
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let sidebarCollapsed: Bool
+    let inspectorCollapsed: Bool
+    let inspectorZoomed: Bool
+    let inspectorTab: InspectorTab
+
+    func body(content: Content) -> some View {
+        let immediate = reduceMotion || transcriptPresentation.snapshot.prefersImmediatePanelLayout
+        content
+            .animation(immediate ? nil : LocusMotion.spatial, value: sidebarCollapsed)
+            .animation(immediate ? nil : LocusMotion.spatial, value: inspectorCollapsed)
+            .animation(immediate ? nil : LocusMotion.spatial, value: inspectorZoomed)
+            .animation(immediate ? nil : LocusMotion.spatial, value: inspectorTab)
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
@@ -817,11 +840,11 @@ struct RootView: View {
                 proxy.size.width - minimumWorkspaceWidth - inspectorReservation - railWidth
             )
             let sidebarWidth = CGFloat(AppSettings.renderedSidebarWidth(
-                Double(model.sidebarWidth),
+                Double(workspaceLayout.sidebarWidth),
                 availableWidth: Double(availableSidebarWidth)
             ))
             let overlaySidebarWidth = CGFloat(AppSettings.renderedSidebarWidth(
-                Double(model.sidebarWidth),
+                Double(workspaceLayout.sidebarWidth),
                 availableWidth: Double(proxy.size.width - railWidth)
             ))
             let widthAfterChrome = proxy.size.width
@@ -834,9 +857,9 @@ struct RootView: View {
                 minimumInspectorWidth,
                 widthAfterChrome - minimumWorkspaceWidth
             )
-            let dockedInspectorWidth = min(model.inspectorWidth, availableInspectorWidth)
+            let dockedInspectorWidth = min(workspaceLayout.inspectorWidth, availableInspectorWidth)
             let zoomedWorkspaceWidth = min(
-                model.zoomedChatWidth,
+                workspaceLayout.zoomedChatWidth,
                 max(minimumWorkspaceWidth, widthAfterChrome - minimumInspectorWidth)
             )
             let workspaceWidth = model.inspectorZoomed && docksInspector
@@ -877,31 +900,18 @@ struct RootView: View {
                             }
                         }
                     )
-                    .frame(
-                        minWidth: 0,
-                        maxWidth: model.inspectorZoomed && docksInspector
-                            ? zoomedWorkspaceWidth
-                            : .infinity
-                    )
-                    .frame(
-                        width: model.inspectorZoomed && docksInspector
-                            ? zoomedWorkspaceWidth
-                            : nil
-                    )
+                    // The root has already resolved every column's width.
+                    // Re-negotiating flexible widths with a long native-text
+                    // transcript can keep the HStack's layout graph cycling
+                    // when an expanded inspector is restored.
+                    .frame(width: workspaceWidth)
                     .layoutPriority(1)
                     .ignoresSafeArea(.container, edges: .top)
 
                     if docksInspector {
                         InspectorView(resizeWidth: model.inspectorZoomed
                             ? zoomedWorkspaceWidth : dockedInspectorWidth)
-                            .frame(
-                                minWidth: model.inspectorZoomed
-                                    ? minimumInspectorWidth
-                                    : dockedInspectorWidth,
-                                maxWidth: model.inspectorZoomed
-                                    ? .infinity
-                                    : dockedInspectorWidth
-                            )
+                            .frame(width: widthAfterChrome - workspaceWidth)
                             .ignoresSafeArea(.container, edges: .top)
                             .transition(LocusMotion.transition(
                                 edge: .trailing,
@@ -927,8 +937,8 @@ struct RootView: View {
                 }
 
                 if inspectorOpen && !docksInspector {
-                    InspectorView(resizeWidth: min(model.inspectorWidth, proxy.size.width - railWidth))
-                        .frame(width: min(model.inspectorWidth, proxy.size.width - railWidth))
+                    InspectorView(resizeWidth: min(workspaceLayout.inspectorWidth, proxy.size.width - railWidth))
+                        .frame(width: min(workspaceLayout.inspectorWidth, proxy.size.width - railWidth))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                         .padding(.trailing, railWidth)
                         .shadow(
@@ -984,11 +994,12 @@ struct RootView: View {
                 transaction.disablesAnimations = true
             }
         }
-        // Animate panel expansion and its borrowed sidebar space together,
-        // including browser, rail, and keyboard actions. Divider widths stay
-        // outside animation so they follow the cursor during a resize drag.
-        .animation(LocusMotion.spatial, value: model.sidebarCollapsed)
-        .animation(LocusMotion.spatial, value: model.inspectorZoomed)
+        .modifier(WorkspacePanelMotion(
+            sidebarCollapsed: model.sidebarCollapsed,
+            inspectorCollapsed: model.inspectorCollapsed,
+            inspectorZoomed: model.inspectorZoomed,
+            inspectorTab: model.inspectorTab
+        ))
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = toastCenter.toast {

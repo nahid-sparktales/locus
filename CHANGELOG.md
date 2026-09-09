@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Check for Updates in the sidebar gear menu. Manual-update and App Store
+  builds open their Software Updates settings from the same menu.
+
+### Fixed
+
+- Restoring an expanded right panel no longer stalls beside a large Markdown
+  answer. Long histories retain lazy rendering, and populated chats avoid
+  repeated animated text reflow during panel changes.
+- Divider drags avoid unrelated chat refreshes, and returning to Files reuses
+  pending scans and completed empty indexes.
+
 ## 2.7.0 — 2026-09-08
 
 ### Added

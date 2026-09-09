@@ -351,15 +351,26 @@ final class AppModel: ObservableObject {
             if inspectorCollapsed { setInspectorZoomed(false) }
         }
     }
-    @Published var inspectorWidth: CGFloat = CGFloat(AppSettings.defaultInspectorWidth)  // internal(for: AppModel extension files)
-    @Published var sidebarWidth: CGFloat = CGFloat(AppSettings.defaultSidebarWidth)  // internal(for: AppModel extension files)
+    // Compatibility access for commands and restoration. Views observe the
+    // layout owner directly so a drag does not invalidate every chat row.
+    var inspectorWidth: CGFloat {
+        get { workspaceLayout.inspectorWidth }
+        set { workspaceLayout.setInspectorWidth(newValue) }
+    }
+    var sidebarWidth: CGFloat {
+        get { workspaceLayout.sidebarWidth }
+        set { workspaceLayout.setSidebarWidth(newValue) }
+    }
     /// The panel filling the window with chat squeezed to a column. A focus
     /// mode, deliberately not persisted — relaunch returns to the normal
     /// layout. Only `setInspectorZoomed(_:)` may change it.
     @Published var inspectorZoomed = false  // internal(for: AppModel+UITestFixtures)
     /// The chat column's width while zoomed. The panel takes the remainder,
     /// so this is the value the divider drags in that state.
-    @Published var zoomedChatWidth: CGFloat = CGFloat(AppSettings.defaultZoomedChatWidth)  // internal(for: AppModel extension files)
+    var zoomedChatWidth: CGFloat {
+        get { workspaceLayout.zoomedChatWidth }
+        set { workspaceLayout.setZoomedChatWidth(newValue) }
+    }
     /// Whether un-zooming should reopen the session sidebar it auto-collapsed.
     var restoreSidebarAfterZoom = false  // internal(for: AppModel extension files)
     @Published var planHasUnseenUpdate = false  // internal(for: AppModel extension files)
@@ -962,9 +973,9 @@ final class AppModel: ObservableObject {
 
         // Seeded here rather than in a didSet: assignments inside init skip
         // property observers, so this cannot echo back into persistence.
-        inspectorWidth = CGFloat(loadedSettings.inspectorWidth)
-        sidebarWidth = isUITesting ? 240 : CGFloat(loadedSettings.sidebarWidth)
-        zoomedChatWidth = CGFloat(loadedSettings.inspectorZoomedChatWidth)
+        workspaceLayout.setInspectorWidth(CGFloat(loadedSettings.inspectorWidth))
+        workspaceLayout.setSidebarWidth(isUITesting ? 240 : CGFloat(loadedSettings.sidebarWidth))
+        workspaceLayout.setZoomedChatWidth(CGFloat(loadedSettings.inspectorZoomedChatWidth))
         inspectorCollapsed = loadedSettings.inspectorCollapsed
         sidebarCollapsed = loadedSettings.sidebarCollapsed
         openInspectorTabs = restoredOpenInspectorTabs

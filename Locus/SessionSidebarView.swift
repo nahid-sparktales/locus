@@ -425,6 +425,7 @@ enum SidebarIconMetrics {
 
 struct SessionSidebarView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updates: AppUpdateController
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1245,6 +1246,14 @@ struct SessionSidebarView: View {
         Menu {
             Button("Settings…") { model.presentSettings() }
                 .accessibilityIdentifier("sidebar.settings")
+            if updates.isAvailable {
+                Button("Check for Updates…") { updates.checkForUpdates() }
+                    .disabled(!updates.canCheckForUpdates)
+                    .accessibilityIdentifier("sidebar.checkForUpdates")
+            } else {
+                Button("Software Updates…") { model.presentSettings(.updates) }
+                    .accessibilityIdentifier("sidebar.softwareUpdates")
+            }
             Button("Usage & Costs…") { model.usageDashboardPresented = true }
                 .accessibilityIdentifier("sidebar.usage")
             Button("Session Checkpoints…") { model.checkpointPresented = true }
@@ -1698,6 +1707,7 @@ struct SessionSidebarView: View {
 
 private struct SidebarResizeHandle: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var workspaceLayout: WorkspaceLayoutModel
     @State private var dragStartWidth: CGFloat?
     @State private var hovering = false
 
@@ -1722,8 +1732,8 @@ private struct SidebarResizeHandle: View {
         .gesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in
-                    if dragStartWidth == nil { dragStartWidth = model.sidebarWidth }
-                    model.setSidebarWidth((dragStartWidth ?? model.sidebarWidth) + value.translation.width)
+                    if dragStartWidth == nil { dragStartWidth = workspaceLayout.sidebarWidth }
+                    model.setSidebarWidth((dragStartWidth ?? workspaceLayout.sidebarWidth) + value.translation.width)
                 }
                 .onEnded { _ in
                     dragStartWidth = nil
@@ -1736,7 +1746,7 @@ private struct SidebarResizeHandle: View {
         .accessibilityRepresentation {
             Slider(
                 value: Binding(
-                    get: { model.sidebarWidth },
+                    get: { workspaceLayout.sidebarWidth },
                     set: { width in
                         model.setSidebarWidth(width)
                         model.commitSidebarWidth()
@@ -1747,7 +1757,7 @@ private struct SidebarResizeHandle: View {
             ) {
                 Text("Sidebar width")
             }
-            .accessibilityValue("\(Int(model.sidebarWidth)) points")
+            .accessibilityValue("\(Int(workspaceLayout.sidebarWidth)) points")
             .accessibilityHint("Drag to resize. Double-click to reset.")
             .accessibilityIdentifier("sidebar.resize")
         }

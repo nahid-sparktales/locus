@@ -39,9 +39,29 @@ struct WorkspaceGeometrySnapshot: Equatable {
 @MainActor
 final class WorkspaceLayoutModel: ObservableObject {
     @Published private(set) var isLiveResizing = false
+    @Published private(set) var inspectorWidth = CGFloat(AppSettings.defaultInspectorWidth)
+    @Published private(set) var sidebarWidth = CGFloat(AppSettings.defaultSidebarWidth)
+    @Published private(set) var zoomedChatWidth = CGFloat(AppSettings.defaultZoomedChatWidth)
     private(set) var geometry = WorkspaceGeometrySnapshot.empty
 
     lazy var liveResizeCoordinator = LiveResizeCoordinator(layout: self)
+
+    // Pointer movement belongs to layout, not the application-wide publisher.
+    // Ignore repeated clamped values when the pointer moves past a limit.
+    func setInspectorWidth(_ width: CGFloat) {
+        let width = CGFloat(AppSettings.clampInspectorWidth(Double(width)))
+        if inspectorWidth != width { inspectorWidth = width }
+    }
+
+    func setSidebarWidth(_ width: CGFloat) {
+        let width = CGFloat(AppSettings.clampSidebarWidth(Double(width)))
+        if sidebarWidth != width { sidebarWidth = width }
+    }
+
+    func setZoomedChatWidth(_ width: CGFloat) {
+        let width = CGFloat(AppSettings.clampZoomedChatWidth(Double(width)))
+        if zoomedChatWidth != width { zoomedChatWidth = width }
+    }
 
     func updateGeometry(_ snapshot: WorkspaceGeometrySnapshot) {
         geometry = snapshot

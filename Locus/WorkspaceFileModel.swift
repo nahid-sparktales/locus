@@ -38,6 +38,7 @@ final class WorkspaceFileModel: ObservableObject {
     }
     private var canIndexProvider: () -> Bool = { false }
     private var indexedWorkspacePath: String?
+    private var indexingWorkspacePath: String?
     private var indexGeneration = UUID()
     private var indexTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
@@ -72,6 +73,7 @@ final class WorkspaceFileModel: ObservableObject {
         indexGeneration = UUID()
         indexTask?.cancel()
         indexTask = nil
+        indexingWorkspacePath = nil
     }
 
     func refresh(force: Bool = false) {
@@ -83,12 +85,22 @@ final class WorkspaceFileModel: ObservableObject {
         // path. Never walk that broad directory for a result that will be
         // discarded as soon as the real workspace becomes available.
         guard canIndexProvider() else { return }
-        guard force || indexedWorkspacePath != root || files.isEmpty else { return }
+        // Switching back to Files while a scan is running must reuse that
+        // work. Cancelling the waiter does not stop its detached disk scan.
+        // An empty completed index is also a valid cache until invalidation.
+        guard force || (indexedWorkspacePath != root && indexingWorkspacePath != root) else { return }
         indexTask?.cancel()
+        indexingWorkspacePath = root
         let generation = UUID()
         indexGeneration = generation
         let scanner = scanner
         indexTask = Task { [weak self] in
+            defer {
+                if let self, self.indexGeneration == generation {
+                    self.indexTask = nil
+                    self.indexingWorkspacePath = nil
+                }
+            }
             let files = await Task.detached(priority: .utility) {
                 scanner(root)
             }.value
@@ -148,6 +160,8 @@ final class WorkspaceFileModel: ObservableObject {
     func stop() {
         indexGeneration = UUID()
         indexTask?.cancel()
+        indexTask = nil
+        indexingWorkspacePath = nil
         previewTask?.cancel()
     }
 
@@ -155,6 +169,8 @@ final class WorkspaceFileModel: ObservableObject {
     func seed(_ files: [URL], workspacePath: String) {
         indexGeneration = UUID()
         indexTask?.cancel()
+        indexTask = nil
+        indexingWorkspacePath = nil
         indexedWorkspacePath = workspacePath
         self.files = files
     }

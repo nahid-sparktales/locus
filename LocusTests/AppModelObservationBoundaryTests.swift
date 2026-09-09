@@ -67,6 +67,45 @@ final class AppModelObservationBoundaryTests: XCTestCase {
         withExtendedLifetime((appSubscription, composerSubscription)) {}
     }
 
+    func testDividerWidthsOnlyPublishLayoutAndPersistOnRelease() {
+        let app = AppModel(startImmediately: false)
+        app.installTranscriptSession("large", blocks: (0..<500).map {
+            ChatBlock(kind: .assistant, text: "Historical answer \($0)")
+        })
+        let savedSettings = app.settings
+        let snapshot = app.transcriptPresentation.snapshot
+        let buildCount = app.transcriptPresentation.snapshotBuildCountForTesting
+        var appPublications = 0
+        var layoutPublications = 0
+        let appSubscription = app.objectWillChange.sink { appPublications += 1 }
+        let layoutSubscription = app.workspaceLayout.objectWillChange.sink { layoutPublications += 1 }
+
+        for step in 0..<100 {
+            app.setInspectorWidth(CGFloat(320 + step))
+            app.setSidebarWidth(CGFloat(200 + step))
+            app.setZoomedChatWidth(CGFloat(400 + step))
+        }
+
+        XCTAssertEqual(appPublications, 0, "Pointer movement must not invalidate the conversation and every panel")
+        XCTAssertGreaterThan(layoutPublications, 0, "The layout must still follow the pointer")
+        XCTAssertEqual(app.settings, savedSettings, "Only release persists the widths")
+        XCTAssertEqual(app.transcriptPresentation.snapshot, snapshot)
+        XCTAssertEqual(app.transcriptPresentation.snapshotBuildCountForTesting, buildCount)
+
+        let beforeNoOp = layoutPublications
+        app.setInspectorWidth(app.inspectorWidth)
+        app.setSidebarWidth(app.sidebarWidth)
+        app.setZoomedChatWidth(app.zoomedChatWidth)
+        XCTAssertEqual(layoutPublications, beforeNoOp)
+        app.commitInspectorWidth()
+        app.commitSidebarWidth()
+        app.commitZoomedChatWidth()
+        XCTAssertEqual(app.settings.inspectorWidth, Double(app.inspectorWidth))
+        XCTAssertEqual(app.settings.sidebarWidth, Double(app.sidebarWidth))
+        XCTAssertEqual(app.settings.inspectorZoomedChatWidth, Double(app.zoomedChatWidth))
+        withExtendedLifetime((appSubscription, layoutSubscription)) {}
+    }
+
     func testTranscriptChildPublicationsAndContentCommitsDoNotRepublishAppModel() {
         let app = AppModel(startImmediately: false)
         app.installTranscriptSession("selected", blocks: [ChatBlock(kind: .assistant, text: "Initial")])

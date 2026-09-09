@@ -248,6 +248,43 @@ final class TranscriptPresentationModelTests: XCTestCase {
         XCTAssertFalse(snapshot.hasPendingPermission)
     }
 
+    func testRenderRowsReuseStorageAndFollowContentAndSessionIdentity() {
+        let model = TranscriptPresentationModel()
+        model.installSession("large", blocks: benchmarkFixture())
+        let original = model.snapshot
+        let address = original.rows.withUnsafeBufferPointer { $0.baseAddress }
+        for _ in 0..<100 {
+            XCTAssertEqual(model.snapshot.rows.withUnsafeBufferPointer { $0.baseAddress }, address,
+                "A layout read must not allocate another full-history row array")
+        }
+        XCTAssertEqual(original.rows.map(\.index), Array(original.items.indices))
+        XCTAssertEqual(original.rows.map(\.item), original.items)
+        XCTAssertEqual(original.rows.last?.id,
+            .item(original.renderToken.sessionGeneration, original.items.last!.id))
+
+        model.rekeySession(from: "large", to: "renamed")
+        XCTAssertEqual(model.snapshot.rows.withUnsafeBufferPointer { $0.baseAddress }, address)
+        model.updateBlocks { $0.append(ChatBlock(kind: .user, text: "Continue")) }
+        XCTAssertEqual(model.snapshot.rows.map(\.item), model.snapshot.items)
+        XCTAssertNotEqual(model.snapshot.rows.last?.id, original.rows.last?.id)
+        let ids = model.snapshot.rows.map(\.id)
+        model.installSession("fresh", blocks: model.snapshot.blocks)
+        XCTAssertTrue(Set(ids).isDisjoint(with: model.snapshot.rows.map(\.id)))
+    }
+
+    func testLongAnswerAndLargeHistoryAvoidAnimatedPanelReflowAndResetForNewChat() {
+        let model = TranscriptPresentationModel()
+        XCTAssertFalse(model.snapshot.prefersImmediatePanelLayout)
+        model.replaceBlocks([ChatBlock(kind: .assistant, text: "A short answer")])
+        XCTAssertFalse(model.snapshot.prefersImmediatePanelLayout)
+        model.replaceBlocks([ChatBlock(kind: .assistant, text: String(repeating: "Long answer. ", count: 2_000))])
+        XCTAssertTrue(model.snapshot.prefersImmediatePanelLayout, "A single large answer needs the same protection as long history")
+        model.replaceBlocks(benchmarkFixture())
+        XCTAssertTrue(model.snapshot.prefersImmediatePanelLayout)
+        model.installSession("new", blocks: [])
+        XCTAssertFalse(model.snapshot.prefersImmediatePanelLayout)
+    }
+
     func testBatchedBlockMutationBuildsAndPublishesExactlyOnce() {
         let model = TranscriptPresentationModel()
         model.replaceBlocks([
