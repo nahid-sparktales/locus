@@ -181,8 +181,8 @@ extension AppModel {
     }
 
     func dismissOverview() {
-        overviewPresented = false
-        overviewActivityVisible = false
+        if overviewPresented { overviewPresented = false }
+        if overviewActivityVisible { overviewActivityVisible = false }
     }
 
     func presentInspectorForSentRequest(isTeam: Bool, runID: String? = nil) {

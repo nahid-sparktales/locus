@@ -3251,7 +3251,8 @@ final class FeatureLogicTests: XCTestCase {
 
         send("cd child\n")
         let location = root.appendingPathComponent("location.txt")
-        send("pwd > '\(location.path)'\n")
+        let locationPending = root.appendingPathComponent("location.pending")
+        send("pwd > '\(locationPending.path)' && mv '\(locationPending.path)' '\(location.path)'\n")
         let locationResult = await waitForFile(location)
         let reportedLocation = URL(
             fileURLWithPath: try XCTUnwrap(locationResult)
@@ -3295,11 +3296,14 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(rendered.contains("LOCUS-UNICODE-λ-界"))
 
         let interrupted = root.appendingPathComponent("interrupted.txt")
+        let interruptedPending = root.appendingPathComponent("interrupted.pending")
         send("sleep 30\n")
         try? await Task.sleep(for: .milliseconds(150))
         let controlC: [UInt8] = [3]
         view.send(data: controlC[...])
-        send("printf interrupted > '\(interrupted.path)'\n")
+        // Publish only a completed write: opening the redirect creates an
+        // empty file before printf writes its content on a busy runner.
+        send("printf interrupted > '\(interruptedPending.path)' && mv '\(interruptedPending.path)' '\(interrupted.path)'\n")
         let interruptedResult = await waitForFile(interrupted)
         XCTAssertEqual(try XCTUnwrap(interruptedResult), "interrupted")
     }

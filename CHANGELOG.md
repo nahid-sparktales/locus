@@ -62,6 +62,8 @@
 
 ### Fixed
 
+- Avoid redundant workspace refreshes when switching chats with Overview
+  already closed.
 - Updated the bundled HTTP transport to HTTPX2 and HTTPCore2 2.12.0 to include
   upstream TLS, redirect, and streaming decompression security fixes.
 
