@@ -425,6 +425,7 @@ class AgentCore:
         self.execution_path = self.cwd
         self.task_metadata: dict[str, Any] | None = None
         self.tool_ctx = ToolContext(cwd=self.cwd)
+        self.capsule_runtime = None
         self._event_handler: EventHandler | None = None
         self.extensions = ExtensionManager(self.cwd)
         self.mcp = MCPManager(self.extensions, self._emit)
@@ -523,6 +524,11 @@ class AgentCore:
         self._event_handler = handler
 
     def _emit(self, event: dict[str, Any]) -> None:
+        if self.provider == "chatgpt" and not self.identity_mode and event.get("type") == "tool_result":
+            self.session.append_strict({"type": "native_tool_observation", **{
+                key: event[key] for key in ("tool", "id", "summary", "result", "ok", "denied") if key in event}})
+        if getattr(self, "capsule_runtime", None) is not None and event.get("type") == "model_usage":
+            self.capsule_runtime.observe_usage(event)
         if getattr(self, "_output_run_id", "") and event.get("type") in {
             "message_start", "message_end", "assistant_item_start", "assistant_item_delta",
             "assistant_item_end", "token", "thinking", "turn_done",
@@ -549,6 +555,10 @@ class AgentCore:
         with self._steer_lock:
             if not self._accepting_steers:
                 return None
+            if not self.identity_mode:
+                self.session.append_strict({"type": "pending_task_input", "text": value})
+                if self.capsule_runtime is not None:
+                    self.capsule_runtime.correction(value, uuid.uuid4().hex)
             self._pending_steers.append(value)
             self._steer_event.set()
         return "interrupting_generation" if self._streaming_response else "after_current_action"
@@ -613,6 +623,8 @@ class AgentCore:
             # The transcript append may survive a crash before the outbox ack.
             if not any(m.get("_delivery_id") == identifier for m in self.messages):
                 self._add_message({"role": "user", "content": text, "_delivery_id": identifier})
+            if self.capsule_runtime is not None:
+                self.capsule_runtime.correction(text, identifier)
             self._applied_context_deliveries.add(identifier)
             if self.context_delivery_applied is not None:
                 self.context_delivery_applied(identifier)
@@ -2007,12 +2019,12 @@ class AgentCore:
         }
         if event_id and persist and not self.session.append_once(record, event_id):
             return
-        self.messages.append(message)
         if persist and not event_id:
-            if self.goal_runtime is not None and hasattr(self.session, "append_strict"):
+            if (self.goal_runtime is not None or saved.get("role") == "user" or getattr(self, "capsule_runtime", None) is not None) and hasattr(self.session, "append_strict"):
                 self.session.append_strict(record)
             else:
                 self.session.append(record)
+        self.messages.append(message)
 
     def _persist_display_message(self, message: dict[str, Any]) -> None:
         """Persist transcript-only output without feeding it back to a provider.
@@ -2045,6 +2057,11 @@ class AgentCore:
         # wrongly suppress the next turn's final-answer pass.
         self.tool_ctx.user_question = None
         self._goal_pending_actions.clear()
+        self._compaction_calls_pending = 0
+        self._compaction_prompt_pending = 0
+        self._compaction_completion_pending = 0
+        self._compaction_call_limit = model_call_limit
+        self._context_preservation_error = ""
         if self.identity_mode and self.provider == "chatgpt":
             self._emit({"type": "error", "message": "Private Identity tasks require a local model or an API provider. Managed ChatGPT retains provider-side thread context and cannot use private vault sources."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
@@ -2247,12 +2264,23 @@ class AgentCore:
                     else:
                         self._clear_chatgpt_thread()
                 if not self._chatgpt_thread_id or self._chatgpt_thread_fingerprint != fingerprint:
-                    prior = self.messages[:-1]
+                    from .context_preservation import token_estimate
+                    if token_estimate(json.dumps(self.messages, ensure_ascii=False)) + self._tool_schema_tokens() + self._reply_room() >= (self.context_limit or 128000):
+                        compacted = self._slash_compact()
+                        if compacted.get("error"):
+                            raise ValueError(compacted["text"])
+                        prior = self.messages
+                    else:
+                        prior = self.messages[:-1]
                     if prior:
                         canonical = []
-                        for message in prior[-80:]:
+                        for message in prior:
                             role = str(message.get("role") or "message")
-                            content = str(message.get("content") or "")[:20_000]
+                            content = str(message.get("content") or "")
+                            if message.get("tool_calls"):
+                                content += "\nTool calls: " + json.dumps(message["tool_calls"], ensure_ascii=False)
+                            if role == "tool":
+                                content = f"Tool {message.get('name', '')} ({message.get('tool_call_id', '')}): " + content
                             if parity:
                                 # A native-prompt thread must not replay the
                                 # Locus system prompt or the mode wrappers old
@@ -2577,9 +2605,9 @@ class AgentCore:
                                     native_model_calls += 1
                                     native_prompt_tokens += prompt
                                     native_completion_tokens += completion
-                                    self._emit({"type": "model_usage", "model_calls": native_model_calls,
-                                                "prompt_tokens": native_prompt_tokens,
-                                                "completion_tokens": native_completion_tokens})
+                                    self._emit({"type": "model_usage", "model_calls": native_model_calls + self._compaction_calls_pending,
+                                                "prompt_tokens": native_prompt_tokens + self._compaction_prompt_pending,
+                                                "completion_tokens": native_completion_tokens + self._compaction_completion_pending})
                                 if prompt:
                                     # The helper holds the working context, so
                                     # this is the only honest measure of what
@@ -2619,6 +2647,14 @@ class AgentCore:
                     ) + [{"type": "text", "text": raw_request}]
                 else:
                     text_items = [{"type": "text", "text": turn_text}]
+                from .context_preservation import runtime_context
+                task_snapshot = runtime_context(self)
+                if task_snapshot:
+                    from .context_preservation import token_estimate
+                    if token_estimate(task_snapshot) + self._tool_schema_tokens() + self._reply_room() >= (self.context_limit or 128000):
+                        raise ValueError("Essential task instructions exceed this model's context; the saved context is unchanged.")
+                    text_items.insert(0, {"type": "text", "text": task_snapshot})
+                    turn_text = task_snapshot + "\n\n" + turn_text
                 run_managed(
                     thread_id=self._chatgpt_thread_id,
                     text=turn_text,
@@ -2729,7 +2765,7 @@ class AgentCore:
                     })
                 if reason == "complete":
                     self._finish_staged_output()
-                if self._needs_final_answer_pass(
+                if self.capsule_runtime is None and self._needs_final_answer_pass(
                     reason=reason, tool_calls=native_tool_steps
                 ):
                     # The helper thread already holds this whole turn, so the
@@ -2816,7 +2852,7 @@ class AgentCore:
             "type": "turn_done",
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
-            "model_calls": max(native_model_calls, 1),
+            "model_calls": max(native_model_calls, 1) + self._compaction_calls_pending,
             "tool_steps": native_tool_steps,
             "iteration_limit": self.max_iterations,
             "model_call_limit": model_call_limit,
@@ -2883,7 +2919,6 @@ class AgentCore:
             # the first turn budgets against nothing and every turn after that
             # against the truth. One cheap local call, once per user turn.
             self.refresh_context_limit()
-            self.auto_compact_if_needed()
             user_message: dict[str, Any] = {"role": "user", "content": user_text}
             if attachments:
                 # Image bytes stay in the in-memory conversation so a follow-up
@@ -2907,6 +2942,27 @@ class AgentCore:
                     **persisted_user_metadata,
                 }
             self._add_message(user_message, persisted, persist=persist_user_message)
+            from .context_preservation import protected_context, token_estimate
+            if (self.context_limit > 0 and not self.identity_mode
+                    and token_estimate(protected_context(self)) + token_estimate(str(self.system_message().get("content", "")))
+                    + self._tool_schema_tokens() + self._reply_room() >= self.context_limit):
+                self._context_preservation_error = "Essential task instructions exceed this model's context. The complete request is saved; choose a larger context or narrow the task."
+                self._emit({"type": "note", "text": self._context_preservation_error, "error": True})
+            else:
+                self.auto_compact_if_needed()
+            if getattr(self, "_context_preservation_error", ""):
+                self.last_turn_result = {"type": "turn_done", "reason": "context_limit", "duration_ms": 0,
+                    "model_calls": self._compaction_calls_pending,
+                    "prompt_tokens": self._compaction_prompt_pending,
+                    "completion_tokens": self._compaction_completion_pending,
+                    "provider": self.provider, "model": self.model, "workspace_root": self.workspace_root,
+                    "session_id": self.session.session_id}
+                self._emit(self.last_turn_result)
+                return
+            from .context_preservation import runtime_context
+            snapshot = runtime_context(self)
+            if snapshot:
+                self._add_message({"role": "user", "content": snapshot, "_locus_context": True})
             self._run_response_loop(
                 decider,
                 started_at=started_at,
@@ -2981,6 +3037,7 @@ class AgentCore:
             "text": "Context is nearly full — compacting the conversation.",
         })
         result = self._slash_compact()
+        self._context_preservation_error = str(result.get("error") or "")
         # Reported as a note, not a slash_result: this is part of the turn the
         # user asked for, not a command they ran.
         self._emit({
@@ -3281,13 +3338,13 @@ class AgentCore:
         model_call_limit: int | None = None,
     ) -> None:
         started_at = time.monotonic() if started_at is None else started_at
-        prompt_tokens_before = self.total_prompt_tokens
-        completion_tokens_before = self.total_completion_tokens
+        prompt_tokens_before = self.total_prompt_tokens - getattr(self, "_compaction_prompt_pending", 0)
+        completion_tokens_before = self.total_completion_tokens - getattr(self, "_compaction_completion_pending", 0)
         reason = "complete"
         iteration = 0
         tool_calls_run = 0
         iteration_limit = self.max_iterations
-        hard_call_limit = max(int(model_call_limit), 0) if model_call_limit is not None else None
+        hard_call_limit = max(int(model_call_limit) - getattr(self, "_compaction_calls_pending", 0), 0) if model_call_limit is not None else None
         while iteration < iteration_limit and (hard_call_limit is None or iteration < hard_call_limit):
             iteration += 1
             if self._interrupt.is_set():
@@ -3345,7 +3402,7 @@ class AgentCore:
             self._add_message(assistant_msg)
             self.total_prompt_tokens += resp.prompt_eval_count
             self.total_completion_tokens += resp.eval_count
-            self._emit({"type": "model_usage", "model_calls": iteration,
+            self._emit({"type": "model_usage", "model_calls": iteration + getattr(self, "_compaction_calls_pending", 0),
                         "prompt_tokens": max(self.total_prompt_tokens - prompt_tokens_before, 0),
                         "completion_tokens": max(self.total_completion_tokens - completion_tokens_before, 0)})
             # The per-call counts are the server's ground truth for what this
@@ -3362,6 +3419,8 @@ class AgentCore:
             if self.context_limit <= 0:
                 self.refresh_context_limit()
             if resp.done_reason == "length":
+                if not resp.tool_calls:
+                    reason = "output_limit"
                 # The model hit its output cap: say so rather than presenting
                 # a cut-off answer as a finished one.
                 self._emit({
@@ -3490,14 +3549,14 @@ class AgentCore:
             reason = "interrupted"
         if reason == "complete":
             self._finish_staged_output()
-        if self._needs_final_answer_pass(reason=reason, tool_calls=tool_calls_run):
+        if self.capsule_runtime is None and self._needs_final_answer_pass(reason=reason, tool_calls=tool_calls_run):
             if self._run_final_answer_pass():
                 iteration += 1
         terminal = {
             "type": "turn_done",
             "reason": reason,
             "duration_ms": max(int((time.monotonic() - started_at) * 1000), 0),
-            "model_calls": iteration,
+            "model_calls": iteration + getattr(self, "_compaction_calls_pending", 0),
             # The step count both routes agree on: one per tool Locus ran.
             "tool_steps": tool_calls_run,
             "iteration_limit": iteration_limit,
@@ -3990,6 +4049,8 @@ class AgentCore:
             refusal = self.tool_registry.image_tool_refusal(tc.name)
             if refusal is not None:
                 return image_refusal_message(tc.name, refusal)
+        if tc.name == "update_goal" and self.goal_runtime is not None:
+            self.goal_runtime.verification_decider = decider
         if tc.name in {"get_goal", "update_goal"} and self.tool_ctx.goal is None:
             return "Error: goal tools belong only to the active goal coordinator."
         if self.goal_runtime is not None and tc.name not in {"get_goal", "update_goal"} and self.goal_runtime.should_stop():
@@ -4131,6 +4192,9 @@ class AgentCore:
             goal_action = (self.goal_runtime is not None
                            and not self.tool_registry.is_read_only_tool(tc.name)
                            and tc.name not in {"get_goal", "update_goal"})
+            capsule_action = self.capsule_runtime is not None and not self.tool_registry.is_read_only_tool(tc.name)
+            if capsule_action:
+                self.capsule_runtime.action_started(call_id, tc.name, tc.arguments, summary)
             if goal_action:
                 self.goal_runtime.start_action(call_id, tc.name)
             if track_active:
@@ -4182,6 +4246,8 @@ class AgentCore:
                     else:
                         result = self.connector_executor(tc.name, tc.arguments, call_id)
                 else:
+                    if getattr(self, "_verification_running", False) and info.get("origin") == "builtin":
+                        self._verification_tool_started = tc.call_id
                     result = (
                         execute_tool(tc.name, tc.arguments, self.tool_ctx)
                         if info.get("origin") == "builtin"
@@ -4195,8 +4261,13 @@ class AgentCore:
                 if track_active:
                     self.active_tool_call_id = ""
         ok = not result.startswith("Error")
+        if ok and tc.name == "submit_plan" and self.tool_ctx.plan_document and not self.identity_mode:
+            self.session.append_strict({"type": "task_plan", "plan": self.tool_ctx.plan_document,
+                                        "workspace_root": self.workspace_root})
+        if capsule_action:
+            self.capsule_runtime.action_finished(call_id, result)
         if goal_action:
-            if self.provider != "chatgpt" and self._in_tool_call and track_active:
+            if self.provider != "chatgpt" and self._in_tool_call and track_active and not getattr(self, "_verification_running", False):
                 self._goal_pending_actions[id(tc)] = (call_id, ok, result)
             else:
                 self.goal_runtime.finish_action(call_id, ok=ok, result=result)
@@ -4373,70 +4444,8 @@ class AgentCore:
     def _slash_compact(self) -> dict[str, Any]:
         if self.identity_mode:
             return {"command": "compact", "error": "Private Identity source context cannot be compacted."}
-        history = self._compactable_history()
-        if len(history) < 2:
-            return {"command": "compact", "text": "Nothing to compact yet."}
-        # Newest-first until the cap: the request that summarizes the
-        # conversation must itself fit the window it is trying to rescue.
-        # 3 chars per token is the inverse of the estimate convention
-        # (4 chars/token at 0.75 optimism); the summary allowance is carved
-        # out so the reply has room to exist.
-        cap = COMPACT_TRANSCRIPT_CAP_CHARS
-        if self.context_limit > 0:
-            cap = min(cap, max(2_000, 3 * (self.context_limit - SUMMARY_ALLOWANCE_TOKENS)))
-        kept: list[str] = []
-        total = 0
-        for m in reversed(history):
-            piece = (
-                f"{m['role'].upper()}: "
-                f"{strip_prompt_decoration(str(m.get('content', '')))[:2000]}"
-            )
-            if kept and total + len(piece) > cap:
-                break
-            kept.append(piece)
-            total += len(piece)
-        kept.reverse()
-        if len(kept) < len(history):
-            kept.insert(0, "[Earlier messages omitted — too long to summarize at once.]")
-        transcript = "\n\n".join(kept)
-        req = [
-            {
-                "role": "system",
-                "content": (
-                    "You summarize conversations for a coding agent. Produce a compact "
-                    "summary preserving: user goals, decisions made, files created or "
-                    "modified (with paths), commands run, and pending tasks."
-                ),
-            },
-            {"role": "user", "content": f"Summarize this conversation:\n\n{transcript}"},
-        ]
-        try:
-            resp = self.client.chat_stream(
-                self.model, req, tools=None, options=self.chat_options()
-            )
-        except OllamaError as e:
-            return {"command": "compact", "text": str(e), "error": True}
-        summary = strip_think(resp.content) or "(empty summary)"
-        self.messages = [
-            self.system_message(),
-            {
-                "role": "user",
-                "content": "[Summary of the earlier conversation, compacted to save context]\n" + summary,
-            },
-        ]
-        # The measurement described the conversation that was just replaced.
-        # Left standing it would hold the meter at the pre-compaction reading
-        # until the next model call, which is exactly when someone looks.
-        self._measured_prompt_tokens = 0
-        # The helper thread still holds the full uncompacted history; keeping
-        # it would silently undo the compaction on the next ChatGPT turn.
-        self._clear_chatgpt_thread()
-        self._emit_info()
-        return {
-            "command": "compact",
-            "text": f"Conversation compacted to a summary ({len(summary)} chars).",
-            "data": {"summary": summary},
-        }
+        from .context_preservation import compact
+        return compact(self)
 
     def _slash_resume(self, arg: str) -> dict[str, Any]:
         files = SessionStore.list_sessions()
@@ -4603,8 +4612,13 @@ class AgentCore:
                 pass
         # Transcript-only reasoning records retain their exact position for
         # the UI, but never become conversational input after resume.
-        conversational = [m for m in messages if not m.get("_display_only")]
+        conversational = [m for m in SessionStore.load_context(path) if not m.get("_display_only")]
         self.messages = [self.system_message()] + conversational
+        for record in SessionStore.context_records(path):
+            if record.get("type") == "compacted_context" and isinstance(record.get("plan"), dict):
+                self.tool_ctx.plan_document = record["plan"]
+            elif record.get("type") in {"plan_ready", "task_plan"} and isinstance(record.get("plan"), dict):
+                self.tool_ctx.plan_document = record["plan"]
         self._clear_chatgpt_thread()
         if self.provider == "chatgpt":
             marker = SessionStore.chatgpt_thread_state(path)

@@ -1,0 +1,157 @@
+{
+  "method": "Offline production-code probes with synthetic provider responses; network blocked",
+  "results": [
+    {
+      "probe": "completion_without_recorded_verification",
+      "observed": {
+        "goal_status": "completed",
+        "required_file_exists": false,
+        "tools_or_tests_executed": 0
+      }
+    },
+    {
+      "probe": "no_progress_with_paraphrased_reports",
+      "observed": {
+        "turns_with_no_actions": 5,
+        "states": [
+          {
+            "status": "active",
+            "no_progress_count": 1
+          },
+          {
+            "status": "active",
+            "no_progress_count": 1
+          },
+          {
+            "status": "active",
+            "no_progress_count": 1
+          },
+          {
+            "status": "active",
+            "no_progress_count": 1
+          },
+          {
+            "status": "active",
+            "no_progress_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "probe": "compaction_constraint_evidence_and_metering",
+      "observed": {
+        "compaction_returned_error": false,
+        "late_user_constraint_in_summary_input": false,
+        "test_result_in_summary_input": false,
+        "provider_reported_tokens": 625,
+        "core_recorded_tokens": 0
+      }
+    },
+    {
+      "probe": "output_limit_terminal_status",
+      "observed": {
+        "terminal_reason": "complete",
+        "incomplete_warning_emitted": true
+      }
+    },
+    {
+      "probe": "anthropic_cached_input_accounting",
+      "observed": {
+        "provided_usage": {
+          "input_tokens": 100,
+          "cache_read_input_tokens": 5000,
+          "cache_creation_input_tokens": 2000
+        },
+        "recorded_prompt_tokens": 100,
+        "provider_fields": {}
+      }
+    },
+    {
+      "probe": "capsule_baseline_scope_and_partial_run",
+      "observed": {
+        "unlisted_dependency_change": {
+          "valid": true,
+          "capsule_id": "15be0a79-6eda-43bc-83c3-78733c3881c6",
+          "revision": 1,
+          "changes": [],
+          "checked_files": 1
+        },
+        "own_partial_execution_change": {
+          "valid": false,
+          "capsule_id": "15be0a79-6eda-43bc-83c3-78733c3881c6",
+          "revision": 1,
+          "changes": [
+            {
+              "path": "app.py",
+              "reason": "changed"
+            }
+          ],
+          "checked_files": 1
+        }
+      }
+    },
+    {
+      "probe": "capsule_baseline_checked_against_source_instead_of_execution_checkout",
+      "observed": {
+        "source_baseline_valid": true,
+        "execution_dispatched": true,
+        "execution_file_contents": [
+          "divergent execution contents"
+        ],
+        "errors": []
+      }
+    },
+    {
+      "probe": "evaluation_startup",
+      "observed": {
+        "run_records_precreated_for_diagnosis": false,
+        "runtime_exception": "IntegrityError: FOREIGN KEY constraint failed",
+        "case_results": []
+      }
+    },
+    {
+      "probe": "evaluation_limit_and_unexecuted_rubric_after_precreating_runs",
+      "observed": {
+        "run_records_precreated_for_diagnosis": true,
+        "case_results": [
+          {
+            "case_id": "rubric",
+            "state": "passed",
+            "rubric_score": null,
+            "rubric_subjective": false,
+            "estimated_cost": 0.0,
+            "error": null
+          },
+          {
+            "case_id": "limit",
+            "state": "passed",
+            "rubric_score": null,
+            "rubric_subjective": false,
+            "estimated_cost": 0.0,
+            "error": null
+          }
+        ]
+      }
+    },
+    {
+      "probe": "comparison_configuration_identity",
+      "observed": [
+        {
+          "configuration": "solo",
+          "cases": 2,
+          "passed": 1,
+          "pass_rate": 0.5,
+          "average_rubric_score": null,
+          "median_latency_ms": 300,
+          "p95_latency_ms": 300,
+          "model_calls": 0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "estimated_cost": 0.0,
+          "retries": 0,
+          "failure_categories": {}
+        }
+      ]
+    }
+  ]
+}

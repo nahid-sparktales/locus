@@ -6765,14 +6765,18 @@ def test_new_session_emits_session_started_and_clears_state(tmp_path):
 
 def test_auto_compaction_runs_before_the_window_overflows(tmp_path):
     core = _core(tmp_path, [
-        ChatResponse(content_parts=["a summary"], done=True),   # the compaction call
+        ChatResponse(content_parts=["a summary"], done=True),
+        ChatResponse(content_parts=["second section summary"], done=True),
+        ChatResponse(content_parts=["third section summary"], done=True),
+        ChatResponse(content_parts=["fourth section summary"], done=True),
+        ChatResponse(content_parts=["fifth section summary"], done=True),   # the compaction call
         ChatResponse(content_parts=["answer"], done=True),      # the real turn
     ])
     core.client.loaded_window = 32_768
     core.messages = [
         core.system_message(),
-        {"role": "user", "content": "x" * 60_000},
-        {"role": "assistant", "content": "y" * 60_000},
+        {"role": "user", "content": "Keep the API unchanged."},
+        {"role": "assistant", "content": "y" * 100_000},
     ]
     events = []
     core.on_event(events.append)
@@ -7132,18 +7136,22 @@ def test_compaction_asks_for_the_same_window_as_the_turn(tmp_path):
     # A different num_ctx mid-turn would make Ollama reload the model.
     core = _core(tmp_path, [
         ChatResponse(content_parts=["a summary"], done=True),
+        ChatResponse(content_parts=["second section summary"], done=True),
+        ChatResponse(content_parts=["third section summary"], done=True),
+        ChatResponse(content_parts=["fourth section summary"], done=True),
+        ChatResponse(content_parts=["fifth section summary"], done=True),
         ChatResponse(content_parts=["answer"], done=True),
     ])
     core.config["context_window"] = 32_768
     core.messages = [
         core.system_message(),
-        {"role": "user", "content": "x" * 60_000},
-        {"role": "assistant", "content": "y" * 60_000},
+        {"role": "user", "content": "Keep the API unchanged."},
+        {"role": "assistant", "content": "y" * 100_000},
     ]
 
     core.run_turn("next question")
 
-    assert core.client.seen_options == [{"num_ctx": 32_768}, {"num_ctx": 32_768}]
+    assert core.client.seen_options == [{"num_ctx": 32_768}] * 6
 
 
 def test_the_remote_provider_is_never_sent_num_ctx(tmp_path):
@@ -7697,12 +7705,12 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
         RESERVED_REPLY_TOKENS,
     )
 
-    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)])
+    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)] * 4)
     core.context_limit = 32_768
     core.messages = [
         core.system_message(),
-        {"role": "user", "content": "x" * 44_000},
-        {"role": "assistant", "content": "y" * 43_000},
+        {"role": "user", "content": "Keep the API unchanged."},
+        {"role": "assistant", "content": "y" * 87_000},
     ]
 
     # The old rule was 75% of the whole window and nothing else, so a
@@ -7735,13 +7743,13 @@ def test_a_small_window_still_compacts_rather_than_giving_up(tmp_path):
     would not."""
     from ollama_code.core import RESERVED_REPLY_TOKENS
 
-    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)])
+    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)] * 4)
     core.context_limit = 9_216
     assert core._reply_room() < RESERVED_REPLY_TOKENS
     core.messages = [
         core.system_message(),
-        {"role": "user", "content": "x" * 20_000},
-        {"role": "assistant", "content": "y" * 20_000},
+        {"role": "user", "content": "Keep the API unchanged."},
+        {"role": "assistant", "content": "y" * 40_000},
     ]
 
     assert core.auto_compact_if_needed() is True
@@ -7866,8 +7874,9 @@ def test_slash_compact_replaces_history(tmp_path):
     core.run_turn("a question")
     result = core.handle_slash("/compact")
     assert result["command"] == "compact"
-    assert "a summary" in core.messages[1]["content"]
-    assert len(core.messages) == 2
+    assert "a question" in core.messages[1]["content"]
+    assert "a summary" in core.messages[2]["content"]
+    assert len(core.messages) == 3
 
 
 def test_resume_session_restores_messages(tmp_path):
@@ -8083,7 +8092,7 @@ def test_compaction_transcript_is_capped_so_it_cannot_overflow_itself(tmp_path):
             return super().chat_stream(model, messages, **kwargs)
 
     core = _core(tmp_path, [])
-    core.client = RecordingClient([ChatResponse(content_parts=["summary"], done=True)])
+    core.client = RecordingClient([ChatResponse(content_parts=["summary"], done=True)] * 6)
     core.context_limit = 32_768
     for i in range(40):
         role = "user" if i % 2 == 0 else "assistant"
@@ -8092,11 +8101,12 @@ def test_compaction_transcript_is_capped_so_it_cannot_overflow_itself(tmp_path):
     result = core._slash_compact()
 
     assert not result.get("error")
-    request = core.client.seen_messages[0][-1]["content"]
-    assert len(request) <= COMPACT_TRANSCRIPT_CAP_CHARS + 500
-    assert "marker-39" in request, "the newest message survives"
-    assert "marker-0" not in request, "the oldest is dropped first"
-    assert "Earlier messages omitted" in request
+    requests = [m[-1]["content"] for m in core.client.seen_messages]
+    assert all(len(request) <= COMPACT_TRANSCRIPT_CAP_CHARS for request in requests)
+    available = "\n".join(requests) + json.dumps(core.messages)
+    for i in range(40):
+        assert f"marker-{i}" in available, "Every section is summarized or retained"
+    assert "Earlier messages omitted" not in available
 
 
 def test_think_fallback_does_not_replay_streamed_tokens(monkeypatch):

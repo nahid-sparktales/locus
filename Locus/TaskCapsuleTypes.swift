@@ -16,18 +16,26 @@ struct CapsulePlanStep: Codable, Hashable, Identifiable {
     var dependencies: [String]
     var files: [String]
     var checks: [String]
+    var inputs: [String] = []
+    var outputs: [String] = []
+    var acceptanceChecks: [[String: JSONValue]] = []
 
     init(id: String = UUID().uuidString, title: String = "", instructions: String = "",
-         dependencies: [String] = [], files: [String] = [], checks: [String] = []) {
+         dependencies: [String] = [], files: [String] = [], checks: [String] = [], inputs: [String] = [], outputs: [String] = [], acceptanceChecks: [[String: JSONValue]] = []) {
         self.id = id
         self.title = title
         self.instructions = instructions
         self.dependencies = dependencies
         self.files = files
         self.checks = checks
+        self.inputs = inputs
+        self.outputs = outputs
+        self.acceptanceChecks = acceptanceChecks
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, instructions, dependencies, files, checks }
+    private enum CodingKeys: String, CodingKey { case id, title, instructions, dependencies, files, checks, inputs, outputs
+        case acceptanceChecks = "acceptance_checks"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -37,6 +45,9 @@ struct CapsulePlanStep: Codable, Hashable, Identifiable {
         dependencies = try c.decodeIfPresent([String].self, forKey: .dependencies) ?? []
         files = try c.decodeIfPresent([String].self, forKey: .files) ?? []
         checks = try c.decodeIfPresent([String].self, forKey: .checks) ?? []
+        inputs = try c.decodeIfPresent([String].self, forKey: .inputs) ?? []
+        outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
+        acceptanceChecks = try c.decodeIfPresent([[String: JSONValue]].self, forKey: .acceptanceChecks) ?? []
     }
 }
 
@@ -83,6 +94,11 @@ struct TaskCapsule: Codable, Hashable, Identifiable {
     var createdAt: String?
     var updatedAt: String?
     var runs: [TaskCapsuleRun]
+    var attempts: [CapsuleAttempt] = []
+    var resumableAttempt: CapsuleAttempt? {
+        guard let attempt = attempts.first, attempt.state != "completed", attempt.state != "running" else { return nil }
+        return attempt
+    }
 
     var plannerHelpRequestsUsed: Int {
         runs.filter { $0.stage == "escalate" && $0.continuationOfRunID == nil }.count
@@ -90,7 +106,7 @@ struct TaskCapsule: Codable, Hashable, Identifiable {
     var plannerHelpRequestsRemaining: Int { max(0, recipe.maxPlannerEscalations - plannerHelpRequestsUsed) }
 
     private enum CodingKeys: String, CodingKey {
-        case id, revision, title, request, plan, recipe, runs
+        case id, revision, title, request, plan, recipe, runs, attempts
         case workspaceRoot = "workspace_root", createdAt = "created_at", updatedAt = "updated_at"
     }
 
@@ -121,6 +137,7 @@ struct TaskCapsule: Codable, Hashable, Identifiable {
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
         runs = try c.decodeIfPresent([TaskCapsuleRun].self, forKey: .runs) ?? []
+        attempts = try c.decodeIfPresent([CapsuleAttempt].self, forKey: .attempts) ?? []
     }
 }
 
@@ -230,4 +247,35 @@ struct TaskCapsuleValidation: Decodable {
     var valid: Bool
     var changes: [Change]
     struct Change: Decodable { var path: String; var reason: String }
+}
+
+struct CapsuleAttempt: Codable, Hashable, Identifiable {
+    var id: String
+    var state: String
+    var steps: [String: CapsuleStepProgress]
+    var verificationStatus: String?
+    var reason: String?
+    var uncertainAction: [String: JSONValue]?
+    var pendingUsage: [String: JSONValue]?
+    var usage: [String: JSONValue]?
+    var canResume: Bool { uncertainAction == nil && pendingUsage == nil }
+    var verifiedCount: Int { steps.values.filter { $0.state == "verified" }.count }
+    var title: String {
+        switch state {
+        case "running": verificationStatus == "checking" ? "Checking" : "Working"
+        case "needs_review": "Needs review"
+        case "completed": verificationStatus == "accepted" ? "Completed · Accepted by you" : "Completed"
+        default: "Paused"
+        }
+    }
+    enum CodingKeys: String, CodingKey {
+        case id, state, steps, reason, usage
+        case verificationStatus = "verification_status", uncertainAction = "uncertain_action"
+        case pendingUsage = "pending_usage"
+    }
+}
+
+struct CapsuleStepProgress: Codable, Hashable {
+    var state: String
+    var reason: String?
 }

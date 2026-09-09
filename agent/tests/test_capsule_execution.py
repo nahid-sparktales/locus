@@ -24,6 +24,7 @@ from ollama_code.orchestration import (
     parse_manifest,
     validate_dispatch_plan,
 )
+from ollama_code.runstore import RunStore
 from ollama_code.tools import ToolContext, _impl_submit_plan
 
 
@@ -59,9 +60,12 @@ def capsule_setup(tmp_path):
 
 def _service(workspace):
     events = []
+    runs = RunStore(workspace.parent / "routing-runs.sqlite3")
+    runs.run = lambda _run_id: {"state": "completed"}
     service = SimpleNamespace(
-        core=SimpleNamespace(workspace_root=str(workspace), cwd=str(workspace), identity_mode=False),
-        run_store=SimpleNamespace(run=lambda _run_id: {"state": "completed"}),
+        core=SimpleNamespace(workspace_root=str(workspace), cwd=str(workspace), identity_mode=False,
+                             session=SimpleNamespace(append_strict=lambda _: None)),
+        run_store=runs,
         emit=events.append,
     )
     return service, events

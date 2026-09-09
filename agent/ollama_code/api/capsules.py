@@ -44,7 +44,8 @@ def _present(service: ChatService, capsule: dict[str, Any]) -> dict[str, Any]:
             if isinstance(session_id, str) and session_id.strip():
                 enriched["session_id"] = session_id
         runs.append(enriched)
-    return {**capsule, "runs": runs}
+    from ..capsule_progress import CapsuleProgressStore
+    return {**capsule, "runs": runs, "attempts": CapsuleProgressStore(service.run_store).list(capsule["id"])}
 
 
 def _origin_run(service: ChatService, body: dict[str, Any], store: CapsuleStore) -> dict[str, Any] | None:
@@ -67,9 +68,9 @@ def _origin_run(service: ChatService, body: dict[str, Any], store: CapsuleStore)
 
 def capsule_list(service: ServiceDependency, workspace_root: str = Query(default=""), limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
     try:
-        return {"capsules": capsule_store(service, workspace_root).list(limit)}
-    except CapsuleError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        return {"capsules": [_present(service, c) for c in capsule_store(service, workspace_root).list(limit)]}
+    except (CapsuleError, ValueError) as exc:
+        raise HTTPException(getattr(exc, "status_code", 409), str(exc)) from exc
 
 
 def capsule_create(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
@@ -77,29 +78,44 @@ def capsule_create(service: ServiceDependency, body: dict[str, Any] = Body(defau
         store = capsule_store(service, body.get("workspace_root", ""))
         origin_run = _origin_run(service, body, store)
         return {"capsule": _present(service, store.create(body, origin_run=origin_run))}
-    except CapsuleError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+    except (CapsuleError, ValueError) as exc:
+        raise HTTPException(getattr(exc, "status_code", 409), str(exc)) from exc
 
 
 def capsule_get(capsule_id: str, service: ServiceDependency, workspace_root: str = Query(default=""), revision: int | None = Query(default=None, ge=1)) -> dict[str, Any]:
     try:
         return {"capsule": _present(service, capsule_store(service, workspace_root).get(capsule_id, revision))}
-    except CapsuleError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+    except (CapsuleError, ValueError) as exc:
+        raise HTTPException(getattr(exc, "status_code", 409), str(exc)) from exc
 
 
 def capsule_update(capsule_id: str, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
-        return {"capsule": capsule_store(service, body.get("workspace_root", "")).update(capsule_id, body, body.get("expected_revision"))}
-    except CapsuleError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        store = capsule_store(service, body.get("workspace_root", ""))
+        if body.get("action") in {"accept", "resolve_action", "resolve_usage"}:
+            from ..capsule_progress import CapsuleProgressStore
+            capsule = store.get(capsule_id)
+            if capsule["revision"] != body.get("expected_revision"):
+                raise CapsuleError("The capsule changed; reload before accepting.", 409)
+            progress = CapsuleProgressStore(service.run_store)
+            if body["action"] == "accept":
+                progress.accept(str(body.get("attempt_id") or ""), capsule_id, capsule["revision"])
+            elif body["action"] == "resolve_usage":
+                progress.resolve_usage(str(body.get("attempt_id") or ""), capsule_id, body.get("usage"))
+            else:
+                progress.resolve_action(str(body.get("attempt_id") or ""), capsule_id,
+                                        body.get("action_id"), body.get("note"))
+            return {"capsule": _present(service, capsule)}
+        return {"capsule": _present(service, store.update(capsule_id, body, body.get("expected_revision")))}
+    except (CapsuleError, ValueError) as exc:
+        raise HTTPException(getattr(exc, "status_code", 409), str(exc)) from exc
 
 
 def capsule_validate(capsule_id: str, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
         return capsule_store(service, body.get("workspace_root", "")).validate(capsule_id, body.get("revision"))
-    except CapsuleError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+    except (CapsuleError, ValueError) as exc:
+        raise HTTPException(getattr(exc, "status_code", 409), str(exc)) from exc
 
 
 def register_routes(router: APIRouter) -> None:

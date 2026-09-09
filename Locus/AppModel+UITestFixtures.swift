@@ -45,6 +45,9 @@ private final class GoalUITestProtocol: URLProtocol {
             switch input["action"] as? String {
             case "pause": record["status"] = "paused"
             case "resume": record["status"] = "active"
+            case "accept":
+                record["status"] = "completed"
+                record["verification_status"] = "accepted"
             case "cancel": record["status"] = "cancelled"
             case "edit":
                 for key in ["objective", "model_call_budget", "token_budget", "execution"] {

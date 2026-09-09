@@ -1,0 +1,34 @@
+{
+  "date": "2026-09-09",
+  "backend": {
+    "passed": 776,
+    "verification_and_recovery_regressions": 53,
+    "seconds": 52.98,
+    "command": "agent/.venv/bin/python -m pytest -q agent/tests/test_verified_tasks.py agent/tests/test_backend.py agent/tests/test_capsules.py agent/tests/test_capsule_execution.py agent/tests/test_goals.py agent/tests/test_goal_runtime.py agent/tests/test_context_delivery.py agent/tests/test_async_question_transport.py agent/tests/test_sessions.py agent/tests/test_runstore.py agent/tests/test_orchestration.py agent/tests/test_chatgpt_app_server.py --tb=short",
+    "log": "backend-tests.txt"
+  },
+  "desktop": {
+    "model_and_render_tests_passed": 52,
+    "ui_tests_passed": 9,
+    "build": "passed",
+    "command": "xcodebuild test -project Locus.xcodeproj -scheme Locus -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/locus-verified-task-build CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements -only-testing:LocusTests/TaskCapsuleModelTests -only-testing:LocusTests/GoalModelTests -only-testing:LocusUITests/GoalUITests -only-testing:LocusUITests/TaskCapsuleUITests",
+    "final_build_command": "xcodebuild build -project Locus.xcodeproj -scheme Locus -configuration Debug -destination 'platform=macOS' -derivedDataPath /tmp/locus-verified-task-build CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements",
+    "logs": [
+      "desktop-tests.log.gz",
+      "desktop-build.log.gz"
+    ]
+  },
+  "lint_and_diff_check": "passed",
+  "isolation": "Temporary stores, deterministic fixture providers, seeded desktop scenarios; no paid model calls.",
+  "not_verified": [
+    "Live provider interruption and recovery",
+    "Real external-service action uncertainty",
+    "Large-workspace performance",
+    "Comparable live completion, correction, elapsed-time and cost benchmarks"
+  ],
+  "migration": {
+    "run_database": "13 -> 14; additive task_records, task_evidence, capsule_attempts",
+    "capsule_payload": "1 -> 2; tolerant legacy decoding",
+    "history": "Preserved; missing evidence remains unverified"
+  }
+}

@@ -11,7 +11,7 @@ struct GoalCardView: View {
                     Image(systemName: goal.status == .completed ? "checkmark.circle" : "scope")
                         .foregroundStyle(LocusTheme.accentAction)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(goal.status.title).font(.callout.weight(.semibold))
+                        Text(goal.verificationStatus == "checking" ? "Checking" : goal.status.title).font(.callout.weight(.semibold))
                             .accessibilityIdentifier("goal.status")
                         Text(goal.objective).font(.callout).lineLimit(3).textSelection(.enabled)
                             .accessibilityIdentifier("goal.objective")
@@ -25,8 +25,20 @@ struct GoalCardView: View {
                 if let next = goal.nextStep, !next.isEmpty, !goal.status.isTerminal {
                     Text("Next: \(next)").font(.caption).foregroundStyle(LocusTheme.textSecondary).lineLimit(2)
                 }
-                if goal.status == .completed, !goal.evidence.isEmpty {
-                    DisclosureGroup("Verification evidence") {
+                if goal.status == .completed, goal.verificationStatus != "passed" {
+                    Text(goal.verificationStatus == "accepted" ? "Accepted by you · Not machine verified" : "Historical result · Verification unavailable")
+                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .accessibilityIdentifier("goal.verificationLabel")
+                }
+                if !goal.acceptanceChecks.isEmpty {
+                    DisclosureGroup("Completion checks · \(goal.evidenceIDs.count) recorded") {
+                        ForEach(Array(goal.acceptanceChecks.enumerated()), id: \.offset) { _, check in
+                            Text(check["requirement"]?.string ?? "Completion check").textSelection(.enabled)
+                        }
+                    }.font(.caption).accessibilityIdentifier("goal.checks")
+                }
+                if goal.status == .completed || goal.status == .needsReview, !goal.evidence.isEmpty {
+                    DisclosureGroup("Reported result") {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(goal.evidence.enumerated()), id: \.offset) { _, evidence in
                                 Text(evidence).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
@@ -49,6 +61,10 @@ struct GoalCardView: View {
                         Button("Resume") { Task { await model.resume(sessionID: sessionID) } }
                             .help("Continue this goal in its chat")
                             .accessibilityIdentifier("goal.resume")
+                    }
+                    if goal.status == .needsReview {
+                        Button("Accept result") { Task { await model.acceptResult(sessionID: sessionID) } }
+                            .accessibilityIdentifier("goal.accept")
                     }
                     if !goal.status.isTerminal {
                         Button("Edit") { model.open(sessionID: sessionID) }

@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -730,6 +730,9 @@ class RunStore(AgentInspectorStore):
             if version < 13:
                 from .goals import initialize_schema
                 initialize_schema(connection)
+            if version < 14:
+                from .task_state import initialize_schema as initialize_task_schema
+                initialize_task_schema(connection)
             # A model turn that died with the previous app process is never
             # silently replayed. Keep the session lease and make the exact
             # step explicitly retryable in Attention.

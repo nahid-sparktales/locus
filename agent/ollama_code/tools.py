@@ -27,6 +27,7 @@ from typing import Any
 
 from . import USER_AGENT, proxy
 from .response_parts import ATTACH_OUTPUT_PARTS_SCHEMA
+from .task_state import CHECK_SCHEMA
 
 MAX_OUTPUT = 30_000
 MAX_WEB_FETCH_BYTES = 2 * 1024 * 1024
@@ -110,6 +111,7 @@ class ToolContext:
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None
     collaboration: Callable[[str, dict[str, Any]], str] | None = None
     goal: Callable[[str, dict[str, Any]], str] | None = None
+    last_command_receipt: dict[str, Any] | None = None
     #: Helper-only mailbox to its owning root. Never installed on the root.
     send_parent_message: Callable[[str], dict[str, Any]] | None = None
     ask_question_async: Callable[[dict[str, Any]], str] | None = None
@@ -551,6 +553,7 @@ def _impl_bash(args: dict[str, Any], ctx: ToolContext) -> str:
         if stop_reason == "interrupted":
             return f"Error: command interrupted and terminated.{suffix}"
         return f"Error: command timed out after {timeout}s and was terminated.{suffix}"
+    ctx.last_command_receipt = {"command": command, "exit_code": proc.returncode}
     out = stdout
     if stderr:
         out += ("\n[stderr]\n" if out else "[stderr]\n") + stderr
@@ -962,11 +965,11 @@ def _impl_submit_plan(args: dict[str, Any], ctx: ToolContext) -> str:
     if not steps:
         return "Error: submit_plan requires at least one non-empty step."
     details = {}
-    if any(key in args for key in ("step_details", "constraints", "decisions")):
+    if any(key in args for key in ("step_details", "constraints", "decisions", "acceptance_checks")):
         from .capsules import CapsuleError, normalize_plan
         try:
             normalized = normalize_plan({**args, "steps": steps, "tests": tests})
-            details = {key: normalized[key] for key in ("step_details", "constraints", "decisions")}
+            details = {key: normalized[key] for key in ("step_details", "constraints", "decisions", "acceptance_checks")}
         except (CapsuleError, ValueError) as exc:
             return f"Error: {exc}"
     plan_id = secrets.token_hex(8)
@@ -1606,6 +1609,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                             "description": "Requirements the implementation must preserve."},
             "decisions": {"type": "array", "items": {"type": "string"},
                           "description": "Design decisions already resolved by the planner."},
+            "acceptance_checks": {"type": "array", "items": CHECK_SCHEMA, "description": "Executable final checks; human_review for requirements that cannot be checked automatically."},
             "step_details": {
                 "type": "array", "description": "For task capsules, detailed steps in dependency order (maximum 16).",
                 "items": {"type": "object", "properties": {
@@ -1613,7 +1617,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "instructions": {"type": "string"},
                     "dependencies": {"type": "array", "items": {"type": "string"}},
                     "files": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative source and destination files. Include missing files to be created."},
+                    "inputs": {"type": "array", "items": {"type": "string"}},
+                    "outputs": {"type": "array", "items": {"type": "string"}},
                     "checks": {"type": "array", "items": {"type": "string"}},
+                    "acceptance_checks": {"type": "array", "items": CHECK_SCHEMA},
                 }, "required": ["id", "title", "instructions", "dependencies", "files", "checks"]},
             },
         },

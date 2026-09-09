@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 
 from .goals import GoalBudgetExceeded, GoalError, GoalStore
+from .task_state import CHECK_SCHEMA, TaskStateStore, TaskVerifier, normalize_checks
 
 GOAL_CONTRACT = (
     "This task has an explicitly enabled persistent goal. Call get_goal to read "
@@ -20,7 +21,10 @@ GOAL_CONTRACT = (
     "that objective. Before ending, call update_goal with continue and a concrete "
     "next_step, complete only with evidence that every requirement was verified, or "
     "blocked with the specific external blocker. A final answer alone does not "
-    "complete the goal. Never claim completion just because a budget is nearly "
+    "complete the goal. Supply acceptance_checks when reporting complete: each needs id, kind, "
+    "requirement and its file path/value or command. Supported kinds are file_exists, file_contains, "
+    "json_value, command and human_review. Locus runs these checks through existing permissions. "
+    "Prose is not proof; uncheckable requirements need human_review. Never claim completion just because a budget is nearly "
     "exhausted. User steering preserves the objective unless the user changes it."
 )
 
@@ -36,6 +40,7 @@ GOAL_TOOL_SCHEMAS = [
             "summary": {"type": "string"},
             "evidence": {"type": "array", "items": {"type": "string"}},
             "next_step": {"type": "string"}, "blocker": {"type": "string"},
+            "acceptance_checks": {"type": "array", "items": CHECK_SCHEMA},
         }, "required": ["status", "summary", "evidence"], "additionalProperties": False},
     }},
 ]
@@ -43,7 +48,7 @@ GOAL_TOOL_NAMES = frozenset({"get_goal", "update_goal"})
 
 
 def validate_goal_report(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) - {"status", "summary", "evidence", "next_step", "blocker"}:
+    if not isinstance(value, dict) or set(value) - {"status", "summary", "evidence", "next_step", "blocker", "acceptance_checks"}:
         raise GoalError("The goal report must contain only status, summary, evidence, next_step and blocker.")
     if value.get("status") not in {"continue", "complete", "blocked"}:
         raise GoalError("The goal report has an invalid status.")
@@ -65,6 +70,8 @@ def validate_goal_report(value: Any) -> dict[str, Any]:
         raise GoalError("Goal completion requires verification evidence.")
     if len(value["summary"]) > 16_000:
         raise GoalError("The goal summary is too long.")
+    if "acceptance_checks" in value:
+        normalize_checks(value["acceptance_checks"])
     return {"status": value["status"], "summary": value["summary"].strip(),
             "evidence": list(evidence), "next_step": value.get("next_step", "").strip(),
             "blocker": value.get("blocker", "").strip()}
@@ -83,6 +90,8 @@ class GoalRuntime:
         self._native_baselines: dict[str, tuple[int, int]] = {}
         self._waits: dict[str, str] = {}
         self._invalid_report = False
+        self.core = None
+        self.verification_decider = None
 
     def should_stop(self) -> bool:
         # Streaming callbacks can run once per token. Poll user controls at a
@@ -129,6 +138,27 @@ class GoalRuntime:
 
     def submit_report(self, value: Any) -> dict[str, Any]:
         report = validate_goal_report(value)
+        if self.core is not None and report["status"] != "complete" and "acceptance_checks" in value:
+            state_store = TaskStateStore(self.store.run_store)
+            saved = state_store.get("goal:" + self.goal_id)
+            if saved and saved["revision"] == self.revision:
+                incoming = normalize_checks(value["acceptance_checks"])
+                by_id = {c["id"]: c for c in incoming}
+                for prior in saved.get("checks", []) if saved.get("checks_revision") == self.revision else []:
+                    if prior["id"] in by_id and by_id[prior["id"]] != prior:
+                        raise ValueError("Revise the goal before replacing a declared acceptance check.")
+                    if prior["id"] not in by_id:
+                        incoming.append(prior)
+                saved.update(checks=incoming, checks_revision=self.revision)
+                state_store.save(saved, expected_revision=self.revision)
+        if self.core is not None and report["status"] == "complete" and self.snapshot()["revision"] == self.revision:
+            state_store = TaskStateStore(self.store.run_store)
+            saved = state_store.get("goal:" + self.goal_id) or {}
+            checks = value.get("acceptance_checks", saved.get("checks", []))
+            checked = TaskVerifier(state_store, "goal:" + self.goal_id, self.core, self.run_id).verify(
+                checks, self.verification_decider, fallback=self.snapshot()["objective"])
+            if checked["verification_status"] == "failed":
+                report.update(status="continue", next_step="Repair the failing acceptance checks: " + checked["verification_reason"])
         try:
             goal = self.store.report(self.goal_id, self.run_id, self.revision, **report)
         except GoalError:
@@ -297,5 +327,12 @@ def bind_goal_runtime(service: Any, run_id: str, *, coordinator: bool = True,
 
 def attach_goal_runtime(core: Any, runtime: GoalRuntime | None, *, coordinator: bool = False) -> None:
     core.goal_runtime = runtime
+    if runtime is not None:
+        runtime.core = core
+        goal = runtime.snapshot()
+        TaskStateStore(runtime.store.run_store).ensure("goal:" + runtime.goal_id,
+            request=goal["objective"], revision=runtime.revision,
+            workspace=core.workspace_root, execution=core.cwd, session_id=core.session.session_id,
+            plan=core.tool_ctx.plan_document)
     core.tool_ctx.goal = runtime.tool if runtime is not None and coordinator else None
     core.tool_registry.goal_enabled = runtime is not None and coordinator

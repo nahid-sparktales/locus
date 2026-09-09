@@ -183,6 +183,14 @@ class GoalStore:
         known = connection.execute("SELECT COALESCE(MIN(tokens_known),1),COALESCE(MIN(model_calls_known),1)"
                                    " FROM goal_usage WHERE goal_id=?", (row["id"],)).fetchone()
         value["token_usage_available"], value["model_call_usage_available"] = bool(known[0]), bool(known[1])
+        value["verification_status"] = "legacy_unverified"
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='task_records'").fetchone():
+            record = connection.execute("SELECT payload FROM task_records WHERE id=?", ("goal:" + row["id"],)).fetchone()
+            if record:
+                task = json.loads(record[0])
+                value["verification_status"] = task.get("verification_status", "pending") if task.get("revision") == row["revision"] else "pending"
+                value["acceptance_checks"] = task.get("checks", [])
+                value["evidence_ids"] = task.get("evidence_ids", [])
         return value
 
     def get(self, goal_id: str) -> dict[str, Any] | None:
@@ -250,15 +258,28 @@ class GoalStore:
 
     def update(self, goal_id: str, action: str, *, expected_revision: int | None = None,
                **fields: Any) -> dict[str, Any]:
-        if action not in {"pause", "resume", "cancel", "edit", "block", "steer", "discard_input"}:
+        if action not in {"pause", "resume", "cancel", "edit", "block", "steer", "discard_input", "accept"}:
             raise GoalError("unknown goal action")
         with self._write() as connection:
             row = self._row(connection, goal_id)
-            self._revision(row, expected_revision, required=action == "edit")
+            self._revision(row, expected_revision, required=action in {"edit", "accept"})
             if row["status"] in TERMINAL:
                 if action == "cancel" and row["status"] == "cancelled":
                     return self._present(connection, row)
                 raise GoalError("this goal has ended; create a new goal")
+            if action == "accept":
+                if row["status"] != "needs_review":
+                    raise GoalError("Only a settled result needing review can be accepted.")
+                record = connection.execute("SELECT payload FROM task_records WHERE id=?", ("goal:" + goal_id,)).fetchone()
+                value = json.loads(record[0]) if record else {
+                    "id": "goal:" + goal_id, "schema_version": 1, "revision": row["revision"],
+                    "original_request": row["objective"], "request": row["objective"],
+                    "checks": [], "evidence_ids": []}
+                value.update(verification_status="accepted", accepted_at=time.time())
+                connection.execute("INSERT INTO task_records VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",
+                                   ("goal:" + goal_id, _json(value), time.time()))
+                connection.execute("UPDATE goals SET status='completed',reason='Accepted by the user; not machine verified.',updated_at=? WHERE id=?", (time.time(), goal_id))
+                return self._present(connection, self._row(connection, goal_id))
             if action == "steer":
                 input_id = _text(fields.get("input_id") or uuid.uuid4().hex, "input_id", 160, required=True)
                 cursor = connection.execute(
@@ -667,7 +688,21 @@ class GoalStore:
                 elif self._budget_exhausted(row):
                     state, message = "limit_reached", "The goal usage allowance has been reached."
             elif report["status"] == "complete":
-                state = "completed"
+                from .task_state import TaskStateStore
+                verification, message = TaskStateStore(self.run_store).completion("goal:" + goal_id, revision=row["revision"])
+                state = "completed" if verification in {"passed", "accepted"} else "needs_review"
+                if state == "completed":
+                    message = ""
+                elif verification == "failed":
+                    failures += 1
+                    state = "paused" if failures >= 3 else "limit_reached" if self._budget_exhausted(row) else "active"
+                    report["next_step"] = "Repair or rerun the stale acceptance checks: " + message
+                    saved = connection.execute("SELECT payload FROM task_records WHERE id=?", ("goal:" + goal_id,)).fetchone()
+                    if saved:
+                        task = json.loads(saved[0])
+                        task.update(verification_status="failed", verification_reason=message)
+                        connection.execute("UPDATE task_records SET payload=?,updated_at=? WHERE id=?", (_json(task), time.time(), task["id"]))
+
             elif report["status"] == "blocked":
                 state, message = "blocked", report["blocker"]
             else:
