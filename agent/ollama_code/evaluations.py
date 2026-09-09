@@ -444,7 +444,7 @@ def compare_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-def configuration_fingerprint(core, case, manifest):
+def configuration_fingerprint(core, case, manifest, reusable_checks=None):
     import hashlib
     from .model_usage import safe_route
     # Volatile run IDs and credentials cannot influence or leak through a fingerprint.
@@ -459,6 +459,7 @@ def configuration_fingerprint(core, case, manifest):
         "provider": core.provider, "model": core.model,
         "route": safe_route(getattr(core.client, "base_url", core.host)),
         "account_id": getattr(core, "account_id", ""),
+        "reusable_checks": [{key: value for key, value in item.items() if key != "baseline"} for item in (reusable_checks or [])],
         "agent_configuration": core.agent_configuration.structured(),
         "system_prompt": core.system_message(), "tools": core.tool_registry.schemas(),
         "team": {key: value for key, value in manifest.items() if key not in {"run_id", "request_id"}},

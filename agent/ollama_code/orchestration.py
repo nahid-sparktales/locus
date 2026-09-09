@@ -2942,7 +2942,7 @@ class ChatGPTTeamClient:
         if on_token is not None and text:
             on_token(text)
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
+        last = usage.get("total") or usage.get("last") or {}
         response = ChatResponse(
             content_parts=[text],
             done=True,
@@ -2950,6 +2950,10 @@ class ChatGPTTeamClient:
             prompt_eval_count=int(last.get("inputTokens") or 0),
             eval_count=int(last.get("outputTokens") or 0),
         )
+        response.provider_fields.update(usage=last, usage_family="openai")
+        if (result.get("turn") or {}).get("status") in {"failed", "interrupted", "cancelled"}:
+            response.done = False
+            response.done_reason = "interrupted"
         if should_stop is not None and should_stop():
             raise InterruptedError("orchestration cancelled")
         return response

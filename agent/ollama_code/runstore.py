@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -748,6 +748,11 @@ class RunStore(AgentInspectorStore):
                 from .usage_ledger import initialize_schema as initialize_usage_schema
                 initialize_usage_schema(connection)
                 connection.execute("UPDATE schema_meta SET version=16 WHERE singleton=1")
+                connection.commit()
+            if version < 17:
+                from .reusable_checks import initialize_schema as initialize_reusable_schema
+                initialize_reusable_schema(connection)
+                connection.execute("UPDATE schema_meta SET version=17 WHERE singleton=1")
                 connection.commit()
             if not os.environ.get("LOCUS_RUNTIME_COORDINATOR") and not os.environ.get("LOCUS_RUNTIME_CHILD"):
                 # A model turn that died with the previous app process is never

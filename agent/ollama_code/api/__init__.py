@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from . import (
+    reusable_checks,
     accounting,
     automation_workflows,
     capsules,
@@ -32,6 +33,7 @@ _ROUTE_MODULES = (
     sessions,
     schedules,
     event_triggers,
+    reusable_checks,
     accounting,
     automation_workflows,
     capsules,

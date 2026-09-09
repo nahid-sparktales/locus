@@ -74,7 +74,13 @@ async def deploy(runtime_id: str, request: Request, body: dict = Body(default_fa
         review = json.loads((runtime.root / "reviews" / (review_id + ".json")).read_text())
         if body.get("fingerprint") != review["fingerprint"]:
             raise ValueError("Review this project snapshot before deploying")
-        return await invoke(remotes(request).deploy, runtime_id, review, body.get("configuration") or {})
+        configuration = dict(body.get("configuration") or {})
+        from ..reusable_checks import ReusableCheckStore
+        store = ReusableCheckStore(runtime.service.run_store)
+        selected = body.get("selected_checks") or []
+        frozen = store.freeze(review["workspace"], review["workspace"], agent_id=str(configuration.get("agent_id") or ""), selected=selected)
+        configuration["reusable_checks"] = [store.get(item["id"], item["version"]) for item in frozen]
+        return await invoke(remotes(request).deploy, runtime_id, review, configuration)
     except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -124,6 +130,16 @@ async def import_snapshot(request: Request, body: dict = Body(default_factory=di
             previous = {"id": deployment_id, "session_id": session.session_id, "workspace": str(destination), "fingerprint": review["fingerprint"], "state": "configuring", "created_at": time.time()}
             descriptor.write_text(json.dumps(previous))
         session_id = previous["session_id"]
+        from ..reusable_checks import ReusableCheckStore
+        check_store = ReusableCheckStore(runtime.service.run_store)
+        imported_checks = configuration.get("reusable_checks") or []
+        if not isinstance(imported_checks, list) or len(imported_checks) > 64:
+            raise ValueError("Select at most 64 approved checks")
+        for check in imported_checks:
+            check_store.import_approved(check, str(destination), deployment_id)
+        if configuration.get("agent_id"):
+            from ..sessions import SessionMeta
+            SessionMeta.update(session_id, agent_profile_id=str(configuration["agent_id"]))
         keep = configuration.get("keep_running") is True
         worker = await runtime.ensure_worker(session_id, str(destination), keep_running=keep)
         for kind in ("account", "connector"):
@@ -173,7 +189,15 @@ async def export_snapshot(deployment_id: str, request: Request):
         from ..usage_ledger import UsageLedger
         ledger = UsageLedger(runtime.service.run_store)
         usage = [row for row in ledger.records() if row["context"].get("workspace") == record["workspace"] or row["session_id"] == record["session_id"]]
-        return {"snapshot": review, "archive": base64.b64encode(data).decode(), "runs": runs, "usage_records": usage, "accounting": ledger.summarize(usage),
+        from ..task_state import TaskStateStore
+        task_store = TaskStateStore(runtime.service.run_store)
+        contracts = []
+        with runtime.service.run_store._connect(readonly=True) as db:
+            for row in db.execute("SELECT payload FROM task_records WHERE json_extract(payload,'$.workspace_root')=?", (record["workspace"],)):
+                contract = json.loads(row[0])
+                status, reason = task_store.completion(contract["id"])
+                contracts.append({**contract, "verification_status": status, "verification_reason": reason, "evidence": task_store.receipts(contract["id"])})
+        return {"task_contracts": contracts, "snapshot": review, "archive": base64.b64encode(data).decode(), "runs": runs, "usage_records": usage, "accounting": ledger.summarize(usage),
                 "events": runtime.store.events(record["session_id"], limit=1000)}
     except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc

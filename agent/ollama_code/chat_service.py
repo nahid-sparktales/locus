@@ -324,6 +324,9 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        reusable = getattr(self, "reusable_run_checks", None)
+        if event_type == "turn_done" and reusable is not None:
+            event = reusable.terminal(event)
         if event_type == "compaction_usage" and not event.get("included_in_turn"):
             self._record_turn_usage({**event, "session_id": self.core.session.session_id,
                 "workspace_root": self.core.workspace_root, "provider": self.core.provider,
@@ -454,7 +457,7 @@ class ChatService:
             }.get(reason, "failed")
             try:
                 terminal_record = self.run_store.run(run_id) or {}
-                if terminal_record.get("run_kind") == "solo" or (
+                if reusable is not None or terminal_record.get("run_kind") == "solo" or (
                     terminal_record.get("run_kind") == "evaluation"
                     and terminal_record.get("state") in ACTIVE_NONRECOVERABLE_STATES
                 ):

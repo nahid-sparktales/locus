@@ -40,6 +40,16 @@ struct RuntimeReturnedResult: Decodable {
     let changes: [RuntimeReturnedChange]
     let runs: [OrchestrationRun]
     let accounting: UsageAccounting?
+    let taskContracts: [ReturnedTaskContract]?
+    enum CodingKeys: String, CodingKey { case changes, runs, accounting, taskContracts = "task_contracts" }
+}
+struct ReturnedTaskContract: Decodable, Identifiable {
+    let id: String
+    let request: String
+    let verificationStatus: String
+    let verificationReason: String
+    let evidence: [[String: JSONValue]]
+    enum CodingKeys: String, CodingKey { case id, request, evidence, verificationStatus = "verification_status", verificationReason = "verification_reason" }
 }
 
 struct RemoteRuntimesView: View {
@@ -99,6 +109,15 @@ struct RemoteRuntimesView: View {
                 }
                 if let accounting = result.accounting { UsageAccountingView(accounting: accounting) }
                 ForEach(result.runs) { run in Text("\(run.id) · \(run.state)").font(.caption).textSelection(.enabled) }
+                ForEach(result.taskContracts ?? []) { contract in
+                    DisclosureGroup(contract.request + " · " + contract.verificationStatus.replacingOccurrences(of: "_", with: " ")) {
+                        Text(contract.verificationReason).textSelection(.enabled)
+                        ForEach(Array(contract.evidence.enumerated()), id: \.offset) { _, evidence in
+                            Text((evidence["requirement"]?.string ?? "Check") + ": " + (evidence["state"]?.string ?? "Unavailable"))
+                            Text(evidence["detail"]?.string ?? "").font(.caption).textSelection(.enabled)
+                        }
+                    }
+                }
                 Text("\(result.runs.count) saved runs. Local edits are checked before applying selected changes.").font(.caption)
                 Button("Apply selected changes") { perform {
                     let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(target.0)/deployments/\(target.1)/apply", body: ["selected_files": Array(selectedChanges)], as: [String: JSONValue].self)
@@ -159,6 +178,9 @@ struct DeployAgentView: View {
     @State private var scheduled = false
     @State private var permissionMode = "ask"
     @State private var selectedConnectors: Set<String> = []
+    @State private var approvedChecks: [ReusableCheckRecord] = []
+    @State private var selectedChecks: Set<String> = []
+    @State private var sourceAgentID = ""
     @State private var busy = false
     @State private var message = ""
     @State private var loginURL: URL?
@@ -182,6 +204,14 @@ struct DeployAgentView: View {
                             ForEach(review.exclusions) { file in Text("\(file.path): \(file.reason ?? "excluded")").font(.caption) }
                         }
                         Text("Current edits are included. Returned files are reviewed before you apply them.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if !approvedChecks.isEmpty {
+                    Section("Approved project checks") {
+                        ForEach(approvedChecks) { check in
+                            Toggle((check.check["requirement"]?.string ?? "Check") + " · v\(check.version)", isOn: Binding(get: { selectedChecks.contains(check.id) }, set: { if $0 { selectedChecks.insert(check.id) } else { selectedChecks.remove(check.id) } }))
+                            Text(check.correction).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Section("Account and permissions") {
@@ -227,6 +257,10 @@ struct DeployAgentView: View {
             modelName = model.activeAccount?.preferredModel ?? ""
             accountID = model.activeAccount?.id.uuidString ?? ""
             perform {
+                struct CheckListing: Decodable { let checks: [ReusableCheckRecord]; let agent_id: String }
+                let listing: CheckListing = try await model.conversationBackend.get("/api/reusable-checks", as: CheckListing.self)
+                sourceAgentID = listing.agent_id
+                approvedChecks = listing.checks.filter { $0.state == "approved" && ($0.scope.agentID.isEmpty || $0.scope.agentID == sourceAgentID) }
                 let value: RuntimeProjectReview = try await model.backend.post("/api/runtime/snapshots/preview", body: ["workspace": model.workspacePath], timeout: 60, as: RuntimeProjectReview.self)
                 review = value; selectedFiles = Set(value.files.map(\.path))
             }
@@ -253,13 +287,13 @@ struct DeployAgentView: View {
         if value.fingerprint != reviewed.fingerprint {
             review = value; message = "Project files changed. Review the updated snapshot and deploy again."; return
         }
-        var configuration: [String: Any] = ["provider": provider, "permissions": ["mode": permissionMode], "keep_running": keepRunning]
+        var configuration: [String: Any] = ["provider": provider, "permissions": ["mode": permissionMode], "keep_running": keepRunning, "agent_id": sourceAgentID]
         configuration["connectors"] = model.eventAutomations.selectedRuntimeConnectors(selectedConnectors)
         if scheduled {
             configuration["schedule"] = ["name": "Remote agent", "prompt": prompt, "mode": "work", "runner": "solo", "provider": provider["provider"] ?? "ollama", "provider_account_id": accountID, "model": modelName, "timezone": TimeZone.current.identifier, "rule": ["kind": "interval", "every": 1, "unit": "hours", "anchor": Date().timeIntervalSince1970 + 3600]] as [String: Any]
             configuration["accounts"] = [["id": accountID.isEmpty ? "ollama" : accountID, "configuration": provider]]
         } else { configuration["prompt"] = prompt }
-        let _: RemoteDeploymentRecord = try await model.backend.post("/api/runtime/remotes/\(target.id)/deploy", body: ["review_id": value.id, "fingerprint": value.fingerprint, "configuration": configuration], timeout: 180, as: RemoteDeploymentRecord.self)
+        let _: RemoteDeploymentRecord = try await model.backend.post("/api/runtime/remotes/\(target.id)/deploy", body: ["review_id": value.id, "fingerprint": value.fingerprint, "configuration": configuration, "selected_checks": approvedChecks.filter { selectedChecks.contains($0.id) }.map { ["id": $0.id, "version": $0.version] as [String: Any] }], timeout: 180, as: RemoteDeploymentRecord.self)
         completed(); dismiss()
     }
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {

@@ -2926,11 +2926,13 @@ private struct ConversationView: View {
     @State private var selectedStreamingSnapshots: [String: StreamingReplySnapshot] = [:]
     @State private var selectionSources: [String: RowSelectionSource] = [:]
     @State private var deferredSelectionRows: Set<String> = []
+    @State private var reusableCheckSource: ReusableCheckSource?
 
     var body: some View {
         GeometryReader { viewport in
             transcriptContent(viewportWidth: viewport.size.width)
         }
+        .sheet(item: $reusableCheckSource) { source in ReusableChecksView(source: source).environmentObject(model) }
     }
 
     private func transcriptContent(viewportWidth: CGFloat) -> some View {
@@ -3419,6 +3421,7 @@ private struct ConversationView: View {
                             : sourceBlock.text
                         model.useAsDraft(draft)
                     },
+                    onMakeReusableCheck: { reusableCheckSource = ReusableCheckSource(correction: sourceBlock.text, messageIndex: sourceBlock.historyIndex, runID: sourceBlock.runID) },
                     onRewind: { model.rewind(to: sourceBlock) },
                     onRegenerate: { model.retryLastResponse() },
                     onOpenWorkspaceReference: model.openWorkspaceReference
@@ -5319,6 +5322,7 @@ private struct MessageBlockView: View, Equatable {
     let selectionRowID: String
     let onCopy: (ResponseCopyFormat) -> Void
     let onUseAsDraft: () -> Void
+    let onMakeReusableCheck: () -> Void
     let onRewind: () -> Void
     let onRegenerate: () -> Void
     let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
@@ -5545,6 +5549,8 @@ private struct MessageBlockView: View, Equatable {
             .disabled(actionsDisabled)
         }
         if block.kind == .user {
+            actionButton("checkmark.shield", help: "Make reusable check", identifier: "makeReusableCheck", action: onMakeReusableCheck)
+                .disabled(actionsDisabled)
             actionButton("arrow.counterclockwise", help: "Rewind to this message", identifier: "rewind") {
                 onRewind()
             }

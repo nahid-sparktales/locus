@@ -42,6 +42,10 @@ def run_evaluation_suite(
     The source workspace is only read while each baseline is captured. The
     evaluation owns a separate AgentCore/session and never exposes Apply.
     """
+    from .reusable_checks import ReusableCheckStore
+    from .sessions import SessionMeta
+    metadata = SessionMeta.get(parent.core.session.session_id)
+    frozen_checks = ReusableCheckStore(parent.run_store).freeze(suite["workspace_root"], suite["workspace_root"], agent_id=str(metadata.get("agent_profile_id") or metadata.get("agent_trigger_id") or parent.core.session.session_id))
     store = EvaluationStore(parent.run_store)
     parent.emit({
         "type": "evaluation_started", "evaluation_id": evaluation_id,
@@ -58,7 +62,7 @@ def run_evaluation_suite(
             requested = str(case.get("team_id") or "")
             selected = manifests.get(requested) or (next(iter(manifests.values())) if not requested and len(manifests) == 1 else manifest)
             try:
-                frozen = configuration_fingerprint(parent.core, case, selected)
+                frozen = configuration_fingerprint(parent.core, case, selected, frozen_checks)
                 result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id, frozen)
             except Exception as exc:
                 result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id)
@@ -99,6 +103,7 @@ def run_evaluation_suite(
                     skip_permissions=True,
                     config=copy.deepcopy(parent.core.config),
                 )
+                evaluation_core.configure_agent(parent.core.agent_configuration.structured())
                 parent.active_evaluation_core = evaluation_core
                 evaluation_core.tool_registry.computer_enabled = False
                 # A browser reaches further than computer control does, and a
@@ -113,6 +118,7 @@ def run_evaluation_suite(
                     role="evaluation",
                 )
                 evaluation_service = ChatService(evaluation_core)
+                evaluation_service.evaluation_frozen_checks = frozen_checks
                 # Evaluations in a dedicated worker share that worker's
                 # authenticated proxy; they never launch another App Server.
                 evaluation_service.close_codex()
@@ -181,6 +187,10 @@ def run_evaluation_suite(
                         execution_environment="worktree",
                     )
                     evaluation_service.active_run_id = run_id
+                    if frozen_checks:
+                        from .reusable_check_runtime import RunChecks
+                        evaluation_service.reusable_run_checks = RunChecks(evaluation_service, run_id, str(case["prompt"]), frozen=frozen_checks)
+                        evaluation_core.before_finalize = evaluation_service.reusable_run_checks.before_finalize
                     evaluation_core.tool_ctx.memory_run_id = run_id
                     evaluation_core.client = parent.core.client
                     evaluation_core.provider = parent.core.provider
@@ -228,6 +238,8 @@ def run_evaluation_suite(
                                 "agent_id": "solo-evaluation", "lease_id": lease_id,
                             })
                     solo_reason = str(evaluation_core.last_turn_result.get("reason") or "")
+                    if frozen_checks and evaluation_service.reusable_run_checks.tasks.completion("run:" + run_id)[0] not in {"passed", "not_applicable", "accepted"}:
+                        solo_reason = "verification_failed"
                     parent.run_store.set_state(
                         run_id,
                         "completed" if solo_reason == "complete" else "interrupted" if solo_reason in {"interrupted", "cancelled"} else "failed",

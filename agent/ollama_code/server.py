@@ -630,6 +630,14 @@ def _run_user_turn(
                 svc.core._interrupt.wait(0.25)
             return None
         svc.core.before_finalize = wait_for_question
+    from .reusable_check_runtime import bind_run_checks
+    checks_runtime = bind_run_checks(svc, run_id, text) if not just_chat else None
+    if checks_runtime:
+        prior_finalize = svc.core.before_finalize
+        def finalize_checks():
+            additional = prior_finalize() if prior_finalize else None
+            return additional or checks_runtime.before_finalize()
+        svc.core.before_finalize = finalize_checks
     advertised = (svc.core.tool_registry.parity_schemas(plan_mode=mode == "plan")
                   if svc.core.chatgpt_parity_active(not just_chat) else svc.core.tool_registry.schemas())
     svc.emit({"type": "delegation_availability", "available": swarm is not None,
@@ -711,6 +719,7 @@ def _run_user_turn(
         svc.core.context_delivery_native_sent = None
         svc.core.context_delivery_native_unsent = None
         svc.core.before_finalize = None
+        svc.reusable_run_checks = None
         svc.active_collaboration = None
         svc.core.tool_registry.set_workflow_outputs(None)
         svc.core.tool_registry.set_workflow_result_only(False)
@@ -808,6 +817,8 @@ def _run_team_turn(
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
+        from .reusable_check_runtime import bind_run_checks
+        bind_run_checks(svc, run_id, text)
         # Each team member gets independently scoped, policy-bounded recall.
         # The generated context is injected only into this in-memory turn copy;
         # it is neither accepted from the client nor persisted in the run manifest.
@@ -1161,6 +1172,27 @@ def _run_team_turn(
                     from .capsule_execution import review_request
                     if review_request(reviews):
                         raise TeamWriterBudgetPause("capsule-review", "review_required", "The reviewer found remaining issues after repair.")
+            reusable = getattr(svc, "reusable_run_checks", None)
+            if reusable:
+                while True:
+                    checked = reusable.verify()
+                    if checked["verification_status"] in {"passed", "not_applicable"}:
+                        break
+                    remaining = orchestrator.remaining_model_calls(prepared.team.budget)
+                    if checked["verification_status"] == "needs_review" or remaining <= 1 or not reusable.reserve_repair(max(prepared.team.budget.max_rounds - 1, 0)):
+                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", checked["verification_reason"])
+                    snapshot = _install_writer_route(core, prepared.writer)
+                    try:
+                        repair = _run_team_writer(svc, orchestrator, prepared, prepared.writer,
+                            "Repair the failed reusable checks with the existing files.\n" + checked["verification_reason"],
+                            persisted_user_text="[Reusable check repair]", job_id="reusable-check-repair",
+                            goal="Repair required checks", model_call_limit=remaining - 1)
+                    finally:
+                        _restore_writer_route(core, snapshot)
+                    if core.last_turn_result.get("reason") != "complete":
+                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", "The existing repair allowance is exhausted.")
+                    prepared.writer_results.append(repair)
+                    diff_text = _task_diff(svc, core.workspace_root, core.cwd)
             stage = "preparing the final handoff"
             core.begin_steerable_turn()
             synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
@@ -1402,6 +1434,7 @@ def _run_team_turn(
                 "iteration_limit": core.last_turn_result.get("iteration_limit"),
             })
         svc.emit(terminal_event)
+        svc.reusable_run_checks = None
         attach_goal_runtime(core, None)
         svc.goal_runtime = None
         core.tool_ctx.workflow_outputs = []

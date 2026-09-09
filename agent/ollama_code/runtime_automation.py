@@ -107,6 +107,9 @@ class RuntimeAutomation:
         worker = await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
         saved = runtime.private.read()
         automation_configuration = saved.get(f"automation:schedule:{manifest.get('schedule_id', '')}") or saved.get(f"automation:event:{manifest.get('event_trigger_id', '')}") or {}
+        if automation_configuration.get("agent_id"):
+            from .sessions import SessionMeta
+            SessionMeta.update(session_id, agent_profile_id=str(automation_configuration["agent_id"]))
         account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}")
         if automation_configuration.get("permissions") and not worker.active_command:
             await runtime.request(worker, "POST", "/api/permissions", automation_configuration["permissions"])

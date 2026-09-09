@@ -133,13 +133,50 @@ async def proxy(session_id: str, path: str, request: Request):
     forwarded = "/" + path
     if request.url.query:
         forwarded += "?" + request.url.query
-    try:
-        # Reattaching to a running session is a read, never a destructive resume.
-        if path == f"api/sessions/{session_id}/resume" and worker.session_info:
-            return {"ok": True, "session_info": worker.session_info}
-        return await runtime.request(worker, request.method, forwarded, body)
-    except RuntimeError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=getattr(exc, "status_code", 503))
+    controller_work = request.method == "POST" and path.startswith("api/reusable-checks/") and path.rsplit("/", 1)[-1] in {"propose", "test", "verify"}
+    if controller_work:
+        if worker.active_command or any(other.active_command and runtime.store.worker(other.session_id)["workspace"] == runtime.store.worker(session_id)["workspace"] for other in runtime.workers.values()) or sum(bool(other.active_command) for other in runtime.workers.values()) >= runtime.limit:
+            raise HTTPException(409, "Wait for an available runtime slot before generating or testing a check.")
+        # Persist admission before the request crosses the worker boundary. The
+        # operation outlives its HTTP subscriber, just like a websocket turn.
+        operation = runtime.store.enqueue(session_id, {"type": "controller_check", "path": path})
+        runtime.store.command_state(operation, "sent")
+        worker.active_command = operation
+        runtime.store.state(session_id, "running")
+
+    async def invoke():
+        settled = not controller_work
+        try:
+            if path == f"api/sessions/{session_id}/resume" and worker.session_info:
+                return {"ok": True, "session_info": worker.session_info}
+            value = await runtime.request(worker, request.method, forwarded, body, timeout=660 if controller_work else 30)
+            settled = True
+            return value
+        except RuntimeError as exc:
+            # A validated worker rejection is final. Transport failures and
+            # server errors retain uncertainty and workspace ownership.
+            settled = 400 <= getattr(exc, "status_code", 503) < 500
+            return JSONResponse({"detail": str(exc)}, status_code=getattr(exc, "status_code", 503))
+        except Exception:
+            return JSONResponse({"detail": "The worker connection was interrupted. Review its saved progress before retrying."}, status_code=503)
+        finally:
+            if controller_work:
+                runtime.store.command_state(operation, "completed" if settled else "uncertain")
+                if settled and worker.active_command == operation:
+                    worker.active_command = ""
+                    if runtime.store.worker(session_id)["state"] != "paused":
+                        runtime.store.state(session_id, "idle")
+                elif not settled:
+                    runtime.store.state(session_id, "interrupted")
+
+    task = asyncio.create_task(invoke())
+    # Keep a strong reference until the worker request finishes even when the
+    # controller cancels its HTTP connection.
+    if not hasattr(runtime, "controller_operations"):
+        runtime.controller_operations = set()
+    runtime.controller_operations.add(task)
+    task.add_done_callback(runtime.controller_operations.discard)
+    return await asyncio.shield(task)
 
 
 async def socket_proxy(ws: WebSocket, session_id: str):

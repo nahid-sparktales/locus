@@ -16,6 +16,7 @@ struct AgentTeamsSettingsView: View {
     @State private var profileToDelete: AgentProfile?
     @State private var teamToDelete: AgentTeam?
     @State private var profileSearch = ""
+    @State private var projectChecksPresented = false
 
     var body: some View {
         Form {
@@ -36,6 +37,10 @@ struct AgentTeamsSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("settings.agents.search")
                 }
+            }
+            Section("Project checks") {
+                Button("Manage reusable checks") { projectChecksPresented = true }
+                Text("Review, edit, test, or disable the checks saved for this project.").font(.caption)
             }
             profilesSection
             teamsSection
@@ -62,6 +67,10 @@ struct AgentTeamsSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(LocusTheme.surfaceCanvas)
         .accessibilityIdentifier("settings.agents.root")
+        .sheet(isPresented: $projectChecksPresented) {
+            ReusableChecksView(source: ReusableCheckSource(correction: "", messageIndex: nil, runID: nil, generateRequested: false))
+                .environmentObject(model)
+        }
         .sheet(item: $editingProfile) { profile in
             AgentProfileEditor(
                 profile: profile,

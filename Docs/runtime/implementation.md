@@ -117,3 +117,38 @@ reservations and native cumulative replay. Native Debug build passed. All provid
 responses in these tests are deterministic fixtures. Real provider prices/charges,
 account expiration, signed installation and disposable remote hosts remain live
 release gates. No integration into the original checkout has occurred.
+
+
+## Explicit reusable checks (stage 4)
+
+Make reusable check appears only on saved user messages. The selected model
+creates a visible proposal, with its generation invocation attributed to the
+source task. Invalid or unsupported proposals become human review. There is no
+observer or automatic correction collection. Settings → Agents & Teams → Manage
+reusable checks opens the library without generating a proposal.
+
+Proposals preserve the correction, requirement, project, file/agent scope and
+verification limits. Editing, testing, approving, dismissing and disabling use
+revision checks; command tests retain the normal permission boundary. Approved
+versions are frozen into future chat, team, goal and capsule contracts. Applicable
+checks run through TaskVerifier and its existing evidence invalidation and repair
+allowances. Explicit Apply to this task invalidates a chat's prior evidence;
+goals/capsules retain their own requirement-edit controls. Disabling a check affects
+future admissions, never silently changes an existing contract. Evaluations freeze
+check definitions once for identical repetitions and include them in fingerprints.
+
+Remote snapshots include only explicitly selected approved versions with their
+provenance. Returned results expose current verification evidence and the same
+invocation accounting used locally. Long-running controller check requests retain
+workspace admission after an HTTP disconnect; uncertain worker outcomes are not
+replayed.
+
+Stage 4 validation: 332 combined backend checks passed, including a real local
+supervisor and worker process with a deterministic HTTP provider fixture. The
+acceptance test imports a reviewed deployment, disconnects the controller, runs a
+schedule, retrieves verified output and usage, approves an explicitly requested
+correction check and enforces its exact version on the next task. It does not use
+SSH or claim a real remote installation. The native app and protocol test targets
+compile. XCTest execution failed before connection: a process sample shows the
+host blocked in dyld's file-open path before application code. This remains a
+native execution gate; no unit test pass is inferred from compilation.
