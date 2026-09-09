@@ -150,6 +150,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case chat = "Chat"
     case accounts = "Models & Providers"
     case agents = "Agents & Teams"
+    case runtimes = "Runtimes"
     case knowledge = "Memory & Knowledge"
     case browser = "Browser"
     #if LOCUS_WALLET
@@ -176,6 +177,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         #endif
         case .accounts: "person.crop.circle"
         case .agents: "person.3.sequence.fill"
+        case .runtimes: "server.rack"
         case .knowledge: "books.vertical.fill"
         case .permissions: "lock.shield"
         case .extensions: "puzzlepiece.extension"
@@ -198,7 +200,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var navigationGroup: SettingsNavigationGroup {
         switch self {
         case .general, .appearance, .chat: .app
-        case .accounts, .agents, .knowledge: .models
+        case .accounts, .agents, .knowledge, .runtimes: .models
         case .browser, .extensions, .permissions, .network: .tools
         #if LOCUS_WALLET
         case .wallet: .tools
@@ -221,6 +223,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .chat: "Conversation display, notes, and automatic panels"
         case .accounts: "Local models and hosted model connections"
         case .agents: "Profiles, teams, routing, and evaluation"
+        case .runtimes: "Independent agents and remote execution"
         case .knowledge: "Workspace memory, indexing, and handoffs"
         case .browser: "Built-in browsing, input, and privacy"
         #if LOCUS_WALLET

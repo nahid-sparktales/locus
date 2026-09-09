@@ -2054,7 +2054,7 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertEqual(
             SettingsPage.allCases.filter { $0.navigationGroup == .models },
-            [.accounts, .agents, .knowledge]
+            [.accounts, .agents, .runtimes, .knowledge]
         )
         #if LOCUS_WALLET
         XCTAssertEqual(

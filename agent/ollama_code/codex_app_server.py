@@ -493,10 +493,11 @@ class CodexAppServerManager:
         result["runtimeVersion"] = self.runtime_version
         return result
 
-    def start_login(self) -> dict[str, Any]:
+    def start_login(self, *, device_code: bool = False) -> dict[str, Any]:
         return self.request(
             "account/login/start",
-            {"type": "chatgpt", "useHostedLoginSuccessPage": True, "appBrand": "chatgpt"},
+            ({"type": "chatgptDeviceCode"} if device_code else
+             {"type": "chatgpt", "useHostedLoginSuccessPage": True, "appBrand": "chatgpt"}),
             timeout=30,
         )
 

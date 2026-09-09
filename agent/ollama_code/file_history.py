@@ -35,7 +35,7 @@ def initialize_schema(db):
             id TEXT PRIMARY KEY, task_id TEXT NOT NULL, state TEXT NOT NULL,
             payload TEXT NOT NULL, created_at REAL NOT NULL
         );
-        UPDATE schema_meta SET version=17 WHERE singleton=1;
+        UPDATE schema_meta SET version=20 WHERE singleton=1;
         COMMIT;
     """)
 

@@ -301,7 +301,7 @@ class CapsuleRuntime:
         step = self.definition(identifier)
         task_id = f"capsule:{self.value['id']}:{identifier}"
         self.tasks.ensure(task_id, request=step.get("title", identifier), revision=self.capsule["revision"],
-                          workspace=self.core.workspace_root, execution=self.core.cwd, plan=step)
+                          workspace=self.core.workspace_root, execution=self.core.cwd, plan=step, include_reusable=False)
         if checked is None:
             checked = TaskVerifier(self.tasks, task_id, self.core, self.run_id).verify(
                 step.get("acceptance_checks", []), decider, fallback="; ".join(step.get("checks", [])) or step.get("title", identifier))
@@ -404,7 +404,7 @@ class CapsuleRuntime:
         self.tasks.ensure(identifier, request=self.capsule["request"], revision=self.capsule["revision"],
             workspace=self.core.workspace_root, execution=self.core.cwd, plan=self.capsule["plan"])
         checks = self.capsule["plan"].get("acceptance_checks", [])
-        if checks:
+        if checks or (self.tasks.get(identifier) or {}).get("reusable_checks"):
             checked = TaskVerifier(self.tasks, identifier, self.core, self.run_id).verify(checks, decider)
             status, reason = checked["verification_status"], checked["verification_reason"]
         else:

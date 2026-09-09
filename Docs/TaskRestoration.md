@@ -28,11 +28,11 @@ new mutating controls. Existing mobile endpoints and models remain compatible;
 unknown response fields are additive. Legacy plan steps remain sequential
 writers, absent evidence remains unverified, and absent cost stays unknown.
 
-The database migrates successively from schema 14 through 15, 16, and 17.
-The task-view additions in this follow-up require no further database changes.
-The migration regression starts with a schema-14 database, retains the legacy
-run, and confirms that reading its upgraded task does not start execution or
-invent evidence.
+The database migrates successively from schema 14 through 20. The independent
+runtime owns migrations 15–17; task links and evidence use 18, task usage and
+spans use 19, and file history/restoration uses 20. Migration regressions start
+from schemas 14 and 17, retain the legacy run and runtime limits, and confirm
+that reading an upgraded task does not start execution or invent evidence.
 
 ## Restoration contract
 
@@ -73,7 +73,7 @@ restoration batch including recovery copies. Captured content is bounded too.
 | --- | --- |
 | Task details open without dispatch | Backend projection and desktop rendering tests |
 | Persisted controls and lifecycle ownership | Work, Goal, Capsule, uncertainty, and sheet routing regressions |
-| Schema-14 and legacy compatibility | Real migration, additive decoding, and legacy step defaults |
+| Schema-14/17 and legacy compatibility | Real migration, additive decoding, and legacy step defaults |
 | Selective reversal preserves later edits | API preview/apply with selected and conflicting files |
 | Stale previews cannot write | Revision, fingerprint, path, duplicate apply, and intervening edit regressions |
 | Restart during restoration | Crash after atomic write, inert reopening, and explicit recovery |

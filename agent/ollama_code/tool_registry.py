@@ -871,6 +871,7 @@ class ToolRegistry:
         self._user_capability_policy: dict[str, bool] = {}
         self._solo_swarm_enabled = False
         self.goal_enabled = False
+        self.runtime_wait_enabled = False
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
         self._ask_question_enabled = False
@@ -1140,6 +1141,8 @@ class ToolRegistry:
         ]
         if (workflow_schema := self._workflow_result_schema()) is not None:
             schemas.append(workflow_schema)
+        if self.runtime_wait_enabled:
+            schemas.append(_schema("wait_for_locus", "Pause when this task requires an unavailable desktop capability. Explain the specific remaining step. This waits for Locus and does not grant permission or perform the operation.", {"capability": {"type": "string", "enum": ["browser", "computer", "simulator", "notes", "identity"]}, "reason": {"type": "string"}}, ["capability", "reason"]))
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
             schemas.extend(
                 schema for schema in COMPUTER_TOOL_SCHEMAS
@@ -1221,6 +1224,8 @@ class ToolRegistry:
         ]
         if (workflow_schema := self._workflow_result_schema()) is not None:
             schemas.append(workflow_schema)
+        if self.runtime_wait_enabled:
+            schemas.append(_schema("wait_for_locus", "Pause when this task requires an unavailable desktop capability. Explain the specific remaining step. This waits for Locus and does not grant permission or perform the operation.", {"capability": {"type": "string", "enum": ["browser", "computer", "simulator", "notes", "identity"]}, "reason": {"type": "string"}}, ["capability", "reason"]))
         if (
             self._solo_swarm_enabled
             and self._agent_access_ceiling != "read_only"
@@ -1453,6 +1458,8 @@ class ToolRegistry:
         return groups
 
     def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
+        if name == "wait_for_locus" and self.runtime_wait_enabled and ctx.wait_for_locus:
+            return ctx.wait_for_locus(arguments)
         if not self._user_allows(name):
             return "Error: this tool is disabled by the agent's capability settings."
         if name in _MODERN_MCP_TOOLS and not capability_enabled("modern_mcp"):
@@ -1654,6 +1661,8 @@ class ToolRegistry:
         return "\n".join(lines)
 
     def is_safe(self, name: str) -> bool:
+        if name == "wait_for_locus":
+            return self.runtime_wait_enabled
         if name in {"get_goal", "update_goal"}:
             return self.goal_enabled
         if name in COLLABORATION_NAMES:
@@ -1768,6 +1777,8 @@ class ToolRegistry:
         return True
 
     def tool_info(self, name: str) -> dict[str, Any] | None:
+        if name == "wait_for_locus" and self.runtime_wait_enabled:
+            return {"origin": "builtin", "annotations": {"readOnlyHint": True}}
         if name in {"get_goal", "update_goal"} and self.goal_enabled:
             return {"origin": "builtin", "annotations": {"readOnlyHint": True}}
         if name == "identity_vault" and self.identity_enabled:

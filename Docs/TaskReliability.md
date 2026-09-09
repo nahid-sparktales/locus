@@ -150,11 +150,15 @@ External actions and conversation history are never implicitly restored.
 
 ## Additive interfaces and compatibility
 
-Schema **15** adds task links, immutable plans, observations, and milestones;
-**16** adds usage, limits, and spans; **17** adds content history/restoration
-journals. Existing schema 14 records remain intact. Missing evidence stays
+The independent runtime owns schemas **15–17**. Schema **18** adds task links,
+immutable plans, observations, and milestones; **19** adds task usage, limits,
+and spans; **20** adds content history/restoration journals. Existing schema 14
+and 17 records remain intact. Missing evidence stays
 unverified, missing price/usage stays unknown, and legacy step kinds are writes.
 Mobile clients can continue using the existing endpoints and tolerant models.
+The runtime invocation ledger and logical-task usage projection retain their
+own limits and views. Their subtotals describe overlapping calls and must not
+be added together; provider dispatch still happens once.
 
 - `GET /api/sessions/{session_id}/task`: read-only task projection.
 - `POST .../task/limit`: optional cumulative estimate limit (`amount`, or null).

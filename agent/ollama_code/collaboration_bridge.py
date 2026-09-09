@@ -264,6 +264,9 @@ class AgentWorkerRuntime:
         core.tool_ctx.memory_workspace = parent.workspace_root
         core.tool_ctx.memory_session_id = spec.session_id
         core.tool_ctx.memory_run_id = spec.run_id
+        from .model_usage import context_for
+        core.usage_owner_task_id = context_for(parent)["task_id"]
+        core.usage_store = svc.run_store
         core.mcp.task_store = svc.run_store
         core.mcp.context_provider = lambda: {
             "run_id": spec.run_id,

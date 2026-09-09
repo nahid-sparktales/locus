@@ -20,6 +20,13 @@ def _store(service: ChatService) -> GoalStore:
     return GoalStore(service.run_store)
 
 
+def _present(service, goal):
+    if goal is None:
+        return None
+    from ..usage_ledger import UsageLedger
+    return {**goal, "accounting": UsageLedger(service.run_store).summary(task_id="goal:" + goal["id"])}
+
+
 def _error(error: GoalError) -> HTTPException:
     return HTTPException(404 if str(error) == "goal not found" else 409, str(error))
 
@@ -28,13 +35,13 @@ def goal_list(service: ServiceDependency, nonterminal: bool = Query(default=Fals
     store = _store(service)
     try:
         store.recover()
-        return {"goals": store.list(nonterminal=nonterminal)}
+        return {"goals": [_present(service, goal) for goal in store.list(nonterminal=nonterminal)]}
     except GoalError as error:
         raise _error(error) from error
 
 
 def session_goal(service: ServiceDependency, session_id: str) -> dict[str, Any]:
-    return {"goal": _store(service).for_session(session_id)}
+    return {"goal": _present(service, _store(service).for_session(session_id))}
 
 
 def goal_create(service: ServiceDependency, session_id: str,

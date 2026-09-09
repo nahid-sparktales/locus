@@ -1753,6 +1753,9 @@ struct SettingsView: View {
                     )
                 #endif
                 case .accounts: accountsPage
+                case .runtimes:
+                    RuntimesSettingsView()
+                        .environmentObject(model)
                 case .agents:
                     AgentTeamsSettingsView(advancedExpanded: advancedBinding(for: .agents))
                         .environmentObject(model)

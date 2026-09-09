@@ -39,7 +39,7 @@ class Campaign:
     """Persist campaign attempts/reservations before an adapter starts work."""
     def __init__(self, runs, identifier, *, phase, configurations):
         from .task_journal import TaskJournal
-        from .usage_ledger import UsageLedger
+        from .task_usage_ledger import UsageLedger
         self.runs, self.identifier = runs, identifier
         if phase not in {1, 2}:
             raise ValueError("Invalid campaign phase")
@@ -73,7 +73,7 @@ class Campaign:
         if not started or finished:
             raise ValueError('This scenario is not an active started attempt.')
         from .task_journal import TaskJournal
-        from .usage_ledger import UsageLedger
+        from .task_usage_ledger import UsageLedger
         ledger = UsageLedger(TaskJournal(self.runs, self.journal.task_id, self.identifier + ':' + case['id']))
         config = case['configuration']
         return ledger.reserve(provider=config['provider'], model=config['model'], stage=case['scenario'],

@@ -183,7 +183,26 @@ async def evaluation_run(
     if not callable(team_runner):
         raise HTTPException(503, "evaluation execution is not configured")
     loop = asyncio.get_running_loop()
-    evaluation_id = uuid.uuid4().hex
+    evaluation_id = str(body.get("evaluation_id") or uuid.uuid4().hex)
+    if not evaluation_id.isalnum() or len(evaluation_id) > 64:
+        raise HTTPException(422, "Invalid evaluation ID")
+    runtime = getattr(request.app.state, "runtime", None)
+    if runtime is not None:
+        import time
+        runtime.controller_seen = time.monotonic()
+        from ..sessions import SessionStore
+        session = SessionStore(cwd=suite["workspace_root"])
+        worker = await runtime.ensure_worker(session.session_id, suite["workspace_root"], keep_running=False)
+        core = service.core
+        provider = {"provider": core.provider, "model": core.model, "account_id": core.account_id}
+        if core.provider == "remote":
+            provider.update(base_url=core.config.get("remote_base_url", ""), api_key=core.config.get("remote_api_key", ""), auth_style=core.config.get("remote_auth_style", ""))
+        elif core.provider == "chatgpt":
+            provider.update(codex_home_id=service._codex_home_id, native_mode=core.config.get("chatgpt_native_mode", True), web_search=False)
+        await runtime.request(worker, "POST", "/api/provider", provider)
+        runtime.enqueue(session.session_id, {"type": "evaluation_run", "suite_id": suite_id, "request_id": evaluation_id,
+                                            "body": {**body, "evaluation_id": evaluation_id}})
+        return {"ok": True, "evaluation_id": evaluation_id, "session_id": session.session_id, "state": "queued"}
     if not service.start_turn(
         loop,
         run_evaluation_suite,

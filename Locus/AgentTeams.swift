@@ -242,11 +242,15 @@ struct AgentRuntimePolicy: Codable, Hashable {
     var maxToolIterations: Int? = nil
     var timeoutSeconds: Int? = nil
     var maxOutputTokens: Int? = nil
+    var maxModelCalls: Int? = nil
+    var maxTotalTokens: Int? = nil
+    var maxEstimatedUSD: Double? = nil
 
     private enum CodingKeys: String, CodingKey {
         case maxToolIterations = "max_tool_iterations"
         case timeoutSeconds = "timeout_seconds"
         case maxOutputTokens = "max_output_tokens"
+        case maxModelCalls = "max_model_calls", maxTotalTokens = "max_total_tokens", maxEstimatedUSD = "max_estimated_usd"
     }
 
     mutating func clamp() {
@@ -1910,6 +1914,11 @@ struct EvaluationSuite: Identifiable, Codable, Hashable {
 }
 
 struct EvaluationSummary: Codable, Hashable {
+    let estimatedAPICost: Double?
+    let costCoverage: String?
+    let completionRate: Double?
+    let rubricCoverage: Double?
+    let outcomes: [String: Int]?
     let cases: Int
     let passed: Int
     let passRate: Double
@@ -1922,6 +1931,7 @@ struct EvaluationSummary: Codable, Hashable {
     let estimatedCost: Double
 
     enum CodingKeys: String, CodingKey {
+        case estimatedAPICost = "estimated_api_cost", costCoverage = "cost_coverage", completionRate = "completion_rate", rubricCoverage = "rubric_coverage", outcomes
         case cases, passed
         case passRate = "pass_rate"
         case averageRubricScore = "average_rubric_score"
@@ -1935,6 +1945,12 @@ struct EvaluationSummary: Codable, Hashable {
 }
 
 struct EvaluationComparison: Identifiable, Codable, Hashable {
+    let label: String?
+    let estimatedAPICost: Double?
+    let costCoverage: String?
+    let completionRate: Double?
+    let rubricCoverage: Double?
+    let outcomes: [String: Int]?
     var id: String { configuration }
     let configuration: String
     let cases: Int
@@ -1951,6 +1967,7 @@ struct EvaluationComparison: Identifiable, Codable, Hashable {
     let failureCategories: [String: Int]
 
     enum CodingKeys: String, CodingKey {
+        case estimatedAPICost = "estimated_api_cost", costCoverage = "cost_coverage", completionRate = "completion_rate", rubricCoverage = "rubric_coverage", outcomes, label
         case configuration, cases, passed, retries
         case passRate = "pass_rate"
         case averageRubricScore = "average_rubric_score"

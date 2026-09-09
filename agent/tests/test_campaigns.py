@@ -7,7 +7,7 @@ import requests
 
 from ollama_code.benchmark_campaign import Campaign, matrix
 from ollama_code.runstore import RunStore
-from ollama_code.usage_ledger import UsageLimitError
+from ollama_code.task_usage_ledger import UsageLimitError
 
 
 def configuration():

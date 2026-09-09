@@ -186,20 +186,24 @@ def test_binary_exact_match_and_file_creation_deletion_restore(workspace_task, g
     assert (t.root / 'deleted').read_text() == 'kept'
 
 
-def test_schema14_upgrade_retains_old_records_with_unknown_evidence(workspace_task):
+@pytest.mark.parametrize("source_version", [14, 17])
+def test_upgrade_retains_old_records_with_unknown_evidence(workspace_task, source_version):
     t = workspace_task
+    from ollama_code.usage_ledger import UsageLedger
+    UsageLedger(t.runs).set_limits("runtime-task", {"max_calls": 12})
     with t.runs._connect() as db:
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         for name in tables:
             if name.startswith('task_') and name not in {'task_states', 'task_check_receipts'}:
-                # These are the exact additive v15-v17 tables; retain v14 task verification.
+                # Remove only the new task tables; preserve runtime state and v14 verification.
                 if name in {'task_links', 'task_plans', 'task_observations', 'task_milestones', 'task_reviews',
                             'task_usage', 'task_limits', 'task_spans', 'task_file_changes', 'task_restorations'}:
                     db.execute(f'DROP TABLE {name}')
-        db.execute('UPDATE schema_meta SET version=14 WHERE singleton=1')
+        db.execute('UPDATE schema_meta SET version=? WHERE singleton=1', (source_version,))
     reopened = RunStore(t.runs.path)
     t.service.run_store = reopened
     assert reopened.run('run')['request'] == 'Restore the task output'
+    assert UsageLedger(reopened).limits('runtime-task') == {'max_calls': 12}
     detail = t.client.get(t.endpoint).json()
     assert detail['schema_version'] == SCHEMA_VERSION
     assert detail['verification'] is None and detail['progress'] == []

@@ -15,7 +15,7 @@ from ..session_runtime import session_has_active_run
 from ..sessions import SessionMeta
 from ..task_journal import TaskJournal
 from ..task_state import TaskStateStore, TaskVerifier
-from ..usage_ledger import UsageLedger, UsageLimitError
+from ..task_usage_ledger import UsageLedger, UsageLimitError
 from .dependencies import get_service
 
 Service = Annotated[ChatService, Depends(get_service)]
@@ -83,7 +83,10 @@ def task_detail(session_id: str, service: Service):
         (run.get("manifest") or {}).get("goal_id") != goal["id"] and goal.get("current_run_id") != run["id"]
     ):
         goal = None
-    verification = TaskStateStore(service.run_store).get("work:" + journal.task_id)
+    task_states = TaskStateStore(service.run_store)
+    verification = task_states.get("work:" + journal.task_id)
+    runtime_verification = task_states.get("run:" + run["id"]) if run["id"] else None
+    verification = verification or runtime_verification
     state, blocker = run.get("state", "unknown"), run.get("recovery_reason") or ""
     if state == "completed" and (run.get("manifest") or {}).get("mode") in {"plan", "grill"}:
         state = "planned"
@@ -106,8 +109,13 @@ def task_detail(session_id: str, service: Service):
     if verification and not goal and not capsule:
         verified, reason = TaskStateStore(service.run_store).completion(verification["id"])
         reference = (snapshot.get("plan") or {}).get("approval_reference")
-        if reference and reference["revision"] != verification["revision"]:
+        if reference and verification["id"].startswith("work:") and reference["revision"] != verification["revision"]:
             verified, reason = "needs_review", "The saved plan changed. Approve its current revision before continuing."
+        if runtime_verification and runtime_verification["id"] != verification["id"]:
+            runtime_status, runtime_reason = task_states.completion(runtime_verification["id"])
+            if runtime_status not in {"passed", "not_applicable", "accepted"}:
+                verified, reason = runtime_status, runtime_reason
+            verification = {**verification, "additional_contracts": [runtime_verification]}
         verification = {**verification, "current_status": verified, "current_reason": reason}
         if verified != "passed":
             blocker = reason
@@ -139,6 +147,7 @@ def task_detail(session_id: str, service: Service):
             review["current"] = False
     can_retry = bool(verification and verification.get("checks") and not goal and not capsule
         and (snapshot.get("plan") or {}).get("approval_reference", {}).get("revision", verification["revision"]) == verification["revision"]
+        and not verification.get("additional_contracts")
         and all(c["kind"] in {"file_exists", "file_contains", "json_value"} for c in verification["checks"]))
     busy = _workspace_busy(service, session_id, history.root)
     kind = "capsule" if capsule else "goal" if goal else "work"
@@ -195,7 +204,7 @@ def task_limit(session_id: str, service: Service, body: dict[str, Any] = Body(de
 
 def task_reconcile_usage(session_id: str, service: Service, body: dict[str, Any] = Body(default_factory=dict)):
     journal, _ = _context(service, session_id)
-    from ..usage_ledger import UsageLimitError
+    from ..task_usage_ledger import UsageLimitError
     try:
         UsageLedger(journal).reconcile(str(body.get("id") or ""), amount=body.get("amount"), note=body.get("note", ""))
         return {"ok": True}

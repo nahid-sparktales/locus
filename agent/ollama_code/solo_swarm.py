@@ -147,9 +147,10 @@ class SoloSwarmExecutor:
         task_journal: Any = None,
         usage_rates: dict | None = None,
     ) -> None:
+        self.usage_context = None
         self.route = route
         self.goal_runtime = goal_runtime
-        from .usage_ledger import UsageLedger
+        from .task_usage_ledger import UsageLedger
         self.usage_ledger = UsageLedger(task_journal) if task_journal is not None else None
         self.usage_rates = usage_rates or {}
         self.emit = emit
@@ -397,16 +398,15 @@ class SoloSwarmExecutor:
             try:
                 goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
                 task_call = self._reserve_task_usage()
-                response = self.route.client.chat_stream(
-                    self.route.model,
-                    messages,
+                from .model_usage import tracked_chat
+                response = tracked_chat(None, self.route.client, self.route.model, messages, purpose="worker", context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model, "route": getattr(self.route.client, "base_url", "")},
                     tools=schemas,
                     should_stop=self._worker_should_stop,
                 )
                 if goal_call is not None:
                     self.goal_runtime.settle(goal_call, response)
                 if task_call:
-                    from .usage_ledger import response_usage
+                    from .task_usage_ledger import response_usage
                     self.usage_ledger.settle(task_call, response_usage(response))
             except InterruptedError:
                 raise
@@ -507,7 +507,8 @@ class SoloSwarmExecutor:
 
         run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
         task_call = self._reserve_task_usage()
-        run_native(
+        from .model_usage import tracked_native
+        tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": "chatgpt", "model": self.route.model},
             thread_id=thread_id,
             text=self._worker_prompt(task),
             model=self.route.model,

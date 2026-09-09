@@ -33,7 +33,7 @@ def initialize_schema(db):
         CREATE TABLE IF NOT EXISTS task_reviews (
             run_id TEXT PRIMARY KEY, payload TEXT NOT NULL
         );
-        UPDATE schema_meta SET version=15 WHERE singleton=1;
+        UPDATE schema_meta SET version=18 WHERE singleton=1;
         COMMIT;
     """)
 

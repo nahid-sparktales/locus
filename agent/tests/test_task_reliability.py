@@ -11,7 +11,7 @@ from ollama_code.remote import _consume_anthropic_event
 from ollama_code.runstore import SCHEMA_VERSION, RunStore
 from ollama_code.task_journal import TaskJournal
 from ollama_code.task_state import TaskStateError, TaskStateStore, TaskVerifier
-from ollama_code.usage_ledger import UsageLedger, UsageLimitError
+from ollama_code.task_usage_ledger import UsageLedger, UsageLimitError
 
 
 @pytest.fixture
@@ -163,7 +163,7 @@ def test_duplicate_reported_charge_cannot_overwrite_cost(task):
 def test_anthropic_reservation_covers_highest_cache_write_rate():
     from decimal import Decimal
 
-    from ollama_code.usage_ledger import request_bound
+    from ollama_code.task_usage_ledger import request_bound
     rates = {"input_tokens": 3, "output_tokens": 15, "cache_creation_5m_input_tokens": 3.75, "cache_creation_1h_input_tokens": 6}
     assert request_bound(SimpleNamespace(auth_style="anthropic"), rates, 1_000_000, 1_000_000) == Decimal(21)
     rates.pop("cache_creation_1h_input_tokens")
@@ -171,7 +171,8 @@ def test_anthropic_reservation_covers_highest_cache_write_rate():
 
 
 @pytest.mark.parametrize("already_used", [0, 1])
-def test_ordinary_team_repair_rereviews_and_preserves_round_allowance(task, monkeypatch, already_used):
+@pytest.mark.parametrize("reusable_checks", [False, True])
+def test_ordinary_team_repair_rereviews_and_preserves_round_allowance(task, monkeypatch, already_used, reusable_checks):
     from ollama_code import server
     from ollama_code.orchestration import AgentResult
     reviewer = SimpleNamespace(id="reviewer", role="reviewer", can_write=False)
@@ -201,12 +202,24 @@ def test_ordinary_team_repair_rereviews_and_preserves_round_allowance(task, monk
     monkeypatch.setattr(server, "_team_checkpoint_state", lambda p, *a, **k: {"repair_count": p.repair_count})
     monkeypatch.setattr(server, "_task_diff", lambda *_: "result diff")
     manifest = {"_resume": {"repair_count": already_used}}
+    initial_reviews = [revised]
+    if reusable_checks:
+        from ollama_code.reusable_check_runtime import RunChecks
+        runtime = RunChecks(service, "run", "Fix result", frozen=[])
+        current = runtime.tasks.get(runtime.id)
+        current.update(repair_attempts=already_used, checks_revision=current["revision"], checks=[{
+            "id": "result", "kind": "file_contains", "path": "result", "value": "repaired",
+            "requirement": "The result is repaired", "files": []}])
+        runtime.tasks.save(current, expected_revision=current["revision"])
+        service.reusable_run_checks = runtime
+        initial_reviews = [approved]
+        manifest = {}  # Existing runtime attempts still consume the shared allowance.
     if already_used:
         with pytest.raises(server.TeamWriterBudgetPause, match="allowance is exhausted"):
-            server._repair_team_reviews(service, orchestrator, prepared, manifest, [revised])
+            server._repair_team_reviews(service, orchestrator, prepared, manifest, initial_reviews)
         assert actions == []
     else:
-        assert server._repair_team_reviews(service, orchestrator, prepared, manifest, [revised]) == [approved]
+        assert server._repair_team_reviews(service, orchestrator, prepared, manifest, initial_reviews) == [approved]
         assert actions == ["repair", "review"]
         assert checkpoints[0]["repair_count"] == 1
         assert prepared.review_files

@@ -801,6 +801,8 @@ class RemoteClient:
     ) -> None:
         usage = chunk.get("usage") or {}
         if usage:
+            resp.provider_fields["usage"] = usage
+            resp.provider_fields["usage_family"] = "openai"
             resp.prompt_eval_count = int(usage.get("prompt_tokens") or 0)
             resp.eval_count = int(usage.get("completion_tokens") or 0)
             cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
@@ -862,6 +864,7 @@ def _consume_anthropic_event(
     if event_type == "message_start":
         usage = (event.get("message") or {}).get("usage") or {}
         _anthropic_usage(resp, usage)
+        resp.provider_fields["usage_family"] = "anthropic"
         return
     if event_type == "content_block_start":
         block = event.get("content_block") or {}
@@ -955,6 +958,7 @@ def _consume_anthropic_event(
     if event_type == "message_delta":
         usage = event.get("usage") or {}
         _anthropic_usage(resp, usage)
+        resp.provider_fields["usage_family"] = "anthropic"
         stop = (event.get("delta") or {}).get("stop_reason")
         if stop:
             resp.done_reason = "length" if stop == "max_tokens" else str(stop)
@@ -973,6 +977,7 @@ def _anthropic_usage(resp: ChatResponse, usage: dict) -> None:
             saved[key] = max(int(usage[key]), saved.get(key, 0))
     creation = usage.get("cache_creation")
     if isinstance(creation, dict):
+        saved["cache_creation"] = {**saved.get("cache_creation", {}), **creation}
         for duration in ("5m", "1h"):
             key = "cache_creation_" + duration + "_input_tokens"
             saved[key] = max(int(creation.get("ephemeral_" + duration + "_input_tokens") or 0), saved.get(key, 0))

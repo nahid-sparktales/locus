@@ -109,6 +109,7 @@ class ToolContext:
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
     background_service: Callable[[dict[str, Any]], str] | None = None
+    wait_for_locus: Callable[[dict[str, Any]], str] | None = None
     #: Per-turn adaptive Solo executor. It is installed only for eligible Solo
     #: turns and removed before the turn identity is released.
     delegate_read_only: Callable[[dict[str, Any]], str] | None = None

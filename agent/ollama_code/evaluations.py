@@ -118,19 +118,27 @@ class EvaluationStore:
             except WorktreeError:
                 pass
 
-    def start_result(self, suite_id: str, case_id: str, run_id: str) -> str:
+    def start_result(self, suite_id: str, case_id: str, run_id: str, configuration: dict | None = None) -> str:
         identifier = uuid.uuid4().hex
         with self.run_store._connect() as connection:  # noqa: SLF001
             connection.execute(
                 """INSERT INTO evaluation_results(
                     id, suite_id, case_id, run_id, state, payload_json, created_at
-                ) VALUES(?, ?, ?, ?, 'running', '{}', ?)""",
-                (identifier, suite_id, case_id, run_id, time.time()),
+                ) VALUES(?, ?, ?, ?, 'running', ?, ?)""",
+                (identifier, suite_id, case_id, run_id, json.dumps(configuration or {}), time.time()),
             )
         return identifier
 
     def finish_result(self, result_id: str, value: dict[str, Any]) -> dict[str, Any]:
         safe = sanitize_event(value)
+        with self.run_store._connect(readonly=True) as connection:
+            row = connection.execute("SELECT payload_json FROM evaluation_results WHERE id=?", (result_id,)).fetchone()
+        previous = json.loads(row[0]) if row else {}
+        for field in ("configuration_id", "configuration_snapshot"):
+            if field in previous:
+                if field in safe and previous[field] != safe[field]:
+                    raise EvaluationError("Evaluation configuration is immutable")
+                safe[field] = previous[field]
         state = str(safe.get("state") or "failed")
         with self.run_store._connect() as connection:  # noqa: SLF001
             connection.execute(
@@ -218,6 +226,7 @@ def validate_suite(value: Any, *, suite_id: str = "") -> dict[str, Any]:
         "description": str(value.get("description") or "")[:4_000],
         "tags": _tags(value.get("tags")), "read_only_mcp": bool(value.get("read_only_mcp")),
         "pinned": bool(value.get("pinned")), "cases": cases,
+        "repetitions": min(max(_integer(value.get("repetitions"), 1), 1), 20),
     }
 
 
@@ -427,53 +436,83 @@ def configuration_snapshot(core, case: dict, manifest: dict) -> dict:
 
 
 def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
-    completed = results  # Every started attempt remains in the denominator.
-    latencies = sorted(int(item.get("duration_ms") or 0) for item in completed)
-    scores = [float(item["rubric_score"]) for item in completed
-              if item.get("rubric_score") is not None]
+    completed = [item for item in results if item.get("execution_outcome") == "completed" or
+                 ("execution_outcome" not in item and item.get("state") in {"passed", "failed"})]
+    latencies = sorted(int(item.get("duration_ms") or 0) for item in results if item.get("duration_ms") is not None)
+    scores = [float(item["rubric_score"]) for item in results if item.get("rubric_score") is not None]
+    required = [item for item in results if item.get("rubric_required")]
+    priced = [item for item in results if item.get("estimated_api_cost") is not None]
+    passed = sum(item.get("state") == "passed" for item in results)
     return {
-        "cases": len(completed),
-        "passed": sum(1 for item in completed if item.get("state") == "passed"),
-        "pass_rate": (sum(1 for item in completed if item.get("state") == "passed") / len(completed))
-        if completed else 0,
+        "cases": len(results), "passed": passed, "pass_rate": passed / len(results) if results else 0,
+        "completed": len(completed), "completion_rate": len(completed) / len(results) if results else 0,
+        "rubric_coverage": sum(item.get("rubric_score") is not None for item in required) / len(required) if required else None,
+        "verification_passed": sum(bool(item.get("deterministic_passed")) for item in results),
+        "outcomes": {state: sum(item.get("state") == state for item in results) for state in sorted({str(item.get("state", "unknown")) for item in results})},
         "average_rubric_score": sum(scores) / len(scores) if scores else None,
         "median_latency_ms": latencies[len(latencies) // 2] if latencies else 0,
-        "p95_latency_ms": latencies[min(int(len(latencies) * 0.95), len(latencies) - 1)]
-        if latencies else 0,
-        "model_calls": sum(int(item.get("model_calls") or 0) for item in completed),
-        "prompt_tokens": sum(int(item.get("prompt_tokens") or 0) for item in completed),
-        "completion_tokens": sum(int(item.get("completion_tokens") or 0) for item in completed),
-        "estimated_cost": sum(float(item["estimated_cost"]) for item in completed) if completed and all(item.get("estimated_cost") is not None for item in completed) else None,
-        "known_cost_subtotal": sum(float(item.get("known_cost_subtotal", item.get("estimated_cost")) or 0) for item in completed),
-        "cost_known_cases": sum(item.get("estimated_cost") is not None for item in completed),
-        "ungraded": sum(item.get("state") == "ungraded" for item in completed),
+        "p95_latency_ms": latencies[min(int(len(latencies) * .95), len(latencies) - 1)] if latencies else 0,
+        "model_calls": sum(int(item.get("model_calls") or 0) for item in results),
+        "prompt_tokens": sum(int(item.get("prompt_tokens") or 0) for item in results),
+        "completion_tokens": sum(int(item.get("completion_tokens") or 0) for item in results),
+        # Legacy fields remain readable; new presentation uses the nullable estimate and coverage.
+        "estimated_cost": sum(float(item["estimated_cost"]) for item in results) if results and all(item.get("estimated_cost") is not None for item in results) else None,
+        "estimated_api_cost": sum(float(item["estimated_api_cost"]) for item in priced) if priced else None,
+        "cost_coverage": "known" if priced and all(item.get("cost_coverage") in {"known", "local", "subscription"} for item in results) else "partial" if priced else "unavailable",
+        "historical_cases": sum(not item.get("configuration_id") for item in results),
+        "known_cost_subtotal": sum(float(item.get("known_cost_subtotal", item.get("estimated_api_cost", item.get("estimated_cost"))) or 0) for item in results),
+        "cost_known_cases": sum(item.get("estimated_cost") is not None for item in results),
+        "ungraded": sum(item.get("state") == "ungraded" for item in results),
     }
 
 
 def compare_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate repeatable Solo/team configurations without exposing providers."""
     groups: dict[str, list[dict[str, Any]]] = {}
-    for result in results:
-        target = str(result.get("target") or "unknown")
-        team_id = str(result.get("team_id") or "")
-        configuration = result.get("configuration") or {}
-        key = configuration.get("fingerprint") or (target if target == "solo" else f"team:{team_id or 'default'}")
+    for index, result in enumerate(results):
+        key = str(result.get("configuration_id") or f"historical:{result.get('id') or result.get('run_id') or index}")
         groups.setdefault(key, []).append(result)
-    output: list[dict[str, Any]] = []
+    output = []
     for configuration, values in sorted(groups.items()):
-        metrics = summarize_results(values)
         categories: dict[str, int] = {}
         for value in values:
             category = str(value.get("failure_category") or "")
             if category:
                 categories[category] = categories.get(category, 0) + 1
-        output.append({
-            "configuration": configuration,
-            **metrics,
-            "retries": sum(int(value.get("retries") or 0) for value in values),
-            "failure_categories": categories,
-        })
+        snapshot = values[0].get("configuration_snapshot") or {}
+        output.append({"configuration": configuration,
+                       "label": snapshot.get("label", "Historical result — configuration unavailable"),
+                       "historical": not bool(values[0].get("configuration_id")),
+                       **summarize_results(values),
+                       "retries": sum(int(value.get("retries") or 0) for value in values),
+                       "failure_categories": categories})
     return output
+
+
+def configuration_fingerprint(core, case, manifest, reusable_checks=None):
+    import hashlib
+
+    from .model_usage import safe_route
+    # Volatile run IDs and credentials cannot influence or leak through a fingerprint.
+    def scrub(value):
+        from .runstore import _SAFE_TOKEN_KEYS, _SECRET_KEY
+        if isinstance(value, dict):
+            return {key: "[redacted]" if _SECRET_KEY.search(key) and key not in _SAFE_TOKEN_KEYS else scrub(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [scrub(item) for item in value]
+        return sanitize_event(value, max_string_chars=None)
+    snapshot = scrub({"version": 1, "target": case.get("target", "team"),
+        "provider": core.provider, "model": core.model,
+        "route": safe_route(getattr(core.client, "base_url", core.host)),
+        "account_id": getattr(core, "account_id", ""),
+        "reusable_checks": [{key: value for key, value in item.items() if key != "baseline"} for item in (reusable_checks or [])],
+        "agent_configuration": core.agent_configuration.structured(),
+        "system_prompt": core.system_message(), "tools": core.tool_registry.schemas(),
+        "team": {key: value for key, value in manifest.items() if key not in {"run_id", "request_id"}},
+        "case": {key: value for key, value in case.items() if key != "baseline_fixture"},
+        "baseline": {key: value for key, value in (case.get("baseline_fixture") or {}).items() if key not in {"task_id", "execution_path"}},
+        "label": str(core.model) if case.get("target") == "solo" else str((manifest.get("team") or {}).get("name", "Team"))})
+    identifier = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {"configuration_id": identifier, "configuration_snapshot": snapshot}
 
 
 def _tags(value: Any) -> list[str]:

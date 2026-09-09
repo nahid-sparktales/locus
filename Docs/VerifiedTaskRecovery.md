@@ -210,7 +210,7 @@ or Codex.
 The subsequent two-phase implementation adds immutable plan approval references,
 execution-evidence progress detection, shared bounded team repair, invocation
 receipts, evaluation startup/grading fixes, whole-task usage accounting, a unified
-macOS task detail view, and selective file restoration. Schema migrations 15–17
+macOS task detail view, and selective file restoration. Task migrations 18–20 follow the independent runtime’s 15–17 migrations and
 are additive to the schema 14 foundation described above.
 
 See [Task reliability implementation and validation](TaskReliability.md) for

@@ -20,7 +20,7 @@ class TaskStateError(ValueError):
 
 
 def encoded(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def digest(value: Any) -> str:
@@ -130,8 +130,9 @@ class TaskStateStore:
         return value
 
     def ensure(self, identifier: str, *, request: str, revision: int, workspace: str,
-               execution: str, session_id: str = "", plan: dict | None = None) -> dict:
+               execution: str, session_id: str = "", plan: dict | None = None, agent_id: str = "", include_reusable: bool = True) -> dict:
         existing = self.get(identifier)
+        prior_request = existing.get("request") if existing else None
         expected_revision = existing["revision"] if existing else None
         if existing and existing["revision"] > revision:
             raise TaskStateError("A newer task revision already exists.")
@@ -148,6 +149,16 @@ class TaskStateStore:
             value["requirements"] = plan.get("constraints", []) or [request]
         else:
             value["requirements"] = [request]
+        if existing and prior_request != request:
+            value.update(evidence_ids=[], verification_status="pending")
+        if not existing and include_reusable:
+            from .reusable_checks import ReusableCheckStore
+            if not agent_id and session_id:
+                from .sessions import SessionMeta
+                metadata = SessionMeta.get(session_id)
+                agent_id = str(metadata.get("agent_profile_id") or metadata.get("agent_trigger_id") or session_id)
+            value["agent_id"] = agent_id
+            value["reusable_checks"] = ReusableCheckStore(self.runs).freeze(workspace, execution, agent_id=agent_id)
         return self.save(value, expected_revision=expected_revision)
 
     def receipts(self, identifier: str) -> list[dict]:
@@ -173,13 +184,19 @@ class TaskStateStore:
             return "needs_review", "No recorded acceptance checks are available."
         if revision is not None and value["revision"] != revision:
             return "needs_review", "The requirements changed after verification."
+        from .reusable_checks import applicable
+        required = applicable(value)
+        if value.get("verification_status") == "not_applicable" and not required:
+            return "not_applicable", "No reusable checks apply to the files touched by this task."
+        if any(check not in value.get("checks", []) for check in required):
+            return "needs_review", "Applicable reusable checks have not been verified."
         status = value.get("verification_status", "pending")
         if status == "accepted":
             return "accepted", "Accepted by the user; not machine verified."
         receipts = {r["id"]: r for r in self.receipts(identifier)}
         selected = [receipts[key] for key in value.get("evidence_ids", []) if key in receipts]
         if ({r.get("check_hash") for r in selected} != {digest(c) for c in value.get("checks", [])}
-                or any(r.get("revision") != value["revision"] for r in selected)):
+                or any(r.get("revision") != value["revision"] or r.get("requirements_hash", digest(value.get("requirements", []))) != digest(value.get("requirements", [])) for r in selected)):
             return "needs_review", "The current acceptance checks do not have matching execution evidence."
         for key in value.get("evidence_ids", []):
             receipt = receipts.get(key)
@@ -228,6 +245,12 @@ class TaskVerifier:
         if value is None:
             raise TaskStateError("Task verification was not initialized.")
         checks = normalize_checks(checks)
+        from .reusable_checks import applicable
+        for required in applicable(value):
+            if any(check["id"] == required["id"] and check != required for check in checks):
+                raise TaskStateError("A frozen reusable check cannot be weakened.")
+            if required not in checks:
+                checks.append(required)
         # A completion report can add checks, but cannot silently remove or
         # weaken a previously declared requirement in the same task revision.
         previous = value.get("checks", []) if value.get("checks_revision") == value["revision"] else []
@@ -289,7 +312,7 @@ class TaskVerifier:
             raise InterruptedError("Verification interrupted")
         files = list(dict.fromkeys([*check.get("files", []), *([check["path"]] if check.get("path") else [])]))
         receipt = {"id": uuid.uuid4().hex, "check_id": check["id"], "check_hash": digest(check),
-                   "requirement": check["requirement"], "revision": value["revision"], "run_id": self.run_id,
+                   "requirement": check["requirement"], "revision": value["revision"], "requirements_hash": digest(value.get("requirements", [])), "run_id": self.run_id,
                    "execution_path": value["execution_path"], "state": "needs_review", "fingerprints": {}}
         try:
             before = fingerprints(value["execution_path"], files)

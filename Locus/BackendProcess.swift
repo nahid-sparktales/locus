@@ -8,6 +8,9 @@ enum BackendLaunchResult: Equatable {
 
 final class BackendProcess {
     private var process: Process?
+    private var attachedEndpoint: URL?
+    var isExternallyManaged: Bool { attachedEndpoint != nil }
+    func attach(to endpoint: URL) { attachedEndpoint = endpoint }
     private var outputPipe: Pipe?
     private var runningPort: Int?
     private var stopping = false
@@ -16,7 +19,7 @@ final class BackendProcess {
 
     var onUnexpectedExit: ((Int32, String) -> Void)?
 
-    var isRunning: Bool { process?.isRunning == true }
+    var isRunning: Bool { attachedEndpoint != nil || process?.isRunning == true }
 
     /// Last portion of the child's combined stdout/stderr, for diagnostics.
     var recentOutput: String {
@@ -33,6 +36,10 @@ final class BackendProcess {
         environmentOverlay: [String: String] = [:],
         proxyCredential: String? = nil
     ) -> BackendLaunchResult {
+        if RuntimeInstallation.enabled, environmentOverlay["LOCUS_DOCUMENT_COORDINATOR"] != "0" {
+            attachedEndpoint = RuntimeInstallation.endpoint
+            return .running(RuntimeInstallation.endpoint)
+        }
         if isRunning, let runningPort,
            let url = URL(string: "http://127.0.0.1:\(runningPort)")
         {
@@ -375,6 +382,7 @@ final class BackendProcess {
     /// would beachball the quit. After SIGKILL there is nothing to wait for:
     /// at termination the only requirement is that the child not outlive us.
     func stop(maxWait: TimeInterval = 0.5) {
+        if attachedEndpoint != nil { attachedEndpoint = nil; return }
         guard let process = terminate() else { return }
         self.process = nil
         runningPort = nil
