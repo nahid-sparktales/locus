@@ -25,6 +25,15 @@ final class EventAutomationModel: ObservableObject {
     /// is not in `triggers` may simply not have arrived yet.
     @Published private(set) var hasLoaded = false
 
+    func selectedRuntimeConnectors(_ identifiers: Set<String>) -> [[String: Any]] {
+        connections.filter { identifiers.contains($0.id) }.compactMap { connection in
+            guard let data = try? JSONEncoder().encode(connection),
+                  let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let secret = try? credentials.load(for: connection.id) else { return nil }
+            return ["id": connection.id, "configuration": secret, "connection": metadata]
+        }
+    }
+
     func provisionRuntimeCredentials() async {
         guard RuntimeInstallation.enabled, let backend else { return }
         for connection in connections {
@@ -631,11 +640,11 @@ final class EventAutomationModel: ObservableObject {
                     ], as: ConnectorConnection.self
                 )
                 connections.append(connection)
-                let base = tunnelURL.nilIfBlank ?? "http://127.0.0.1:\(port)"
+                let base = tunnelURL.nilIfBlank ?? (RuntimeInstallation.enabled ? RuntimeInstallation.endpoint.absoluteString : "http://127.0.0.1:\(port)")
                 webhookSetup = WebhookSetup(
                     id: identifier,
                     endpoint: base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                        + "/hooks/v1/\(identifier)",
+                        + (RuntimeInstallation.enabled ? "/api/runtime/webhooks/\(identifier)" : "/hooks/v1/\(identifier)"),
                     secret: secret
                 )
                 runtimeFingerprint = ""

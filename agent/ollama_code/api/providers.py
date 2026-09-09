@@ -139,13 +139,15 @@ def chatgpt_login_start(
 ) -> dict[str, Any]:
     manager = _chatgpt_manager(service, str(body.get("account_id") or ""))
     try:
-        result = manager.start_login()
+        result = manager.start_login(device_code=True) if body.get("method") == "device_code" else manager.start_login()
     except CodexAppServerError as error:
         raise HTTPException(503, str(error)) from error
     return {
         "status": "signing_in",
         "login_id": str(result.get("loginId") or ""),
-        "auth_url": str(result.get("authUrl") or ""),
+        "auth_url": str(result.get("authUrl") or result.get("verificationUrl") or ""),
+        "user_code": str(result.get("userCode") or ""),
+        "method": "device_code" if body.get("method") == "device_code" else "browser",
     }
 
 

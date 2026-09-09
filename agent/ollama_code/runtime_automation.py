@@ -106,7 +106,10 @@ class RuntimeAutomation:
         workspace = run["workspace_root"]
         worker = await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
         saved = runtime.private.read()
-        account = saved.get(f"account:{manifest.get('provider_account_id', '')}")
+        automation_configuration = saved.get(f"automation:schedule:{manifest.get('schedule_id', '')}") or saved.get(f"automation:event:{manifest.get('event_trigger_id', '')}") or {}
+        account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}")
+        if automation_configuration.get("permissions") and not worker.active_command:
+            await runtime.request(worker, "POST", "/api/permissions", automation_configuration["permissions"])
         if account and not worker.active_command:
             await runtime.request(worker, "POST", "/api/provider", account)
         command = {"type": "user_message", "text": run["request"], "mode": manifest.get("mode", "work"),

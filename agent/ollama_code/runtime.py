@@ -74,6 +74,11 @@ class RuntimeSupervisor:
                 await self.coordinator
         if self.automation:
             await self.automation.close()
+        if hasattr(self, "remotes"):
+            for key in list(self.remotes.tunnels):
+                self.remotes.disconnect(key)
+            for process in self.remotes.login_tunnels.values():
+                process.terminate()
         for session_id in list(self.workers):
             await self.stop_worker(session_id)
 
@@ -81,6 +86,7 @@ class RuntimeSupervisor:
         return {"id": self.runtime_id, "version": 1, "protocol_version": 1,
                 "independent": True, "connected": True, "workers": self.store.workers(),
                 "pending_approvals": self.store.decisions(), "max_active_chats": self.limit,
+                "active_work": sum(bool(worker.active_command) for worker in self.workers.values()),
                 "capabilities": {"durable_events": True, "background_schedules": True,
                                  "desktop_requires_controller": True, "remote_chatgpt": True}}
 

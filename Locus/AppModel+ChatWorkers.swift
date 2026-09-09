@@ -409,7 +409,7 @@ extension AppModel {
         return capsuleDispatch != nil
     }
 
-    private func scheduledProviderRequestBody(
+    func scheduledProviderRequestBody(
         provider: String, accountID: String?, model: String
     ) -> [String: Any]? {
         if provider == "ollama" {

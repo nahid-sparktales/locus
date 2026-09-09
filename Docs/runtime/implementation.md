@@ -1,0 +1,79 @@
+# Independent agent runtime
+
+Branch: `codex/independent-agent-runtime`, isolated from revision `4b49373`.
+
+## Delivery gates
+
+1. Local service and durable controller protocol.
+2. SSH deployment, reviewed workspace snapshots, account isolation, retrieval.
+3. Unified invocation accounting and immutable evaluation comparisons.
+4. Explicit correction proposals and versioned acceptance checks.
+
+The runtime is opt-in in direct-download, wallet-free Locus. A signed bundled
+SMAppService launch agent starts the Python supervisor. Its versioned package,
+private credentials, and controller token are stored in the user's Locus Runtime
+directory. macOS registration approval, login and awake requirements are shown in
+Settings. App Store and LocusX do not install this helper.
+
+A worker belongs to the supervisor, not a window. Controller websocket connections
+subscribe to durable events; reconnect uses a cursor and pending decision snapshot.
+Decisions require their current fingerprint. The supervisor owns the only worker
+socket and connector executor, and records external action intent before execution.
+A crash leaves sent commands and external actions uncertain instead of resending
+those actions. Existing recovery controls remain responsible for deliberate retry.
+The runtime pauses ordinary work on controller disconnect; opted-in work continues.
+
+The service coordinates schedules, event delivery, workflow steps and goal claims.
+Automation continuation is inherited from the owning agent's explicit setting.
+The application remains the interactive sign-in and native operation broker.
+Browser, computer and other native requests remain pending while disconnected;
+explicit interruption cancels their wait. Model and tool permission checks remain
+inside the existing worker. Credentials are stored separately from event records.
+
+## Validation log
+
+Stage 1: native Debug build (ad hoc, bundled assets skipped) and 37 backend tests
+passed. Includes a real supervisor/worker process, controller detach/reattach,
+request deduplication, interrupted command handling, approval version checks and
+external action receipt deduplication. These are fixture/process results, not live
+provider validation. Signed SMAppService registration, login/reboot lifecycle and
+real provider/connector smoke tests remain release gates.
+
+No changes from the original dirty checkout have been copied. Overlapping recovery,
+evaluation and run-store work must be reviewed and reconciled before integration.
+
+Stage 2 implements strict OpenSSH host validation, loopback tunnels, systemd user
+and macOS launch-agent installation, hash-checked versioned packages, independent
+ChatGPT device login with an SSH browser callback fallback, and remote controls.
+Deployment snapshots include current selected edits and show ignored/secret/cache
+exclusions. Uploads have stable deployment IDs; retry reconciles the same remote
+workspace. Retrieved changes require selection and an unchanged local baseline.
+Removing a connection preserves remote files. Updates refuse active work; Stop
+first checkpoints and drains workers. Previous packages and migration backups are
+retained. Selected API and connector credentials travel through authenticated
+tunnels and remain outside project snapshots and public deployment records.
+
+Stage 2 validation: 92 backend tests passed, including tampered/incompatible
+packages, host-key failure, snapshot path escape, post-review edits, explicit apply,
+local conflicts, independent device login and account homes. Native Debug build
+passed. No disposable SSH host was supplied; service-manager installation and
+remote live-provider/login/reboot tests remain release gates.
+
+## Build and install a remote package
+
+Run `Tools/PackageRemoteRuntime.py` with `--runtime` pointing to a portable runtime
+layout (`python/bin/python3`, `site-packages`, and `source/ollama_code`), the pinned
+0.147.0 helper and its `codex-code-mode-host` sibling, `--target` (`linux-x86_64`,
+`linux-arm64`, or `macos-arm64`) and `--output`. Use the hashed
+`agent/requirements-runtime.lock` when building dependencies for each architecture.
+The macOS runtime preparation scripts pin Python and helper source/dependency hashes.
+Linux release packages must be built and smoke-tested on their target architecture;
+this change does not claim that macOS executables can be deployed to Linux.
+The generated package and SHA-256 are selected in Settings → Runtimes. Installation
+requires Python 3 for the bootstrap and a working systemd user session on Linux, or
+an active GUI login on macOS. The installed service uses its own bundled Python.
+
+Do not release a package before checking its helper version, architecture, runtime
+imports, isolated account login and a model call on the target host. Signed macOS
+background-helper registration must also be checked from a signed direct-download
+build; ad hoc compile checks do not establish OS registration behavior.

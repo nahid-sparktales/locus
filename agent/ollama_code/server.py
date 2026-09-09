@@ -251,7 +251,8 @@ async def block_browser_origins(request: Request, call_next):
             {"detail": "cross-origin requests are not allowed"}, status_code=403
         )
     token = str(getattr(request.app.state, "auth_token", "") or "")
-    if token and request.headers.get("x-locus-token") != token:
+    runtime_webhook = bool(getattr(request.app.state, "runtime", None)) and request.url.path.startswith("/api/runtime/webhooks/") and request.method == "POST"
+    if token and not runtime_webhook and request.headers.get("x-locus-token") != token:
         return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
     with request_service_context(getattr(request.app.state, "service", None)):
         return await call_next(request)

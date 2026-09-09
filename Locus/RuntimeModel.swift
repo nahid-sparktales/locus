@@ -109,6 +109,10 @@ final class RuntimeModel: ObservableObject {
             if let helper = CodexComponent.helperPathForBackend(), !helper.isEmpty {
                 let destination = installed.appending(path: "codex-app-server")
                 try manager.copyItem(at: URL(fileURLWithPath: helper), to: destination)
+                let codeHost = URL(fileURLWithPath: helper).deletingLastPathComponent().appending(path: "codex-code-mode-host")
+                if manager.fileExists(atPath: codeHost.path) {
+                    try manager.copyItem(at: codeHost, to: installed.appending(path: "codex-code-mode-host"))
+                }
                 pinnedCodex = destination.path
             }
             let configuration: [String: Any] = ["package": installed.path, "workspace": workspace, "port": 8793,

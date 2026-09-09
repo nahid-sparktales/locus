@@ -70,6 +70,7 @@ class RuntimeConnectors:
             for event in events:
                 await asyncio.to_thread(self.store.ingest_event, key, event)
             await asyncio.to_thread(self.store.update_connector_cursor, key, cursor)
+            await asyncio.sleep(max(15, min(int((connection.get("public_config") or {}).get("poll_interval_seconds", 30)), 3600)))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -147,7 +148,7 @@ class RuntimeConnectors:
 
     def prices(self, connection):
         config = connection.get("public_config") or {}
-        credentials = self.secret(connection["id"])
+        credentials = self.runtime.private.read().get(f"connector:{connection['id']}") or {}
         conditions = [trigger.get("filters", {}).get("price_condition") for trigger in self.store.event_triggers()
                       if trigger.get("connection_id") == connection["id"] and trigger.get("enabled")]
         events = []
@@ -171,10 +172,25 @@ class RuntimeConnectors:
             value = result
             for part in str(config.get("price_path", config.get("price_json_path", "price"))).removeprefix("$.").split("."):
                 value = value[int(part)] if isinstance(value, list) else value[part]
-            events.append(self.event("price_feed", f"{symbol}:{time.time_ns()}", event_type="price", subject=symbol,
+            quoted_at = time.time()
+            timestamp_path = config.get("timestamp_json_path", "")
+            if timestamp_path:
+                stamp = result
+                for part in timestamp_path.removeprefix("$.").split("."):
+                    stamp = stamp[int(part)] if isinstance(stamp, list) else stamp[part]
+                try:
+                    quoted_at = float(stamp)
+                    if quoted_at > 1e12:
+                        quoted_at /= 1000
+                except (TypeError, ValueError):
+                    from datetime import datetime
+                    quoted_at = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+            if time.time() - quoted_at > int(config.get("max_quote_age_seconds", 300)):
+                continue
+            events.append(self.event("price_feed", f"{symbol}:{quoted_at}", event_type="price.quote", subject=symbol,
                                      data={"symbol": condition.get("symbol", symbol), "provider_symbol": symbol,
                                            "price": str(value), "quote_currency": condition.get("quote_currency", "USD"),
-                                           "asset_class": condition.get("asset_class", "crypto"), "timestamp": time.time()}))
+                                           "asset_class": condition.get("asset_class", "crypto"), "provider_timestamp": quoted_at}))
         return events
 
     async def action(self, event):
@@ -211,20 +227,40 @@ class RuntimeConnectors:
             if args.get("reply_to_message_id"):
                 body["reply_parameters"] = {"message_id": args["reply_to_message_id"]}
             result = self.telegram(key, "sendMessage", body)
+        elif tool == "telegram_fetch_file":
+            token = self.secret(key)["bot_token"]
+            file = self.telegram(key, "getFile", {"file_id": args["file_id"]})["result"]
+            if int(file.get("file_size", 0)) > 25 * 1024 * 1024:
+                raise ValueError("Attachment exceeds the size limit")
+            remote_path = str(file["file_path"])
+            if ".." in Path(remote_path).parts or remote_path.startswith("/"):
+                raise ValueError("Invalid Telegram file path")
+            with requests.get(f"https://api.telegram.org/file/bot{token}/{quote(remote_path, safe='/')}", timeout=35, stream=True, allow_redirects=False) as response:
+                if response.status_code != 200:
+                    raise ValueError("The attachment could not be downloaded")
+                content = bytearray()
+                for chunk in response.iter_content(65536):
+                    content.extend(chunk)
+                    if len(content) > 25 * 1024 * 1024:
+                        raise ValueError("Attachment exceeds the size limit")
+            result = self.save_attachment(event, args, bytes(content))
         elif tool == "gmail_fetch_attachment":
             result = self.gmail(key, f"messages/{quote(args['message_id'], safe='')}/attachments/{quote(args['attachment_id'], safe='')}")
             encoded = result["data"]
             data = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-            worker = self.runtime.store.worker(event["session_id"])
-            root = Path(worker["workspace"])
-            filename = Path(args["filename"]).name
-            target = (root / "Downloads" / filename).resolve()
-            if root not in target.parents or len(data) > 25 * 1024 * 1024:
-                raise ValueError("Attachment outside the allowed workspace or too large")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("xb") as stream:
-                stream.write(data)
-            result = {"path": str(target)}
+            result = self.save_attachment(event, args, data)
         else:
             raise ValueError("Unsupported connector action")
         return {"text": json.dumps(result, ensure_ascii=False)}
+
+    def save_attachment(self, event, args, data):
+        worker = self.runtime.store.worker(event["session_id"])
+        root = Path(worker["workspace"])
+        filename = Path(args.get("filename") or args.get("file_id", "attachment")).name
+        target = (root / "Downloads" / filename).resolve()
+        if root not in target.parents or len(data) > 25 * 1024 * 1024:
+            raise ValueError("Attachment outside the allowed workspace or too large")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as stream:
+            stream.write(data)
+        return {"path": str(target)}

@@ -42,6 +42,7 @@ struct RuntimesSettingsView: View {
                     }
                 }
             }
+            if RuntimeInstallation.enabled { Section("Remote runtimes") { RemoteRuntimesView() } }
             if let error = runtimes.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
         }
         .formStyle(.grouped)
