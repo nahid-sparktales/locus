@@ -80,12 +80,21 @@ restoration batch including recovery copies. Captured content is bounded too.
 | Bounds and unsupported ownership | Candidate and batch exclusions, binary checks, and symlink traversal |
 | Desktop accessibility and restoration flow | Model/render checks and UI preview, selection, apply, and undo |
 
-The isolated merge checkout passed **2,255 backend tests**. Desktop validation
-passed **47 distinct model/routing tests and 11 UI tests**. The selections overlap;
-repeated tests are not added to these counts. The final restoration capture is
+The final integrated checkout passed **2,316 backend tests** and **50 desktop
+model/routing tests**. The independent-worker fixture exercised task details,
+current verification, restoration, and undo through its HTTP connection. A
+tracked-source secret scan and lint also passed.
+
+The integrated macOS UI gate remains **open**: three attempts stopped before
+executing tests because XCTest timed out enabling automation mode. The earlier
+pre-integration snapshot passed **11 UI tests**; those results are retained and
+are not counted as a pass for the integrated revision. No system permissions
+were changed. The earlier restoration capture is
 [available here](../output/task-reliability-2026-09-09/TaskRestoration-macOS.png).
 
-Raw follow-up results are retained in
+Current raw results and limitations are in
+[task-restoration-integration-validation.json](../output/task-reliability-2026-09-09/task-restoration-integration-validation.json).
+The preceding snapshot is retained in
 [task-restoration-validation.json](../output/task-reliability-2026-09-09/task-restoration-validation.json).
 The broader implementation and earlier validation are described in
 [Task reliability](TaskReliability.md). Live-provider recovery and comparative

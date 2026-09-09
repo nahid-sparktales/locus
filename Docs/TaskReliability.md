@@ -204,3 +204,16 @@ mixed-provider capsule comparisons. No release gate is inferred from missing
 coverage, and no superiority claim is made. The campaign module does not start
 provider transport itself; provider-specific adapters/interruption orchestration
 and the actual paid runs belong to the deferred campaign work.
+
+
+## Independent runtime integration validation
+
+The integrated task-view/restoration revision passed 2,316 backend tests and
+50 desktop model/routing tests. Schema 14 and 17 upgrade coverage preserves
+existing runtime limits. Restoration and safe check retries reserve the runtime
+workspace, and reusable-check repairs share the persisted team repair allowance.
+The post-integration UI gate remains open because macOS timed out enabling
+XCTest automation before any UI test ran. The earlier 11 UI passes apply to the
+pre-integration snapshot. Raw logs and source fingerprints are retained in the
+[integration report](../output/task-reliability-2026-09-09/task-restoration-integration-validation.json).
+Live-provider and comparative campaign gates remain deferred, not passed.
