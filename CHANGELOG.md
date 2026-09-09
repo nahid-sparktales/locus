@@ -4,6 +4,16 @@
 
 ### Added
 
+- Opt-in independent agents in direct-download, wallet-free Locus, with a
+  background runtime, durable approvals and reconnectable execution. Agents can
+  keep running when Locus closes; native desktop work waits for Locus.
+- Runtimes settings and SSH deployment to owned Linux and Apple Silicon Mac
+  hosts, with reviewed project snapshots, selected accounts and explicit review
+  of returned changes.
+- Persistent invocation usage, pricing and cost-coverage reporting, estimated
+  spending controls, and evaluation comparisons with immutable configurations.
+- Make reusable check on user messages, with editable proposals, explicit
+  approval and versioned project checks enforced on applicable future tasks.
 - Check for Updates in the sidebar gear menu. Manual-update and App Store
   builds open their Software Updates settings from the same menu.
 

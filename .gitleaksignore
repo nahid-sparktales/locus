@@ -1,0 +1,4 @@
+# Historical snapshot exclusion fixtures contain two OpenSSH headers with no key
+# data. Ignore only this reviewed finding in this exact commit; future findings
+# in the same file must still fail the scan.
+b9fc1b755ebf56fc8ea57180fbea52a6d537be77:agent/tests/test_runtime_remote.py:private-key:19

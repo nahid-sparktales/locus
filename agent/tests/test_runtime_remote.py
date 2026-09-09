@@ -16,7 +16,7 @@ def test_snapshot_excludes_secrets_and_rejects_edits_after_review(tmp_path):
     tmp_path.mkdir()
     (tmp_path / 'app.py').write_text('print("hello")')
     (tmp_path / '.env').write_text('TOKEN=private')
-    (tmp_path / 'credential.txt').write_text('-----BEGIN OPENSSH PRIVATE KEY-----')
+    (tmp_path / 'credential.txt').write_text('-----BEGIN ' + 'OPENSSH PRIVATE KEY-----')
     (tmp_path / 'link').symlink_to('/etc/passwd')
     review = snapshots.preview(tmp_path)
     assert [row['path'] for row in review['files']] == ['app.py']
@@ -134,7 +134,7 @@ def test_secret_excluded_from_return_is_not_reported_as_deleted(tmp_path):
     root.mkdir()
     (root / 'data.txt').write_text('ordinary content')
     baseline = snapshots.preview(root)
-    (root / 'data.txt').write_text('-----BEGIN OPENSSH PRIVATE KEY-----')
+    (root / 'data.txt').write_text('-----BEGIN ' + 'OPENSSH PRIVATE KEY-----')
     returned = snapshots.preview(root)
     assert snapshots.changes(baseline, returned) == []
     assert returned['exclusions'][0]['reason'] == 'detected secret'

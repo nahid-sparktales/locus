@@ -129,7 +129,7 @@ struct ReusableChecksView: View {
                         ForEach(records) { item in
                             Button { perform { try await load(item.id) } } label: {
                                 HStack { Text(item.check["requirement"]?.string ?? "Check"); Spacer(); Text("v\(item.version) · \(item.state)") }
-                            }.buttonStyle(.plain).padding(.vertical, 5)
+                            }.buttonStyle(.locus(.quiet)).padding(.vertical, 5)
                         }
                     }
                 }

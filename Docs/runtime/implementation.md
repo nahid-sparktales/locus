@@ -30,6 +30,26 @@ Browser, computer and other native requests remain pending while disconnected;
 explicit interruption cancels their wait. Model and tool permission checks remain
 inside the existing worker. Credentials are stored separately from event records.
 
+### Runtime credential boundary
+
+Independent execution requires the supervisor to retain only the API and connector
+credentials explicitly provisioned to it. This extends the desktop-only credential
+boundary: the runtime's separate private store has a user-only directory and file
+permissions, rejects unsafe existing files, and is excluded from snapshots, event
+records, deployment logs and result exports. SSH carries selected credentials over
+an authenticated tunnel; they are not placed in command arguments. ChatGPT OAuth
+remains owned by the pinned helper in each account's separate credential home and
+is not copied through API-key routes.
+
+The trust boundary includes the signed local helper and the user-selected remote
+machine and its account. The remote host owner can read credentials provisioned
+there; this design does not protect against a compromised host or another process
+running as the same user. Strict host-key verification, loopback-only APIs and a
+private controller token protect against untrusted network clients. Native action
+claims, permission checks and durable decision fingerprints remain necessary even
+for an authenticated controller. Removing a controller connection preserves remote
+work and credentials; revoke provider credentials separately when retiring a host.
+
 ## Validation log
 
 Stage 1: native Debug build (ad hoc, bundled assets skipped) and 37 backend tests
