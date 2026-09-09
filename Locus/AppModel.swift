@@ -94,6 +94,7 @@ final class AppModel: ObservableObject {
     let landingFlow = LandingFlowModel()
     let runs = OrchestrationRunsModel()
     let taskCapsules = TaskCapsuleModel()
+    let duo: DuoModel
     let goals = GoalModel()
     let optionalQuestions = OptionalQuestionModel()
     let soloCollaboration = SoloCollaborationModel()
@@ -247,6 +248,7 @@ final class AppModel: ObservableObject {
     func finishTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
         guard transcriptPresentation.ownsSessionLoad(token) else { return }
         transcriptInputState = sessionInfo?.sessionID == currentSessionID ? .ready : .unavailable
+        if transcriptInputState == .ready, duoTask != nil { selectedMode = .duo }
     }
 
     func failTranscriptInputLoad(_ token: TranscriptSessionLoadToken) {
@@ -772,12 +774,14 @@ final class AppModel: ObservableObject {
         credentialStore: (any CredentialStoring)? = nil,
         mcpCredentialStore: (any MCPCredentialStoring)? = nil,
         browserAutofillVault: BrowserAutofillVault? = nil,
-        connectorCredentialStore: (any ConnectorCredentialStoring)? = nil
+        connectorCredentialStore: (any ConnectorCredentialStoring)? = nil,
+        duoOverride: DuoModel? = nil
     ) {
         let isUITesting = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1"
         self.isUITesting = isUITesting
         let persistenceEnabled = startImmediately && !isUITesting
         self.persistenceEnabled = persistenceEnabled
+        duo = duoOverride ?? DuoModel(defaults: persistenceEnabled ? .standard : nil)
         identityVault = IdentityVaultModel(
             store: persistenceEnabled ? IdentityVaultStore() : IdentityVaultStore(inMemory: ()),
             defaults: persistenceEnabled ? .standard : nil

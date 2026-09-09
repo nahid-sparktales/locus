@@ -1475,7 +1475,7 @@ private struct AgentBehaviorEditor: View {
     @ViewBuilder
     private var promptPreview: some View {
         Picker("Preview mode", selection: $previewMode) {
-            ForEach(WorkMode.allCases) { Text($0.title).tag($0) }
+            ForEach(WorkMode.automationCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
         .accessibilityIdentifier("settings.behavior.preview.mode")

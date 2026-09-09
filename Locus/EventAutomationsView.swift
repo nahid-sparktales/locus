@@ -1262,7 +1262,7 @@ private struct EventTriggerEditorView: View {
             }
         }
         Picker("Work mode", selection: $draft.mode) {
-            ForEach(WorkMode.allCases) { Text($0.title).tag($0) }
+            ForEach(WorkMode.automationCases) { Text($0.title).tag($0) }
         }.onChange(of: draft.mode) { _, mode in
             if let index = draft.workflow.steps.firstIndex(where: { $0.type == .agent }) { draft.workflow.steps[index].mode = mode }
         }

@@ -169,6 +169,7 @@ struct DeployAgentView: View {
     let target: RemoteRuntimeRecord
     let completed: () -> Void
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @Environment(\.dismiss) private var dismiss
     @State private var review: RuntimeProjectReview?
     @State private var selectedFiles: Set<String> = []
@@ -218,7 +219,7 @@ struct DeployAgentView: View {
                 Section("Account and permissions") {
                     Picker("Account", selection: $accountID) {
                         Text("Ollama on remote host").tag("")
-                        ForEach(model.providerAccounts) { account in Text(account.displayName).tag(account.id.uuidString) }
+                        ForEach(providerAccounts.providerAccounts) { account in Text(account.displayName).tag(account.id.uuidString) }
                     }
                     TextField("Model", text: $modelName)
                     Picker("Permissions", selection: $permissionMode) {
@@ -267,9 +268,9 @@ struct DeployAgentView: View {
             }
         }
     }
-    private var selectedAccountIsChatGPT: Bool { model.providerAccounts.first(where: { $0.id.uuidString == accountID })?.kind == .chatGPT }
+    private var selectedAccountIsChatGPT: Bool { providerAccounts.providerAccounts.first(where: { $0.id.uuidString == accountID })?.kind == .chatGPT }
     private var provider: [String: Any] {
-        if let account = model.providerAccounts.first(where: { $0.id.uuidString == accountID }) {
+        if let account = providerAccounts.providerAccounts.first(where: { $0.id.uuidString == accountID }) {
             return model.scheduledProviderRequestBody(provider: account.kind == .chatGPT ? "chatgpt" : "remote", accountID: accountID, model: modelName) ?? [:]
         }
         return ["provider": "ollama", "model": modelName]

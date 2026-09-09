@@ -47,6 +47,7 @@ struct TurnCompletion: Codable, Hashable {
             case .ask: "Chat finished"
             case .work: "Work finished"
             case .plan: "Plan finished"
+            case .duo: "Duo finished"
             case .grill: "Grill finished"
             case nil: "Finished"
             }

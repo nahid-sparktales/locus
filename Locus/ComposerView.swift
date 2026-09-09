@@ -327,6 +327,10 @@ struct ComposerView: View {
             // be typed or sent until the request is answered, and the keyboard
             // drives the answer. The draft lives on the model, so it survives
             // the editor unmounting and is back the moment the panel clears.
+            if model.selectedMode == .duo, !model.isIdentityTask {
+                DuoComposerView(duo: model.duo, capsules: model.taskCapsules)
+                    .frame(maxWidth: 740)
+            }
             if model.canAcceptTranscriptInput, let request = model.activePermissionRequest {
                 PermissionPromptView(request: request)
                     .frame(maxWidth: 740)
@@ -1376,6 +1380,7 @@ struct ComposerView: View {
         case .work: "Ask Locus to work on something…"
         case .plan: "Describe what you want to plan…"
         case .grill: "What should we stress-test?"
+        case .duo: "What should Duo plan and build?"
         }
     }
 

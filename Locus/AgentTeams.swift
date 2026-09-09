@@ -114,7 +114,7 @@ struct AgentModeOverlays: Codable, Hashable {
         switch mode {
         case .ask: ask
         case .work: work
-        case .plan: plan
+        case .plan, .duo: plan
         case .grill: grill
         }
     }

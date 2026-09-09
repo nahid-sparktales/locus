@@ -70,6 +70,8 @@ def execution_manifest(capsule: dict, profiles: list[dict], run_id: str) -> dict
         # Serialize writes even when the author described independent steps.
         dependencies = list(dict.fromkeys([*step.get("dependencies", []), *([previous] if previous else [])]))
         goal = json.dumps({
+            "request": capsule["request"],
+            "summary": plan.get("summary", ""),
             "step": step,
             "constraints": plan.get("constraints", []),
             "decisions": plan.get("decisions", []),
@@ -136,7 +138,7 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
         store = CapsuleStore(svc.core.workspace_root or svc.core.cwd)
         if svc.core.identity_mode:
             raise ValueError("Open a regular task to work with capsules.")
-        if stage not in {"plan", "execute", "review", "escalate"}:
+        if stage not in {"plan", "execute", "review", "escalate", "followup"}:
             raise ValueError("Unknown capsule stage.")
         if context.get("id"):
             capsule = store.get(str(context["id"]))
@@ -158,19 +160,31 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
                 paths = ", ".join(c["path"] for c in validation["changes"][:5])
                 raise ValueError(f"The plan's source files changed ({paths}). Ask the planner to update it first.")
             manifest = execution_manifest(capsule, context.get("profiles") or [], run_id)
-            from .capsule_progress import CapsuleRuntime
-            progress = CapsuleRuntime(svc, capsule, run_id, context.get("resume_attempt_id"))
-            progress.checks_only = context.get("checks_only") is True
-            svc.core.capsule_runtime = progress
         else:
             limit = context.get("call_limit", 12)
             if capsule:
                 limit = capsule["recipe"]["planning_call_limit"]
+            if stage == "followup":
+                from .capsule_progress import CapsuleProgressStore
+                attempts = CapsuleProgressStore(svc.run_store).list(capsule["id"])
+                if not attempts or attempts[0]["state"] != "completed":
+                    raise ValueError("Finish or resume the saved build before sending an executor follow-up.")
+                limit = capsule["recipe"]["execution_call_limit"]
+                text = ("Follow up on the completed task using the approved decisions below. "
+                        "Inspect current files and verify any new changes. If the request requires a material "
+                        "redesign, explain the blocker and ask the user to request a revised Duo plan.\n\n"
+                        + json.dumps({"request": capsule["request"], "plan": capsule["plan"]}, ensure_ascii=False)
+                        + "\n\nUser follow-up:\n" + text)
             if type(limit) is not int or not 1 <= limit <= 100:
                 raise ValueError("The capsule call limit must be between 1 and 100.")
         if capsule:
-            store.record_run(capsule["id"], run_id, stage, "running", expected_revision=capsule["revision"], continuation_of_run_id=continuation, reserve=True)
+            store.record_run(capsule["id"], run_id, stage, "running", expected_revision=capsule["revision"], continuation_of_run_id=continuation, reserve=True, handoff_id=context.get("handoff_id"))
             reserved = True
+        if stage == "execute":
+            from .capsule_progress import CapsuleRuntime
+            progress = CapsuleRuntime(svc, capsule, run_id, context.get("resume_attempt_id"))
+            progress.checks_only = context.get("checks_only") is True
+            svc.core.capsule_runtime = progress
         svc.emit({"type": "capsule_stage", "capsule_id": capsule["id"] if capsule else None,
                   "stage": stage, "run_id": run_id, "state": "running"})
         if stage == "execute":
@@ -178,7 +192,7 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
         else:
             # Plan mode enforces read-only work for authors and reviewers. The
             # exact selected account is already installed on the isolated worker.
-            run_user(svc, text, False, attachments, agent_config, "plan", run_id,
+            run_user(svc, text, False, attachments, agent_config, "work" if stage == "followup" else "plan", run_id,
                      False, None, limit)
         completed = True
     except (CapsuleError, ValueError) as exc:

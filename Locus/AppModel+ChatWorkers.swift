@@ -512,6 +512,9 @@ extension AppModel {
     private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
         goals.handleEvent(event, sessionID: runtime.sessionID)
         if handleOptionalQuestionEvent(event, sessionID: runtime.sessionID) { return }
+        if taskCapsules.activeStageSessions[runtime.sessionID] != nil {
+            duo.handleEvent(event, sessionID: runtime.sessionID)
+        }
         taskCapsules.handleEvent(event, sessionID: runtime.sessionID)
         if let type = event["type"] as? String,
            ["identity_action_request", "identity_context_request", "identity_cancelled"].contains(type) {
