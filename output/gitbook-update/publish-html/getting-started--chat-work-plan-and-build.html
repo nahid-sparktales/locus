@@ -1,0 +1,80 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Ask, Work, Plan &amp; Grill</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus separates conversation-only requests from project work and guided clarification.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Mode</th>
+  <th>Best for</th>
+  <th>Project behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Ask</strong></td>
+  <td>Explanations, brainstorming, and attached material</td>
+  <td>Workspace tools are disabled</td>
+</tr>
+<tr>
+  <td><strong>Work</strong></td>
+  <td>Adaptive inspection, planning, implementation, and bounded research or isolated coding delegation</td>
+  <td>Tools are enabled as needed</td>
+</tr>
+<tr>
+  <td><strong>Plan</strong></td>
+  <td>A reviewable implementation plan before changes</td>
+  <td>Inspection and planning only until approval</td>
+</tr>
+<tr>
+  <td><strong>Grill</strong></td>
+  <td>Stress-testing an idea or plan through one focused question at a time</td>
+  <td>Does not modify anything</td>
+</tr>
+</tbody>
+</table>
+
+<p><img src="https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2F32XidrEy7OgDjkWCxOys%2Flocus-v2-plan.png?alt=media" alt="Plan mode with generated outputs, subagent activity, and context usage visible in the Overview inspector" /></p>
+
+<p><strong>Work</strong> is the default agentic mode. It can answer directly, inspect first, implement, or ask helpers for research or isolated coding work. Select an explicit team only when you want named routes, a dispatcher plan, and team budgets.</p>
+
+<h2>Grill mode</h2>
+
+<p>Use <strong>Grill</strong>, ⌥G, or <code>/grill</code> to refine a request through one focused question at a time. It develops a shared understanding before project changes. After approval, implementation continues in Work.</p>
+
+<p>Required questions remain pending until answered; they do not gain approval from elapsed time. Optional questions can appear above the composer while independent work continues. Their visible recommendation may be used after Skip or the displayed timeout. A defaulted recommendation is labeled as such and is never permission to perform a protected action.</p>
+
+<p>Older saved mode values remain compatible. Use the current Ask, Work, Plan, and Grill labels when choosing a mode.</p>
+
+<h2>Plan approval</h2>
+
+<p>A completed Plan presents:</p>
+
+<ul>
+<li><strong>Proceed</strong> to implement in Work under the current permission mode;</li>
+<li><strong>Revise</strong> to keep the plan visible and request changes; or</li>
+<li><strong>Cancel</strong> to return to Work without implementing.</li>
+</ul>
+
+<p>Clarifying questions do not trigger plan approval. A queued message waits until the decision is resolved, and the decision survives reconnects.</p>
+
+<h2>Steering and stopping</h2>
+
+<p>During a run, type direction and use <strong>Steer Now</strong> or ⌘↵ to interrupt the current provider stream and continue the same turn. You can also queue a message for the next turn or stop and send it as a fresh turn. When the composer is empty, the send control becomes Stop; Escape also stops.</p>
+
+<h2>Attachments in every mode</h2>
+
+<p>Drag files onto the composer or conversation, or paste an image with ⌘V. Images can reach Work, Plan, and Grill, not only Ask. On a team run, the dispatcher and first coding job receive the image; specialist goals and review remain text-only.</p>
+
+<p>Attachments are carried in memory for the active turn and are <strong>not persisted</strong>. A restored chat shows attachment names, not image bytes. If a provider rejects image input, Locus retries once without the images and records a note.</p>
+
+<h2>ChatGPT conversation contract</h2>
+
+<p>Each ChatGPT-plan account has a <strong>Codex-native mode</strong> toggle. New accounts begin with Locus's own prompt and tools so approved memory, cross-chat context, and the skill index remain available. Existing accounts keep their previous setting.</p>
+
+<p>Turn Codex-native mode on when you want the model's Codex prompt, voice, and Codex-shaped tools. Locus still enforces its permission prompts, deny lists, and edit previews, but approved memory, cross-chat continuity, and the skill index are deliberately absent. Changing the toggle restarts the conversation's server-side context.</p>
+
+<p>Reasoning effort applies per turn. Optional OpenAI web search is off by default and sends search queries to OpenAI when enabled.</p>
+
+<h2>Continue beyond one turn</h2>
+
+<p>Use <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/persistent-goals">Goal</a> for an ordinary Solo or team chat that should continue toward a saved objective. Use <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/task-capsules">Task Capsules</a> for a saved plan with explicit planning, implementation, and optional review models.</p>
+</body></html>

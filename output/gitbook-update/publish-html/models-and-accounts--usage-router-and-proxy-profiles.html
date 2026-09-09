@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Usage, Router &amp; Proxy Profiles</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus makes routing decisions inspectable without silently moving work to a paid or less-private provider.</p>
+
+<h2>Usage &amp; Costs</h2>
+
+<p>Open the sidebar menu and choose <strong>Usage &amp; Costs</strong>. Filter the local run history by 7, 30, or 90 days, or view all recorded activity. The dashboard groups token activity by agent, model, provider, and workspace and links expensive runs back to the Runs inspector.</p>
+
+<p>Costs are estimates based on the rates saved on agent profiles. Local Ollama usage is shown as $0. Solo rows record tokens; without an explicit rate they do not invent a dollar amount. The dashboard is not a provider bill.</p>
+
+<h2>Model Router</h2>
+
+<p>The Router inspector compares eligible routes across:</p>
+
+<ul>
+<li>quality;</li>
+<li>reliability;</li>
+<li>privacy;</li>
+<li>latency;</li>
+<li>estimated cost; and</li>
+<li>model footprint.</li>
+</ul>
+
+<p>The scorecard uses bounded candidate metadata and task tags. Prompt text is not sent to the scorecard endpoint. Hosted routes remain ineligible until separately allowed, and explicit teams keep their own route and budget rules.</p>
+
+<p>Solo collaboration can use reusable research helpers and isolated coding helpers. Helpers inherit the selected provider, account, model, and reasoning settings. The coordinator remains responsible for review and combined validation; simple tasks can finish without delegation. Grill is a guided interview and does not modify the project.</p>
+
+<h2>Proxy profiles</h2>
+
+<p>The Proxies inspector manages named HTTP, HTTPS, and SOCKS5 profiles. Assign profiles by traffic class, workspace, or provider, then choose strict tunnel and automatic failover behavior.</p>
+
+<p>Health checks report latency and the externally observed exit address. With failover enabled, Locus checks the pool every minute and selects the fastest healthy standby. Strict tunnel mode ignores custom bypass entries and blocks external traffic when no configured route is available.</p>
+
+<p>Loopback services and the configured Ollama host remain direct so Locus can reach its own runtime. Proxy rules apply to Locus, not to every app on the Mac.</p>
+</body></html>

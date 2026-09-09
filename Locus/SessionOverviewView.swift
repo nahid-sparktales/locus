@@ -1,20 +1,66 @@
 import Combine
 import SwiftUI
 
-/// The Overview tab: Codex's pinned summary card (Plan, Outputs, Subagents,
-/// Background processes, Sources) with the Locus context window card pinned
-/// beneath it. "View all" and the plan row push an in-tab detail page over
-/// the card — the closest Locus has to Codex's side-panel tabs.
+/// A floating request summary. It appears when work starts and can be
+/// minimized without moving keyboard focus. Opening a workspace panel takes
+/// its place on the right until that panel closes.
 struct SessionOverviewView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var session: SessionStateEmitter
     @State private var detail: SummaryDetail?
+    @State private var summaryHeight: CGFloat = 170
+    var maximumHeight: CGFloat = 520
 
     private var state: SessionState { session.state }
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                HStack(spacing: 7) {
+                    if model.isBusy {
+                        ProgressView().controlSize(.small).scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "rectangle.grid.2x2")
+                    }
+                    Text(model.hasPendingPermission ? "Needs attention" : model.isBusy ? "Working" : "Overview")
+                }
+                .font(.locus(size: 13, weight: .semibold))
+                Spacer()
+                if let chat = model.sessionCatalog.snapshot.sessionsByID[model.currentSessionID],
+                   let agent = chat.agentReference(in: model.agentDefinitions) {
+                    Button("View agent") {
+                        model.dismissOverview()
+                        model.selectAgent(agent)
+                    }
+                    .buttonStyle(.locus())
+                    .font(.locus(size: 11, weight: .medium))
+                    .accessibilityIdentifier("plan.agentOverview")
+                }
+                Button { model.overviewPresented = false } label: {
+                    Image(systemName: "minus")
+                        .font(.locus(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.locus())
+                .help("Minimize request overview")
+                .accessibilityLabel("Minimize request overview")
+                .accessibilityIdentifier("workspace.overview.minimize")
+                Button { model.dismissOverview() } label: {
+                    Image(systemName: "xmark")
+                        .font(.locus(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.locus())
+                .help("Close overview (Esc)")
+                .accessibilityLabel("Close overview")
+                .accessibilityIdentifier("workspace.overview.close")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            Divider()
             Group {
                 switch detail {
                 case nil:
@@ -30,24 +76,16 @@ struct SessionOverviewView: View {
             .id(detail)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-
-            Divider().overlay(LocusTheme.line)
-            VStack(spacing: 10) {
-                SummaryShortcutsBar(workspace: state.workspace)
-                VStack {
-                    ContextWindowInfoCard()
-                }
-                    .accessibilityIdentifier("plan.context")
-            }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(height: detail == nil ? min(maximumHeight, summaryHeight + 46) : maximumHeight)
         .background(LocusTheme.paperDeep)
         .foregroundStyle(LocusTheme.ink)
         .font(.locus(size: 11))
         .animation(reduceMotion ? nil : LocusMotion.spatial, value: detail)
         .onChange(of: model.currentSessionID) { detail = nil }
+        .onExitCommand { model.dismissOverview() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.overview.popover")
         .onChange(of: state.plan.isEmpty) {
             if state.plan.isEmpty, detail == .plan { detail = nil }
         }
@@ -56,44 +94,83 @@ struct SessionOverviewView: View {
     private var summaryPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                chatScopeHeader
                 PinnedSummaryCard(session: session, browser: model.browser) { detail = $0 }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var chatScopeHeader: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Chat overview")
-                .font(.locus(size: 13, weight: .semibold))
-            Text("Plan, outputs, and sources from the open conversation.")
-                .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let chat = model.sessionCatalog.snapshot.sessionsByID[model.currentSessionID],
-               let agent = chat.agentReference(in: model.agentDefinitions) {
-                Button {
-                    model.selectAgent(agent)
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(locusSymbol: LocusSymbol.robot)
-                        Text(model.inspectorAgentDefinition(agent)?.name ?? chat.agentName ?? "View agent")
-                            .lineLimit(1)
-                        Image(systemName: "arrow.up.right").font(.locus(size: 9))
-                    }
-                    .font(.locus(size: 11, weight: .medium))
-                    .foregroundStyle(LocusTheme.signalDeep)
-                    .frame(minHeight: 26)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: OverviewContentHeightKey.self, value: geometry.size.height)
                 }
-                .buttonStyle(.locus())
-                .help("View this chat’s agent, trigger, access, and activity")
-                .accessibilityIdentifier("plan.agentOverview")
             }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("plan.chatScope")
+        .onPreferenceChange(OverviewContentHeightKey.self) { if $0 > 0 { summaryHeight = $0 } }
     }
+}
+
+struct RequestOverviewActivity: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.locusWorkspaceGeometry) private var geometry
+    @ObservedObject var session: SessionStateEmitter
+
+    private var title: String {
+        if model.hasPendingPermission { return "Needs attention" }
+        if model.isBusy { return "Working…" }
+        return "Request overview"
+    }
+
+    var body: some View {
+        Group {
+            if model.overviewPresented {
+                SessionOverviewView(
+                    session: session,
+                    maximumHeight: min(380, max(220, geometry.workspaceHeight - 150))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay { RoundedRectangle(cornerRadius: 12).stroke(LocusTheme.lineStrong, lineWidth: 1) }
+                .shadow(color: .black.opacity(0.14), radius: 16, y: 6)
+            } else {
+                HStack(spacing: 0) {
+                    Button { model.presentRequestOverview() } label: {
+                        HStack(spacing: 8) {
+                            if model.isBusy {
+                                ProgressView().controlSize(.small).scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "rectangle.grid.2x2")
+                            }
+                            Text(title).font(.locus(size: 12, weight: .semibold))
+                            Image(systemName: "chevron.down").font(.locus(size: 9, weight: .semibold))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.locus())
+                    .help("Show request overview (⌘1)")
+                    .accessibilityLabel("Show request overview")
+                    .accessibilityIdentifier("workspace.overview")
+                    Button { model.dismissOverview() } label: {
+                        Image(systemName: "xmark").font(.locus(size: 10, weight: .semibold))
+                            .frame(width: 30, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.locus())
+                    .help("Dismiss request overview")
+                    .accessibilityLabel("Dismiss request overview")
+                }
+                .foregroundStyle(LocusTheme.inkSoft)
+                .locusSurface(.floating, radius: 10)
+                .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.lineStrong, lineWidth: 1) }
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+}
+
+private struct OverviewContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 // MARK: - Detail pages
@@ -108,7 +185,7 @@ struct SummaryDetailHeader: View {
         HStack(spacing: 8) {
             Button(action: onBack) {
                 Label("Overview", systemImage: "chevron.left")
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 11, weight: .semibold))
                     .foregroundStyle(LocusTheme.inkSoft)
                     .padding(.horizontal, 6)
                     .frame(minHeight: 27)
@@ -119,7 +196,7 @@ struct SummaryDetailHeader: View {
             .accessibilityIdentifier("plan.summary.back")
             Spacer(minLength: 4)
             Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())
-                .font(.locus(size: 7, weight: .bold))
+                .font(.locus(size: 9, weight: .bold))
                 .tracking(0.5)
                 .foregroundStyle(LocusTheme.muted)
                 .lineLimit(1)
@@ -147,7 +224,7 @@ struct SourcesDetailView: View {
                 VStack(spacing: 0) {
                     if sources.isEmpty {
                         Text("No sources yet")
-                            .font(.locus(size: 9))
+                            .font(.locus(size: 11))
                             .foregroundStyle(LocusTheme.inkSoft)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -222,19 +299,19 @@ private struct SourceDetailRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.source.label)
-                    .font(.locus(size: 10, weight: .semibold))
+                    .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(LocusTheme.ink)
                     .lineLimit(2)
                 if let meta = row.meta {
                     Text(meta)
-                        .font(.locus(size: 8))
+                        .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 ForEach(row.detailLines, id: \.self) { line in
                     Text(line)
-                        .font(.locus(size: 9))
+                        .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.inkSoft)
                 }
             }
@@ -268,7 +345,7 @@ struct PlanDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(state.completedStepCount) of \(state.plan.count) steps done")
-                            .font(.locus(size: 9))
+                            .font(.locus(size: 11))
                             .foregroundStyle(LocusTheme.inkSoft)
                             .padding(.horizontal, 4)
                         VStack(spacing: 3) {
@@ -310,7 +387,7 @@ private struct SessionPlanStepRow: View {
         HStack(spacing: 9) {
             stepIcon.frame(width: 17)
             Text(step.label)
-                .font(.locus(size: 10, weight: step.state == .running ? .semibold : .regular))
+                .font(.locus(size: 12, weight: step.state == .running ? .semibold : .regular))
                 .strikethrough(step.state == .done)
                 .foregroundStyle(labelColor)
                 .lineLimit(2)
@@ -358,136 +435,5 @@ private struct SessionPlanStepRow: View {
     private func elapsed(from milliseconds: Int) -> String {
         let seconds = max(Int(now.timeIntervalSince1970) - milliseconds / 1_000, 0)
         return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
-    }
-}
-
-// MARK: - Pinned shortcuts
-
-/// The Overview's pinned shortcuts. They sit beside the context card rather
-/// than inside the summary so they never scroll away and never compete with
-/// the sections, which appear only while they hold live session content.
-private struct SummaryShortcutsBar: View {
-    @EnvironmentObject private var model: AppModel
-    let workspace: SessionWorkspaceIdentity
-
-    private struct Shortcut: Identifiable {
-        let id: String
-        let title: String
-        let symbol: String
-        let help: String
-        var disabled = false
-        let action: () -> Void
-    }
-
-    private var shortcuts: [Shortcut] {
-        [
-            Shortcut(
-                id: "plan.shortcuts.finder",
-                title: "Finder",
-                symbol: "folder",
-                help: workspace.path.isEmpty
-                    ? "This chat has no workspace folder yet"
-                    : "Reveal \(workspace.name) in Finder",
-                disabled: workspace.path.isEmpty
-            ) {
-                model.revealSessionWorkspace()
-            },
-            Shortcut(
-                id: "plan.shortcuts.accounts",
-                title: "Accounts",
-                symbol: "person.crop.circle",
-                help: "Add or edit provider accounts and their API keys"
-            ) {
-                model.presentSettings(.accounts)
-            },
-            Shortcut(
-                id: "plan.shortcuts.extensions",
-                title: "Plugins & MCP",
-                symbol: "puzzlepiece.extension",
-                help: "Manage plugins, MCP servers, and skills"
-            ) {
-                model.presentSettings(.extensions)
-            },
-        ]
-    }
-
-    var body: some View {
-        // Widest layout first. One row while the inspector is wide enough for
-        // three labels, then two rows, and finally glyphs alone — the labels
-        // shrink away rather than truncating "Plugins & MCP" mid-word.
-        ViewThatFits(in: .horizontal) {
-            singleRow
-            stackedRows
-            glyphRow
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Overview shortcuts")
-        .accessibilityIdentifier("plan.shortcuts")
-    }
-
-    /// Buttons hug their text here, so the row's slack goes to the gaps
-    /// between them instead of squeezing the longest label.
-    private var singleRow: some View {
-        HStack(spacing: 6) {
-            ForEach(shortcuts) { shortcut in
-                if shortcut.id != shortcuts.first?.id {
-                    Spacer(minLength: 0)
-                }
-                button(shortcut, showsTitle: true, stretches: false)
-            }
-        }
-    }
-
-    private var stackedRows: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                ForEach(Array(shortcuts.prefix(2))) { shortcut in
-                    button(shortcut, showsTitle: true, stretches: true)
-                }
-            }
-            ForEach(Array(shortcuts.dropFirst(2))) { shortcut in
-                button(shortcut, showsTitle: true, stretches: true)
-            }
-        }
-    }
-
-    private var glyphRow: some View {
-        HStack(spacing: 6) {
-            ForEach(shortcuts) { shortcut in
-                button(shortcut, showsTitle: false, stretches: true)
-            }
-        }
-    }
-
-    private func button(
-        _ shortcut: Shortcut,
-        showsTitle: Bool,
-        stretches: Bool
-    ) -> some View {
-        Button(action: shortcut.action) {
-            HStack(spacing: 6) {
-                Image(systemName: shortcut.symbol)
-                    .font(.locus(size: 11, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
-                    .accessibilityHidden(true)
-                if showsTitle {
-                    Text(shortcut.title)
-                        .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: stretches ? .infinity : nil, minHeight: 30)
-            .summaryCardChrome(stretches: stretches)
-        }
-        .buttonStyle(.locus(.card))
-        .disabled(shortcut.disabled)
-        .help(shortcut.help)
-        // Starts with the visible text so Voice Control's "Click Finder"
-        // matches (WCAG label-in-name).
-        .accessibilityLabel(shortcut.title)
-        .accessibilityIdentifier(shortcut.id)
     }
 }

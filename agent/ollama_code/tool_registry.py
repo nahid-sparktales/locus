@@ -1413,6 +1413,45 @@ class ToolRegistry:
     def schema_tokens(self) -> int:
         return len(json.dumps(self.schemas(), separators=(",", ":"))) // 4
 
+    def context_schema_usage(self) -> dict[str, list[dict[str, Any]]]:
+        """Describe cached tool schemas without connecting to any MCP server."""
+        groups: dict[str, list[dict[str, Any]]] = {
+            "system_tools": [], "mcp_tools": [], "deferred_mcp": [],
+        }
+        schemas = self.schemas()
+        active_names = set()
+        for schema in schemas:
+            name = schema["function"]["name"]
+            active_names.add(name)
+            group = "mcp_tools" if name in self._mcp_by_qualified else "system_tools"
+            groups[group].append({
+                "id": name, "label": name,
+                "tokens": len(json.dumps(schema, separators=(",", ":"))) // 4,
+            })
+        # Include JSON separators/rounding so the categories add up to the
+        # same overhead used by the compaction budget.
+        active = groups["system_tools"] + groups["mcp_tools"]
+        if active:
+            active[0]["tokens"] += max(
+                len(json.dumps(schemas, separators=(",", ":"))) // 4
+                - sum(item["tokens"] for item in active), 0,
+            )
+        for name, tool in sorted(self._mcp_by_qualified.items()):
+            if (name in active_names or not self._user_allows(name)
+                    or not self._allows_mcp_item(tool, "tools", qualified=name)
+                    or (self._agent_access_ceiling == "read_only" and not self.is_safe(name))):
+                continue
+            schema = {"type": "function", "function": {
+                "name": name,
+                "description": str(tool.get("description") or tool.get("title") or name)[:4_000],
+                "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+            }}
+            groups["deferred_mcp"].append({
+                "id": name, "label": name,
+                "tokens": len(json.dumps(schema, separators=(",", ":"))) // 4,
+            })
+        return groups
+
     def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
         if not self._user_allows(name):
             return "Error: this tool is disabled by the agent's capability settings."

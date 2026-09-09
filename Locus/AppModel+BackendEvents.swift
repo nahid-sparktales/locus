@@ -639,7 +639,7 @@ extension AppModel {
                 }
                 // Badge rather than switch: being pulled off the tab you are
                 // reading mid-run is the complaint this replaces.
-                if !todos.isEmpty, inspectorTab != .plan || inspectorCollapsed {
+                if !todos.isEmpty, !(overviewPresented && requestOverviewVisible) {
                     planHasUnseenUpdate = true
                 }
                 synchronizeSessionPlan(todos)
@@ -654,7 +654,7 @@ extension AppModel {
                 planReadyThisTurn = true
                 todos = plan.steps.map { TodoItem(content: $0, status: .pending) }
                 synchronizeSessionPlan(todos)
-                if inspectorTab != .plan || inspectorCollapsed {
+                if !(overviewPresented && requestOverviewVisible) {
                     planHasUnseenUpdate = true
                 }
             }
@@ -1136,7 +1136,7 @@ extension AppModel {
             guard todo.status == .inProgress else { return todo }
             return TodoItem(content: todo.content, status: .completed)
         }
-        if inspectorTab != .plan || inspectorCollapsed {
+        if !(overviewPresented && requestOverviewVisible) {
             planHasUnseenUpdate = true
         }
     }

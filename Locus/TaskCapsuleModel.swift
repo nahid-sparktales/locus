@@ -114,8 +114,15 @@ final class TaskCapsuleModel: ObservableObject {
             .map(profileLabelProvider) ?? "Profile unavailable"
     }
 
-    func open(selecting capsuleID: String? = nil, notice: String? = nil) {
+    func open(selecting capsuleID: String? = nil, notice: String? = nil, prefillingRequest: String? = nil) {
         activateWorkspace()
+        // Opening from the composer may seed an empty new capsule, but must
+        // never replace an unfinished capsule or the currently selected plan.
+        if capsuleID == nil, selectedID == nil,
+           draftRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let prefillingRequest {
+            draftRequest = prefillingRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if let capsuleID {
             cancelRecipeEditing()
             selectedID = capsuleID

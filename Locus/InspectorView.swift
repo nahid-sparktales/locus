@@ -26,6 +26,8 @@ struct InspectorView: View {
                 switch model.inspectorTab {
                 case .plan:
                     InspectorPlanTab()
+                case .context:
+                    InspectorContextTab()
                 case .agent:
                     InspectorAgentTab()
                 case .changes:
@@ -957,18 +959,37 @@ private struct InspectorOpenTabBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                tabItems
+        HStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) { tabItems }
+                    .onAppear { proxy.scrollTo(model.inspectorTab.id, anchor: .center) }
+                    .onChange(of: model.inspectorTab) { _, tab in
+                        proxy.scrollTo(tab.id, anchor: .center)
+                    }
             }
-            .onAppear {
-                proxy.scrollTo(model.inspectorTab.id, anchor: .center)
-            }
-            .onChange(of: model.inspectorTab) { _, tab in
-                proxy.scrollTo(tab.id, anchor: .center)
+            if model.openInspectorTabs.count > 1 {
+                Menu {
+                    ForEach(model.openInspectorTabs) { tab in
+                        Button { model.selectInspectorTab(tab) } label: {
+                            Label(tab.title, systemImage: model.inspectorTab == tab ? "checkmark" : tab.symbol)
+                        }
+                        .accessibilityIdentifier("inspector.openTabs.\(tab.rawValue)")
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.locus(size: 11, weight: .medium))
+                        .frame(width: 28, height: 32)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 28)
+                .padding(.trailing, 6)
+                .help("Switch between open panels")
+                .accessibilityLabel("Open panels")
+                .accessibilityIdentifier("inspector.openTabs")
             }
         }
-        .frame(height: 31)
+        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .clipped()
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
@@ -996,7 +1017,7 @@ private struct InspectorOpenTabBar: View {
         let badgeWidth = InspectorOpenTabItem.reservedBadgeWidth(for: tab)
         // Text, optional status, and close control each get a stable slot. This
         // avoids the loose label/X spacing that made the old row feel uneven.
-        return min(140, max(62, labelWidth + badgeWidth + 35))
+        return min(140, max(62, labelWidth + badgeWidth + 43))
     }
 
 }
@@ -1029,7 +1050,7 @@ private struct InspectorOpenTabItem: View {
                 accessibilityIdentifier: "inspector.tab.\(tab.rawValue)",
                 action: focus
             )
-            .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
+            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32)
 
             if Self.reservedBadgeWidth(for: tab) > 0 {
                 InspectorTextTabBadge(tab: tab)
@@ -1043,7 +1064,7 @@ private struct InspectorOpenTabItem: View {
         }
         .padding(.leading, 8)
         .padding(.trailing, 4)
-        .frame(width: width, height: 28)
+        .frame(width: width, height: 36)
         .background(
             selected ? LocusTheme.signal.opacity(0.08) : isHovering ? LocusTheme.white.opacity(0.38) : Color.clear
         )
@@ -1083,7 +1104,7 @@ private struct InspectorTabCloseButton: View {
             Image(systemName: "xmark")
                 .font(.locus(size: 6.5, weight: .bold))
                 .foregroundStyle(LocusTheme.inkSoft)
-                .frame(width: 16, height: 18)
+                .frame(width: 24, height: 28)
                 .background(isHovering ? LocusTheme.ink.opacity(0.08) : Color.clear)
                 .clipShape(Circle())
                 .contentShape(Rectangle())

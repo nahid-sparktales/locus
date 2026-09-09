@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Build &amp; Test</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Build for Ollama and API accounts</h2>
+
+<p>From the repository root:</p>
+
+<pre><code>brew install xcodegen
+xcodegen generate
+xcodebuild -project Locus.xcodeproj -scheme Locus -configuration Debug \
+  -destination 'platform=macOS' -derivedDataPath build/locus \
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+  LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements \
+  LOCUS_BUNDLE_CODEX=skip build
+open build/locus/Build/Products/Debug/Locus.app
+</code></pre>
+
+<p>The first build downloads the standalone Python runtime. <code>LOCUS_BUNDLE_CODEX=skip</code> omits optional ChatGPT helpers and avoids their Rust build. To include them, install Rust through rustup and remove that setting; the pinned Codex source selects its toolchain. LocusX additionally needs the signer toolchain pinned in <code>WalletSignerCore/rust-toolchain.toml</code>.</p>
+
+<p>Use separate build directories for Locus and LocusX. Locus and LocusMAS exclude wallet code, SDKs, resources, signer helpers, and wallet browser injection. A backend setting cannot enable wallet tools in the standard staged app.</p>
+
+<h2>Native tests</h2>
+
+<p>For common native tests, replace the final <code>build</code> above with <code>test -only-testing:LocusTests</code>. LocusX uses its own scheme, build directory, and <code>LocusXTests</code>. Run relevant UI checks for interface changes. Consult the repository's CI workflow for the exact release checks.</p>
+
+<h2>Backend tests</h2>
+
+<p>From the repository root, use Python 3.10 or later:</p>
+
+<pre><code>python3 -m venv agent/.venv
+agent/.venv/bin/pip install -e './agent[dev]'
+agent/.venv/bin/python -m pytest -q
+</code></pre>
+
+<p>Tests use disposable application data. CI currently uses Python 3.14.</p>
+
+<h2>Mobile checks</h2>
+
+<p>From the mobile checkout with its pinned Flutter SDK:</p>
+
+<pre><code>flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+flutter build ios --simulator --no-codesign
+</code></pre>
+
+<h2>Packaging</h2>
+
+<p>Packaged apps must include the agent runtime. <code>LOCUS_BUNDLE_MODE=skip</code> is a compile-only shortcut, not a deliverable app. Direct release builds normally deliver ChatGPT helpers separately; Debug and ReleaseMAS bundle them. Component delivery verifies checksums and signing identity before execution.</p>
+
+<p>Locus 2.6.0 uses manual app updates. Follow the version's release procedures and edition audit; do not publish wallet-free Locus through the preserved legacy app feed. See the repository's <a href="https://github.com/nahid-sparktales/locus/blob/main/CONTRIBUTING.md">Contributing guide</a> and <a href="https://github.com/nahid-sparktales/locus/blob/main/Docs/Editions.md">Editions guide</a> for current source build and packaging details, which may advance beyond these release docs.</p>
+</body></html>

@@ -58,14 +58,14 @@ struct OnboardingView: View {
                 Label("Getting Started", systemImage: "sparkles")
                     .font(.locus(size: 14, weight: .semibold))
                 Spacer()
-                Text("Step \(onboarding.progress.step.rawValue + 1) of 4")
+                Text("Step \(onboarding.stepNumber) of \(onboarding.steps.count)")
                     .foregroundStyle(LocusTheme.textSecondary)
             }
-            Text(onboarding.progress.step.title)
+            Text(onboarding.stepTitle)
                 .font(.locus(size: 23, weight: .semibold))
                 .accessibilityIdentifier("onboarding.title")
             HStack(spacing: 6) {
-                ForEach(OnboardingModel.Step.allCases, id: \.rawValue) { step in
+                ForEach(onboarding.steps, id: \.rawValue) { step in
                     Capsule()
                         .fill(step.rawValue <= onboarding.progress.step.rawValue
                               ? LocusTheme.signalDeep : LocusTheme.line)
@@ -79,20 +79,18 @@ struct OnboardingView: View {
 
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Start with something useful. You can explore the rest of Locus whenever you like.")
+            Text("Pick something to try. We’ll help you take the first step.")
                 .foregroundStyle(LocusTheme.textSecondary)
             ForEach(OnboardingStartingPoint.allCases) { point in
                 Button { onboarding.select(point) } label: {
                     HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: point == .documents ? "doc.text.magnifyingglass" : "chevron.left.forwardslash.chevron.right")
+                        Image(systemName: point.symbol)
                             .font(.locus(size: 23))
                             .foregroundStyle(LocusTheme.signalDeep)
                             .frame(width: 30)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(point.title).font(.locus(size: 15, weight: .semibold))
-                            Text(point == .documents
-                                 ? "Ask questions about documents and make a summary you can keep."
-                                 : "Understand a repository and save a useful guide to its structure.")
+                            Text(point.summary)
                                 .foregroundStyle(LocusTheme.textSecondary)
                                 .multilineTextAlignment(.leading)
                         }
@@ -100,14 +98,14 @@ struct OnboardingView: View {
                         Image(systemName: onboarding.progress.startingPoint == point ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(onboarding.progress.startingPoint == point ? LocusTheme.signalDeep : LocusTheme.textSecondary)
                     }
-                    .padding(18)
+                    .padding(16)
                     .background(LocusTheme.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12)
                         .stroke(onboarding.progress.startingPoint == point ? LocusTheme.signalDeep : LocusTheme.line, lineWidth: 1))
                 }
                 .buttonStyle(.locus())
-                .disabled(onboarding.isRunning)
+                .disabled(onboarding.isStarting || onboarding.isRunning)
                 .accessibilityIdentifier("onboarding.path.\(point.rawValue)")
                 .accessibilityAddTraits(onboarding.progress.startingPoint == point ? .isSelected : [])
             }
@@ -116,20 +114,37 @@ struct OnboardingView: View {
 
     private var connection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label(onboarding.readiness.ready ? "Your model is ready" : "Connect a model to continue", systemImage: onboarding.readiness.ready ? "checkmark.circle.fill" : "circle.dotted")
+            Label(onboarding.readiness.ready ? "You’re connected" : "Connect the AI you want to use", systemImage: onboarding.readiness.ready ? "checkmark.circle.fill" : "circle.dotted")
                 .font(.locus(size: 15, weight: .semibold))
                 .foregroundStyle(onboarding.readiness.ready ? LocusTheme.success : LocusTheme.ink)
                 .accessibilityIdentifier("onboarding.readiness")
-            Text(onboarding.readiness.detail).foregroundStyle(LocusTheme.textSecondary)
-            if !onboarding.readiness.modelName.isEmpty {
-                LabeledContent("Selected model", value: onboarding.readiness.modelName)
+            if onboarding.readiness.ready {
+                Text("\(onboarding.readiness.modelName) is ready. Continue when you’re ready to try it.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+                DisclosureGroup("Change AI connection") {
+                    connectionOptions.padding(.top, 12)
+                }
+            } else {
+                Text("Use an account you already have, or run AI on your Mac with Ollama.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+                connectionOptions
+                DisclosureGroup("Connection details") {
+                    Text(onboarding.readiness.detail)
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .padding(.top, 8)
+                }
             }
-            GroupBox("Local Ollama") {
+        }
+    }
+
+    private var connectionOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GroupBox("Run on your Mac") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Runs on your Mac without API charges. Ollama and model weights are separate downloads.")
+                    Text("Use Ollama for local AI without API charges. Install Ollama, then download a model.")
                         .foregroundStyle(LocusTheme.textSecondary)
                     HStack {
-                        Menu("Choose installed model") {
+                        Menu("Choose a model") {
                             ForEach(providers.localModels, id: \.name) { local in
                                 Button(local.name) { model.selectModel(account: nil, model: local.name) }
                             }
@@ -144,7 +159,7 @@ struct OnboardingView: View {
             }
             GroupBox("Use an account") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("A hosted model receives the content you send. ChatGPT plan access uses your subscription; API accounts are billed separately by their provider.")
+                    Text("Connect ChatGPT or another AI provider. Content is sent to that service; API usage may cost extra.")
                         .foregroundStyle(LocusTheme.textSecondary)
                     HStack {
                         Menu("Choose account") {
@@ -165,7 +180,7 @@ struct OnboardingView: View {
                     }
                 }.padding(8)
             }
-            Button(onboarding.isChecking ? "Checking…" : "Check connection / Retry") { onboarding.checkConnection() }
+            Button(onboarding.isChecking ? "Checking…" : "Check connection") { onboarding.checkConnection() }
                 .disabled(onboarding.isChecking)
                 .accessibilityIdentifier("onboarding.checkConnection")
         }
@@ -173,16 +188,20 @@ struct OnboardingView: View {
 
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("A workspace keeps your chats, documents, and saved outputs together.")
+            Text("Locus uses a folder, called a workspace, to keep your files and results together.")
                 .foregroundStyle(LocusTheme.textSecondary)
             Button { model.chooseOnboardingSample() } label: {
-                Label("Try the sample workspace", systemImage: "sparkles.rectangle.stack")
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("Try a sample", systemImage: "sparkles.rectangle.stack")
+                        .font(.locus(size: 14, weight: .semibold))
+                    Text("Ready-made files to explore. A good place to start.")
+                        .foregroundStyle(LocusTheme.textSecondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
             }
             .disabled(onboarding.isRunning)
             .accessibilityIdentifier("onboarding.sample")
             Button { model.chooseOnboardingWorkspace() } label: {
-                Label("Choose my own folder…", systemImage: "folder")
+                Label("Use my own folder…", systemImage: "folder")
                     .frame(maxWidth: .infinity, alignment: .leading).padding(10)
             }
             .disabled(onboarding.isRunning)
@@ -190,62 +209,104 @@ struct OnboardingView: View {
             if let path = onboarding.progress.workspace {
                 Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "checkmark.circle.fill")
                     .font(.locus(size: 15, weight: .semibold))
-                Text(path).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary).textSelection(.enabled)
+                    .help(path)
             }
-            Text("Document indexing is enabled when you start the document example. Files stay in this workspace and appear in Library → Documents.")
-                .foregroundStyle(LocusTheme.textSecondary)
+            if onboarding.progress.startingPoint == .documents {
+                Text("Locus will make the documents in this folder searchable when you start. You can find them in Library → Documents.")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            }
         }
     }
 
     private var firstTask: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if onboarding.progress.firstTaskCompleted {
+            if onboarding.progress.startingPoint == .agents {
+                agentSetup
+            } else if onboarding.progress.firstTaskCompleted {
                 Label("Your first task is complete", systemImage: "checkmark.circle.fill")
                     .font(.locus(size: 18, weight: .semibold)).foregroundStyle(LocusTheme.success)
-                Text("Your result is saved in Library → Outputs, with its own version history.")
-                if let duration = onboarding.progress.durationMilliseconds {
-                    Text("Task time: \(Double(duration) / 1_000, specifier: "%.1f") seconds")
-                        .foregroundStyle(LocusTheme.textSecondary)
-                }
-                if let firstResponse = onboarding.progress.firstResponseMilliseconds {
-                    Text("First response: \(Double(firstResponse) / 1_000, specifier: "%.1f") seconds")
-                        .foregroundStyle(LocusTheme.textSecondary)
-                }
-                if let throughput = onboarding.progress.outputTokensPerSecond {
-                    Text("Output throughput over the whole task: \(throughput, specifier: "%.1f") tokens/second")
-                        .foregroundStyle(LocusTheme.textSecondary)
-                }
-                Text("These timings describe this task, including tool work; they do not measure model quality.")
-                    .foregroundStyle(LocusTheme.textSecondary)
-                Button("Open Outputs") {
-                    onboarding.requestOutputs()
+                Text("Your result is ready in Library → Outputs.")
+                Button("View my result") { onboarding.requestOutputs() }
+                    .buttonStyle(.borderedProminent)
+                DisclosureGroup("Task details") {
+                    taskDetails.padding(.top, 8)
                 }
             } else {
                 Text(onboarding.progress.startingPoint == .documents
-                     ? "Make a concise summary with citations to the documents in your workspace."
-                     : "Map the repository and make a concise guide to its structure and next steps.")
+                     ? "Turn your documents into a short summary with links to the sources."
+                     : "Get a short guide to your code project and ideas for what to do next.")
                     .font(.locus(size: 16, weight: .medium))
-                LabeledContent("Saved result", value: onboarding.progress.startingPoint.outputPath)
-                Text("The task opens in a normal chat, where you can follow progress and answer any approval requests. Find this guide again under Help → Getting Started.")
+                if let outputPath = onboarding.progress.startingPoint.outputPath {
+                    LabeledContent("Saved as", value: outputPath)
+                }
+                Text("Follow along in the chat. Locus will ask if it needs your help.")
                     .foregroundStyle(LocusTheme.textSecondary)
                 if onboarding.isRunning {
-                    Label(onboarding.isWaitingForOutput ? "Saving the output…" : "Your task is running in its chat", systemImage: "clock")
+                    Label(onboarding.isWaitingForOutput ? "Saving your result…" : "Your task is running", systemImage: "clock")
                     Button("Return to chat") { onboarding.dismiss() }
                 } else {
-                    Button(onboarding.isStarting ? "Starting…" : (onboarding.progress.failure == nil ? "Run first task" : "Retry first task")) {
+                    Button(onboarding.isStarting ? "Starting…" : (onboarding.progress.failure == nil ? "Start my first task" : "Try again")) {
                         onboarding.runFirstTask()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(onboarding.isStarting || !onboarding.readiness.ready || onboarding.progress.workspace == nil)
                     .accessibilityIdentifier("onboarding.runFirstTask")
+                    if !onboarding.readiness.ready || onboarding.progress.workspace == nil {
+                        Text(!onboarding.readiness.ready
+                             ? "Go back to connect your AI before starting."
+                             : "Go back to choose a sample or your own folder.")
+                            .foregroundStyle(LocusTheme.textSecondary)
+                    }
                 }
             }
         }
     }
 
+    private var agentSetup: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("An agent remembers what you want done and runs when you choose.")
+                .font(.locus(size: 16, weight: .medium))
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Get a summary every morning", systemImage: "sun.max")
+                Label("Review a project each week", systemImage: "calendar")
+                Label("Respond when a new message arrives", systemImage: "bubble.left.and.bubble.right")
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LocusTheme.white, in: RoundedRectangle(cornerRadius: 12))
+            Text("Give your agent instructions, then choose a schedule or an event to start it. You can review everything before saving.")
+                .foregroundStyle(LocusTheme.textSecondary)
+            Button("Create an agent") { onboarding.requestAgentSetup() }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("onboarding.createAgent")
+            Text("Keep Locus open on your Mac for automatic tasks. Find and manage them in Agents.")
+                .foregroundStyle(LocusTheme.textSecondary)
+        }
+    }
+
+    private var taskDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let duration = onboarding.progress.durationMilliseconds {
+                Text("Task time: \(Double(duration) / 1_000, specifier: "%.1f") seconds")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            }
+            if let firstResponse = onboarding.progress.firstResponseMilliseconds {
+                Text("First response: \(Double(firstResponse) / 1_000, specifier: "%.1f") seconds")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            }
+            if let throughput = onboarding.progress.outputTokensPerSecond {
+                Text("Output throughput over the whole task: \(throughput, specifier: "%.1f") tokens/second")
+                    .foregroundStyle(LocusTheme.textSecondary)
+            }
+            Text("These timings describe this task, including tool work; they do not measure model quality.")
+                .foregroundStyle(LocusTheme.textSecondary)
+        }
+    }
+
     private var footer: some View {
         HStack {
-            Button("Skip setup") { onboarding.dismiss() }
+            Button("Not now") { onboarding.dismiss() }
+                .help("Your progress is saved. Return from Help → Getting Started.")
                 .accessibilityIdentifier("onboarding.skip")
             Spacer()
             if onboarding.progress.step != .startingPoint {

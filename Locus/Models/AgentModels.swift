@@ -236,6 +236,7 @@ struct SessionInfo: Codable, Hashable {
     /// Where `contextLimit` came from, so an assumed window is never drawn as a
     /// measured one. Optional: an older agent does not send it.
     let contextSource: String?
+    let contextBreakdown: SessionContextBreakdown?
     let maxIterations: Int
     let hasProjectContext: Bool
     let provider: String?
@@ -258,6 +259,7 @@ struct SessionInfo: Codable, Hashable {
         contextLimit: Int = 0,
         usableTokens: Int? = nil,
         contextSource: String? = nil,
+        contextBreakdown: SessionContextBreakdown? = nil,
         maxIterations: Int,
         hasProjectContext: Bool,
         provider: String? = nil,
@@ -279,6 +281,7 @@ struct SessionInfo: Codable, Hashable {
         self.contextLimit = contextLimit
         self.usableTokens = usableTokens
         self.contextSource = contextSource
+        self.contextBreakdown = contextBreakdown
         self.maxIterations = maxIterations
         self.hasProjectContext = hasProjectContext
         self.provider = provider
@@ -309,6 +312,7 @@ struct SessionInfo: Codable, Hashable {
             contextLimit: contextLimit,
             usableTokens: usableTokens,
             contextSource: contextSource,
+            contextBreakdown: contextBreakdown,
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
@@ -334,6 +338,7 @@ struct SessionInfo: Codable, Hashable {
             contextLimit: contextLimit,
             usableTokens: usableTokens,
             contextSource: contextSource,
+            contextBreakdown: contextBreakdown,
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
@@ -354,6 +359,7 @@ struct SessionInfo: Codable, Hashable {
         case contextLimit = "context_limit"
         case usableTokens = "usable_tokens"
         case contextSource = "context_source"
+        case contextBreakdown = "context_breakdown"
         case maxIterations = "max_iterations"
         case hasProjectContext = "has_project_context"
         case workspaceRoot = "workspace_root"
@@ -377,6 +383,7 @@ struct SessionInfo: Codable, Hashable {
         contextLimit = try container.decodeIfPresent(Int.self, forKey: .contextLimit) ?? 0
         usableTokens = try container.decodeIfPresent(Int.self, forKey: .usableTokens)
         contextSource = try container.decodeIfPresent(String.self, forKey: .contextSource)
+        contextBreakdown = try? container.decodeIfPresent(SessionContextBreakdown.self, forKey: .contextBreakdown)
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations) ?? 0
         hasProjectContext = try container.decodeIfPresent(Bool.self, forKey: .hasProjectContext) ?? false
         provider = try? container.decodeIfPresent(String.self, forKey: .provider)
@@ -387,4 +394,71 @@ struct SessionInfo: Codable, Hashable {
         permissions = (try? container.decodeIfPresent(SessionPermissions.self, forKey: .permissions))
             ?? SessionPermissions(skipAll: false, allowed: [])
     }
+}
+
+/// Estimates of the categories present in the runtime's current request.
+/// Deferred tools are deliberately separate from categories occupying context.
+struct ContextUsageItem: Codable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    let tokens: Int
+}
+
+struct ContextUsageCategory: Codable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    var tokens: Int
+    var children: [ContextUsageItem] = []
+}
+
+struct SessionContextBreakdown: Codable, Hashable {
+    var categories: [ContextUsageCategory]
+    var deferred: [ContextUsageCategory] = []
+    var reservedTokens: Int? = nil
+    var note: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case categories, deferred, note
+        case reservedTokens = "reserved_tokens"
+    }
+}
+
+struct ContextUsagePresentation {
+    var categories: [ContextUsageCategory]
+    let deferred: [ContextUsageCategory]
+    let window: Int?
+    let reserved: Int?
+    let note: String
+    let hasBreakdown: Bool
+
+    init(breakdown: SessionContextBreakdown?, conversationTokens: Int,
+         streamingTokens: Int, window: Int?, usable: Int?) {
+        self.window = window.flatMap { $0 > 0 ? $0 : nil }
+        hasBreakdown = breakdown != nil
+        categories = breakdown?.categories ?? [
+            .init(id: "messages", label: "Conversation & instructions", tokens: max(conversationTokens, 0))
+        ]
+        for index in categories.indices { categories[index].tokens = max(categories[index].tokens, 0) }
+        if streamingTokens > 0 {
+            if let index = categories.firstIndex(where: { $0.id == "messages" || $0.id == "provider_context" }) {
+                categories[index].tokens += streamingTokens
+                categories[index].children.append(.init(id: "streaming", label: "Current response", tokens: streamingTokens))
+            } else {
+                categories.append(.init(id: "messages", label: "Current response", tokens: streamingTokens))
+            }
+        }
+        deferred = breakdown?.deferred ?? []
+        if let breakdown {
+            reserved = breakdown.reservedTokens.map { max($0, 0) }
+        } else if let window = self.window, let usable, usable > 0 {
+            reserved = max(window - usable, 0)
+        } else {
+            reserved = nil
+        }
+        note = breakdown?.note ?? "The runtime reports a combined conversation total. Category details will appear when available. Reserved capacity includes tools and room for the next response."
+    }
+
+    var used: Int { categories.reduce(0) { $0 + $1.tokens } }
+    var free: Int? { window.map { max($0 - used - (reserved ?? 0), 0) } }
+    var fraction: Double? { window.map { Double(used) / Double($0) } }
 }

@@ -1,0 +1,220 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Workspace Knowledge &amp; Memory</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus has two local knowledge systems with different jobs:</p>
+
+<table>
+<thead>
+<tr>
+  <th>System</th>
+  <th>Purpose</th>
+  <th>Stored data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Workspace Search Index</strong></td>
+  <td>Find relevant material in project files.</td>
+  <td>Eligible file chunks, paths, line ranges, hashes, FTS5 terms, and optional local vectors.</td>
+</tr>
+<tr>
+  <td><strong>Durable Memory 2.0</strong></td>
+  <td>Carry approved preferences, facts, decisions, procedures, and relationships into future work.</td>
+  <td>Encrypted memory payloads, review state, scope, provenance, confidence, validity, and optional encrypted vectors.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Indexing a file does not turn it into memory. A memory suggestion is not recallable until you approve it.</p>
+
+<h2>The user-facing memory flow</h2>
+
+<ol>
+<li><strong>Agent suggests.</strong> A clear preference, fact, decision, procedure, or relationship enters the Inbox as a candidate.</li>
+<li><strong>You review.</strong> Approve, edit, reject, keep both sides of a conflict, or replace an older item.</li>
+<li><strong>Relevant recall.</strong> Only approved, eligible memories can be retrieved. Locus explains why each item matched.</li>
+</ol>
+
+<p>Candidates expire after 30 days if they are not approved. This keeps transient suggestions from accumulating indefinitely.</p>
+
+<h2>Memory owner and scope</h2>
+
+<p>The <strong>Memory owner</strong> picker changes which agent-scoped memories you are viewing and editing. Personal and workspace memory are shared independently of that selection.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Scope</th>
+  <th>Boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Personal</strong></td>
+  <td>Available across workspaces for this local user.</td>
+</tr>
+<tr>
+  <td><strong>Workspace</strong></td>
+  <td>Bound to the canonical workspace.</td>
+</tr>
+<tr>
+  <td><strong>Agent</strong></td>
+  <td>Bound to the selected team member or primary agent.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Memory kinds are <strong>preference</strong>, <strong>fact</strong>, <strong>decision</strong>, <strong>procedure</strong>, and <strong>relationship</strong>. Each item can also carry tags, confidence, provenance, a source session/run, valid-from and valid-until dates, a pin, stale state, last-used time, use count, revision, and conflict/supersession links.</p>
+
+<h2>Advanced Memory Settings</h2>
+
+<p><img src="https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FQOGY9p3X9EUPwR3Y6AdS%2Fadvanced-memory-settings.jpg?alt=media" alt="Advanced Memory Settings with FTS5 text search enabled" /></p>
+
+<p>The screenshot shows a populated search index and an empty approved-memory set:</p>
+
+<ul>
+<li><strong>180 Files</strong> means 180 eligible project files are represented in the index.</li>
+<li><strong>455 Chunks</strong> means those files produced 455 searchable text segments.</li>
+<li><strong>0 Memories</strong> means no approved durable memory is currently visible for the active workspace and selected memory owner.</li>
+<li><strong>FTS5 text search</strong> means the embedding model field is empty, so retrieval is lexical only.</li>
+</ul>
+
+<p>The memory count is separate from the file and chunk counts. It also does not show how many candidates are waiting in the Inbox.</p>
+
+<h2>Workspace Search Index</h2>
+
+<p>The index is isolated by canonical workspace and stored locally in SQLite.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Control</th>
+  <th>Detailed behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Index this workspace</strong></td>
+  <td>Enables project-file indexing for the current workspace.</td>
+</tr>
+<tr>
+  <td><strong>Optional local Ollama embedding model</strong></td>
+  <td>Leave empty for fast FTS5 lexical search. Enter a local model to add meaning-based vector similarity and improve approved-memory semantic recall.</td>
+</tr>
+<tr>
+  <td><strong>Additional exclusions</strong></td>
+  <td>Comma-separated globs such as <code>Generated/**</code> or <code>Fixtures/private-*.json</code>.</td>
+</tr>
+<tr>
+  <td><strong>Save</strong></td>
+  <td>Stores enabled state, model, local Ollama host, and exclusion rules.</td>
+</tr>
+<tr>
+  <td><strong>Rebuild Index</strong></td>
+  <td>Reprocesses eligible files; use it after changing the embedding model or exclusions.</td>
+</tr>
+<tr>
+  <td><strong>Delete All Workspace Knowledge</strong></td>
+  <td>After confirmation, deletes the project index and workspace-scoped candidate and approved memory. It does not remove project files or chat transcripts.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Indexing follows Git ignore rules and uses content hashes for incremental updates. It refuses symlinks and paths that escape the canonical workspace, and skips hidden, vendor, build, binary, and oversized files.</p>
+
+<p>The following never enter the index:</p>
+
+<ul>
+<li>Files matching Git ignore rules or your extra exclusion globs.</li>
+<li>Secret-shaped filenames and common key, certificate, and environment-secret names.</li>
+<li>Vendor/build folders and hidden paths.</li>
+<li>Binary files and files over 2 MB.</li>
+<li>Symlinks or path escapes.</li>
+</ul>
+
+<p>If an embedding model is configured, text is sent only to the configured loopback Ollama <code>/api/embed</code> endpoint. If semantic embedding fails, FTS5 lexical search remains available.</p>
+
+<p>Search results include relative paths, line ranges, freshness, and source type. They are evidence, not instructions: project text cannot change system instructions, permissions, or team membership.</p>
+
+<h2>How Memory 2.0 recall works</h2>
+
+<p>Recall first selects approved items in the active personal, workspace, and selected-agent scopes. Items whose valid-from date is in the future are skipped.</p>
+
+<p>Eligible items are ranked using:</p>
+
+<ol>
+<li>Exact phrase matches.</li>
+<li>Matching terms.</li>
+<li>Optional local semantic similarity.</li>
+<li>A boost for pinned items.</li>
+<li>Confidence.</li>
+<li>Recency.</li>
+</ol>
+
+<p>Expired items are strongly down-ranked and stale items are down-ranked further. Weak matches are filtered out. Returned items include a recall explanation such as <strong>exact phrase</strong>, <strong>3 matching terms</strong>, <strong>semantic similarity 78%</strong>, <strong>pinned</strong>, and <strong>90% confidence</strong>. Recalled items update their last-used time and use count.</p>
+
+<h2>Conflicts and replacement</h2>
+
+<p>Locus surfaces same-topic alternatives instead of silently overwriting them.</p>
+
+<ul>
+<li><strong>Keep Both</strong> approves the new item and preserves the older conflicting item.</li>
+<li><strong>Replace Older</strong> approves the new item, records which IDs it supersedes, marks the older conflicts stale, and links each older item back to the replacement.</li>
+</ul>
+
+<p>Feedback can be marked <strong>helpful</strong>, <strong>ignored</strong>, or <strong>incorrect</strong>. Incorrect feedback marks the memory stale so it is much less likely to be recalled.</p>
+
+<h2>Backup and maintenance</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Action</th>
+  <th>What it changes</th>
+  <th>What remains</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Review Health</strong></td>
+  <td>Marks expired approved memories stale and reports conflicts for review.</td>
+  <td>Index, files, chats, and non-expired memory.</td>
+</tr>
+<tr>
+  <td><strong>Import Memory</strong></td>
+  <td>Adds validated memories from a Locus Memory JSON export.</td>
+  <td>Existing index and source project.</td>
+</tr>
+<tr>
+  <td><strong>Export Memory</strong></td>
+  <td>Writes a deliberately readable JSON copy to your chosen file.</td>
+  <td>Encrypted local vault remains unchanged.</td>
+</tr>
+<tr>
+  <td><strong>Delete All Workspace Knowledge</strong></td>
+  <td>Deletes the workspace index and workspace-scoped candidate/approved memory.</td>
+  <td>Project files, chats, personal memory, and agent memory.</td>
+</tr>
+<tr>
+  <td><strong>Delete All Memory</strong></td>
+  <td>Deletes visible personal, workspace, and selected-agent candidate/approved memory.</td>
+  <td>Project index, project files, and chats.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Memory export is readable text by design. Store the exported JSON like any other sensitive document. Deletion cannot be undone unless you exported memory first.</p>
+
+<h2>Encryption details</h2>
+
+<p>Memory content and optional semantic vectors are encrypted with AES-256-GCM. The backend's memory key is stored in its local <code>memory/master.key</code> file with user-only access; it is not protected by a separate per-application Keychain prompt. Continuity uses the backend memory encryption key.</p>
+
+<p>Treat the local application profile and backups as private data. Memory export deliberately writes readable JSON. The separate Identity Vault uses its own edition-specific Keychain key.</p>
+
+<h2>Recommended defaults</h2>
+
+<ul>
+<li>Start with <strong>FTS5 text search</strong>, an empty embedding-model field, and telemetry off.</li>
+<li>Add a small local embedding model when meaning-based retrieval is worth the local compute.</li>
+<li>Exclude generated artifacts, private fixtures, and any project-specific sensitive paths.</li>
+<li>Approve durable decisions and conventions; reject transient task details.</li>
+<li>Run <strong>Review Health</strong> periodically if you use validity dates or keep many related decisions.</li>
+</ul>
+</body></html>

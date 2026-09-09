@@ -13,7 +13,7 @@ struct VoiceComposerButtons: View {
                     .font(.locus(size: 11, weight: .semibold))
                     .foregroundStyle(voice.isDictating ? model.accentActionColor : LocusTheme.muted)
                     .frame(width: 30, height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.74))
+                    .background(voice.isDictating ? model.accentActionColor.opacity(0.1) : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.locus())
@@ -31,7 +31,7 @@ struct VoiceComposerButtons: View {
                         voice.isVoiceModeActive ? model.accentActionColor : LocusTheme.muted
                     )
                     .frame(width: 30, height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.74))
+                    .background(voice.isVoiceModeActive ? model.accentActionColor.opacity(0.1) : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.locus())

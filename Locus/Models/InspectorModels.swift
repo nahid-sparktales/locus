@@ -31,6 +31,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case agents
     case router
     case proxies
+    case context
 
     var id: String { rawValue }
 
@@ -39,7 +40,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
         .changes, .files, .terminal, .simulator, .notes, .runs, .agents,
-        .router, .proxies,
+        .router, .proxies, .context,
     ]
 
     var isWorkspaceTab: Bool { Self.workspaceTabs.contains(self) }
@@ -62,6 +63,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .agents: "Instructions"
         case .router: "Router"
         case .proxies: "Proxies"
+        case .context: "Context"
         }
     }
 
@@ -70,7 +72,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var help: String {
         let detail: String
         switch self {
-        case .plan: detail = "This chat’s plan, outputs, sources, and context usage"
+        case .plan: detail = "Open this chat’s plan, outputs, and sources in a popup"
         case .agent: detail = "Selected agent: trigger, access, chats, and activity"
         case .notes: detail = "Editable notes shared at the scope you choose"
         case .agents: detail = "Workspace instructions in AGENTS.md"
@@ -83,6 +85,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .checkpoints: detail = "Restore an earlier workspace checkpoint"
         case .router: detail = "Model routing and provider decisions"
         case .proxies: detail = "Network proxy routes and connection health"
+        case .context: detail = "Context window usage and files attached to this chat"
         }
         return "\(title) — \(detail)" + (shortcutKey.map { " (⌘\($0))" } ?? "")
     }
@@ -104,6 +107,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .agents: "doc.text.fill"
         case .router: "arrow.triangle.branch"
         case .proxies: "network.badge.shield.half.filled"
+        case .context: "circle.dotted.circle"
         }
     }
 
@@ -121,7 +125,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .agent, .simulator, .router, .proxies: nil
+        case .agent, .simulator, .router, .proxies, .context: nil
         }
     }
 }
@@ -586,18 +590,18 @@ struct AutomaticInspectorPrompt: Equatable {
     var title: String {
         isTeamRun
             ? "Open Runs for team requests?"
-            : "Open Context & Plan for solo requests?"
+            : "Open Overview for solo requests?"
     }
 
     var message: String {
         if isTeamRun {
             return "Locus can open Runs whenever you send a team request so you can follow its agents and progress. You can change this anytime in Settings → General → Conversation."
         }
-        return "Locus can open Context & Plan whenever you send a solo Work request so you can follow context use and the current plan. You can change this anytime in Settings → General → Conversation."
+        return "Locus can show the Overview popup whenever you send a solo Work request so you can follow the plan, outputs, and sources. Context usage is available in the Context panel. You can change this anytime in Settings → General → Conversation."
     }
 
     var confirmationTitle: String {
-        isTeamRun ? "Open Runs Every Time" : "Open Context & Plan Every Time"
+        isTeamRun ? "Open Runs Every Time" : "Open Overview Every Time"
     }
 }
 

@@ -1,0 +1,340 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Release Notes</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>2.6.0 — 2026-09-07</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li>Structured answers can present verified file collections, reusable writing,
+deliverables, and source references while preserving a complete Markdown fallback.</li>
+<li>Writing drafts support editing, original recovery, copying, and export.
+Tables copy all rows and can export CSV even when the display is collapsed.</li>
+<li>The Files panel browses all file types and generated folders with incremental
+expansion, path search, explicit hidden-file visibility, and existing previews.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li>Agents now have a searchable collection with clear instructions, triggers,
+access, environment, and recent activity. Shared Connections and Runtime
+controls are separate from Agent configuration.</li>
+<li>Creation starts with a schedule, incoming event, or price condition and uses
+a short form with progressively disclosed advanced settings.</li>
+<li>The sidebar, Agent selector, and right inspector clarify Agent ownership,
+live status, connection problems, and the difference between Agent and chat activity.</li>
+<li>Answer and progress presentation is clearer, and behavior previews show the
+effective instructions for the selected provider and mode.</li>
+<li><p>Goal, plan, and permission controls explain their scope and keep actions
+accessible in compact panels. Reusable profiles are labeled Specialists &amp; teams.</p></li>
+<li><p>Task Capsules now guide model setup, keep the next action visible, and make
+saved plans, edits, and past runs easier to find and review at compact sizes.</p></li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li><p>Mobile chat refresh preserves partial answers when loading fails and ignores
+stale responses after switching conversations.</p></li>
+<li><p>Removing every connected-service action permission now persists the empty
+selection, including restrictions in workflow steps.</p></li>
+<li>Agent creation from the sidebar waits for its parent sheet to mount.</li>
+<li>Activity uses consistent receipt and execution states; failed or cancelled
+deliveries cannot appear successful because of an older linked run.</li>
+<li><p>Schedule loading preserves saved data on failure and ignores cancelled requests.</p></li>
+<li><p>Browser resizing avoids redundant native layout and repeated file lookups;
+panel expansion and restoration keep their smooth transition.</p></li>
+</ul>
+
+<h2>2.5.0 — 2026-09-06</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li><strong>Wallet-free Locus.</strong> The public Mac download now contains the standard
+edition. Existing chats, accounts, settings, and browser data stay in place;
+the optional wallet remains in the separate LocusX edition.</li>
+<li><strong>Persistent goals.</strong> Give an ordinary chat an objective and optional usage
+allowances. Solo agents and teams continue across turns, retain progress on
+reopening, and report verified completion. Pause, Resume, Edit, and End keep
+control beside the composer; queued instructions take priority.</li>
+<li><strong>Solo collaboration.</strong> The conversation agent can delegate bounded work to
+helpers while keeping results and verification with the coordinating agent.</li>
+<li><strong>Private Identity tasks.</strong> Keep reusable personal and business details in
+an encrypted vault, with explicit review before sharing details or documents.</li>
+<li><strong>Task Capsules.</strong> Save a detailed plan with separate planning,
+implementation, and optional review models. ChatGPT and Kimi Code membership
+routes keep their exact accounts, alongside API and local model support.
+Saved revisions, source-change checks, bounded repairs, and explicit planner
+help keep the handoff reviewable without repeatedly calling the plan author.</li>
+<li><strong>Workspace Library.</strong> Documents and Outputs share one home without replacing
+the open chat or its draft. Opt-in document knowledge supports PDF, Word,
+spreadsheets, and delimited tables, including local PDF text recognition.</li>
+<li><strong>Saved output versions.</strong> Deliverables have immutable snapshots, source-chat
+links, export, comparisons, and revision drafts. Existing available outputs
+are imported as their current version; unavailable originals remain visible.</li>
+<li><strong>Resumable Getting Started.</strong> Document/research and coding examples reuse
+existing model connections and workspaces. A first task succeeds only when
+its response finishes and its output has been saved.</li>
+<li><strong>Contextual Agent inspector.</strong> Agent, chat, event, scheduled occurrence, and
+run selections retain their exact identity, with scoped history, execution
+attempts, useful results, and recovery actions.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li>Locus 2.5 uses manual app updates. The previous signed app feed is preserved
+for older installations; upgrading to the wallet-free edition is an explicit
+download. ChatGPT-plan component downloads remain available.</li>
+<li>Generated reports inside build folders can be captured in Outputs. Saved
+history remains available when original workspace files disappear.</li>
+<li>Agent progress and outcomes appear before configuration. Automation state,
+delivery state, and execution outcomes have distinct labels.</li>
+</ul>
+
+<h2>2.4.0 — 2026-09-04</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li><strong>Automation Studio turns schedules and events into workflows.</strong> Scheduled,
+Gmail, Telegram, webhook, and price-triggered agents can use a forward-only
+sequence of Agent, Condition, and Approval steps. A safe simulator previews
+templates, branches, outputs, and approval cards without calling a model or
+creating chat history.</li>
+<li><strong>Attention shows only work that needs a decision.</strong> Questions, permissions,
+workflow approvals, recoverable runs, retryable failures, and configuration
+warnings share one deduplicated inbox with inline actions. Ordinary successful
+and informational activity remains in Activity.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li><strong>Window resizing and long responses stay responsive.</strong> Shared workspace
+geometry, bounded text-measurement caches, append-only streaming, incremental
+Markdown rendering, focused state models, and asynchronous image thumbnails
+keep expensive work off the hottest interface paths.</li>
+<li><strong>Workflow occurrences are durable.</strong> Each occurrence snapshots its workflow,
+keeps exclusive use of its dedicated chat between steps, records attempts and
+approvals, and resumes explicitly after a failure or restart without silently
+repeating external actions.</li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li><strong>Workspace chats open reliably under macOS privacy controls.</strong> Locus now
+keeps the already validated workspace path when the system blocks a child
+process from rediscovering its current folder.</li>
+<li><strong>Attention recoveries can be cleared when work is no longer wanted.</strong> This
+applies whether the original chat still exists or has already been deleted.</li>
+<li><strong>The composer stays against the bottom edge.</strong> Workspace layout no longer
+reserves the toolbar height twice, so the composer remains visible at normal
+and compact window sizes.</li>
+<li><strong>Generated project and design-system checks are current.</strong> The checked-in
+Xcode project and workflow editor typography now match the deterministic CI
+generators and source audit.</li>
+</ul>
+
+<h2>2.3.0 — 2026-09-03</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li><strong>Agents can pause for a structured decision.</strong> A live task may present one
+or more bounded choices in the composer and continue in the same turn after
+the answer; disconnecting or stopping cancels the wait cleanly.</li>
+<li><strong>Agents are now a first-class destination.</strong> Scheduled and event-driven work
+is presented as a durable agent with a clear identity, status, source,
+controls, history, and one dedicated primary chat. Each agent can also open
+side chats for investigation without mixing that discussion into its
+automation record.</li>
+<li><strong>Event-driven agents can react to real inputs.</strong> Locus can connect Gmail,
+Telegram, signed webhooks, and price sources to bounded agent tasks. Delivery
+state is durable and visible, with replay protection, retries, idempotency,
+re-arming for price alerts, and native credential storage outside prompts.</li>
+<li><strong>Overview follows the current request.</strong> A pinned request summary tracks plan
+steps, files, commands, sources, outputs, subagents, timing, and completion
+state instead of blending activity from the full conversation.</li>
+<li><strong>Optional voice controls.</strong> Dictate requests, answer attention prompts, and
+listen to responses with explicit microphone, speech-recognition, network,
+and provider controls.</li>
+<li><strong>Multichain Locus Vault testnet paths.</strong> The direct-download build adds
+reviewed Ethereum, Solana, and Sui asset discovery, activity, and narrowly
+defined native, token, and collectible transfer paths. Unknown assets remain
+quarantined and all mainnet capabilities remain default-denied behind signed
+release and evidence gates.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li><strong>Schedules now behave like agents.</strong> A schedule keeps one stable conversation
+across runs, opens directly from the Agents destination, and separates manual
+side chats from its canonical automation transcript.</li>
+<li><strong>Agent surfaces explain the system in plain language.</strong> Agent setup,
+automation configuration, Overview, navigation, status, and empty states now
+share one vocabulary and visual hierarchy.</li>
+<li><strong>Session and transcript state has narrower ownership.</strong> Catalog, selection,
+and publication boundaries were extracted from the app composition root so
+unrelated views no longer refresh for every change.</li>
+<li><strong>Local compatible endpoints stay local.</strong> Keyless LAN endpoints are accepted
+when configured, and Locus no longer guesses HTTPS for explicitly local
+addresses.</li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li><strong>Incoming events no longer hold the agent queue indefinitely.</strong> Each worker
+now acknowledges an accepted dispatch. If that acknowledgement never
+arrives, Locus safely interrupts only the not-yet-started run, releases its
+execution slot, and leaves the event available to retry without pausing the
+agent.</li>
+<li><strong>Vault activation completes after a correct recovery confirmation.</strong> The
+signer account payload now decodes its cross-language network identifiers
+explicitly, and vault credentials use the provisioned Keychain access group
+with a clear registration path for existing Macs. Post-confirmation failures
+are reported as activation errors rather than incorrect recovery words.</li>
+<li><strong>Wallet creation and restore now open reliably.</strong> The unsupported recovery
+window formerly hosted inside an XPC service has moved to a signed, sandboxed
+accessory application with explicit presentation acknowledgement, Bring to
+Front, launch timeout, crash handling, and bounded cancellation.</li>
+<li><strong>Six-word backup confirmation can be corrected.</strong> A mismatch identifies the
+numbered positions that need attention and preserves the entered values for
+retry. Confirmation and restore fields now include a Show/Hide typed words
+control while remaining secure by default.</li>
+<li><strong>Recovery exits cleanly.</strong> Cancelling or closing the recovery application no
+longer causes it to reopen, and completion, timeout, signer invalidation, and
+helper termination all converge on one teardown path.</li>
+<li><strong>Transcript navigation is steadier.</strong> Streaming follow behavior, jump-to-
+latest completion, coordinate clicks, file cards, workspace links, shell
+blocks, and file viewing no longer compete for focus or scrolling.</li>
+</ul>
+
+<h3>Security</h3>
+
+<ul>
+<li><strong>Recovery secrets stay outside Locus.</strong> The recovery application embeds its
+own authenticated signer service and communicates with the main app through a
+bounded status-only protocol. Recovery phrases, entropy, and private keys are
+excluded from main-process payloads, logs, screenshots, and diagnostics.</li>
+<li><strong>Signer trust boundaries are caller-specific.</strong> Host and recovery bootstrap
+endpoints enforce separate code-signing requirements, and lock or invalidation
+clears pending recovery material and listeners.</li>
+<li><strong>Packaging verifies the complete nested chain.</strong> Release audits check both
+signer copies, the recovery helper, sandbox and network entitlements, exact
+executable identity, nested signing order, and direct-versus-App-Store
+distribution boundaries.</li>
+</ul>
+
+<h2>Locus 2.1.0</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li><strong>Notebook</strong> gathers every workspace, chat, shared, and unlinked legacy note into one searchable page. Open it from the sidebar gear, Locus menu, command palette, or ⇧⌘9, and edit any note in the full editor.</li>
+<li><strong>Locus Vault private alpha</strong> adds an in-app Sepolia Wallet Hub to signed direct-download builds: isolated vault creation and unlock, local ERC-681 receive QR, balance and Etherscan activity, exact agent spending rules, a separate browser opt-in, and native confirmation for every website transaction. The Mac App Store build keeps wallet gates off.</li>
+<li><strong>ChatGPT conversation controls</strong> add per-account Codex-native mode, model-supported reasoning effort, and optional OpenAI web search. Locus still owns execution and permissions in either contract.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li><strong>Grill replaces GSD.</strong> Use ⌥G or /grill for a one-question-at-a-time interview that does not modify the project. Approved Plans now implement in Work; older stored mode values remain compatible.</li>
+<li><strong>New ChatGPT accounts start with Locus's tools.</strong> Existing accounts keep their previous contract choice. Codex-native mode remains one toggle away and deliberately omits approved memory, cross-chat context, and the skill index.</li>
+<li><strong>Transcript activity stays chronological.</strong> Collapsed reasoning and tools use quiet inline disclosures at the real activity boundary; detailed modes retain their cards.</li>
+<li><strong>The app core is decomposed into feature-owned models.</strong> Provider accounts, teams, run history, live run cards, extensions, knowledge, evaluations, schedules, activity, search, background services, AGENTS.md, landing, and toasts now have tested observable owners, reducing the risk of future changes.</li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li>Run Overview and Activity now use only the selected run's events; created-then-deleted files and stale expansion state no longer leak across runs.</li>
+<li>Notes recover from their formatting archive when the plain-text mirror is missing, and UI tests use separate note storage.</li>
+<li>Hosted ChatGPT and Kimi model switches no longer fail against the local Ollama model list.</li>
+<li>Transcript selection spans the conversation, survives scrolling, supports Shift-click, and keeps links clickable; the floating Copy/Quote buttons are gone.</li>
+<li>Produced files open in the correct Mac app and appear in Outputs even when written by scripts, gitignored, or created outside a Git repository.</li>
+<li>Browser layout follows the panel size, keeps native horizontal scrolling, and uses a quieter responsive toolbar.</li>
+<li>The Add Account menu is readable again, and /compact resets the ChatGPT helper's server-side thread.</li>
+</ul>
+
+<h2>Late 2.0 updates</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li>Model Router and Usage &amp; Costs made route scorecards, tokens, estimated spend, provider, model, agent, and workspace attribution inspectable.</li>
+<li>Proxy profiles and failover added workspace/provider assignments, strict tunnel, health checks, external exit address, and fastest-healthy standby selection.</li>
+<li>A calmer workspace added the pinned Overview summary, Notes formatting, chat folders, Side Chat, richer exports, and automatic bounded Solo delegation.</li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li>Failed account switches restore the previous route instead of leaving mismatched provider/model state.</li>
+</ul>
+
+<h2>Locus 2.0.0</h2>
+
+<h3>Added</h3>
+
+<ul>
+<li>ChatGPT-plan helpers moved to a separately downloaded, checksum- and signature-verified component, shrinking the direct app from about 180 MB to about 62 MB.</li>
+<li>Browser input uses real AppKit clicks, keys, scrolling, and dragging when possible.</li>
+<li>Coordinate targeting, region screenshots, per-tab tool targeting, phone user-agent/touch emulation, find in page, page zoom, and visible device controls.</li>
+<li>Named development servers in .locus/launch.json, including URL-only attachment and filtered output.</li>
+</ul>
+
+<h3>Changed</h3>
+
+<ul>
+<li>Browser typing now sends real keystrokes; set_value remains the one-step replacement action.</li>
+<li>Web Inspector became an opt-in Browser setting.</li>
+<li>Codex helpers are stripped before signing and packaging.</li>
+</ul>
+
+<h3>Fixed</h3>
+
+<ul>
+<li>Streaming continues when a display sleeps or no display is connected.</li>
+<li>Browser scrolling works on headless Macs.</li>
+<li>Codex build caches require an exact architecture match.</li>
+</ul>
+
+<h2>Locus 1.16</h2>
+
+<ul>
+<li>Overview became the pinned Plan, Outputs, Subagents, Background Processes, Sources, and Context Window summary.</li>
+<li>Failed provider switches now roll back cleanly.</li>
+</ul>
+
+<h2>Locus 1.15</h2>
+
+<ul>
+<li>Bundled Task Observer, Superpowers, workflow routers, Grill Me, and Grilling methods.</li>
+<li>Encrypted workspace continuity, per-chat Notes, model removal/deletion, GitHub MCP device-flow support, and calmer workspace navigation.</li>
+</ul>
+
+<h2>Locus 1.14</h2>
+
+<ul>
+<li>Signed automatic updates for direct downloads; App Store installs continue through Apple.</li>
+</ul>
+
+<h2>Locus 1.13</h2>
+
+<ul>
+<li>Managed ChatGPT-plan sign-in and the pinned Codex App Server bridge.</li>
+<li>Faster Browser caching and network capture, real tabs, screenshot annotation, attachments in every mode, transcript search, usage/cost reporting, and Git branch/sync/hunk controls.</li>
+<li>Stop and steering controls, provider/model self-identification, and improved navigation and composer preferences.</li>
+</ul>
+
+<h2>Locus 1.12</h2>
+
+<ul>
+<li>The agent-drivable Browser replaced Preview with addressable elements, screenshots, console/network inspection, managed tabs, safe dialogs, quarantined downloads, persistent-profile control, and dev-server supervision.</li>
+</ul>
+
+<p>The detailed guides describe Locus 2.1.0. Older chats and saved mode values remain compatible, and disabled capabilities leave their stored configuration intact.</p>
+</body></html>

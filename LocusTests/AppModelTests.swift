@@ -3848,6 +3848,59 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testOverviewPopupPreservesPanelSelectionAndSavedTabs() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.files)
+        model.toggleInspectorPanel()
+        model.selectInspectorTab(.context)
+        model.planHasUnseenUpdate = true
+        let savedTabs = model.settings.inspectorOpenTabs
+        let sidebarCollapsed = model.sidebarCollapsed
+        model.toggleInspectorTab(.plan)
+        XCTAssertTrue(model.overviewPresented)
+        XCTAssertTrue(model.requestOverviewVisible)
+        XCTAssertFalse(model.planHasUnseenUpdate)
+        XCTAssertEqual(model.inspectorTab, .context)
+        XCTAssertEqual(model.settings.inspectorOpenTabs, savedTabs)
+        XCTAssertEqual(model.sidebarCollapsed, sidebarCollapsed)
+        XCTAssertTrue(model.inspectorCollapsed)
+        model.toggleInspectorPanel()
+        XCTAssertEqual(model.inspectorTab, .context, "Reopening restores the panel Overview replaced")
+        XCTAssertFalse(model.requestOverviewVisible)
+        model.toggleInspectorPanel()
+        model.toggleInspectorTab(.plan)
+        XCTAssertFalse(model.overviewPresented)
+        model.selectInspectorTab(.plan)
+        XCTAssertTrue(model.requestOverviewVisible)
+        model.selectInspectorTab(.files)
+        XCTAssertFalse(model.requestOverviewVisible)
+        XCTAssertEqual(model.inspectorTab, .files)
+        model.toggleInspectorPanel()
+        XCTAssertTrue(model.requestOverviewVisible)
+        XCTAssertTrue(model.overviewPresented, "Opening a panel preserves the expanded overview")
+        model.overviewPresented = false
+        model.toggleInspectorPanel()
+        XCTAssertFalse(model.requestOverviewVisible)
+        model.toggleInspectorPanel()
+        XCTAssertTrue(model.requestOverviewVisible)
+        XCTAssertFalse(model.overviewPresented, "The minimized state survives opening and closing a panel")
+    }
+
+    @MainActor
+    func testOverviewDismissesWhenTheChatOrWorkModeChanges() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.plan)
+        XCTAssertTrue(model.overviewPresented)
+        model.currentSessionID = "another-chat"
+        XCTAssertFalse(model.overviewPresented)
+        model.selectInspectorTab(.plan)
+        model.setJustChatEnabled(true)
+        XCTAssertFalse(model.overviewPresented)
+        model.setJustChatEnabled(false)
+        XCTAssertFalse(model.overviewPresented)
+    }
+
+    @MainActor
     func testSelectingATabExpandsACollapsedInspector() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
@@ -3867,12 +3920,12 @@ final class AppModelTests: XCTestCase {
 
         model.selectInspectorTab(.changes)
         model.selectInspectorTab(.files)
-        model.selectInspectorTab(.plan)
+        model.selectInspectorTab(.context)
         model.selectInspectorTab(.files)
 
-        XCTAssertEqual(model.openInspectorTabs, [.changes, .files, .plan])
+        XCTAssertEqual(model.openInspectorTabs, [.changes, .files, .context])
         XCTAssertEqual(model.inspectorTab, .files)
-        XCTAssertEqual(model.settings.inspectorOpenTabs, ["changes", "files", "plan"])
+        XCTAssertEqual(model.settings.inspectorOpenTabs, ["changes", "files", "context"])
     }
 
     @MainActor
@@ -3890,15 +3943,15 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         model.selectInspectorTab(.changes)
         model.selectInspectorTab(.files)
-        model.selectInspectorTab(.plan)
+        model.selectInspectorTab(.context)
 
         model.selectInspectorTab(.files)
         model.closeInspectorTab(.files)
-        XCTAssertEqual(model.openInspectorTabs, [.changes, .plan])
-        XCTAssertEqual(model.inspectorTab, .plan, "the tab to the right fills the closed slot")
+        XCTAssertEqual(model.openInspectorTabs, [.changes, .context])
+        XCTAssertEqual(model.inspectorTab, .context, "the tab to the right fills the closed slot")
         XCTAssertFalse(model.inspectorCollapsed)
 
-        model.closeInspectorTab(.plan)
+        model.closeInspectorTab(.context)
         XCTAssertEqual(model.openInspectorTabs, [.changes])
         XCTAssertEqual(model.inspectorTab, .changes, "the rightmost tab falls back to its left")
 
@@ -3913,12 +3966,12 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         model.selectInspectorTab(.changes)
         model.selectInspectorTab(.files)
-        model.selectInspectorTab(.plan)
+        model.selectInspectorTab(.context)
 
         model.closeInspectorTab(.changes)
 
-        XCTAssertEqual(model.openInspectorTabs, [.files, .plan])
-        XCTAssertEqual(model.inspectorTab, .plan)
+        XCTAssertEqual(model.openInspectorTabs, [.files, .context])
+        XCTAssertEqual(model.inspectorTab, .context)
         XCTAssertFalse(model.inspectorCollapsed)
     }
 
@@ -3942,13 +3995,13 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPanelToggleDefaultsToOverviewAndReopensTheLastClosedTab() {
+    func testPanelToggleDefaultsToFilesAndReopensTheLastClosedTab() {
         let untouched = AppModel(startImmediately: false)
         untouched.inspectorCollapsed = true
 
         untouched.toggleInspectorPanel()
 
-        XCTAssertEqual(untouched.inspectorTab, .plan)
+        XCTAssertEqual(untouched.inspectorTab, .files)
         XCTAssertFalse(untouched.inspectorCollapsed)
 
         let restored = AppModel(startImmediately: false)
@@ -3971,34 +4024,39 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testSoloAndTeamInspectorChoicesAreAskedAndPersistedIndependently() {
+    func testSoloRequestsShowOverviewWithoutAnInspectorPrompt() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
-
         model.presentInspectorForSentRequest(isTeam: false)
-
-        XCTAssertEqual(model.automaticInspectorPrompt?.tab, .plan)
-        XCTAssertTrue(model.inspectorCollapsed, "the one-time question decides whether to open")
-
-        model.answerAutomaticInspectorPrompt(showEveryTime: true)
-        XCTAssertEqual(
-            model.settings.resolvedSoloPlanPresentation,
-            .always
-        )
-        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
         XCTAssertNil(model.automaticInspectorPrompt)
-        XCTAssertEqual(model.inspectorTab, .plan)
-        XCTAssertEqual(model.openInspectorTabs, [.plan])
-        XCTAssertFalse(model.inspectorCollapsed)
-
-        model.inspectorCollapsed = true
+        XCTAssertTrue(model.overviewActivityVisible)
+        XCTAssertTrue(model.overviewPresented)
+        XCTAssertTrue(model.inspectorCollapsed)
+        XCTAssertFalse(model.sidebarCollapsed, "Automatic overview preserves open navigation")
+        XCTAssertFalse(model.openInspectorTabs.contains(.plan))
         model.presentInspectorForSentRequest(isTeam: true, runID: "run-1")
         XCTAssertEqual(model.automaticInspectorPrompt?.tab, .runs)
-        XCTAssertTrue(model.inspectorCollapsed, "the team choice has not been answered yet")
-
         model.answerAutomaticInspectorPrompt(showEveryTime: false)
         XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .never)
-        XCTAssertEqual(model.settings.resolvedSoloPlanPresentation, .always)
+    }
+
+    @MainActor
+    func testNewRequestReopensDismissedOverviewWithoutReplacingContext() {
+        let model = AppModel(startImmediately: false)
+        model.selectInspectorTab(.context)
+        model.beginSessionFileCapture()
+        XCTAssertTrue(model.overviewPresented)
+        XCTAssertTrue(model.overviewActivityVisible)
+        XCTAssertEqual(model.inspectorTab, .context)
+        XCTAssertFalse(model.inspectorCollapsed, "Automatic activity must not interrupt an open panel")
+        XCTAssertFalse(model.requestOverviewVisible)
+        model.overviewPresented = false
+        XCTAssertTrue(model.overviewActivityVisible, "Minimize keeps the request indicator")
+        model.dismissOverview()
+        XCTAssertFalse(model.overviewActivityVisible)
+        model.beginSessionFileCapture()
+        XCTAssertTrue(model.overviewPresented)
+        XCTAssertEqual(model.inspectorTab, .context)
     }
 
     @MainActor
@@ -4014,16 +4072,13 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDecliningSoloInspectorStillAsksAboutTeamRuns() {
+    func testDismissingOverviewStillAsksAboutTeamRuns() {
         let model = AppModel(startImmediately: false)
         model.inspectorCollapsed = true
         model.presentInspectorForSentRequest(isTeam: false)
-
-        model.answerAutomaticInspectorPrompt(showEveryTime: false)
+        model.dismissOverview()
         model.presentInspectorForSentRequest(isTeam: true, runID: "run-2")
-
-        XCTAssertEqual(model.settings.resolvedSoloPlanPresentation, .never)
-        XCTAssertEqual(model.settings.resolvedTeamRunsPresentation, .ask)
+        XCTAssertFalse(model.overviewActivityVisible)
         XCTAssertTrue(model.inspectorCollapsed)
         XCTAssertEqual(model.automaticInspectorPrompt?.tab, .runs)
     }
@@ -4046,7 +4101,7 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertNotEqual(solo.title, team.title)
         XCTAssertNotEqual(solo.message, team.message)
-        XCTAssertTrue(solo.title.contains("Context & Plan"))
+        XCTAssertTrue(solo.title.contains("Overview"))
         XCTAssertTrue(team.title.contains("team requests"))
         XCTAssertTrue(solo.message.contains("Settings → General → Conversation"))
         XCTAssertTrue(team.message.contains("Settings → General → Conversation"))
@@ -4093,7 +4148,7 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testToggleInspectorTabCollapsesOnSecondClickAndSwitchesOtherwise() {
         let model = AppModel(startImmediately: false)
-        model.selectInspectorTab(.plan)
+        model.selectInspectorTab(.context)
         XCTAssertFalse(model.inspectorCollapsed)
 
         model.toggleInspectorTab(.preview)
@@ -4102,12 +4157,12 @@ final class AppModelTests: XCTestCase {
 
         model.toggleInspectorTab(.preview)
         XCTAssertTrue(model.inspectorCollapsed, "the open tab's own icon closes the panel")
-        XCTAssertEqual(model.openInspectorTabs, [.plan, .preview], "collapsing does not close tabs")
+        XCTAssertEqual(model.openInspectorTabs, [.context, .preview], "collapsing does not close tabs")
 
         model.toggleInspectorTab(.preview)
         XCTAssertFalse(model.inspectorCollapsed, "and reopens it")
         XCTAssertEqual(model.inspectorTab, .preview)
-        XCTAssertEqual(model.openInspectorTabs, [.plan, .preview])
+        XCTAssertEqual(model.openInspectorTabs, [.context, .preview])
     }
 
     @MainActor

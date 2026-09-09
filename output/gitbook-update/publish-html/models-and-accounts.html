@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Models &amp; Accounts</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus starts with local Ollama and never silently changes to a paid route.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Route</th>
+  <th>Authentication</th>
+  <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Ollama</strong></td>
+  <td>Local service</td>
+  <td>Default; model weights and prompts stay on your configured Ollama host</td>
+</tr>
+<tr>
+  <td><strong>ChatGPT plan</strong></td>
+  <td>OpenAI-managed browser sign-in</td>
+  <td>Uses eligible plan access, not an API key; direct builds download the Codex component once</td>
+</tr>
+<tr>
+  <td><strong>OpenAI API</strong></td>
+  <td>API key</td>
+  <td>Separate from ChatGPT plan usage and billing</td>
+</tr>
+<tr>
+  <td><strong>Claude</strong></td>
+  <td>Anthropic API key</td>
+  <td>Uses Anthropic's native Messages API</td>
+</tr>
+<tr>
+  <td><strong>Kimi / Kimi Code</strong></td>
+  <td>Moonshot credentials</td>
+  <td>Separate products, hosts, keys, and catalogs</td>
+</tr>
+<tr>
+  <td><strong>Custom endpoint</strong></td>
+  <td>Provider key if required</td>
+  <td>Compatible OpenAI-style API such as vLLM, TGI, llama.cpp, or a hosted GPU</td>
+</tr>
+</tbody>
+</table>
+
+<ul>
+<li><a href="https://locus-3.gitbook.io/locus-docs/models-and-accounts/local-ollama-models">Local Ollama Models</a></li>
+<li><a href="https://locus-3.gitbook.io/locus-docs/models-and-accounts/hosted-and-custom-models">Hosted &amp; Custom Models</a></li>
+<li><a href="https://locus-3.gitbook.io/locus-docs/models-and-accounts/usage-router-and-proxy-profiles">Usage, Router &amp; Proxy Profiles</a></li>
+</ul>
+
+<p>The model picker is account-aware, so the same model name under two accounts is never ambiguous. A failed switch restores the previous active route rather than leaving the interface and backend out of sync.</p>
+
+<p>ChatGPT accounts add per-account choices for the Locus or Codex-native conversation contract, model-supported reasoning effort, and optional OpenAI web search. New accounts start with Locus's own tools; existing accounts keep their prior contract setting.</p>
+
+<h2>Find and customize settings</h2>
+
+<p>Open Settings to manage model accounts, permissions, tools, and appearance. Model account configuration is under <strong>Models &amp; Providers</strong>; reusable profiles are under <strong>Specialists &amp; teams</strong> in the Agent settings.</p>
+
+<p><img src="https://raw.githubusercontent.com/nahid-sparktales/locus/c3a27c3/Docs/locus-settings-dark.png" alt="Locus Settings showing appearance and the settings navigation" /></p>
+
+<p><em>Appearance settings in the wallet-free app. The navigation also leads to model, tool, and permission controls.</em></p>
+</body></html>

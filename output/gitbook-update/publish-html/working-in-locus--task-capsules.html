@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Task Capsules</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><h2>Set up and run</h2>
+
+<ol>
+<li>Connect the accounts you want to use under <strong>Models &amp; Providers</strong>.</li>
+<li>In <strong>Specialists &amp; teams</strong>, configure reusable profiles with the desired account and model. An implementation profile needs an <strong>Access ceiling</strong> of <strong>Workspace edits</strong>. One profile can serve more than one role.</li>
+<li>Open <strong>Locus → Task Capsules…</strong> or press <strong>⌥⌘K</strong> in the target workspace.</li>
+<li>Describe the task or customize an editable example. Choose <strong>Plan with</strong>, <strong>Implement with</strong>, and optionally <strong>Review with</strong>. Set optional allowances under <strong>Advanced · Usage limits</strong>.</li>
+<li>Select <strong>Generate plan</strong>. Planning is read-only; answer any clarification in its conversation. A successful structured plan saves automatically.</li>
+<li>Reopen the capsule and review instructions, constraints, checks, and design decisions. <strong>Expand steps</strong> reveals the detail. Choose <strong>Run plan</strong> when ready.</li>
+<li>Review stage outcomes and available usage in run history. <strong>Review result</strong> runs a separate read-only review; <strong>Run again</strong> starts another execution of an existing plan.</li>
+</ol>
+
+<p>If profiles are missing, <strong>Set up models</strong> opens settings while preserving the task description. <strong>Continue planning</strong> returns to a waiting planner's conversation.</p>
+
+<h2>Accounts remain explicit</h2>
+
+<p>Each stage uses the exact account assigned to its profile. An unavailable account stops the stage. ChatGPT-plan and Kimi Code membership routes never silently fall back to metered APIs. Capsule choices do not permanently replace the ordinary chat's model selection.</p>
+
+<h2>Saved plans and changed files</h2>
+
+<p>A detailed plan can contain up to 16 ordered steps. Execution follows dependencies sequentially. Before execution, Locus checks fingerprints for files named in those steps, including planned new files. Changed, removed, or unexpectedly created files pause the handoff.</p>
+
+<p>Choose <strong>Update the plan or ask for help</strong> to inspect the current workspace and save a revision. Fingerprints cover named files, not the whole repository. Older plans without named files have no file baseline.</p>
+
+<h2>Limits, review, and recovery</h2>
+
+<p>Planning and standalone review have per-turn model-call allowances. Implementation, its automatic reviewer, and repairs share the execution allowance. Profile runtime and response limits still apply. A failed or malformed review does not count as approval.</p>
+
+<p>Optional API cost limits are estimates for configured execution prices, not hard billing ceilings. They exclude planning, standalone review, tool charges, and image generation. Subscription routes record exposed calls and tokens without inventing per-token subscription prices.</p>
+
+<p>Asking the planner for help is explicit. Repair and help allowances accumulate across the capsule, including later runs. Increasing a limit does not erase previous attempts.</p>
+
+<p>Stopped work keeps the files already changed and its run evidence. Inspect them before repeating execution. Partial changes may require a revised plan; recovery returns to Task Capsules instead of silently restarting a team checkpoint.</p>
+</body></html>

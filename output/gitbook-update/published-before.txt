@@ -1,0 +1,1540 @@
+# Locus
+
+A native macOS workspace for building with local or hosted AI models.
+
+Locus 2.1 is a native macOS workspace for chatting, planning, building, browsing, reviewing, and supervising AI work. It brings project context, Git changes, a retained terminal, an agent-drivable browser, scheduled tasks, mobile access, local notes, and bounded agent teams into one SwiftUI app.
+
+{% hint style="success" %}
+**Local by default.** A fresh installation uses your own Ollama runtime. Locus sends data to a hosted provider only after you add and select an account or explicitly allow hosted team routing.
+{% endhint %}
+
+![Locus workspace](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FZa56hVwenjE31NrrY8HW%2Flocus-v2-workspace.png?alt=media)
+
+[Visit locushost.co](https://locushost.co) · [Download Locus](https://github.com/nahid-sparktales/locus/releases/latest) · [Read the 2.1 release notes](/locus-docs/release-notes)
+
+## Start here
+
+<table data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><h3>🚀</h3></td><td><strong>Getting started</strong></td><td>Install Locus, open a project, and complete your first run.</td><td><a href="https://locus-3.gitbook.io/locus-docs/getting-started">https://locus-3.gitbook.io/locus-docs/getting-started</a></td></tr><tr><td><h3>🧭</h3></td><td><strong>Working in Locus</strong></td><td>Learn chats, the inspector, Git, Browser, Notebook, schedules, mobile access, and shortcuts.</td><td><a href="https://locus-3.gitbook.io/locus-docs/working-in-locus">https://locus-3.gitbook.io/locus-docs/working-in-locus</a></td></tr><tr><td><h3>🤖</h3></td><td><strong>Models &#x26; accounts</strong></td><td>Use Ollama, a ChatGPT plan, API providers, model routing, and proxy profiles.</td><td><a href="https://locus-3.gitbook.io/locus-docs/models-and-accounts">https://locus-3.gitbook.io/locus-docs/models-and-accounts</a></td></tr><tr><td><h3>👥</h3></td><td><strong>Agent teams</strong></td><td>Route work across explicit, bounded specialists with durable runs.</td><td><a href="https://locus-3.gitbook.io/locus-docs/agent-teams">https://locus-3.gitbook.io/locus-docs/agent-teams</a></td></tr><tr><td><h3>🛡️</h3></td><td><strong>Safety &#x26; privacy</strong></td><td>Understand permissions, credentials, local data, Browser Autofill, and the Vault private alpha.</td><td><a href="https://locus-3.gitbook.io/locus-docs/safety-and-privacy">https://locus-3.gitbook.io/locus-docs/safety-and-privacy</a></td></tr><tr><td><h3>🧰</h3></td><td><strong>Troubleshooting</strong></td><td>Resolve runtime, model, account, browser, proxy, mobile, run, and recovery problems.</td><td><a href="https://locus-3.gitbook.io/locus-docs/troubleshooting">https://locus-3.gitbook.io/locus-docs/troubleshooting</a></td></tr></tbody></table>
+
+## What 2.1 brings together
+
+* **Just Chat, adaptive Work, Plan, and Grill** with visible permission boundaries. Grill asks one question at a time and does not modify the project.
+* **A real browser** with trusted input, coordinate targeting, responsive tabs, mobile emulation, screenshots, named dev servers, and a Keychain-backed Autofill vault.
+* **Project context and continuity** through attachments, file mentions, context packs, local search, a searchable Notebook, approved memory, and encrypted handoffs.
+* **Git and Terminal** with per-hunk review, branches, fetch/pull/push, checkpoints, retained processes, and reliable produced-file detection.
+* **Local and hosted models** including Ollama, ChatGPT-plan access, OpenAI API, Claude, Kimi, and compatible endpoints.
+* **Durable Solo and team work** with bounded delegation, editable plans, run-scoped evidence, recovery, evaluation, and usage visibility.
+* **Schedules and Locus Mobile** for supervised work away from the main window.
+* **Skills, MCP, model routing, and proxy profiles** with deny-by-default policies and no silent paid fallback.
+* **Locus Vault private alpha** for a guarded Sepolia wallet experience in signed direct-download builds.
+
+{% hint style="info" %}
+These docs describe **Locus 2.1.0** for Apple Silicon Macs running macOS 14 or newer.
+{% endhint %}
+
+
+# Getting Started
+
+Install Locus 2.1, choose a model route, open a workspace, and complete a safe first request.
+
+Locus 2.1 includes its own agent runtime. Bring one model source—local Ollama, an eligible ChatGPT plan, or a supported API account—and a project folder.
+
+1. [Install Locus](/locus-docs/getting-started/install-locus) and choose the direct-download or Mac App Store channel.
+2. [Open your first workspace](/locus-docs/getting-started/your-first-workspace), select a model, and send a bounded request.
+3. Choose Just Chat, Work, Plan, or Grill according to the kind of help you want.
+4. Open the Notebook with ⇧⌘9 when you want to search or edit every workspace, chat, shared, and unlinked note in one place.
+
+{% hint style="success" %}
+Start with **Ask every time** permissions. Move to Accept File Edits only after you are comfortable reviewing Locus's diff and command prompts.
+{% endhint %}
+
+{% hint style="info" %}
+Grill replaces GSD in 2.1. Saved work remains compatible, and approving a Plan now continues implementation in Work.
+{% endhint %}
+
+
+# Install Locus
+
+Requirements, Locus 2.1 installation, ChatGPT components, and update channels.
+
+## Requirements
+
+* Apple Silicon Mac
+* macOS 14 or newer
+* One model source: Ollama with a tool-capable model, an eligible ChatGPT plan, or a supported API account
+
+Locus includes its Python agent runtime. You do not need Python, Homebrew, Rust, Codex CLI, the Codex app, or the ChatGPT app. Ollama and model weights are not bundled.
+
+{% stepper %}
+{% step %}
+
+### Download the app
+
+Download **Locus-macOS.zip** from [locushost.co](https://locushost.co) or [GitHub Releases](https://github.com/nahid-sparktales/locus/releases/latest). The direct download is about 62 MB.
+{% endstep %}
+
+{% step %}
+
+### Move Locus to Applications
+
+Unzip the archive, move Locus to Applications, and open it. The release is signed and notarized.
+{% endstep %}
+
+{% step %}
+
+### Choose a workspace and model
+
+Select a project folder, then use local Ollama, sign in with a ChatGPT plan, or add an API-backed provider under Settings → Models & Providers.
+{% endstep %}
+
+{% step %}
+
+### Send a first request
+
+Start with Just Chat for conversation-only work, Work for adaptive agentic work, Plan for a reviewable plan, or Grill for a one-question-at-a-time interview before implementation.
+{% endstep %}
+{% endstepper %}
+
+## ChatGPT-plan component
+
+ChatGPT-plan accounts use two helpers from OpenAI's Codex project. They are not included in the direct download because most users never need them. When you add a ChatGPT-plan account, Locus offers a one-time download of about 104 MB, using about 268–270 MB when installed.
+
+The archive checksum and every helper's SparkTales code signature are verified before installation. A failed verification installs nothing and leaves the previous component untouched. Remove the component from Settings → Updates to reclaim the space; adding a plan account can install it again.
+
+The Mac App Store build bundles these helpers because App Store rules do not allow downloading executable code.
+
+## Updates and build differences
+
+Direct-download builds check the signed stable release feed and can install an update when Locus quits. Mac App Store builds update through Apple.
+
+The direct build can offer guarded Computer Control, local stdio MCP, Git fetch/pull/push, SSH/Keychain-backed Git operations, and the Locus Vault private alpha. The sandboxed App Store build omits capabilities it cannot safely access and keeps every wallet gate off, while Browser remains available in both.
+
+
+# Your First Workspace
+
+Open a project folder, choose a model, and complete your first supervised Locus 2.1 request.
+
+![A Locus workspace with the workspace list, model route, composer modes, and Files inspector visible](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FZa56hVwenjE31NrrY8HW%2Flocus-v2-workspace.png?alt=media)
+
+{% stepper %}
+{% step %}
+
+### Open or create a folder
+
+Choose **Add Existing Folder…** or **New Workspace Folder…**. Locus groups chats by their real folder and remembers the most recent chat in each workspace.
+{% endstep %}
+
+{% step %}
+
+### Choose a model route
+
+Use local Ollama for on-device work, sign in with an eligible ChatGPT plan, or add an API provider under Settings → Models & Providers. Locus never silently switches from local or plan access to a paid API route.
+{% endstep %}
+
+{% step %}
+
+### Pick a mode
+
+Use Just Chat for conversation-only work. Work can inspect, plan, implement, and delegate bounded read-only research. Plan stops at an approval boundary. Grill asks one focused question at a time and never modifies the project; when the shared understanding is approved, implementation continues in Work.
+{% endstep %}
+
+{% step %}
+
+### Send a bounded first task
+
+Try: “Read the README and summarize how to run the tests. Do not change files or run commands.”
+{% endstep %}
+
+{% step %}
+
+### Review the evidence
+
+Open Overview for sources and outputs, Files for project content, Changes for the real Git tree, and Runs for durable Solo or team history.
+{% endstep %}
+{% endstepper %}
+
+## Workspace behavior
+
+Chats autosave locally and can be organized into nested folders. Add a named checkpoint before a risky conversation change. Use **Hand Off to Worktree** or **Duplicate with Worktree** when implementation should happen in an isolated Git checkout.
+
+Press ⇧⌘9 to open the Notebook and find every note associated with this workspace, its chats, the shared note, and any older note that can no longer be linked to an owner.
+
+
+# Just Chat, Work, Plan & Grill
+
+Choose conversation, adaptive work, planning, or a one-question-at-a-time Grill interview.
+
+Locus separates conversation-only requests from project work and guided clarification.
+
+| Mode          | Best for                                                                        | Project behavior                            |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------- |
+| **Just Chat** | Explanations, brainstorming, and attached material                              | Workspace tools are disabled                |
+| **Work**      | Adaptive inspection, planning, implementation, and bounded read-only delegation | Tools are enabled as needed                 |
+| **Plan**      | A reviewable implementation plan before changes                                 | Inspection and planning only until approval |
+| **Grill**     | Stress-testing an idea or plan through one focused question at a time           | Does not modify anything                    |
+
+![Plan mode with generated outputs, subagent activity, and context usage visible in the Overview inspector](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2F32XidrEy7OgDjkWCxOys%2Flocus-v2-plan.png?alt=media)
+
+**Work** is the default agentic mode. It can answer directly, inspect first, implement, or ask temporary read-only workers for parallel evidence. Select an explicit team only when you want named routes, a dispatcher plan, and team budgets.
+
+## Grill mode
+
+Grill replaces GSD in Locus 2.1. Use ⌥G or /grill to start a relentless, one-question-at-a-time interview powered by the bundled grilling workflow. It develops a shared understanding before any project changes occur.
+
+When the agent asks a question, Locus replaces the composer with a focused answer popup. It can show multiple-choice answers with the recommended choice selected and always includes a free-text response. Escape dismisses the popup so you can answer in the composer. Queued work waits until the question is answered or dismissed.
+
+Older saved mode values remain compatible. Older mobile clients that send Build continue in Work, while the /build and /gsd slash aliases select Grill for people who still use those command names.
+
+## Plan approval
+
+A completed Plan presents:
+
+* **Proceed** to implement in Work under the current permission mode;
+* **Revise** to keep the plan visible and request changes; or
+* **Cancel** to return to Work without implementing.
+
+Clarifying questions do not trigger plan approval. A queued message waits until the decision is resolved, and the decision survives reconnects.
+
+## Steering and stopping
+
+During a run, type direction and use **Steer Now** or ⌘↵ to interrupt the current provider stream and continue the same turn. You can also queue a message for the next turn or stop and send it as a fresh turn. When the composer is empty, the send control becomes Stop; Escape also stops.
+
+## Attachments in every mode
+
+Drag files onto the composer or conversation, or paste an image with ⌘V. Images can reach Work, Plan, and Grill, not only Just Chat. On a team run, the dispatcher and first coding job receive the image; specialist goals and review remain text-only.
+
+Attachments are carried in memory for the active turn and are **not persisted**. A restored chat shows attachment names, not image bytes. If a provider rejects image input, Locus retries once without the images and records a note.
+
+## ChatGPT conversation contract
+
+Each ChatGPT-plan account has a **Codex-native mode** toggle. New accounts begin with Locus's own prompt and tools so approved memory, cross-chat context, and the skill index remain available. Existing accounts keep their previous setting.
+
+Turn Codex-native mode on when you want the model's Codex prompt, voice, and Codex-shaped tools. Locus still enforces its permission prompts, deny lists, and edit previews, but approved memory, cross-chat continuity, and the skill index are deliberately absent. Changing the toggle restarts the conversation's server-side context.
+
+Reasoning effort applies per turn. Optional OpenAI web search is off by default and sends search queries to OpenAI when enabled.
+
+
+# Working in Locus
+
+Conversations, Notebook, Browser, Git, Terminal, schedules, mobile access, and everyday controls.
+
+Locus keeps the conversation central while project tools stay one click away.
+
+* [Conversations & Context](/locus-docs/working-in-locus/conversations-and-context) covers workspaces, folders, search, Side Chat, transcript selection, attachments, outputs, context packs, Notebook, and memory.
+* [The Inspector](/locus-docs/working-in-locus/the-inspector) explains Overview and every workspace panel.
+* [Git Changes & Terminal](/locus-docs/working-in-locus/git-changes-and-console) covers diff review, branches, commands, and retained processes.
+* [Browser & Dev Servers](/locus-docs/working-in-locus/browser-and-dev-servers) covers browser automation, real input, responsive tabs, Autofill, mobile emulation, and .locus/launch.json.
+* [Mobile, Schedules & Background Work](/locus-docs/working-in-locus/mobile-schedules-and-background-work) covers the Activity Center, menu-bar operation, the companion, and managed services.
+* [Shortcuts & Slash Commands](/locus-docs/working-in-locus/shortcuts-and-slash-commands) keeps the full keyboard and composer reference.
+
+The right rail keeps Side Chat, Overview, Terminal, Browser, and Notes within reach. The overflow menu opens Changes, Files, Runs, AGENTS.md, Model Router, and Proxies. Notebook opens independently from the sidebar gear, Locus menu, command palette, or ⇧⌘9 so you can search every note without changing the current inspector panel.
+
+
+# Conversations & Context
+
+Organize, search, split, export, and give models the right project context.
+
+## Organize project chats
+
+Each workspace owns its conversation group. Create nested chat folders without changing where chats run, drag or move chats between folders, and reorder them. Removing a folder keeps its chats and moves them up one level.
+
+Chats can be named, pinned, archived, duplicated, exported, or deleted into recoverable storage. **Duplicate with Worktree** creates an isolated Git-backed copy when you want a separate implementation path.
+
+Sidebar search matches titles, folders, and transcript content. ⇧⌘F focuses the cross-conversation search; selecting a result opens the exact message.
+
+## Side Chat
+
+Open Side Chat from the right rail to place two saved conversations side by side. Each pane keeps its own draft, attachments, mode, selected team, context, search, and active run status. The split and divider position restore across launches.
+
+## Transcript behavior
+
+Reasoning and tool activity remain in the order they happened. Collapsed mode uses quiet inline disclosures at real activity boundaries; Expanded reasoning and Verbose tools keep the detailed cards.
+
+Text selection now spans the entire conversation, survives scrolling, supports Shift-click extension and edge scrolling, and keeps links clickable. Command-C copies exactly the selected text, including content that has scrolled out of view. Copy and Search in Google remain available from the context menu; the floating Copy/Quote buttons have been removed.
+
+Agent questions can appear in a focused popup after the turn, with choices and a free-text answer. This is especially common in Grill mode. Your answer returns to the chat as an ordinary user message.
+
+## Attachments, outputs, and exports
+
+Type @ to mention a workspace file, drag files into either pane, or paste an image. Export a chat as Markdown, plain text, or PDF. The export sheet can include attachments, provider-supplied reasoning, and full tool details; sensitive data should be reviewed before sharing.
+
+Files produced by agent tools or shell commands are detected even when they are gitignored or the folder is not a Git repository. Produced documents open in their normal Mac app; source files open in the Files inspector; every detected result is listed in Overview → Outputs.
+
+{% hint style="warning" %}
+Attachment bytes are not stored in the normal transcript. A restored chat retains names only. Include attachments in an export only when you intend to copy those bytes into the exported artifact.
+{% endhint %}
+
+## Persistent context
+
+Use **Context** or /context to add files and folders to the context pack. Locus refreshes selected files immediately before sending and trims them to a model-aware budget. The Files inspector can add a file, mention it, reveal it in Finder, or copy its relative path.
+
+The header meter measures the conversation against the usable model window after tool schemas and reply room. Local Ollama windows are measured when resident and remembered per host and model; hosted accounts use provider metadata, a configured value, or a marked estimate.
+
+## Notebook, knowledge, and continuity
+
+Press ⇧⌘9, choose Notebook from the sidebar gear or Locus menu, or use the command palette to open every note in one searchable page. The Notebook groups workspace, chat, shared, and unlinked legacy notes. Opening a note uses the same full editor and same document as its Notes-panel copy.
+
+Eligible agentic modes can query a bounded local workspace index; retrieved snippets are labeled untrusted. Long-term memory is added only when you explicitly approve it. Encrypted continuity snapshots carry development state across chats without a model call.
+
+Just Chat does not receive workspace tools, skills, knowledge retrieval, or continuity.
+
+
+# The Inspector
+
+Keep overview, files, diffs, terminal, browser, notes, runs, routing, and proxies beside the conversation.
+
+The right rail keeps high-frequency tools reachable even when the inspector is collapsed. Open Side Chat, Overview, Terminal, Browser, or Notes directly; use the overflow menu for the remaining panels. Panels you open appear in a closable tab strip, and Locus remembers the selection and width.
+
+| Panel            | What it shows                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Overview**     | Collapsible Plan, Outputs, Subagents, Background Processes, and Sources, with Context Window pinned below   |
+| **Changes**      | Git status, per-file and per-hunk diffs, staging, discard, branches, sync, commit, and pull-request handoff |
+| **Files**        | Workspace search, inline previews, context actions, and paths                                               |
+| **Terminal**     | A retained PTY for interactive commands                                                                     |
+| **Browser**      | Shared responsive tabs, dev servers, screenshots, console, network, device controls, and guarded Autofill   |
+| **Notes**        | The current chat or shared note, using the same document as Notebook                                        |
+| **Checkpoints**  | On-demand named session rollback points                                                                     |
+| **Runs**         | Durable Solo and team history, run-scoped evidence, attempts, budgets, recovery, and exports                |
+| **AGENTS.md**    | Durable workspace instructions and starter sections                                                         |
+| **Model Router** | Route scorecards across quality, privacy, reliability, latency, cost, and footprint                         |
+| **Proxies**      | Named proxy profiles, assignments, strict tunnel, health, and failover                                      |
+
+![Planning and context in the Locus inspector](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2F32XidrEy7OgDjkWCxOys%2Flocus-v2-plan.png?alt=media)
+
+Overview shows only sections that have content. Outputs catches files created through direct tools and shell commands, including gitignored results and work outside a Git repository. Clicking a produced document opens the Mac app associated with that file type.
+
+The Runs panel has its own icon in 2.1; the three-node orchestration symbol is reserved for the team dispatcher. When one run is open while another continues, Overview and Activity remain scoped to the selected run. Files created and deleted within the same run are not reported as created, and expanded request/details state resets when you switch runs.
+
+A run never steals the selected panel. Attention appears as a badge. Use ⌘1–⌘5 and ⌘7–⌘9 for numbered panels, ⌘6 for checkpoints, ⌘⌥I to show or hide the inspector, and ⌘⌥E to expand or restore it.
+
+Open the Notebook separately with ⇧⌘9 to search and edit all notes without changing the Notes panel's current owner.
+
+
+# Git Changes & Terminal
+
+Review and ship Git changes, then run interactive project commands in the retained terminal.
+
+## Changes
+
+Changes reads the real Git working tree, including edits made outside Locus. Review staged and unstaged files, new files, deletions, renames, and binary changes.
+
+* Stage, unstage, or discard a whole file.
+* Stage, unstage, or discard individual hunks when the diff is complete and stable.
+* Draft a commit message with the selected local model.
+* Create or switch branches.
+* Fetch, fast-forward-only pull, and push from the direct-download build.
+* Publish a new branch on its first push.
+* Open GitHub's compare page with the branch filled in; you own the final Create Pull Request action.
+
+A changed hunk is relocated by content before application. If it can no longer be matched, Locus refreshes instead of guessing. Renames and truncated diffs keep whole-file controls only. Discard always confirms, and untracked files move to the Trash.
+
+The App Store sandbox hides Git operations that require SSH keys or Keychain access.
+
+## Files
+
+Files searches the workspace index and previews common text formats. Hidden, generated, binary, and oversized files are skipped. Add a file to context, insert an @ mention, reveal it, or copy its relative path.
+
+## Terminal and background services
+
+Terminal owns a retained PTY, so interactive commands work normally. Agent-started dev servers, watchers, and workers should use managed background services; these appear separately, survive the task that created them, and do not occupy your terminal.
+
+## Managed task changes
+
+Team and isolated task checkouts are reviewed against their private baseline. Apply to Workspace performs a conflict check and leaves changes unstaged and uncommitted. Team-run review remains apply-all or discard-all; ordinary workspace diffs support hunk-level actions.
+
+
+# Browser & Dev Servers
+
+Drive real web pages, inspect applications, use guarded Autofill, and manage named development servers.
+
+Locus turns Preview into a full browser shared by you and the agent. Tabs belong to the conversation that opened them, remain usable while the inspector is collapsed, and can be detached into a full-size window.
+
+## What the agent can do
+
+* Read a page as an addressable accessibility tree.
+* Navigate, open background tabs, click, type, press keys, scroll, and drag.
+* Target a named element or page coordinates for canvases, maps, and custom controls.
+* Capture the viewport or a selected region and translate image coordinates back into page coordinates.
+* Inspect console messages and network requests, wait for a single-page app to settle, and evaluate JavaScript for debugging.
+* Emulate phone-sized viewports, mobile user-agent and touch capabilities, color scheme, and custom dimensions.
+
+Every browser tool accepts a tab identifier, so a background worker can use its own page without pulling it in front of you. Element identifiers are valid only for the most recent page snapshot.
+
+{% hint style="warning" %}
+Page content is untrusted external data. Password fields and file-upload pickers are refused by ordinary typing tools. Running page JavaScript asks every time, including in Bypass mode.
+{% endhint %}
+
+## Real input and responsive layout
+
+Clicks and keystrokes use the same AppKit event path as human input when possible. This lets gesture-gated controls, drag surfaces, search-as-you-type fields, and canvas interfaces behave normally. Settings → Browser can restore synthetic input for compatibility, but synthetic events cannot create a trusted user gesture.
+
+Scrolling is aimed at the container under the pointer. On a headless Mac, coordinate conversion no longer depends on a connected display.
+
+In 2.1, the live page follows the Browser panel as it resizes instead of behaving like a magnified canvas. Wide pages retain WebKit's native horizontal scrolling. Tabs and navigation use a quieter responsive toolbar, with less common actions grouped in one menu.
+
+## Browser Autofill
+
+Locus includes a Keychain-backed Autofill vault for passwords, contacts, and payment cards. Secrets stay in Keychain and are not written to ordinary app data.
+
+Agent access is separately gated by category. The model sees the Autofill tool only for categories you enable; password use is scoped to the current site. The page still cannot read the vault directly, and ordinary browser history access is a separate permission.
+
+## Browser controls
+
+* ⌘T opens a tab.
+* ⌘W closes the current browser tab while Browser is visible.
+* ⇧⌘] and ⇧⌘\[ move between tabs.
+* ⌘F finds text on the page.
+* ⌘+, ⌘−, and ⌘0 change page zoom.
+* The camera captures, crops, annotates, copies, saves, or attaches the visible page.
+
+Popups become managed tabs. Downloads are quarantined in Locus storage, size-limited, and never executed. Browsing data is ephemeral by default; enable a persistent profile per workspace only when you need cookies or local storage to survive a restart.
+
+## Locus Vault browser access
+
+The Sepolia Wallet Hub is a separate private-alpha feature in signed direct-download builds. Website access must be explicitly enabled after the Vault itself is enabled. Locus reloads tabs after revoking pending work and remembered origins, publishes a frozen EIP-6963 provider with a fresh identifier per page, and requires an exact native confirmation for every website transaction. The Mac App Store build keeps all wallet gates off.
+
+## Named development servers
+
+Create .locus/launch.json in a workspace to define repeatable servers:
+
+```json
+{
+  "configurations": [
+    {
+      "name": "Web",
+      "executable": "npm",
+      "arguments": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Existing preview",
+      "url": "http://127.0.0.1:4173"
+    }
+  ]
+}
+```
+
+The agent can list configurations, start one by name, attach to an existing URL, wait for its port, and read bounded output filtered by level, search text, or line count. Starting a process always asks, even in Bypass mode.
+
+
+# Mobile, Schedules & Background Work
+
+Continue work from your phone, schedule tasks, and supervise durable background activity.
+
+Locus V2 can keep useful work available after the main window closes without turning your Mac into a cloud relay.
+
+## Scheduled tasks
+
+The Activity Center shows upcoming, running, paused, completed, and failed schedules. Locus can remain in the menu bar, wake an eligible local task at its scheduled time, and keep each run attached to its owning workspace and chat.
+
+![Scheduled tasks in the Locus Activity Center](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FLEnpUeGa6zu8gv2eYLhD%2Flocus-v2-schedules.png?alt=media)
+
+Review the model route, permission mode, recurrence, and workspace before enabling a schedule. Pause or run a schedule from the Mac or the mobile companion. Destructive operations and one-time approvals still require the appropriate interactive permission boundary.
+
+## Managed background services
+
+Use managed background services for dev servers, watchers, and queue workers that should outlive a single agent turn. They appear above Terminal, remain associated with their workspace, and stop only when you explicitly stop them or the owning backend quits.
+
+## Locus Mobile
+
+Mobile Access is off by default. When enabled, Locus creates a private TLS gateway on your Mac and pairs an iOS or Android device with a five-minute, one-use code. The companion pins the Mac certificate and connects over your LAN or Tailscale; there is no Locus cloud relay.
+
+![Mobile Access settings](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2Fh21c5hZgTNw61LLL0gTQ%2Flocus-v2-mobile-access.png?alt=media)
+
+![Pairing Locus Mobile](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2Fa09CzR1RfDZ68kbiCVgl%2Flocus-v2-mobile-pairing.png?alt=media)
+
+The companion can:
+
+* create and continue chats;
+* follow streaming work;
+* stop runs;
+* answer one-time approvals; and
+* run or pause schedules.
+
+Terminal, Browser, file editing, permanent permissions, provider settings, and destructive session actions remain Mac-only. Provider credentials and local agent ports are never exposed to the phone.
+
+
+# Shortcuts & Slash Commands
+
+Navigate Locus 2.1 and control a session from the keyboard.
+
+## Essential shortcuts
+
+| Shortcut          | Action                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| ⌘K                | Command palette                                                         |
+| ⌘F                | Find in the current conversation; find on page while Browser owns focus |
+| ⇧⌘F               | Search all conversations                                                |
+| ⌘/                | Keyboard shortcut reference                                             |
+| ⌘0                | Show or hide the sidebar                                                |
+| ⌘1–⌘5, ⌘7–⌘9      | Open numbered inspector panels                                          |
+| ⌘6                | Session checkpoints                                                     |
+| ⇧⌘9               | Open Notebook                                                           |
+| ⌘⌥I               | Show or hide the inspector                                              |
+| ⌘⌥E               | Expand or restore the inspector                                         |
+| ⌘N                | New chat                                                                |
+| ⌘⇧K               | Clear the current chat                                                  |
+| ⌘S                | Session checkpoints                                                     |
+| ⌘R                | Review changes                                                          |
+| ⌥A / ⌥W / ⌥P / ⌥G | Just Chat / Work / Plan / Grill                                         |
+| ⌘↵                | Send, steer while busy, or stop when empty                              |
+| Escape            | Stop the run or close the active prompt                                 |
+
+While Browser is visible: ⌘T opens a tab, ⌘W closes it, and ⇧⌘]/⇧⌘\[ move between tabs.
+
+## Composer commands
+
+Type / to open autocomplete.
+
+| Command                             | Purpose                                                        |
+| ----------------------------------- | -------------------------------------------------------------- |
+| /clear                              | Start a fresh chat and keep the current one saved              |
+| /model, /models                     | Select a model or browse compatible local models               |
+| /ask, /work, /plan, /grill          | Change mode                                                    |
+| /gsd, /build                        | Compatibility aliases that select Grill                        |
+| /checkpoint, /rewind                | Create or restore a named checkpoint                           |
+| /changes                            | Review the Git working tree                                    |
+| /browser                            | Open Browser; /preview remains an alias                        |
+| /context                            | Add files or folders to the persistent context pack            |
+| /export                             | Export the current session                                     |
+| /workspace, /newworkspace           | Open or create a project folder                                |
+| /copy, /retry, /stop                | Control the latest response or run                             |
+| /compact                            | Compact conversation context and reset a ChatGPT helper thread |
+| /remember                           | Save an approved workspace fact                                |
+| /permissions, /acceptedits, /bypass | Change permission mode                                         |
+| /thinking                           | Hide, collapse, or expand provider-supplied reasoning          |
+| /settings, /shortcuts, /help        | Open controls and references                                   |
+
+Unknown slash commands pass through to the local agent.
+
+
+# Models & Accounts
+
+Configure Ollama, ChatGPT plans, API providers, reasoning, routing scorecards, usage, and proxy profiles.
+
+Locus starts with local Ollama and never silently changes to a paid route.
+
+| Route                | Authentication                 | Notes                                                                                      |
+| -------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| **Ollama**           | Local service                  | Default; model weights and prompts stay on your configured Ollama host                     |
+| **ChatGPT plan**     | OpenAI-managed browser sign-in | Uses eligible plan access, not an API key; direct builds download the Codex component once |
+| **OpenAI API**       | API key                        | Separate from ChatGPT plan usage and billing                                               |
+| **Claude**           | Anthropic API key              | Uses Anthropic's native Messages API                                                       |
+| **Kimi / Kimi Code** | Moonshot credentials           | Separate products, hosts, keys, and catalogs                                               |
+| **Custom endpoint**  | Provider key if required       | Compatible OpenAI-style API such as vLLM, TGI, llama.cpp, or a hosted GPU                  |
+
+* [Local Ollama Models](/locus-docs/models-and-accounts/local-ollama-models)
+* [Hosted & Custom Models](/locus-docs/models-and-accounts/hosted-and-custom-models)
+* [Usage, Router & Proxy Profiles](/locus-docs/models-and-accounts/usage-router-and-proxy-profiles)
+
+The model picker is account-aware, so the same model name under two accounts is never ambiguous. A failed switch restores the previous active route rather than leaving the interface and backend out of sync.
+
+ChatGPT accounts add per-account choices for the Locus or Codex-native conversation contract, model-supported reasoning effort, and optional OpenAI web search. New accounts start with Locus's own tools; existing accounts keep their prior contract setting.
+
+
+# Local Ollama Models
+
+Run Locus locally with Ollama, manage model files, and understand practical context windows.
+
+## Choose or install a model
+
+Pick an installed model from the header. The model library can browse compatible GGUF files on Hugging Face, compare quantizations and sizes, download through Ollama with progress and cancellation, and activate the result.
+
+Local models report vision support from Ollama's capability list. Locus warns before sending images to a model known not to accept them.
+
+From the model library you can remove a model from Locus without touching its files or delete the local model when its provider supports removal.
+
+## Context windows
+
+Locus budgets against the window the model actually runs with, not only the maximum printed on its model card. It reads the resident Ollama runner, remembers the observed value by host and model, and marks unknown values honestly.
+
+In current V2 settings, leaving the local context field empty lets Locus request the model's trained ceiling up to 32,768 tokens. You can pin an exact `num_ctx` value when memory use requires it. Larger windows increase KV-cache memory; Locus can back off a model that would otherwise spill heavily onto the CPU.
+
+The context meter reserves room for the system prompt, tools, and reply. Automatic compaction uses the practical window.
+
+## Ollama on another machine
+
+Configure the Ollama host in Settings → Models & Providers. A remote Ollama server must listen beyond loopback and be reachable through the selected network route. Locus treats its configured Ollama host as direct traffic so a broken external proxy cannot cut the app off from its model runtime.
+
+
+# Hosted & Custom Models
+
+Add a ChatGPT plan, OpenAI API, Claude, Kimi, or compatible custom endpoint.
+
+Add accounts under Settings → Models & Providers.
+
+## ChatGPT-plan access
+
+Choose **ChatGPT**, install the optional Codex component if prompted, and complete OpenAI's managed browser sign-in. Locus discovers the plan's visible models and usage windows. This route does not use or fall back to an OpenAI API key.
+
+Each account has a **Codex-native mode** toggle:
+
+* New ChatGPT accounts begin with the Locus contract—Locus's prompt and tools, approved memory, cross-chat context, and skill index.
+* Existing accounts keep the setting they had before the 2.1 update.
+* Turn Codex-native mode on for the model's Codex prompt, voice, and Codex-shaped shell, patch, and plan tools. Locus still owns execution, permission prompts, deny lists, and edit previews.
+* Codex-native chats deliberately omit approved memory, cross-chat context, and the skill index.
+* Changing the toggle restarts that conversation's server-side context. The first message in an existing ChatGPT chat after the update may replay its history once.
+
+The account editor also controls model-supported reasoning effort and optional OpenAI web search. Reasoning effort applies on the next turn without resetting the conversation; higher effort can use plan quota faster. Web search is off by default and sends search queries to OpenAI when enabled.
+
+Just Chat, explicit teams, evaluations, and non-ChatGPT providers keep their existing behavior.
+
+## API-backed accounts
+
+| Account    | Endpoint               | Authentication             |
+| ---------- | ---------------------- | -------------------------- |
+| OpenAI API | api.openai.com/v1      | OpenAI API key             |
+| Claude     | api.anthropic.com/v1   | Anthropic API key          |
+| Kimi       | api.moonshot.ai/v1     | Moonshot API key           |
+| Kimi Code  | api.kimi.com/coding/v1 | Kimi Code subscription key |
+| Custom     | Your URL               | Endpoint key if required   |
+
+Use **Test Connection** before selecting the route. Locus reports a rejected key, an incorrect URL, or a waking endpoint. When a provider has no model-list route, the test sends a minimal completion.
+
+Multiple accounts for one provider remain distinct. Model and account changes requested during a run wait until it finishes. Removing the active hosted account returns the session to local Ollama. In 2.1, switching models no longer checks hosted ChatGPT or Kimi models against the locally installed Ollama list.
+
+## Custom endpoints and safety
+
+Custom accounts support vLLM, TGI, llama.cpp, Hugging Face endpoints, and compatible services. Authenticated non-loopback endpoints must use HTTPS. Redirects are refused so credentials cannot follow a response to another origin.
+
+If the endpoint rejects tool calling, Locus retries once without tools and says the route can answer but cannot edit. If it rejects an image, Locus retries once without images and keeps that route text-only for the session.
+
+{% hint style="warning" %}
+Selecting a hosted route sends the prompt and included project context to that provider. Automatic hosted team routing requires separate one-time consent.
+{% endhint %}
+
+
+# Usage, Router & Proxy Profiles
+
+Understand usage, model-routing scorecards, and health-ranked proxy profiles.
+
+Locus makes routing decisions inspectable without silently moving work to a paid or less-private provider.
+
+## Usage & Costs
+
+Open the sidebar menu and choose **Usage & Costs**. Filter the local run history by 7, 30, or 90 days, or view all recorded activity. The dashboard groups token activity by agent, model, provider, and workspace and links expensive runs back to the Runs inspector.
+
+Costs are estimates based on the rates saved on agent profiles. Local Ollama usage is shown as $0. Solo rows record tokens; without an explicit rate they do not invent a dollar amount. The dashboard is not a provider bill.
+
+## Model Router
+
+The Router inspector compares eligible routes across:
+
+* quality;
+* reliability;
+* privacy;
+* latency;
+* estimated cost; and
+* model footprint.
+
+The scorecard uses bounded candidate metadata and task tags. Prompt text is not sent to the scorecard endpoint. Hosted routes remain ineligible until separately allowed, and explicit teams keep their own route and budget rules.
+
+Solo Work and Plan requests can create temporary read-only workers when parallel investigation would help. They use the selected model and fixed safety limits; the primary agent can also finish without delegation. Grill is a guided interview and does not modify the project.
+
+## Proxy profiles
+
+The Proxies inspector manages named HTTP, HTTPS, and SOCKS5 profiles. Assign profiles by traffic class, workspace, or provider, then choose strict tunnel and automatic failover behavior.
+
+Health checks report latency and the externally observed exit address. With failover enabled, Locus checks the pool every minute and selects the fastest healthy standby. Strict tunnel mode ignores custom bypass entries and blocks external traffic when no configured route is available.
+
+Loopback services and the configured Ollama host remain direct so Locus can reach its own runtime. Proxy rules apply to Locus, not to every app on the Mac.
+
+
+# Agent Teams
+
+Choose adaptive Solo work or configure explicit, durable multi-model teams.
+
+Most requests can stay **Solo**. Adaptive Work and Plan may create temporary read-only workers when parallel investigation helps; they share the selected model and fixed limits while the primary agent remains responsible for the result. Grill remains a one-question-at-a-time clarification flow and does not modify the project.
+
+Choose an explicit team when you need named provider routes, roles, access ceilings, a dispatcher plan, dependency-ordered writers, team budgets, durable assignment history, or a final reviewer.
+
+* [Set Up a Team](/locus-docs/agent-teams/set-up-a-team)
+* [Run & Monitor Team Work](/locus-docs/agent-teams/run-and-monitor-team-work)
+* [Recovery & Evaluation](/locus-docs/agent-teams/recovery-and-evaluation)
+
+## Fixed boundaries
+
+* A dispatcher can route only to profiles in the selected team.
+* Hosted members require one-time Automatic Hosted Routing consent.
+* Read-only specialists may overlap; write-capable jobs are ordered or isolated in bounded parallel worktrees.
+* Each team has hard job, round, concurrency, model-call, token, and cost limits.
+* Credentials, hidden reasoning, and provider signatures are excluded from durable run history.
+* Computer Control is foreground-only, writer-only, and globally exclusive.
+
+Teams use the same permission mode and hard safety boundaries as Solo work. Selecting a team never grants broader access by itself.
+
+Runs now has its own inspector icon. The orchestration glyph belongs to the team dispatcher, making the difference between “open run history” and “route a team” explicit.
+
+
+# Set Up a Team
+
+Create profiles, define a bounded team, and explicitly allow hosted routing.
+
+Open Settings → Agents & Teams.
+
+## 1. Create agent profiles
+
+A profile defines:
+
+* name and role;
+* exact provider account and model;
+* role instructions and capability tags;
+* read-only, workspace-write, or Computer Control ceiling;
+* standard tool groups and explicit MCP allowlists; and
+* timeout, token, call, and optional estimated-cost limits.
+
+Use **Test Connection** before adding a profile. Eligible routes include Ollama, ChatGPT-plan, OpenAI API, Claude, Kimi, and compatible endpoints. ChatGPT-managed teams keep the Locus team contract rather than Codex-native Solo behavior.
+
+## 2. Define the team
+
+Choose one dispatcher, an optional fallback dispatcher, one write-capable Lead Writer, any additional ordered writers, and read-only specialists or reviewers. Configure maximum jobs, rounds, simultaneous calls, total calls, metered tokens, and estimated cost.
+
+New teams use adaptive Locus execution with bounded delegation. The optional OpenAI Responses beta appears only for an eligible OpenAI API GPT-5.6 dispatcher, never a ChatGPT-managed account. If it is unavailable, Locus pauses and offers to run with the Locus engine; billing and execution never switch silently.
+
+## 3. Allow hosted routing
+
+Review Settings → Agents & Teams → Automatic Hosted Routing. Consent names the provider accounts that a dispatcher may use without another routing prompt. It does not grant tools, raise an access ceiling, or bypass ordinary permissions.
+
+## Starter team
+
+A practical first team uses:
+
+* one local or inexpensive dispatcher;
+* one read-only researcher;
+* one primary writer;
+* one read-only reviewer.
+
+Keep initial budgets small until the routing and evidence match your expectations.
+
+
+# Run & Monitor Team Work
+
+Approve a dependency plan and supervise durable, run-scoped Solo and team activity.
+
+Choose Team from the composer or mention an eligible team. Mentioning a member can force that profile when the team and job rules allow it.
+
+## Dispatch and approval
+
+The dispatcher must submit a validated, acyclic job graph. Locus shows the complete plan, assignments, dependencies, exact routes, and budget before writer work begins. You can edit the dispatch plan, approve it, or cancel.
+
+Invalid output gets a bounded repair attempt. If repair still fails, Locus names the validation reason and can continue safely with the Lead Writer when the team policy allows it.
+
+## Execution and isolation
+
+Read-only research and test-design jobs may overlap. Writers are dependency-ordered. Optional parallel writer worktrees start from one immutable snapshot, integrate patches in plan order, and preserve a conflicting child checkout for inspection.
+
+New Git tasks default to a private worktree whose baseline includes tracked, staged, unstaged, and untracked non-ignored source state. Applying the result to the original workspace is explicit, conflict-checked, unstaged, and uncommitted.
+
+## Live board and Runs
+
+The board under the user message moves through Planning, Approval, Specialists, Coding Jobs, Review, and Complete. It shows the active agent and model, waits, duration, calls, turn-level usage, subagent counts, branch controls, Pause, and Stop. Finished boards collapse to a written result summary; every completed turn ends with an answer even when the work was mostly tools.
+
+Runs preserves ordered events, checkpoints, evidence, visible provider reasoning, redacted tools, budgets, retries, reassignment, replay, recovery, and the files a run produced. Search Activity for a model, profile, event, or fallback. Raw events live under Technical Log.
+
+## Selected-run accuracy
+
+Overview and Activity calculate request text, files, steps, agents, models, usage, and timing only from the run you selected—even while another run is active. Opening or reloading an older run no longer mixes in the live run's events.
+
+A file created and then deleted during the same run is not listed as created. Expanded request text and “Show more” state reset when you choose a different run. Produced files written by direct tools or shell commands appear in Outputs and open in the appropriate Mac app.
+
+Images on a team request reach the dispatcher and the first coding job. Specialists and reviewers receive text evidence. The transcript records that boundary.
+
+
+# Recovery & Evaluation
+
+Resume interrupted work, run durable background services, and compare agent configurations safely.
+
+Locus keeps long-running work recoverable and makes agent quality measurable without silently changing the source workspace.
+
+## Recovery
+
+Every team run is written to a local SQLite store before events reach the interface. The durable record includes timelines, attempts, dependencies, checkpoints, visible output, redacted tool evidence, routing decisions, usage, and errors. It excludes credentials, authorization headers, secure input, provider signatures, and hidden reasoning.
+
+Locus checkpoints after dispatch validation, specialist waves, writer turns, review, revision, and synthesis. When an interrupted run is found, you can:
+
+* **Resume** from the latest valid checkpoint.
+* **Inspect** without spending tokens.
+* **Discard Run** while leaving project files untouched.
+
+If a required model, credential, profile, team, or checkout is missing, Runs shows a repair checklist instead of guessing.
+
+## Job-level controls
+
+| Control                              | What it does                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| **Pause at Safe Boundary**           | Cooperatively stops streams and cancellable tools, then writes a checkpoint.                |
+| **Retry with Same Agent**            | Creates a new attempt and invalidates only dependent jobs.                                  |
+| **Reassign**                         | Moves an eligible unfinished job to another member of the same team without raising access. |
+| **Replay Same Baseline**             | Starts a comparable run from the original task state.                                       |
+| **Duplicate from Current Workspace** | Starts from the project as it exists now.                                                   |
+| **Stop Run**                         | Cancels active orchestration.                                                               |
+| **Clean Up Managed Checkout**        | Separately removes an unused private checkout.                                              |
+
+## Managed background services
+
+Development servers, watchers, and queue workers should run as **managed services**, not as finite terminal commands. The service process belongs to the local backend, so stopping the chat task only stops the wait for readiness; it does not kill the server. A service keeps running until you press **Stop** beside it or quit Locus.
+
+![Managed services showing one failed launch and one running server](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FfOiHz9rRcHr4zyq9lJmX%2Fmanaged-services-status.jpg?alt=media)
+
+The screenshot shows two different launch attempts:
+
+* **npm - Exited 127** is an earlier failed process retained for diagnostics. Use **Dismiss** to remove an exited row.
+* **lumen-dev - green** is the active server on port 3000. **Stop** terminates its process group and removes the row immediately.
+* Name and PID distinguish attempts even when they use the same port.
+
+Locus verifies readiness by opening the requested port on both IPv4 loopback (`127.0.0.1`) and IPv6 loopback (`::1`). This matters for Vite-based servers that print `http://localhost:3000` but listen only on IPv6. Once either loopback address accepts a connection, the launch returns control to the agent; the agent can then open the URL in Browser for an application-level check.
+
+{% hint style="info" %}
+A port accepting a connection proves that a listener exists, not that the app is correct. After readiness succeeds, verify the page in Browser and check recent service output for runtime errors.
+{% endhint %}
+
+## Evaluation Lab
+
+Evaluation suites compare Solo and team configurations against fixed local fixtures. They measure quality, reliability, latency, model calls, tokens, estimated cost, patch size, retries, and failure categories without applying evaluation output to the source workspace.
+
+![Evaluation Lab and Optional Telemetry settings](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FDUWzDdPFYwQeaDSy3lrn%2Fevaluation-telemetry-settings.jpg?alt=media)
+
+### Suite controls
+
+| Control                                     | Meaning                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Add Suite**                               | Creates a local suite for the current workspace.                                               |
+| **Import JSON**                             | Loads a portable suite definition and validates its workspace, cases, budgets, and assertions. |
+| **Allow explicitly read-only MCP evidence** | Lets a case read from approved MCP tools; mutating MCP operations remain unavailable.          |
+| **Pinned**                                  | Keeps successful disposable evaluation fixtures from age-based cleanup.                        |
+
+A suite contains a name, description, tags, a read-only MCP policy, and one or more cases. Git workspaces receive managed fixed fixtures so repeated runs use the same baseline rather than the current moving source tree.
+
+### Case configuration
+
+| Field                    | Options and behavior                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **Mode**                 | **Coding** runs in a disposable managed worktree. **Read only** can inspect the source checkout without writing. |
+| **Target**               | **Team** uses a selected team manifest. **Solo** uses one evaluation agent.                                      |
+| **Timeout**              | 30 seconds to 120 minutes. A timeout is recorded as its own failure category.                                    |
+| **Orchestration budget** | Caps jobs, rounds, model calls, concurrent calls, and hosted tokens.                                             |
+| **Rubric**               | Optional natural-language quality criteria.                                                                      |
+| **Blind judge**          | An eligible reviewer profile; provider, model, and agent identities are hidden from its prompt.                  |
+| **Passing score**        | A 0-100 threshold applied when a subjective rubric score is produced.                                            |
+
+### Deterministic assertions
+
+A case can check:
+
+* Command exit codes, with a bounded per-command timeout.
+* Path existence or absence.
+* Exact file content, substring matches, or regular expressions.
+* Allowed and forbidden changed-path globs.
+* JSON Pointer equality or minimal JSON Schema rules.
+* Final visible output by substring or regular expression.
+
+Each assertion can be **Required** or informational. A required failure hard-fails the case.
+
+### How pass/fail is decided
+
+```mermaid
+flowchart LR
+    A["Run completed"] --> B{"Timed out?"}
+    B -->|Yes| F["Fail"]
+    B -->|No| C{"All required assertions passed?"}
+    C -->|No| F
+    C -->|Yes| D{"Rubric configured?"}
+    D -->|No| P["Pass"]
+    D -->|Yes| E{"Judge score meets threshold?"}
+    E -->|Yes| P
+    E -->|No| F
+```
+
+A subjective score cannot override a deterministic failure. Non-required assertions remain visible as evidence but do not hard-fail the case.
+
+### Reading results
+
+Each result records pass/fail state, assertion evidence, changed paths, duration, retries, model calls, prompt and completion tokens, estimated cost, patch bytes, optional rubric score and reason, and one failure category: timeout, provider/runtime, deterministic assertion, or subjective rubric.
+
+For a fair Solo-versus-team comparison, keep the fixture, prompt, assertions, rubric, threshold, timeout, and budget constant. Compare pass rate and rubric quality before comparing latency and cost, and repeat noisy cases.
+
+{% hint style="warning" %}
+Locus never automatically resumes a run, spends hosted tokens at startup, merges a team checkout, commits changes, applies evaluation output, or enables Computer Control in an evaluation.
+{% endhint %}
+
+## Optional telemetry
+
+Telemetry exports completed team-run events as OTLP/HTTP JSON traces. It is independent of Evaluation Lab and off by default.
+
+| Control                                           | Behavior                                                                                                                  |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Export completed team runs**                    | After the first durable completion event is processed, posts one trace for that run.                                      |
+| **Collector endpoint**                            | Must be an absolute HTTP(S) URL. Remote collectors require HTTPS; loopback may use HTTP.                                  |
+| **Authorization header**                          | Optional full header value stored separately in Locus's local credential store and sent only to the configured collector. |
+| **Include visible conversation and tool content** | Adds the sanitized visible event payload to each span. This is a separate opt-in.                                         |
+
+Metadata includes event operation, agent ID, run ID, sequence, schema version, timing, status, team name, and provider/model/job ID when present. Requests time out after 20 seconds and redirects are not followed.
+
+Credentials, secure input, provider signatures, and hidden reasoning are excluded before export. Visible conversation and tool content is also sanitized and is sent only when its separate switch is enabled.
+
+
+# Extensions & MCP
+
+Add plugins, skills, MCP tools, Notebook workflows, and private continuity without expanding permissions.
+
+Locus combines installable extensions with bundled development workflows.
+
+* [Manage Extensions & MCP](/locus-docs/extensions-and-mcp/manage-extensions-and-mcp) covers servers, authentication, resources, prompts, tasks, and per-profile access.
+* [Workspace Knowledge & Memory](/locus-docs/extensions-and-mcp/workspace-knowledge-and-memory) covers the local index, approved memory, encryption, and recall.
+* [Bundled Workflows, Notebook & Continuity](/locus-docs/extensions-and-mcp/bundled-workflows-notes-and-continuity) covers Task Observer, Superpowers, Grill workflows, Notebook, Notes, and encrypted handoffs.
+
+Extensions do not increase the selected permission mode. A capability appears to an agent only when enabled at the workspace/profile boundary and permitted for that route. Stored configuration stays intact when a capability is disabled.
+
+
+# Manage Extensions & MCP
+
+Install extensions and define per-agent MCP access in Locus V2.
+
+Open Settings → Extensions.
+
+Locus supports MCP tools, resources, prompts, long-running tasks, progress, safe structured input, OAuth, remote HTTPS servers, and—where the build allows it—local stdio servers.
+
+## Add a server safely
+
+1. Add a catalog entry or a reviewed server definition.
+2. Connect it and complete authentication.
+3. Inspect every exposed capability.
+4. Allow only the profiles and tool classes that need it.
+5. Test with a read-only request before enabling mutations.
+
+Remote MCP URLs must use HTTPS. OAuth uses PKCE, an exact callback, state verification, bounded registration metadata, and a verified authorization origin. Credential-shaped form fields are refused.
+
+The bundled GitHub preset uses GitHub App device flow when the release is configured for it. Locus validates the account, stores tokens in Keychain, refreshes them, and keeps personal-token fallback for deployments that need it.
+
+## Per-profile policy
+
+Read-only profiles receive only allowed read capabilities. Mutating tools require a write-capable route and the ordinary permission loop. Background MCP tasks persist their remote identifier, progress, cancellation, and terminal state so a reconnect can resume supervision without rerunning the task.
+
+{% hint style="warning" %}
+Treat every extension as code and every remote response as external data. Review the server, its scopes, and its destination before granting access.
+{% endhint %}
+
+
+# Workspace Knowledge & Memory
+
+Search local project knowledge and carry forward only user-approved, encrypted memory.
+
+Locus has two local knowledge systems with different jobs:
+
+| System                     | Purpose                                                                                       | Stored data                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Workspace Search Index** | Find relevant material in project files.                                                      | Eligible file chunks, paths, line ranges, hashes, FTS5 terms, and optional local vectors.                         |
+| **Durable Memory 2.0**     | Carry approved preferences, facts, decisions, procedures, and relationships into future work. | Encrypted memory payloads, review state, scope, provenance, confidence, validity, and optional encrypted vectors. |
+
+{% hint style="info" %}
+Indexing a file does not turn it into memory. A memory suggestion is not recallable until you approve it.
+{% endhint %}
+
+## The user-facing memory flow
+
+1. **Agent suggests.** A clear preference, fact, decision, procedure, or relationship enters the Inbox as a candidate.
+2. **You review.** Approve, edit, reject, keep both sides of a conflict, or replace an older item.
+3. **Relevant recall.** Only approved, eligible memories can be retrieved. Locus explains why each item matched.
+
+Candidates expire after 30 days if they are not approved. This keeps transient suggestions from accumulating indefinitely.
+
+## Memory owner and scope
+
+The **Memory owner** picker changes which agent-scoped memories you are viewing and editing. Personal and workspace memory are shared independently of that selection.
+
+| Scope         | Boundary                                            |
+| ------------- | --------------------------------------------------- |
+| **Personal**  | Available across workspaces for this local user.    |
+| **Workspace** | Bound to the canonical workspace.                   |
+| **Agent**     | Bound to the selected team member or primary agent. |
+
+Memory kinds are **preference**, **fact**, **decision**, **procedure**, and **relationship**. Each item can also carry tags, confidence, provenance, a source session/run, valid-from and valid-until dates, a pin, stale state, last-used time, use count, revision, and conflict/supersession links.
+
+## Advanced Memory Settings
+
+![Advanced Memory Settings with FTS5 text search enabled](https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2FQOGY9p3X9EUPwR3Y6AdS%2Fadvanced-memory-settings.jpg?alt=media)
+
+The screenshot shows a populated search index and an empty approved-memory set:
+
+* **180 Files** means 180 eligible project files are represented in the index.
+* **455 Chunks** means those files produced 455 searchable text segments.
+* **0 Memories** means no approved durable memory is currently visible for the active workspace and selected memory owner.
+* **FTS5 text search** means the embedding model field is empty, so retrieval is lexical only.
+
+The memory count is separate from the file and chunk counts. It also does not show how many candidates are waiting in the Inbox.
+
+## Workspace Search Index
+
+The index is isolated by canonical workspace and stored locally in SQLite.
+
+| Control                                   | Detailed behavior                                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Index this workspace**                  | Enables project-file indexing for the current workspace.                                                                                                |
+| **Optional local Ollama embedding model** | Leave empty for fast FTS5 lexical search. Enter a local model to add meaning-based vector similarity and improve approved-memory semantic recall.       |
+| **Additional exclusions**                 | Comma-separated globs such as `Generated/**` or `Fixtures/private-*.json`.                                                                              |
+| **Save**                                  | Stores enabled state, model, local Ollama host, and exclusion rules.                                                                                    |
+| **Rebuild Index**                         | Reprocesses eligible files; use it after changing the embedding model or exclusions.                                                                    |
+| **Delete All Workspace Knowledge**        | After confirmation, deletes the project index and workspace-scoped candidate and approved memory. It does not remove project files or chat transcripts. |
+
+Indexing follows Git ignore rules and uses content hashes for incremental updates. It refuses symlinks and paths that escape the canonical workspace, and skips hidden, vendor, build, binary, and oversized files.
+
+The following never enter the index:
+
+* Files matching Git ignore rules or your extra exclusion globs.
+* Secret-shaped filenames and common key, certificate, and environment-secret names.
+* Vendor/build folders and hidden paths.
+* Binary files and files over 2 MB.
+* Symlinks or path escapes.
+
+If an embedding model is configured, text is sent only to the configured loopback Ollama `/api/embed` endpoint. If semantic embedding fails, FTS5 lexical search remains available.
+
+Search results include relative paths, line ranges, freshness, and source type. They are evidence, not instructions: project text cannot change system instructions, permissions, or team membership.
+
+## How Memory 2.0 recall works
+
+Recall first selects approved items in the active personal, workspace, and selected-agent scopes. Items whose valid-from date is in the future are skipped.
+
+Eligible items are ranked using:
+
+1. Exact phrase matches.
+2. Matching terms.
+3. Optional local semantic similarity.
+4. A boost for pinned items.
+5. Confidence.
+6. Recency.
+
+Expired items are strongly down-ranked and stale items are down-ranked further. Weak matches are filtered out. Returned items include a recall explanation such as **exact phrase**, **3 matching terms**, **semantic similarity 78%**, **pinned**, and **90% confidence**. Recalled items update their last-used time and use count.
+
+## Conflicts and replacement
+
+Locus surfaces same-topic alternatives instead of silently overwriting them.
+
+* **Keep Both** approves the new item and preserves the older conflicting item.
+* **Replace Older** approves the new item, records which IDs it supersedes, marks the older conflicts stale, and links each older item back to the replacement.
+
+Feedback can be marked **helpful**, **ignored**, or **incorrect**. Incorrect feedback marks the memory stale so it is much less likely to be recalled.
+
+## Backup and maintenance
+
+| Action                             | What it changes                                                                    | What remains                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **Review Health**                  | Marks expired approved memories stale and reports conflicts for review.            | Index, files, chats, and non-expired memory.             |
+| **Import Memory**                  | Adds validated memories from a Locus Memory JSON export.                           | Existing index and source project.                       |
+| **Export Memory**                  | Writes a deliberately readable JSON copy to your chosen file.                      | Encrypted local vault remains unchanged.                 |
+| **Delete All Workspace Knowledge** | Deletes the workspace index and workspace-scoped candidate/approved memory.        | Project files, chats, personal memory, and agent memory. |
+| **Delete All Memory**              | Deletes visible personal, workspace, and selected-agent candidate/approved memory. | Project index, project files, and chats.                 |
+
+{% hint style="warning" %}
+Memory export is readable text by design. Store the exported JSON like any other sensitive document. Deletion cannot be undone unless you exported memory first.
+{% endhint %}
+
+## Encryption details
+
+The local memory database stores ciphertext. Memory payloads and optional semantic vectors are encrypted together with AES-256-GCM.
+
+The 256-bit master key is protected by the macOS login Keychain and passed to the local backend only through its startup pipe. It is never written to app preferences, process arguments, or environment variables. The local memory database is permission-restricted as an additional boundary.
+
+## Recommended defaults
+
+* Start with **FTS5 text search**, an empty embedding-model field, and telemetry off.
+* Add a small local embedding model when meaning-based retrieval is worth the local compute.
+* Exclude generated artifacts, private fixtures, and any project-specific sensitive paths.
+* Approve durable decisions and conventions; reject transient task details.
+* Run **Review Health** periodically if you use validity dates or keep many related decisions.
+
+
+# Bundled Workflows, Notebook & Continuity
+
+Use bundled development workflows, Notebook and Notes, and private cross-chat continuity.
+
+Locus includes development workflows that can start automatically in Work, Plan, and Grill chats.
+
+## Bundled workflows
+
+The built-in suite includes Task Observer, Superpowers, lightweight workflow routers, and the Grill Me and Grilling methods. Grill mode uses the bundled grilling skill to ask one focused question at a time and does not modify the project before shared understanding is confirmed. Global and workspace controls live in Settings → Extensions. Just Chat keeps its no-tools boundary and does not load these workflows.
+
+Skills narrow how an agent approaches a task; they do not expand the selected permission mode or bypass hard safety rules. Review third-party provenance and notices from Settings or the repository inventory.
+
+## Notebook and Notes
+
+Each chat has an automatically saved Notes document in the right rail, and every workspace has its own note alongside the shared note. Use headings, lists, emphasis, links, and color to keep working material beside the conversation.
+
+Open **Notebook** from the sidebar gear, the Locus menu, the command palette, or ⇧⌘9. It presents a searchable list of every workspace, chat, shared, and unlinked legacy note. Select any note to edit it in the full editor. A note and its Notes-panel copy are the same document, so they cannot disagree.
+
+Notes are stored locally under a one-way hash of their owner. Locus records a readable name while that workspace or chat still exists. Older notes that can no longer be matched are preserved under **Unlinked**.
+
+When Notes access is enabled for an agent, Locus resolves the current workspace and chat itself; the model does not choose an arbitrary notes owner. If a note's plain-text mirror is missing, 2.1 restores its content from the formatting archive instead of opening and overwriting it as blank.
+
+## Private continuity
+
+Encrypted, workspace-local continuity snapshots preserve goals, plans, checkpoints, changed files, final outcomes, and pending work across development chats without another model call. Inspect, remove, or disable them in Settings → Memory & Knowledge.
+
+Use $context-handoff when you want an explicit handoff. Approved long-term memory remains a separate user-controlled feature.
+
+
+# Safety & Privacy
+
+Permissions, credentials, Browser, Autofill, Locus Vault, mobile access, proxies, and local persistence.
+
+Locus is local-first, not offline-only. Data leaves the Mac only through a route or capability you enable.
+
+* [Permission Modes](/locus-docs/safety-and-privacy/permission-modes) controls edits, commands, fetches, browser actions, MCP, and Computer Control.
+* [Credentials & Local Data](/locus-docs/safety-and-privacy/credentials-and-local-data) explains credential storage, transcripts, runs, attachments, notes, browser data, and wallet material.
+* [Native Computer Control](/locus-docs/safety-and-privacy/native-computer-control) covers guarded macOS interface automation.
+* [Network Proxies](/locus-docs/safety-and-privacy/network-proxies) covers profiles, strict tunnel, failover, authentication, and bypass rules.
+* [Browser & Dev Servers](/locus-docs/working-in-locus/browser-and-dev-servers) covers untrusted pages, guarded Autofill, quarantined downloads, wallet-origin isolation, and JavaScript approval.
+* [Mobile, Schedules & Background Work](/locus-docs/working-in-locus/mobile-schedules-and-background-work) covers the private TLS companion boundary.
+
+## Locus Vault private alpha
+
+Locus Vault is an in-app Sepolia Wallet Hub available only after risk review and explicit enablement in signed direct-download builds. It can create or unlock an isolated vault, receive through a locally generated ERC-681 QR, show a public balance while locked, link activity to Sepolia Etherscan, and define exact decimal ETH-to-wei spending rules for agents.
+
+Browser wallet access is a second opt-in. Enabling or revoking it clears pending work and remembered origins before tabs reload. Every website transaction requires an exact native confirmation. The Mac App Store build forces every wallet gate off.
+
+Hard safeguards remain active in Bypass mode. Selecting a hosted model, team, extension, proxy, schedule, mobile companion, Autofill category, or wallet feature never silently widens another capability.
+
+
+# Permission Modes
+
+Control when V2 edits, commands, fetches, browser actions, MCP, and UI control require approval.
+
+| Mode                  | Behavior                                                                       |
+| --------------------- | ------------------------------------------------------------------------------ |
+| **Ask every time**    | File changes, commands, fetches, and mutations request approval                |
+| **Accept file edits** | Workspace edits can apply automatically; commands and outside access still ask |
+| **Bypass all**        | Ordinary tools can run without prompts, but hard safeguards remain             |
+
+Automatic reads stay bounded to the workspace, local session state, enabled Notes scope, and capabilities explicitly exposed to the route.
+
+## Boundaries that still ask or refuse
+
+* Browser JavaScript and starting a dev server always ask.
+* Secure fields, credentials, password changes, contracts, security interstitials, final financial actions, and other high-consequence Computer Control steps require takeover or confirmation.
+* Browser file-upload pickers and typed credentials are refused.
+* Hosted screenshots require first-use consent for the provider.
+* Automatic hosted team routing requires separate consent.
+* Mobile cannot grant permanent permissions or perform Mac-only destructive session actions.
+* Evaluation fixtures disable Computer Control and mutating MCP tools.
+
+## Hard command blocks
+
+A deny list blocks catastrophic command patterns in every mode. Permission mode does not override workspace boundaries, credential handling, provider routing, extension policy, or operating-system entitlements.
+
+Use Bypass only in disposable workspaces whose contents and external accounts you can afford to lose.
+
+
+# Credentials & Local Data
+
+Understand what Locus stores locally, what leaves the Mac, and how credentials, notes, Autofill, and wallet material are handled.
+
+## Local by default
+
+Session transcripts, chat organization, Notebook and Notes, run records, checkpoints, schedules, workspace indexes, usage summaries, Browser Autofill data, and encrypted continuity live on the Mac. Local Ollama prompts and screenshots stay on the configured Ollama route.
+
+Hosted providers receive only requests you send through their route. Automatic hosted team routing requires separate consent. Optional ChatGPT web search sends search queries to OpenAI only when its per-account toggle is on.
+
+## Credentials
+
+API keys, managed account state, MCP tokens, mobile keys, memory keys, and Browser Autofill records are kept in macOS Keychain or scoped user-readable credential stores designed for their owning helper. They are never returned through ordinary model-visible APIs. Authenticated non-loopback provider endpoints require HTTPS and cannot redirect credentials.
+
+ChatGPT-plan OAuth stays inside the isolated Codex helper. Team workers reach it through an authenticated local broker and never receive the OAuth material.
+
+Browser Autofill stores passwords, contacts, and payment cards in Keychain. Agent access is opt-in by category; password access is limited to the current origin. Page scripts cannot enumerate the vault.
+
+## What is persisted
+
+* Transcripts are append-only local JSONL with separate organizer metadata.
+* Run history is a local SQLite store with credentials, hidden reasoning, provider signatures, and secure-field values removed.
+* Approved memory and continuity snapshots are encrypted with AES-256-GCM; the key is stored in Keychain.
+* Notes save locally under a one-way hash of their resolved chat, workspace, or shared owner; the Notebook adds searchable owner labels and preserves unmatched older notes under Unlinked.
+* Attachment names can appear in transcripts, but image/file bytes are not persisted in normal chat history.
+* Exporting with attachments deliberately copies those bytes into the exported artifact.
+* Browser data is ephemeral by default; an optional per-workspace persistent profile stores its own cookies, local storage, and browsing history.
+* Mobile pairs a pinned certificate and scoped device record; no cloud relay stores the conversation.
+
+## Locus Vault
+
+The Vault private alpha uses an isolated local wallet in signed direct-download builds. Public balance can refresh while locked; spending requires an unlocked vault, applicable spending rules, and the feature's confirmation boundaries. Receive QR content is generated locally. Browser injection uses a fresh page identity and every website transaction requires exact native confirmation.
+
+The Mac App Store build keeps wallet functionality disabled. Copy redacted diagnostics when reporting a Vault issue; never include a secret or recovery material.
+
+Deleting a chat moves it to recoverable local storage and never deletes workspace files.
+
+
+# Native Computer Control
+
+Let a foreground writer operate Mac interfaces within V2's guarded boundaries.
+
+Computer Control is optional, off by default, and available only in the signed direct-download build after the required macOS permissions are granted. The App Store build omits it.
+
+A foreground write-capable route can inspect accessibility state, click, type, press keys, scroll, drag, and use bounded screenshots. Only one controller may operate the Mac at a time; team researchers and background workers remain read-only.
+
+## Screenshot consent
+
+A screenshot remains local with Ollama. Before the first screenshot sent to a hosted provider in a session, Locus names the provider and asks. If consent is declined or the model rejects images, Locus continues with accessibility text where possible.
+
+## Non-bypassable boundaries
+
+Bypass cannot reveal secure fields or finalize high-consequence actions. Passwords, credential entry, contracts, purchases, privacy/security changes, irreversible deletion, uploads, installation, and security interstitials require confirmation or user takeover.
+
+Computer Control and Browser are separate. Browser is available in both builds and operates only Locus-managed web views with its own credential, JavaScript, download, and tab boundaries.
+
+
+# Network Proxies
+
+Route V2 traffic through named proxy profiles with strict tunnel and health-ranked failover.
+
+Open Settings → Network or the Proxies inspector.
+
+Locus supports direct, macOS system, HTTP/HTTPS, and SOCKS5 routes. Manual routes can cover app requests, hosted models, agent web traffic, Browser, downloads, Git, Terminal, and MCP. SOCKS5 uses remote DNS.
+
+## Profiles and assignment
+
+Create named profiles, then assign them by traffic class, workspace, or provider. A more specific assignment wins over the general route. Health checks report latency and the externally observed exit address.
+
+Automatic failover checks the pool every minute and chooses the fastest healthy standby. **Strict tunnel** ignores custom bypass entries and blocks external traffic when no configured route is available. Locus never silently falls back to a direct external connection.
+
+Loopback, the app-to-agent connection, and the configured Ollama host remain direct.
+
+## System proxy caveats
+
+The agent receives a snapshot of macOS proxy settings when it starts. Restart it after system changes. PAC files cannot be translated into the environment used by all agent libraries, so choose a manual Locus profile when the network requires the tunnel.
+
+The MCP OAuth browser follows macOS system networking. Configure the system proxy as well when only the proxy can reach the sign-in page.
+
+## Authentication and child processes
+
+Manual profiles support Basic authentication. Proxy secrets are withheld from shell commands, Terminal children, Git, stdio MCP servers, and Ollama processes started by Locus. Those children can receive the proxy address without the password and may report HTTP 407 by design.
+
+Custom bypass values accept hostnames, IP addresses, and suffixes such as `.example.com`; CIDR is not supported.
+
+
+# Troubleshooting
+
+Fix common Locus 2.1 runtime, component, model, browser, Notebook, Vault, run, mobile, proxy, and recovery problems.
+
+Start with the visible status in the sidebar, Overview, transcript, run board, Activity Center, or Runs. Locus reports the failing layer rather than silently changing routes.
+
+## Local services or Ollama are unavailable
+
+Wait for Starting or Recovering to finish. Confirm Ollama is installed and reachable at the configured host. A local model loads on the first prompt and may reload after a context-window change.
+
+## ChatGPT sign-in or component fails
+
+Open Settings → Updates and confirm the Codex component is installed. Retry the component download on a stable connection. A checksum or code-signature failure installs nothing; remove and reinstall the component if the verified archive is incomplete. ChatGPT-plan routing never falls back to an API key.
+
+If /compact appears ineffective, update to 2.1; compaction resets the helper's server-side thread too.
+
+## ChatGPT behavior changed after the update
+
+Open the account editor and check **Codex-native mode**. New accounts begin with Locus's prompt and tools; accounts added before 2.1 keep their previous choice. Turning the toggle on or off restarts the conversation's server-side context, and the first message in an existing chat may replay history once.
+
+Reasoning effort applies on the next turn without a reset. Web search is a separate, off-by-default toggle.
+
+## A hosted account will not switch
+
+Test the account, URL, key, and selected model. Kimi and Kimi Code use different hosts and credentials. Authenticated custom endpoints require HTTPS and cannot redirect. A rejected switch should restore the previous active route. Update to 2.1 if a ChatGPT or Kimi model is incorrectly reported as not installed.
+
+## A model answers but cannot edit or see images
+
+The route may lack tool calling or image input. Locus retries once without the rejected capability and records a note. Choose a tool-capable or vision-capable model for that request.
+
+## A note opens empty
+
+Update to 2.1 before typing into it. Locus now falls back to the formatting archive when the plain-text mirror is missing. Open Notebook with ⇧⌘9; older notes that cannot be matched to an existing owner appear under Unlinked.
+
+## Browser input, layout, or Autofill fails
+
+Refresh the page snapshot before reusing element identifiers. For a canvas or map, capture the region and target page coordinates. Confirm real input is enabled under Settings → Browser. Reload after changing the mobile-device presentation because sites choose their layout at navigation time.
+
+Resize the inspector after updating to 2.1; the live page should follow the panel and wide pages should keep native horizontal scrolling.
+
+For Autofill, confirm the vault is loaded and the required category is enabled for agent access. Passwords are origin-scoped. Browser JavaScript and dev-server startup require approval even in Bypass.
+
+## Locus Vault is unavailable
+
+Vault is a private alpha for signed direct-download builds and is disabled in the Mac App Store build. Review and enable it in Settings first. Website access is a separate opt-in from the Vault itself. Use Sepolia only, verify exact transaction details in the native confirmation, and copy only redacted diagnostics when reporting a problem.
+
+## A named dev server will not start
+
+Validate .locus/launch.json, executable, arguments, and port. Use a URL-only configuration to attach to an existing server. Read the bounded server output with a level or search filter.
+
+## Mobile will not pair
+
+Enable Mobile Access on the Mac, keep Locus or its menu-bar process running, and use a fresh five-minute code. Confirm both devices can reach each other over the LAN or Tailscale. A changed Mac certificate requires a new pairing.
+
+## A command needs a full terminal
+
+Use Terminal for interactive programs. Managed background services are better for watchers and servers that should survive an agent turn.
+
+## A run shows the wrong files, steps, or usage
+
+Update to 2.1. Overview and Activity are scoped to the selected run even when another run is live. Switch away and back if you were viewing data loaded by an older build.
+
+## A team plan is repaired or a run reaches a limit
+
+Open the board or Runs for the exact validation or budget boundary. Writer-step and model-call limits pause at a durable checkpoint; they are not success conditions. Repair the missing profile, credential, checkout, or budget and resume.
+
+## Proxy traffic fails
+
+Run a profile health check. In strict tunnel mode, external traffic remains blocked until a healthy route exists. PAC-based system proxy settings may not reach agent libraries; use a manual profile. A child process can report 407 because Locus withholds proxy passwords from it.
+
+## Still blocked?
+
+Record the Locus version, build channel, provider and model, visible error, and relevant Runs timeline. Do not include credentials. Report security issues privately to <security@sparktales.io>.
+
+
+# Release Notes
+
+Product changes across Locus 2.1, 2.0, and the V2 update line.
+
+{% updates format="full" %}
+{% update date="2026-08-30" tags="v2.1,current" %}
+
+## Locus 2.1.0
+
+### Added
+
+* **Notebook** gathers every workspace, chat, shared, and unlinked legacy note into one searchable page. Open it from the sidebar gear, Locus menu, command palette, or ⇧⌘9, and edit any note in the full editor.
+* **Locus Vault private alpha** adds an in-app Sepolia Wallet Hub to signed direct-download builds: isolated vault creation and unlock, local ERC-681 receive QR, balance and Etherscan activity, exact agent spending rules, a separate browser opt-in, and native confirmation for every website transaction. The Mac App Store build keeps wallet gates off.
+* **ChatGPT conversation controls** add per-account Codex-native mode, model-supported reasoning effort, and optional OpenAI web search. Locus still owns execution and permissions in either contract.
+
+### Changed
+
+* **Grill replaces GSD.** Use ⌥G or /grill for a one-question-at-a-time interview that does not modify the project. Approved Plans now implement in Work; older stored mode values remain compatible.
+* **New ChatGPT accounts start with Locus's tools.** Existing accounts keep their previous contract choice. Codex-native mode remains one toggle away and deliberately omits approved memory, cross-chat context, and the skill index.
+* **Transcript activity stays chronological.** Collapsed reasoning and tools use quiet inline disclosures at the real activity boundary; detailed modes retain their cards.
+* **The app core is decomposed into feature-owned models.** Provider accounts, teams, run history, live run cards, extensions, knowledge, evaluations, schedules, activity, search, background services, AGENTS.md, landing, and toasts now have tested observable owners, reducing the risk of future changes.
+
+### Fixed
+
+* Run Overview and Activity now use only the selected run's events; created-then-deleted files and stale expansion state no longer leak across runs.
+* Notes recover from their formatting archive when the plain-text mirror is missing, and UI tests use separate note storage.
+* Hosted ChatGPT and Kimi model switches no longer fail against the local Ollama model list.
+* Transcript selection spans the conversation, survives scrolling, supports Shift-click, and keeps links clickable; the floating Copy/Quote buttons are gone.
+* Produced files open in the correct Mac app and appear in Outputs even when written by scripts, gitignored, or created outside a Git repository.
+* Browser layout follows the panel size, keeps native horizontal scrolling, and uses a quieter responsive toolbar.
+* The Add Account menu is readable again, and /compact resets the ChatGPT helper's server-side thread.
+  {% endupdate %}
+
+{% update date="2026-08-26" tags="v2,updates" %}
+
+## Late 2.0 updates
+
+### Added
+
+* Model Router and Usage & Costs made route scorecards, tokens, estimated spend, provider, model, agent, and workspace attribution inspectable.
+* Proxy profiles and failover added workspace/provider assignments, strict tunnel, health checks, external exit address, and fastest-healthy standby selection.
+* A calmer workspace added the pinned Overview summary, Notes formatting, chat folders, Side Chat, richer exports, and automatic bounded Solo delegation.
+
+### Fixed
+
+* Failed account switches restore the previous route instead of leaving mismatched provider/model state.
+  {% endupdate %}
+
+{% update date="2026-08-22" tags="v2,browser" %}
+
+## Locus 2.0.0
+
+### Added
+
+* ChatGPT-plan helpers moved to a separately downloaded, checksum- and signature-verified component, shrinking the direct app from about 180 MB to about 62 MB.
+* Browser input uses real AppKit clicks, keys, scrolling, and dragging when possible.
+* Coordinate targeting, region screenshots, per-tab tool targeting, phone user-agent/touch emulation, find in page, page zoom, and visible device controls.
+* Named development servers in .locus/launch.json, including URL-only attachment and filtered output.
+
+### Changed
+
+* Browser typing now sends real keystrokes; set\_value remains the one-step replacement action.
+* Web Inspector became an opt-in Browser setting.
+* Codex helpers are stripped before signing and packaging.
+
+### Fixed
+
+* Streaming continues when a display sleeps or no display is connected.
+* Browser scrolling works on headless Macs.
+* Codex build caches require an exact architecture match.
+  {% endupdate %}
+
+{% update date="2026-08-17" tags="v1.16,ui" %}
+
+## Locus 1.16
+
+* Overview became the pinned Plan, Outputs, Subagents, Background Processes, Sources, and Context Window summary.
+* Failed provider switches now roll back cleanly.
+  {% endupdate %}
+
+{% update date="2026-08-16" tags="v1.15,workflows" %}
+
+## Locus 1.15
+
+* Bundled Task Observer, Superpowers, workflow routers, Grill Me, and Grilling methods.
+* Encrypted workspace continuity, per-chat Notes, model removal/deletion, GitHub MCP device-flow support, and calmer workspace navigation.
+  {% endupdate %}
+
+{% update date="2026-08-13" tags="v1.14,updates" %}
+
+## Locus 1.14
+
+* Signed automatic updates for direct downloads; App Store installs continue through Apple.
+  {% endupdate %}
+
+{% update date="2026-08-09" tags="v1.13,accounts" %}
+
+## Locus 1.13
+
+* Managed ChatGPT-plan sign-in and the pinned Codex App Server bridge.
+* Faster Browser caching and network capture, real tabs, screenshot annotation, attachments in every mode, transcript search, usage/cost reporting, and Git branch/sync/hunk controls.
+* Stop and steering controls, provider/model self-identification, and improved navigation and composer preferences.
+  {% endupdate %}
+
+{% update date="2026-08-09" tags="v1.12,browser" %}
+
+## Locus 1.12
+
+* The agent-drivable Browser replaced Preview with addressable elements, screenshots, console/network inspection, managed tabs, safe dialogs, quarantined downloads, persistent-profile control, and dev-server supervision.
+  {% endupdate %}
+  {% endupdates %}
+
+{% hint style="info" %}
+The detailed guides describe Locus 2.1.0. Older chats and saved mode values remain compatible, and disabled capabilities leave their stored configuration intact.
+{% endhint %}
+
+
+# Developer Guide
+
+Build, test, package, and understand the native Locus app and bundled agent.
+
+Locus 2.1 is an Apache-2.0 SwiftUI application with a bundled Python agent, optional Codex helpers, and a shared mobile protocol.
+
+* [Build & Test](/locus-docs/developer-guide/build-and-test) covers Xcode 26, Rust, XcodeGen, native tests, Python tests, mobile checks, and component packaging.
+* [Architecture & Protocol](/locus-docs/developer-guide/architecture-and-protocol) explains the 2.1 feature-model decomposition, process ownership, loopback communication, Codex-plan routing, persistence, and security boundaries.
+
+## Repository map
+
+```
+Locus/             SwiftUI application, feature models, and native brokers
+LocusTests/        Swift unit tests
+LocusUITests/      macOS UI tests with isolated fixture storage
+agent/             Bundled Python agent service and domain API modules
+mobile/            Locus Mobile source and shared protocol client
+ProtocolFixtures/  Shared Mac/mobile wire envelopes
+Tools/             Build, packaging, appcast, audit, and reviewability scripts
+Docs/              Guides, architecture notes, and screenshots
+```
+
+AppModel and agent/server.py are composition roots, not default homes for new feature behavior. Add native state and actions to the matching observable feature model, and add service routes and request behavior to the matching domain API module.
+
+Read the repository CONTRIBUTING guide before changing provider routing, credentials, protocol contracts, permissions, packaging, or third-party inventory.
+
+
+# Build & Test
+
+Prepare the Locus V2 native app, bundled agent, mobile companion, and optional Codex component.
+
+## Prerequisites
+
+Source builds require Xcode 26 and Rust 1.95 installed with rustup. XcodeGen is needed only when changing `project.yml` or adding source files.
+
+```bash
+brew install xcodegen
+rustup toolchain install 1.95.0 --profile minimal --component rust-src
+rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.95.0
+xcodegen generate
+open Locus.xcodeproj
+```
+
+Select the Locus scheme and My Mac. The first build downloads the relocatable Python runtime and pinned Codex dependencies; later builds reuse them.
+
+## Native tests
+
+```bash
+xcodebuild test \
+  -project Locus.xcodeproj \
+  -scheme Locus \
+  -destination 'platform=macOS' \
+  -only-testing:LocusTests
+```
+
+Run UI tests with the LocusUITests target when changing navigation, Browser, permissions, split panes, or inspector behavior.
+
+## Agent tests
+
+```bash
+cd agent
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest -q
+```
+
+## Mobile checks
+
+```bash
+cd mobile
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+flutter build ios --simulator --no-codesign
+```
+
+## Codex component packaging
+
+Release deliberately does not embed the helpers; it records component delivery provenance. `Tools/PackageComponents.sh <output-directory>` builds, strips, signs, and publishes the helpers and `components.json` feed. Debug and ReleaseMAS embed them for local work. Override with `LOCUS_BUNDLE_CODEX=build|component|skip`.
+
+Run the distribution and third-party audits before publishing.
+
+
+# Architecture & Protocol
+
+Understand the 2.1 feature-owned native client, domain-owned agent service, Codex component, persistence, and companion boundary.
+
+Locus is one product with two local runtimes:
+
+* The SwiftUI application owns native presentation, workspace access, permission surfaces, platform integrations, and feature view models.
+* The Python service owns model and provider I/O, orchestration, tools, sessions, schedules, persisted runs, and the authenticated local API.
+
+They communicate over authenticated loopback HTTP and WebSocket contracts.
+
+## Native app
+
+**AppModel is the composition root.** It connects features, translates events, and derives cross-feature presentation, but new feature state and actions belong in a feature-owned observable model.
+
+In 2.1, provider accounts, agent teams, run history, the live run card, extensions and MCP, workspace knowledge, evaluations, schedules, the Activity Center, transcript search, background services, the AGENTS.md editor, landing flow, and toasts moved to their own tested models. GitWorkspaceModel and WorkspaceFileModel own Git and file behavior, while BrowserService, TerminalSession, ApplicationContextService, and SimulatorControlService retain independent platform lifetimes.
+
+Feature views observe their model directly. Dependencies flow toward feature models; a feature model must not retain AppModel. The composition root supplies narrow callbacks for shared presentation such as toasts or session activity.
+
+## Bundled agent
+
+**server.py is the service composition root.** create\_app builds isolated FastAPI instances, and request-time dependencies resolve from the concrete application.
+
+Chat runtime lives in chat\_service.py. Domain modules own ordinary request behavior: workspace and evaluations; system and providers; knowledge, sessions, and continuity; schedules; runs and usage; extensions; and authenticated chat/Codex transport. Request-neutral runtime helpers live beside those modules.
+
+API modules resolve services through the dependency layer and do not import a module-global application. New routes belong in the matching domain module. The server.app symbol remains only as the uvicorn and import compatibility entry point.
+
+## Communication
+
+The app and service communicate over authenticated REST and WebSocket endpoints bound to 127.0.0.1. The service rejects browser-origin requests. Browser, Notes, Terminal, and Computer Control capabilities appear dynamically only when their native broker and permissions are available.
+
+ChatGPT-plan requests use a pinned Codex App Server child over local JSONL and stdio. Direct builds resolve it from the verified downloaded component; Mac App Store and development builds can embed it. Team workers use a launch-token-authenticated internal broker and never receive OAuth state.
+
+Locus Mobile uses a separate private TLS gateway with certificate pinning and a one-use pairing code. It never exposes the agent's loopback port.
+
+## Persistence
+
+* append-only session JSONL plus organizer metadata and recoverable trash;
+* local SQLite for durable runs, schedules, usage, transcript search, and team events;
+* private Git worktrees and immutable evaluation fixtures;
+* hashed local note ownership, formatting archives, Notebook labels, Browser profiles, and Keychain-backed Autofill;
+* AES-256-GCM memory and continuity with a Keychain-held key; and
+* versioned shared Mac/mobile protocol fixtures.
+
+Credentials, secure fields, provider signatures, and hidden reasoning are excluded from run records and exports by default.
+
+## Reviewable changes
+
+Keep a refactor and a behavior change separate when either can stand alone. Route moves retain contract snapshots; feature ownership moves retain characterization tests until consumers use the new boundary directly.
+
+Tools/ReviewabilityReport.py reports large production files, large diff slices, architecture-boundary drift, new published state or view-facing actions in AppModel, and registered route handlers added to server.py. Findings are advisory: a large file is not itself a defect, but another unrelated responsibility is a signal to choose a clearer owner.
+
+

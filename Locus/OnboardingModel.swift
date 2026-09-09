@@ -2,10 +2,36 @@ import Combine
 import Foundation
 
 enum OnboardingStartingPoint: String, Codable, CaseIterable, Identifiable {
-    case documents, coding
+    case documents, coding, agents
     var id: String { rawValue }
-    var title: String { self == .documents ? "Documents and research" : "Coding" }
-    var outputPath: String { self == .documents ? "Locus Summary.md" : "Repository Overview.md" }
+    var title: String {
+        switch self {
+        case .documents: "Documents and research"
+        case .coding: "Coding"
+        case .agents: "Agents and recurring tasks"
+        }
+    }
+    var summary: String {
+        switch self {
+        case .documents: "Ask questions, explore a topic, or summarize your files."
+        case .coding: "Get to know a code project and find your next steps."
+        case .agents: "Let Locus handle regular work or respond to new events."
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .documents: "doc.text.magnifyingglass"
+        case .coding: "chevron.left.forwardslash.chevron.right"
+        case .agents: "clock.arrow.circlepath"
+        }
+    }
+    var outputPath: String? {
+        switch self {
+        case .documents: "Locus Summary.md"
+        case .coding: "Repository Overview.md"
+        case .agents: nil
+        }
+    }
 }
 
 struct OnboardingRun: Codable, Equatable {
@@ -96,10 +122,10 @@ final class OnboardingModel: ObservableObject {
         case startingPoint, model, workspace, firstTask
         var title: String {
             switch self {
-            case .startingPoint: "Choose your starting point"
-            case .model: "Connect a model"
-            case .workspace: "Choose a workspace"
-            case .firstTask: "Complete your first task"
+            case .startingPoint: "What would you like to do?"
+            case .model: "Choose your AI"
+            case .workspace: "Choose a folder to work in"
+            case .firstTask: "Try your first task"
             }
         }
     }
@@ -111,6 +137,8 @@ final class OnboardingModel: ObservableObject {
         var workspace: String?
         var usesSample = false
         var dismissed = false
+        /// Optional for setup progress saved before first-launch presentation was tracked.
+        var presentedOnLaunch: Bool? = nil
         var run: OnboardingRun?
         var firstTaskCompleted = false
         var durationMilliseconds: Int?
@@ -139,8 +167,18 @@ final class OnboardingModel: ObservableObject {
     private var checkTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var pendingOutput: OnboardingRun?
+    private var pendingAgentSetup = false
+    private var pendingLaunchPresentation = false
 
     var isRunning: Bool { progress.run != nil && !progress.firstTaskCompleted && progress.failure == nil }
+    var steps: [Step] {
+        progress.startingPoint == .agents ? [.startingPoint, .firstTask] : Step.allCases
+    }
+    var stepNumber: Int { (steps.firstIndex(of: progress.step) ?? 0) + 1 }
+    var stepTitle: String {
+        progress.startingPoint == .agents && progress.step == .firstTask
+            ? "Set up your first agent" : progress.step.title
+    }
 
     func configure(
         defaults: UserDefaults? = nil,
@@ -162,9 +200,21 @@ final class OnboardingModel: ObservableObject {
         } else {
             progress.dismissed = isExistingInstallation
         }
-        isPresented = autoPresent && !progress.dismissed && !progress.firstTaskCompleted
+        // The main window consumes this after mounting its sheet host.
+        pendingLaunchPresentation = autoPresent && !isExistingInstallation && !progress.dismissed
+            && !progress.firstTaskCompleted && progress.presentedOnLaunch != true
         self.readiness = readiness()
         if isRunning { monitor() }
+    }
+
+    func presentOnLaunchIfNeeded() {
+        guard pendingLaunchPresentation else { return }
+        pendingLaunchPresentation = false
+        // Save immediately so quitting with setup still open does not make it
+        // reappear on the next launch. Manual setup remains resumable from Help.
+        progress.presentedOnLaunch = true
+        persist()
+        present()
     }
 
     func present() {
@@ -175,6 +225,7 @@ final class OnboardingModel: ObservableObject {
     }
 
     func dismiss() {
+        pendingLaunchPresentation = false
         progress.dismissed = true
         isPresented = false
         persist()
@@ -191,13 +242,33 @@ final class OnboardingModel: ObservableObject {
         return pendingOutput
     }
 
+    func requestAgentSetup() {
+        guard progress.startingPoint == .agents, !isStarting, !isRunning else { return }
+        pendingAgentSetup = true
+        dismiss()
+    }
+
+    func takeAgentSetupRequest() -> Bool {
+        defer { pendingAgentSetup = false }
+        return pendingAgentSetup
+    }
+
     func select(_ point: OnboardingStartingPoint) {
-        guard !isStarting, !isRunning else { return }
-        if progress.startingPoint != point, progress.usesSample {
+        guard !isStarting, !isRunning, progress.startingPoint != point else { return }
+        if progress.usesSample {
             progress.workspace = nil
             progress.usesSample = false
         }
         progress.startingPoint = point
+        progress.run = nil
+        progress.firstTaskCompleted = false
+        progress.durationMilliseconds = nil
+        progress.firstResponseMilliseconds = nil
+        progress.outputTokensPerSecond = nil
+        progress.failure = nil
+        isWaitingForOutput = false
+        error = nil
+        if !steps.contains(progress.step) { progress.step = .startingPoint }
         persist()
     }
 
@@ -210,15 +281,15 @@ final class OnboardingModel: ObservableObject {
     }
 
     func next() {
-        guard let step = Step(rawValue: progress.step.rawValue + 1) else { return }
-        progress.step = step
+        guard !isStarting, let index = steps.firstIndex(of: progress.step), index + 1 < steps.count else { return }
+        progress.step = steps[index + 1]
         error = nil
         persist()
     }
 
     func back() {
-        guard !isStarting, let step = Step(rawValue: progress.step.rawValue - 1) else { return }
-        progress.step = step
+        guard !isStarting, let index = steps.firstIndex(of: progress.step), index > 0 else { return }
+        progress.step = steps[index - 1]
         error = nil
         persist()
     }
@@ -241,7 +312,7 @@ final class OnboardingModel: ObservableObject {
     func reportError(_ message: String) { error = message }
 
     func runFirstTask() {
-        guard !isStarting, !isRunning, !progress.firstTaskCompleted else { return }
+        guard progress.startingPoint != .agents, !isStarting, !isRunning, !progress.firstTaskCompleted else { return }
         readiness = readinessProvider()
         guard readiness.ready else { error = "Connect a ready model before starting."; return }
         guard let workspace = progress.workspace else { error = "Choose a workspace first."; return }

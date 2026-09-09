@@ -258,12 +258,13 @@ extension AppModel {
     // MARK: - Pinned summary (Overview tab)
 
     /// Codex's Outputs "+" menu inserts a creation prompt and focuses the
-    /// composer while the summary stays on screen.
+    /// composer after dismissing the popup.
     func insertCreationPrompt(_ kind: SummaryCreationKind) {
         prefillComposerFromSummary(kind.prompt)
     }
 
     func prefillComposerFromSummary(_ prompt: String) {
+        dismissOverview()
         prefillComposer(with: prompt, collapsingInspector: false)
     }
 
@@ -291,6 +292,7 @@ extension AppModel {
     }
 
     func openSummaryOutput(_ row: PinnedSummary.OutputRow) {
+        dismissOverview()
         switch row.kind {
         case .file:
             openSessionFile(row.target)
@@ -310,6 +312,7 @@ extension AppModel {
     }
 
     func openSummarySource(_ source: SessionSource) {
+        dismissOverview()
         switch source.kind {
         case .file, .image:
             guard let target = source.target else { return }
@@ -378,7 +381,7 @@ extension AppModel {
             $0.kind == .assistant || $0.kind == .error || $0.completion != nil
         })?.id
         requestTranscriptJump(target)
-        inspectorCollapsed = true
+        dismissOverview()
     }
 
     func jumpToSessionEvent(_ event: SessionEvent) {
@@ -416,7 +419,7 @@ extension AppModel {
         }
         guard let target else { return }
         requestTranscriptJump(target.id)
-        inspectorCollapsed = true
+        dismissOverview()
     }
 
     private func requestTranscriptJump(_ target: UUID?) {

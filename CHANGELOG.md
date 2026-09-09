@@ -1,9 +1,17 @@
 # Changelog
 
-## 2.7.0 — Unreleased
+## 2.7.0 — 2026-09-08
 
 ### Added
 
+- Automatic updates for direct-download Locus: daily checks, background
+  downloads, and installation on quit, with preferences and manual checks in
+  Settings. Version 2.6.0 and earlier require one manual upgrade. The separate
+  signed Locus feed preserves the unchanged legacy feed for older installations.
+- A detailed Chat Context panel with a segmented usage bar, token counts,
+  percentages, expandable context categories, reserved space, and free space.
+  Deferred tools are listed separately; provider-managed context is identified
+  when a detailed breakdown is unavailable.
 - Image generation and editing inside the conversation. With an OpenAI API or
   compatible account chosen under Settings › Models & Providers › Image
   generation, the agent can create a picture from a prompt or edit an existing
@@ -30,11 +38,34 @@
 
 ### Changed
 
+- Work Overview appears at the top right during a request and yields its place
+  to an open inspector. It can be minimized, dismissed, or reopened from the
+  workspace menu. Browser and Chat Context exchange positions in the right
+  toolbar, and a divider separates panel visibility from the tool buttons.
+- Dark appearance is the default for new settings. Existing appearance choices
+  are preserved.
+- The composer groups Work, Plan, Grill, Goal, Task Capsules, and team options
+  in one keyboard-accessible workflow menu while keeping the draft intact.
+- Library previews add image zoom and pan, clearer document viewing controls,
+  visible export actions, sorting, and useful filtered-empty states. Saved
+  outputs and Vault documents make versions and related details easier to find;
+  private document previews stay in memory.
+- Getting Started opens once when the main window is ready, offers document,
+  coding, and recurring-agent paths, and preserves progress when postponed.
+- Chat Context focuses on context usage; source attachments remain available
+  through Overview. Inspector tabs have larger click targets and an open-tabs menu.
 - The answer contract teaches the agent when to generate an image, when to
   attach an interactive explanation, and how to explain that image generation
   is not set up.
 - Markdown, plain-text, and PDF exports include generated images and the
   interactive HTML beside the exported chat.
+
+### Fixed
+
+- Avoid redundant workspace refreshes when switching chats with Overview
+  already closed.
+- Updated the bundled HTTP transport to HTTPX2 and HTTPCore2 2.12.0 to include
+  upstream TLS, redirect, and streaming decompression security fixes.
 
 ## 2.6.0 — 2026-09-07
 

@@ -2,6 +2,42 @@ import AppKit
 import PDFKit
 import SwiftUI
 
+/// Demonstration records only, using the UI test model's memory-only vault.
+struct IdentityVaultUITestFixtureView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var error: String?
+    var body: some View {
+        IdentityVaultView(vault: model.identityVault)
+            .overlay(alignment: .bottom) { if let error { Text(error).padding() } }
+            .task {
+                guard model.isUITesting,
+                      ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_IDENTITY_CONTENT"] == "1",
+                      await model.identityVault.ready() else { return }
+                let store = model.identityVault.store
+                guard store.profiles.isEmpty else { return }
+                do {
+                    let profile = try store.saveProfile(.init(name: "Career details", kind: .career))
+                    let pdf = try IdentityVaultDocuments.generatePDF(title: "Sample résumé",
+                        sections: [.init(heading: "Experience", text: "Example experience for interface testing.")])
+                    let first = try store.addDocument(name: "Resume.pdf", kind: .resume, mimeType: "application/pdf",
+                        data: pdf, extractedText: "Example experience", profileID: profile.id)
+                    _ = try store.addDocument(name: "Resume.pdf", kind: .resume, mimeType: "application/pdf",
+                        data: pdf, extractedText: "Example experience", profileID: profile.id, replacingDocumentID: first.id)
+                    let image = NSImage(size: NSSize(width: 500, height: 180))
+                    image.lockFocus()
+                    ("Sample signature" as NSString).draw(at: NSPoint(x: 24, y: 70),
+                        withAttributes: [.font: NSFont.systemFont(ofSize: 36), .foregroundColor: NSColor.black])
+                    image.unlockFocus()
+                    if let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+                       let png = bitmap.representation(using: .png, properties: [:]) {
+                        _ = try store.addDocument(name: "Signature.png", kind: .signature, mimeType: "image/png", data: png)
+                    }
+                    model.identityVault.tab = .documents
+                } catch { self.error = error.localizedDescription }
+            }
+    }
+}
+
 /// Populated native UI coverage gets a disposable store; it never reads or
 /// writes the person's Library, preferences, provider, or live workspace.
 @MainActor

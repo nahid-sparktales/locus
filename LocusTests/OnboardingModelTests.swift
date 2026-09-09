@@ -71,9 +71,56 @@ final class OnboardingModelTests: XCTestCase {
             XCTAssertFalse(model.isPresented)
             model.configure(isExistingInstallation: existing, autoPresent: true, readiness: { self.ready }, refresh: {},
                             start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+            XCTAssertFalse(model.isPresented, "Wait until the main window is ready before presenting setup")
+            model.presentOnLaunchIfNeeded()
             XCTAssertEqual(model.isPresented, !existing)
             model.present()
             XCTAssertTrue(model.isPresented)
+        }
+    }
+
+    @MainActor
+    func testFirstLaunchIsRememberedEvenWhenAppQuitsWithSetupOpen() throws {
+        let name = "OnboardingTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let first = OnboardingModel()
+        first.configure(defaults: defaults, isExistingInstallation: false, autoPresent: true,
+                        readiness: { .unknown }, refresh: {},
+                        start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+        first.presentOnLaunchIfNeeded()
+        XCTAssertTrue(first.isPresented, "First-launch setup must not require a connected model")
+        XCTAssertEqual(first.progress.presentedOnLaunch, true)
+        first.select(.agents)
+        first.next()
+        // Recreate the model without dismissing the first sheet, as if the app quit.
+        let next = OnboardingModel()
+        next.configure(defaults: defaults, isExistingInstallation: false, autoPresent: true,
+                       readiness: { .unknown }, refresh: {},
+                       start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+        next.presentOnLaunchIfNeeded()
+        XCTAssertFalse(next.isPresented)
+        XCTAssertFalse(next.progress.firstTaskCompleted)
+        next.present()
+        XCTAssertTrue(next.isPresented)
+        XCTAssertEqual(next.progress.startingPoint, .agents)
+        XCTAssertEqual(next.progress.step, .firstTask)
+        next.dismiss()
+        next.presentOnLaunchIfNeeded()
+        XCTAssertFalse(next.isPresented, "Reopening the main window must not reopen setup")
+    }
+
+    @MainActor
+    func testDisabledAutoPresentationAndEarlyDismissalDoNotOpenSetup() {
+        for autoPresent in [false, true] {
+            let model = OnboardingModel()
+            model.configure(isExistingInstallation: false, autoPresent: autoPresent,
+                            readiness: { .unknown }, refresh: {},
+                            start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+            if autoPresent { model.dismiss() }
+            model.presentOnLaunchIfNeeded()
+            XCTAssertFalse(model.isPresented)
+            XCTAssertNil(model.progress.presentedOnLaunch)
         }
     }
 
@@ -92,6 +139,7 @@ final class OnboardingModelTests: XCTestCase {
         let restored = OnboardingModel()
         restored.configure(defaults: defaults, isExistingInstallation: true, autoPresent: true, readiness: { self.ready }, refresh: {},
                            start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+        restored.presentOnLaunchIfNeeded()
         XCTAssertFalse(restored.isPresented)
         XCTAssertFalse(restored.progress.firstTaskCompleted)
         XCTAssertEqual(restored.progress.step, .model)
@@ -211,6 +259,63 @@ final class OnboardingModelTests: XCTestCase {
         model.runFirstTask()
         XCTAssertEqual(starts, 0)
         XCTAssertNotNil(model.error)
+    }
+
+    @MainActor
+    func testAgentSetupResumesWithoutModelOrWorkspaceAndNeverStartsAnExample() throws {
+        let name = "OnboardingTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = OnboardingModel()
+        model.configure(defaults: defaults, isExistingInstallation: false, autoPresent: true,
+                        readiness: { .unknown }, refresh: {},
+                        start: { _, _ in XCTFail("Agent setup must not run a document or coding task"); throw CocoaError(.userCancelled) },
+                        observe: { _ in .running })
+        model.select(.agents)
+        model.next()
+        XCTAssertEqual(model.progress.step, .firstTask)
+        XCTAssertEqual(model.stepNumber, 2)
+        model.runFirstTask()
+        XCTAssertFalse(model.isStarting)
+        XCTAssertNil(model.error)
+        model.back()
+        XCTAssertEqual(model.progress.step, .startingPoint)
+        model.next()
+        model.dismiss()
+
+        let restored = OnboardingModel()
+        restored.configure(defaults: defaults, isExistingInstallation: true, autoPresent: true,
+                           readiness: { .unknown }, refresh: {},
+                           start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+        restored.present()
+        XCTAssertEqual(restored.progress.startingPoint, .agents)
+        XCTAssertEqual(restored.progress.step, .firstTask)
+        restored.requestAgentSetup()
+        XCTAssertFalse(restored.isPresented)
+        XCTAssertTrue(restored.takeAgentSetupRequest())
+        XCTAssertFalse(restored.takeAgentSetupRequest())
+        XCTAssertFalse(restored.progress.firstTaskCompleted)
+        XCTAssertNil(restored.progress.run)
+        restored.back()
+        restored.select(.coding)
+        restored.next()
+        XCTAssertEqual(restored.progress.step, .model)
+    }
+
+    @MainActor
+    func testSwitchingToAgentsClearsFailureFromPreviousExample() async throws {
+        let model = OnboardingModel()
+        model.configure(isExistingInstallation: false, autoPresent: false, readiness: { self.ready }, refresh: {},
+                        start: { _, _ in throw CocoaError(.userCancelled) }, observe: { _ in .running })
+        model.selectWorkspace("/tmp/document-sample", sample: true)
+        model.runFirstTask()
+        for _ in 0..<40 where model.isStarting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.progress.failure)
+        model.select(.agents)
+        XCTAssertNil(model.progress.failure)
+        XCTAssertNil(model.error)
+        XCTAssertNil(model.progress.workspace)
+        XCTAssertFalse(model.progress.firstTaskCompleted)
     }
 
     @MainActor

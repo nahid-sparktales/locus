@@ -299,14 +299,16 @@ h11==0.16.0 \
     # via
     #   httpcore2
     #   uvicorn
-httpcore2==2.9.1 \
-    --hash=sha256:4d8acbf8b306f48c9d6046591fd5ba4037d1b1b1000d140fc2c3eab1e9a0c0e2 \
-    --hash=sha256:6182472379e855fe4221246a2bb7ecede403bc61c6798062ae1787d051ccde26
+httpcore2==2.12.0 \
+    --hash=sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb \
+    --hash=sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648
     # via httpx2
-httpx2==2.9.1 \
-    --hash=sha256:1820fe14a9ab1107bfeff39259987429450b070ec0ff38cc87eb0d8c97fdc71a \
-    --hash=sha256:1932a768737e3666291582833da748cc4e563c337cf96706fccc04fa6e58764a
-    # via mcp
+httpx2==2.12.0 \
+    --hash=sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf \
+    --hash=sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36
+    # via
+    #   -r agent/requirements-runtime.in
+    #   mcp
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848

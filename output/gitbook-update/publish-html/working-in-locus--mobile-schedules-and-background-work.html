@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Mobile, Schedules &amp; Background Work</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus can continue work through its local runtime while the app remains running. The mobile companion connects directly to that Mac.</p>
+
+<h2>Scheduled Agents</h2>
+
+<p>Open <strong>Manage Agents</strong> to create a schedule and review its instructions, model, cadence, and workspace. Each scheduled Agent owns a stable primary conversation across runs. Its Agent panel shows controls, the next occurrence, and recorded runs. Use Pause or Run now as needed; the mobile companion also supports schedule controls.</p>
+
+<p><img src="https://raw.githubusercontent.com/nahid-sparktales/locus/c3a27c3/Docs/locus-schedules-dark.png" alt="A scheduled Agent's instructions, next occurrence, and run history" /></p>
+
+<p><em>Demonstration data. Enabled status and actual running chats are shown separately.</em></p>
+
+<p>Use <strong>Activity</strong> for recent records and <strong>Attention</strong> for decisions or recoveries. See <a href="https://locus-3.gitbook.io/locus-docs/working-in-locus/agents-and-automation">Agents &amp; Automation</a> for event triggers, connected-service access, and workflows.</p>
+
+<p>Locus must be running and the Mac available for scheduled work to execute. Closing a window is different from quitting the app. The schedule is not a hosted cloud worker.</p>
+
+<h2>Managed background services</h2>
+
+<p>Use managed background services for dev servers, watchers, and queue workers that should outlive a single agent turn. They appear above Terminal, remain associated with their workspace, and stop only when you explicitly stop them or the owning backend quits.</p>
+
+<h2>Locus Mobile</h2>
+
+<p>Mobile Access is off by default. When enabled, Locus creates a private TLS gateway on your Mac and pairs an iOS or Android device with a five-minute, one-use code. The companion pins the Mac certificate and connects over your LAN or Tailscale; there is no Locus cloud relay.</p>
+
+<p><img src="https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2Fh21c5hZgTNw61LLL0gTQ%2Flocus-v2-mobile-access.png?alt=media" alt="Mobile Access settings" /></p>
+
+<p><img src="https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2Fa09CzR1RfDZ68kbiCVgl%2Flocus-v2-mobile-pairing.png?alt=media" alt="Pairing Locus Mobile" /></p>
+
+<p>The companion can:</p>
+
+<ul>
+<li>create and continue chats;</li>
+<li>follow streaming work;</li>
+<li>stop runs;</li>
+<li>answer one-time approvals; and</li>
+<li>run or pause schedules.</li>
+</ul>
+
+<p>Terminal, Browser, file editing, permanent permissions, provider settings, and destructive session actions remain Mac-only. Provider credentials and local agent ports are never exposed to the phone.</p>
+</body></html>

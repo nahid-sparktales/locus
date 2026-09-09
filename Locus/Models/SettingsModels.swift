@@ -225,7 +225,7 @@ struct AppSettings: Codable, Hashable {
     var mobileAccessEnabled = false
     /// Stored as a raw string so a preference written by a future version
     /// cannot make the rest of the settings payload fail to decode.
-    var appearanceRaw = AppAppearance.system.rawValue
+    var appearanceRaw = AppAppearance.dark.rawValue
     /// Seven stable presets plus a separately stored custom swatch. Keeping the
     /// raw value tolerant lets a newer build add presets without resetting the
     /// rest of a person's settings in an older build.
@@ -527,7 +527,7 @@ struct AppSettings: Codable, Hashable {
     }
 
     var resolvedAppearance: AppAppearance {
-        AppAppearance(rawValue: appearanceRaw) ?? .system
+        AppAppearance(rawValue: appearanceRaw) ?? .dark
     }
 
     var resolvedAccent: LocusAccentSelection {
@@ -615,6 +615,7 @@ struct AppSettings: Codable, Hashable {
         var seen: Set<InspectorTab> = []
         return inspectorOpenTabs.compactMap { rawValue in
             guard let tab = InspectorTab(rawValue: rawValue),
+                  tab != .plan,
                   tab != .checkpoints,
                   tab != .agent,
                   seen.insert(tab).inserted else {
@@ -629,7 +630,7 @@ struct AppSettings: Codable, Hashable {
         let selected = resolvedInspectorTab
         if openTabs.contains(selected) { return selected }
         if let first = openTabs.first { return first }
-        return selected.isWorkspaceTab ? selected : resolvedInspectorWorkspaceTab
+        return selected.isWorkspaceTab ? selected : .files
     }
 
     var resolvedAutomaticInspectorPresentation: AutomaticInspectorPresentation {

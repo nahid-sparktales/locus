@@ -268,6 +268,8 @@ struct LocusApp: App {
         case "library":
             LibraryWorkspaceView()
                 .onAppear { model.library.activate(workspace: model.workspacePath) }
+        case "identity-vault" where model.isUITesting:
+            IdentityVaultUITestFixtureView()
         case "settings":
             GeometryReader { proxy in
                 SettingsView(presentationContext: .sheet, availableSize: proxy.size)
@@ -791,7 +793,7 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var compactSidebarPresented = false
 
-    private let inspectorRailWidth: CGFloat = 44
+    private let inspectorRailWidth: CGFloat = InspectorRail.width
     private let minimumWorkspaceWidth: CGFloat = 360
 
     var body: some View {
@@ -914,6 +916,16 @@ struct RootView: View {
                     }
                 }
 
+                if model.requestOverviewVisible {
+                    RequestOverviewActivity(session: model.sessionOverview)
+                        .frame(width: min(340, widthAfterChrome - 16), alignment: .trailing)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.trailing, railWidth + 8)
+                        .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
+                        .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
+                        .zIndex(1)
+                }
+
                 if inspectorOpen && !docksInspector {
                     InspectorView(resizeWidth: min(model.inspectorWidth, proxy.size.width - railWidth))
                         .frame(width: min(model.inspectorWidth, proxy.size.width - railWidth))
@@ -1028,9 +1040,14 @@ struct RootView: View {
             if let run = onboarding.takeOutputRequest() {
                 model.openOutputsLibrary(workspace: run.workspace, sessionID: run.sessionID, runID: run.runID)
             }
+            if onboarding.takeAgentSetupRequest() {
+                model.configureAgentPendingCreation = true
+                model.presentConfigureAgent(draftText: "")
+            }
         }) {
             OnboardingView().appFeatureEnvironment(from: model)
         }
+        .task { onboarding.presentOnLaunchIfNeeded() }
         .sheet(isPresented: $model.commandPalettePresented) {
             CommandPaletteView()
                 .environmentObject(model)

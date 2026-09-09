@@ -1,0 +1,70 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Browser &amp; Dev Servers</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>Locus turns Preview into a full browser shared by you and the agent. Tabs belong to the conversation that opened them, remain usable while the inspector is collapsed, and can be detached into a full-size window.</p>
+
+<h2>What the agent can do</h2>
+
+<ul>
+<li>Read a page as an addressable accessibility tree.</li>
+<li>Navigate, open background tabs, click, type, press keys, scroll, and drag.</li>
+<li>Target a named element or page coordinates for canvases, maps, and custom controls.</li>
+<li>Capture the viewport or a selected region and translate image coordinates back into page coordinates.</li>
+<li>Inspect console messages and network requests, wait for a single-page app to settle, and evaluate JavaScript for debugging.</li>
+<li>Emulate phone-sized viewports, mobile user-agent and touch capabilities, color scheme, and custom dimensions.</li>
+</ul>
+
+<p>Every browser tool accepts a tab identifier, so a background worker can use its own page without pulling it in front of you. Element identifiers are valid only for the most recent page snapshot.</p>
+
+<p>Page content is untrusted external data. Password fields and file-upload pickers are refused by ordinary typing tools. Running page JavaScript asks every time, including in Bypass mode.</p>
+
+<h2>Real input and responsive layout</h2>
+
+<p>Clicks and keystrokes use the same AppKit event path as human input when possible. This lets gesture-gated controls, drag surfaces, search-as-you-type fields, and canvas interfaces behave normally. Settings → Browser can restore synthetic input for compatibility, but synthetic events cannot create a trusted user gesture.</p>
+
+<p>Scrolling is aimed at the container under the pointer. On a headless Mac, coordinate conversion no longer depends on a connected display.</p>
+
+<p>The live page follows the Browser panel as it resizes instead of behaving like a magnified canvas. Wide pages retain WebKit's native horizontal scrolling. Tabs and navigation use a quieter responsive toolbar, with less common actions grouped in one menu.</p>
+
+<h2>Browser Autofill</h2>
+
+<p>Locus includes a Keychain-backed Autofill vault for passwords, contacts, and payment cards. Secrets stay in Keychain and are not written to ordinary app data.</p>
+
+<p>Agent access is separately gated by category. The model sees the Autofill tool only for categories you enable; password use is scoped to the current site. The page still cannot read the vault directly, and ordinary browser history access is a separate permission.</p>
+
+<h2>Browser controls</h2>
+
+<ul>
+<li>⌘T opens a tab.</li>
+<li>⌘W closes the current browser tab while Browser is visible.</li>
+<li>⇧⌘] and ⇧⌘[ move between tabs.</li>
+<li>⌘F finds text on the page.</li>
+<li>⌘+, ⌘−, and ⌘0 change page zoom.</li>
+<li>The camera captures, crops, annotates, copies, saves, or attaches the visible page.</li>
+</ul>
+
+<p>Popups become managed tabs. Downloads are quarantined in Locus storage, size-limited, and never executed. Browsing data is ephemeral by default; enable a persistent profile per workspace only when you need cookies or local storage to survive a restart.</p>
+
+<h2>Wallet-free Locus</h2>
+
+<p>Standard Locus does not include a cryptocurrency wallet, wallet tools, or browser wallet-provider injection. Wallet functionality belongs to the separate LocusX edition. The <a href="https://locus-3.gitbook.io/locus-docs/safety-and-privacy/identity-vault">Identity Vault</a> is a separate feature for private profile details and documents.</p>
+
+<h2>Named development servers</h2>
+
+<p>Create .locus/launch.json in a workspace to define repeatable servers:</p>
+
+<pre><code>{
+  "configurations": [
+    {
+      "name": "Web",
+      "executable": "npm",
+      "arguments": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Existing preview",
+      "url": "http://127.0.0.1:4173"
+    }
+  ]
+}
+</code></pre>
+
+<p>The agent can list configurations, start one by name, attach to an existing URL, wait for its port, and read bounded output filtered by level, search text, or line count. Starting a process always asks, even in Bypass mode.</p>
+</body></html>

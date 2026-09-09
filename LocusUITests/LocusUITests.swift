@@ -61,6 +61,126 @@ final class LocusUITests: XCTestCase {
         }
     }
 
+    func testWorkOverviewYieldsToContextPanelAndDismissesWithEscape() {
+        let context = anyElement("inspector.rail.context")
+        XCTAssertTrue(context.waitForExistence(timeout: 10))
+        context.click()
+        XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("plan.contextWindow.details").exists)
+        XCTAssertFalse(anyElement("workspace.overview").exists, "No permanent Overview button in the header")
+        app.typeKey("1", modifierFlags: .command)
+        let popup = anyElement("workspace.overview.popover")
+        XCTAssertTrue(popup.waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("plan.summary").exists)
+        XCTAssertFalse(anyElement("inspector.context").exists)
+        XCTAssertFalse(anyElement("inspector.tab.plan").exists)
+        XCTAssertLessThan(popup.frame.height, 320, "An empty overview should hug its content")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "work-overview-popup"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        context.click()
+        XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 3))
+        XCTAssertFalse(popup.exists, "The panel replaces Overview")
+        anyElement("inspector.rail.toggle").click()
+        XCTAssertTrue(popup.waitForExistence(timeout: 3), "Closing the panel restores Overview")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !popup.exists })
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(popup.waitForExistence(timeout: 5))
+        anyElement("workspace.overview.close").click()
+        XCTAssertTrue(waitUntil { !popup.exists })
+        anyElement("inspector.rail.toggle").click()
+        XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 3))
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(anyElement("inspector.tab.files").waitForExistence(timeout: 5))
+        anyElement("inspector.openTabs").click()
+        anyElement("inspector.openTabs.context").click()
+        XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 5))
+    }
+
+    func testWorkOverviewAndContextInACompactDarkWindow() {
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "920"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "700"
+        app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = "dark"
+        app.launchEnvironment["LOCUS_UI_TESTING_REQUEST_OVERVIEW"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_CONTEXT_BREAKDOWN"] = "1"
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_PLAN_OVERVIEW"] = "running"
+        app.launch()
+        XCTAssertTrue(anyElement("workspace.overview.popover").waitForExistence(timeout: 10))
+        let popup = anyElement("workspace.overview.popover")
+        XCTAssertTrue(anyElement("plan.plan.row").waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(popup.frame.height, 400)
+        XCTAssertEqual(popup.frame.maxX, anyElement("inspector.rail.toggle").frame.minX - 13, accuracy: 3)
+        XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
+        XCTAssertEqual(popup.frame.minY - app.windows.firstMatch.frame.minY, 60, accuracy: 3)
+        anyElement("inspector.rail.context").click()
+        XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { !popup.exists }, "Right-side panels replace Overview")
+        anyElement("inspector.rail.toggle").click()
+        XCTAssertTrue(popup.waitForExistence(timeout: 3), "Overview returns when the panel closes")
+        let summaryShot = XCTAttachment(screenshot: app.screenshot())
+        summaryShot.name = "work-overview-compact-dark"
+        summaryShot.lifetime = .keepAlways
+        add(summaryShot)
+        anyElement("workspace.overview.minimize").click()
+        XCTAssertTrue(anyElement("workspace.overview").waitForExistence(timeout: 3))
+        XCTAssertFalse(popup.exists)
+        anyElement("workspace.overview").click()
+        XCTAssertTrue(popup.waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitUntil { !popup.exists })
+        XCTAssertTrue(anyElement("composer.stop").exists, "Escape dismisses Overview without stopping the request")
+        anyElement("inspector.rail.context").click()
+        XCTAssertTrue(anyElement("plan.contextWindow.details").waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("context.breakdown").exists)
+        XCTAssertFalse(anyElement("context.browseFiles").exists)
+        let contextShot = XCTAttachment(screenshot: app.screenshot())
+        contextShot.name = "work-context-compact-dark"
+        contextShot.lifetime = .keepAlways
+        add(contextShot)
+    }
+
+    func testContextBreakdownShowsCategoriesAndExpandsToolDetails() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_CONTEXT_BREAKDOWN"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = "light"
+        app.launch()
+        XCTAssertTrue(anyElement("inspector.rail.preview").waitForExistence(timeout: 10))
+        XCTAssertLessThan(anyElement("inspector.rail.preview").frame.maxY, anyElement("inspector.rail.terminal").frame.minY)
+        XCTAssertLessThan(anyElement("inspector.rail.terminal").frame.maxY, anyElement("inspector.rail.context").frame.minY)
+        anyElement("inspector.rail.context").click()
+        XCTAssertTrue(anyElement("context.breakdown").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Attached files"].exists)
+        for category in ["messages", "system_tools", "mcp_tools", "skills", "system_prompt", "memory"] {
+            XCTAssertTrue(anyElement("context.category.\(category)").exists)
+        }
+        anyElement("context.category.system_tools").click()
+        XCTAssertTrue(anyElement("context.details.system_tools").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["read_file"].exists)
+        anyElement("context.category.system_tools").click()
+        XCTAssertFalse(anyElement("context.details.system_tools").exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "context-breakdown-light"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testWorkRightIconRailHasDividerAndKeepsAllToolsReachable() {
+        XCTAssertGreaterThan(
+            anyElement("inspector.rail.preview").frame.minY - anyElement("inspector.rail.toggle").frame.maxY,
+            8, "A divider separates the panel toggle from the workspace tools"
+        )
+        for tab in ["terminal", "preview", "notes", "context"] {
+            XCTAssertTrue(anyElement("inspector.rail.\(tab)").isHittable)
+        }
+        anyElement("inspector.rail.more").click()
+        XCTAssertTrue(anyElement("inspector.rail.menu.router").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.rail.menu.proxies").exists)
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
     override func tearDownWithError() throws {
         // Never leave this test's launched fixture app registered as a live
         // same-bundle-ID target for the next serialized test session.
@@ -686,7 +806,7 @@ final class LocusUITests: XCTestCase {
             anyElement("sidebar.newSession"),
             anyElement("workspace.sessionTitle"),
             anyElement("composer.input"),
-            anyElement("composer.mode.plan"),
+            anyElement("composer.workflow"),
             anyElement("composer.send"),
             anyElement("inspector.tabBar"),
             anyElement("sidebar.agentStatus"),
@@ -696,7 +816,7 @@ final class LocusUITests: XCTestCase {
             XCTAssertTrue(window.frame.insetBy(dx: -1, dy: -1).contains(element.frame), file: file, line: line)
         }
         for element in [
-            anyElement("composer.mode.plan"),
+            anyElement("composer.workflow"),
             anyElement("composer.send"),
             anyElement("sidebar.agentStatus"),
             anyElement("sidebar.more"),
@@ -1198,7 +1318,8 @@ final class LocusUITests: XCTestCase {
         app.typeKey(.upArrow, modifierFlags: [])
         XCTAssertTrue((composer.value as? String)?.contains("Audit the current changes") == true)
 
-        app.buttons["composer.context"].click()
+        anyElement("composer.addChatAttachment").click()
+        app.menuItems["Choose workspace context…"].click()
         XCTAssertTrue(app.buttons["context.add"].waitForExistence(timeout: 2))
         app.typeKey(.escape, modifierFlags: [])
     }
@@ -1623,6 +1744,8 @@ final class LocusUITests: XCTestCase {
     }
 
     func testVisualQuickTeamCanBeCreatedFromComposerAndRemainsAdvancedEditable() {
+        let workflow = anyElement("composer.workflow")
+        workflow.click()
         let teamButton = anyElement("composer.team")
         XCTAssertTrue(teamButton.waitForExistence(timeout: 3))
         teamButton.click()
@@ -1660,13 +1783,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntil { create.isEnabled })
         create.click()
         XCTAssertTrue(waitUntil { !self.anyElement("quickTeam.builder").exists })
-        XCTAssertEqual(teamButton.value as? String, "Quick Team")
+        XCTAssertEqual(workflow.value as? String, "Work · Quick Team")
 
+        workflow.click()
         teamButton.click()
         XCTAssertTrue(anyElement("composer.teamPicker.solo").waitForExistence(timeout: 3))
         anyElement("composer.teamPicker.solo").click()
-        XCTAssertEqual(teamButton.value as? String, "Solo")
+        XCTAssertEqual(workflow.value as? String, "Work · Solo")
 
+        workflow.click()
         teamButton.click()
         let manageTeams = app.descendants(matching: .any).matching(
             NSPredicate(
@@ -1746,7 +1871,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(chatPage.waitForExistence(timeout: 3))
         chatPage.click()
         XCTAssertTrue(anyElement("settings.notesScope").exists)
-        XCTAssertTrue(anyElement("settings.soloPlanPresentation").exists)
+        XCTAssertTrue(anyElement("settings.requestOverview").exists)
         XCTAssertTrue(anyElement("settings.teamRunsPresentation").exists)
 
         let developerPage = anyElement("settings.page.developer")
@@ -2280,7 +2405,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(anyElement("sidebar.mode.agents").value as? String, "Selected")
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
-        XCTAssertTrue(anyElement("inspector.tab.plan").exists, "Overview stays open beside the agent")
+        XCTAssertTrue(anyElement("inspector.tab.files").exists, "Files stays available beside the agent")
 
         // Agent keeps the Agent controls: New chat with its plus
         // glyph creates another chat for the selected agent, while Manage
@@ -2371,7 +2496,7 @@ final class LocusUITests: XCTestCase {
         // Leaving Agent takes the tab and its rail button away again;
         // coming back restores them onto the same chat.
         anyElement("sidebar.mode.ask").click()
-        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.rail.agent")))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.tab.agent")))
         // The sheet has one name in both destinations now.
@@ -2492,18 +2617,21 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(agents.exists)
         XCTAssertTrue(ask.isSelected)
         XCTAssertFalse(anyElement("composer.justChatBoundary").exists)
-        XCTAssertTrue(anyElement("composer.context").exists)
+        XCTAssertTrue(anyElement("composer.addChatAttachment").exists)
 
-        let planMode = anyElement("composer.mode.plan")
+        let planMode = anyElement("composer.workflow")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
+        planMode.click()
+        XCTAssertTrue(anyElement("composer.mode.plan").exists)
         XCTAssertTrue(anyElement("composer.mode.grill").exists)
+        app.typeKey(.escape, modifierFlags: [])
         XCTAssertGreaterThanOrEqual(
             planMode.frame.minY,
             app.textViews["composer.input"].frame.maxY - 2,
             "mode and routing controls belong in the composer footer"
         )
-        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("inspector.rail.plan").exists)
+        XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("workspace.overview").exists)
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
@@ -2512,7 +2640,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
-        XCTAssertTrue(anyElement("composer.context").exists)
+        XCTAssertTrue(anyElement("composer.addChatAttachment").exists)
         XCTAssertTrue(planMode.exists)
 
         ask.click()
@@ -2544,13 +2672,13 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThan(
             more.frame.maxY,
             toggle.frame.minY,
-            "the vertical-dots panel menu belongs at the top of the inspector rail"
+            "the More menu sits above the panel toggle"
         )
-        XCTAssertLessThan(toggle.frame.maxY, anyElement("inspector.rail.plan").frame.minY)
+        XCTAssertLessThan(toggle.frame.maxY, anyElement("inspector.rail.context").frame.minY)
 
         more.click()
         XCTAssertTrue(app.menuItems["inspector.rail.menu.sideChat"].exists)
-        for tab in ["changes", "files", "simulator", "runs", "agents"] {
+        for tab in ["files", "changes", "simulator", "runs", "agents"] {
             XCTAssertTrue(
                 app.menuItems["inspector.rail.menu.\(tab)"].exists,
                 "the more-panels menu should restore \(tab)"
@@ -2595,24 +2723,24 @@ final class LocusUITests: XCTestCase {
     }
 
     func testRailIconsOpenAndTogglePanels() {
-        // The suite seeds the panel open on Overview; the Overview icon's second
-        // click collapses, its next click reopens.
-        let planIcon = anyElement("inspector.rail.plan")
+        anyElement("inspector.rail.context").click()
+        // An active tool's second click collapses its panel.
+        let planIcon = anyElement("inspector.rail.context")
         XCTAssertTrue(planIcon.waitForExistence(timeout: 3))
-        XCTAssertTrue(planIcon.label.contains("Overview"))
+        XCTAssertTrue(planIcon.label.contains("Context"))
         let terminalIcon = anyElement("inspector.rail.terminal")
         XCTAssertTrue(terminalIcon.exists)
         XCTAssertFalse(anyElement("inspector.rail.simulator").exists)
-        XCTAssertLessThan(planIcon.frame.maxY, terminalIcon.frame.minY)
-        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
-        for closedTab in ["changes", "files", "terminal", "preview", "checkpoints", "runs", "agents"] {
+        XCTAssertGreaterThan(planIcon.frame.minY, terminalIcon.frame.maxY)
+        XCTAssertTrue(anyElement("inspector.tab.files").exists)
+        for closedTab in ["changes", "terminal", "preview", "checkpoints", "runs", "agents"] {
             XCTAssertFalse(
                 anyElement("inspector.tab.\(closedTab)").exists,
                 "the old permanent inspector strip must not expose \(closedTab)"
             )
         }
         planIcon.click()
-        XCTAssertFalse(anyElement("plan.context").exists)
+        XCTAssertFalse(anyElement("inspector.context").exists)
         XCTAssertTrue(planIcon.exists)
 
         // Terminal is a direct rail destination and closes on a second click.
@@ -2627,7 +2755,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(browserIcon.exists)
         browserIcon.click()
         XCTAssertTrue(anyElement("browser.url").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
+        XCTAssertTrue(anyElement("inspector.tab.files").exists)
         XCTAssertTrue(anyElement("inspector.tab.terminal").exists)
         XCTAssertTrue(anyElement("inspector.tab.preview").exists)
     }
@@ -2635,14 +2763,14 @@ final class LocusUITests: XCTestCase {
     func testPanelToggleClosesAndRestoresTheLastPanel() {
         let toggle = anyElement("inspector.rail.toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("plan.context").exists)
+        XCTAssertTrue(anyElement("files.search").exists)
 
         toggle.click()
-        XCTAssertFalse(anyElement("plan.context").exists)
+        XCTAssertFalse(anyElement("files.search").exists)
         XCTAssertEqual(toggle.value as? String, "Closed")
 
         toggle.click()
-        XCTAssertTrue(anyElement("plan.context").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
         XCTAssertEqual(toggle.value as? String, "Open")
 
         let browserIcon = anyElement("inspector.rail.preview")
@@ -2656,7 +2784,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testKeyboardShortcutsReachAdditionalInspectorTabs() {
-        XCTAssertTrue(anyElement("inspector.rail.plan").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.rail.context").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("inspector.rail.more").exists)
         let zoom = anyElement("inspector.zoom")
         XCTAssertTrue(zoom.exists)
@@ -2668,9 +2796,9 @@ final class LocusUITests: XCTestCase {
 
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(anyElement("changes.file.0").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("inspector.tab.plan").exists)
+        XCTAssertTrue(anyElement("inspector.tab.files").exists)
         XCTAssertTrue(anyElement("inspector.tab.changes").exists)
-        XCTAssertFalse(anyElement("inspector.tab.files").exists)
+        XCTAssertTrue(anyElement("inspector.tab.files").exists)
 
         // A second shortcut destination appends to the dynamic bar instead of
         // replacing the first or exposing every destination permanently.
@@ -2692,11 +2820,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("changes.file.0").exists)
         XCTAssertTrue(anyElement("files.search").exists)
 
-        anyElement("inspector.tab.close.plan").click()
         anyElement("inspector.tab.close.files").click()
         XCTAssertTrue(anyElement("inspector.tabBar").waitForNonExistence(timeout: 3))
         XCTAssertFalse(anyElement("files.search").exists)
-        XCTAssertTrue(anyElement("inspector.rail.plan").exists)
+        XCTAssertTrue(anyElement("inspector.rail.context").exists)
         XCTAssertTrue(anyElement("inspector.rail.more").exists)
     }
 
@@ -2833,43 +2960,26 @@ final class LocusUITests: XCTestCase {
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(anyElement("plan.summary").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("plan.section.outputs").exists)
-        XCTAssertTrue(anyElement("plan.context").exists)
-        XCTAssertTrue(anyElement("inspector.tab.plan").label.contains("Overview"))
+        XCTAssertFalse(anyElement("agents.content").exists)
+        XCTAssertTrue(anyElement("workspace.overview.popover").exists)
     }
 
-    func testIdleOverviewShowsEmptySummaryAndKeepsContextPinned() {
-        let tabBar = anyElement("inspector.tabBar")
-        let summary = anyElement("plan.summary")
-        let context = anyElement("plan.context")
-        let window = app.windows.firstMatch
-
-        XCTAssertTrue(tabBar.waitForExistence(timeout: 3))
-        XCTAssertTrue(summary.waitForExistence(timeout: 3))
-        XCTAssertTrue(context.exists)
-        // Outputs and Sources always show so their "+" actions stay
-        // discoverable; every other section appears only with content.
-        XCTAssertTrue(anyElement("plan.section.outputs").exists)
-        XCTAssertTrue(anyElement("plan.section.sources").exists)
+    func testIdleOverviewFitsItsContentAtTheTopRight() {
+        app.typeKey("1", modifierFlags: .command)
+        let popup = anyElement("workspace.overview.popover")
+        XCTAssertTrue(popup.waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("plan.summary").exists)
         XCTAssertTrue(anyElement("plan.outputs.empty").exists)
         XCTAssertTrue(anyElement("plan.sources.empty").exists)
         XCTAssertFalse(anyElement("plan.section.plan").exists)
-        XCTAssertFalse(anyElement("plan.section.subagents").exists)
-        XCTAssertFalse(anyElement("plan.section.processes").exists)
-        XCTAssertFalse(anyElement("plan.plan.row").exists)
-        XCTAssertLessThanOrEqual(
-            window.frame.maxY - context.frame.maxY,
-            30,
-            "Context should remain pinned to the bottom of the Overview tab"
-        )
-        XCTAssertLessThanOrEqual(
-            context.frame.maxX,
-            tabBar.frame.maxX + 1,
-            "Session overview content must stay inside the inspector"
-        )
-        XCTAssertFalse(anyElement("checkpointTab.content").exists)
+        XCTAssertFalse(anyElement("plan.contextWindow").exists)
+        XCTAssertLessThan(popup.frame.height, 320)
+        XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
+        XCTAssertFalse(anyElement("files.search").exists)
     }
 
     func testOverviewSourcesMenuOpensSkillsAndMCP() {
+        app.typeKey("1", modifierFlags: .command)
         let empty = anyElement("plan.sources.empty")
         XCTAssertTrue(empty.waitForExistence(timeout: 3))
         empty.click()
@@ -2974,28 +3084,14 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("notes.toolbar").exists)
     }
 
-    func testOverviewShortcutsOpenSettingsAndStayPinned() {
-        let shortcuts = anyElement("plan.shortcuts")
-        let context = anyElement("plan.context")
-        XCTAssertTrue(shortcuts.waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("plan.shortcuts.finder").exists)
-        XCTAssertTrue(anyElement("plan.shortcuts.accounts").exists)
-        XCTAssertTrue(anyElement("plan.shortcuts.extensions").exists)
-
-        // The bar is pinned with the context card rather than scrolling with
-        // the summary, so it sits directly above it.
-        XCTAssertTrue(context.exists)
-        XCTAssertLessThanOrEqual(shortcuts.frame.maxY, context.frame.minY + 1)
-
-        // Finder is deliberately not clicked: it would open a real Finder
-        // window over the test run.
+    func testFormerOverviewShortcutsOpenSettingsFromMoreTools() {
         for (identifier, page) in [
-            ("plan.shortcuts.extensions", "settings.page.extensions"),
-            ("plan.shortcuts.accounts", "settings.page.accounts"),
+            ("inspector.rail.menu.extensions", "settings.page.extensions"),
+            ("inspector.rail.menu.accounts", "settings.page.accounts"),
         ] {
-            let shortcut = anyElement(identifier)
-            XCTAssertTrue(waitUntilHittable(shortcut))
-            shortcut.click()
+            anyElement("inspector.rail.more").click()
+            XCTAssertTrue(anyElement("inspector.rail.menu.finder").exists)
+            anyElement(identifier).click()
             XCTAssertTrue(anyElement(page).waitForExistence(timeout: 5))
             anyElement("settings.close").click()
             XCTAssertTrue(waitUntil { !self.anyElement(page).exists })
@@ -3016,6 +3112,7 @@ final class LocusUITests: XCTestCase {
     }
 
     func testOverviewOutputsMenuOffersCreationActions() {
+        app.typeKey("1", modifierFlags: .command)
         let creationItems = [
             "Create document", "Create presentation", "Create spreadsheet", "Create site",
         ]
@@ -3036,10 +3133,10 @@ final class LocusUITests: XCTestCase {
             (composer.value as? String)?.localizedCaseInsensitiveContains("document") == true
         })
         XCTAssertTrue(
-            anyElement("plan.context").exists,
+            anyElement("files.search").exists,
             "prefilling the composer from the summary must not collapse the inspector"
         )
-        XCTAssertTrue(anyElement("plan.summary").exists)
+        XCTAssertFalse(anyElement("workspace.overview.popover").exists)
 
         // Running: the header "+" offers the same actions above real rows.
         relaunchWithPlanOverview("running")
@@ -3062,6 +3159,8 @@ final class LocusUITests: XCTestCase {
             preserveSections ? "1" : nil
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(anyElement("workspace.overview.popover").waitForExistence(timeout: 5))
     }
 
     func testAcceptanceWindowSizesRemainUsableInLightAndDarkAppearances() {
@@ -3181,7 +3280,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
         XCTAssertTrue(composer.isHittable)
         XCTAssertTrue(window.frame.intersects(composer.frame))
-        let planMode = anyElement("composer.mode.plan")
+        let planMode = anyElement("composer.workflow")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
         XCTAssertLessThanOrEqual(planMode.frame.maxY, window.frame.maxY - 8)
         // Mode controls can wrap above Voice/Send; measure the final action
@@ -3436,49 +3535,24 @@ final class LocusUITests: XCTestCase {
         }
     }
 
-    func testContextWindowCardCollapsesAndExpands() {
-        let toggle = anyElement("plan.contextWindow.toggle")
+    func testContextPanelKeepsUsageExpandedAndCanBeClosedAndReopened() {
+        anyElement("inspector.rail.context").click()
         let details = anyElement("plan.contextWindow.details")
-        XCTAssertTrue(toggle.waitForExistence(timeout: 3))
-        if !details.exists {
-            toggle.click()
-            XCTAssertTrue(details.waitForExistence(timeout: 3))
-        }
-
-        toggle.click()
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        anyElement("inspector.rail.context").click()
         XCTAssertTrue(waitUntil { !details.exists })
-        toggle.click()
-        XCTAssertTrue(details.waitForExistence(timeout: 3))
+        anyElement("inspector.rail.context").click()
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
     }
 
-    /// The running fixture's summary card is taller than the inspector
-    /// viewport, so the lower sections (Subagents, Background processes,
-    /// Sources) can sit under the fold — and how much sits there depends on
-    /// the window height, which the screen clamps.
-    ///
-    /// A clipped SwiftUI row still publishes an accessibility frame, so
-    /// `isHittable` stays true for a row scrolled out of sight and a
-    /// synthesized click lands on the pinned context card instead, silently
-    /// doing nothing. Scroll until the target's frame is provably inside the
-    /// scroll viewport: below the inspector tab bar and above the context
-    /// card that is pinned to the bottom of the tab.
     private func scrollSummary(toReveal target: XCUIElement) {
         let summary = anyElement("plan.summary")
-        guard summary.exists else { return }
-        let window = app.windows.firstMatch
-        let tabBar = anyElement("inspector.tabBar")
-        let context = anyElement("plan.context")
-        let shortcuts = anyElement("plan.shortcuts")
-        for _ in 0..<10 {
+        let popup = anyElement("workspace.overview.popover")
+        guard summary.exists, popup.exists else { return }
+        for _ in 0..<12 {
             guard target.exists else { return }
-            let top = tabBar.exists ? tabBar.frame.maxY : window.frame.minY
-            // Everything pinned below the scrolling summary hides content, so
-            // the fold is the topmost pinned element — the shortcut bar sits
-            // above the context card.
-            let fold = [shortcuts, context]
-                .filter(\.exists)
-                .map { $0.frame.minY }
-                .min() ?? window.frame.maxY
+            let top = popup.frame.minY + 46
+            let fold = popup.frame.maxY - 8
             let frame = target.frame
             if frame.minY >= top, frame.maxY <= fold, target.isHittable { return }
             summary.scroll(byDeltaX: 0, deltaY: frame.maxY > fold ? -120 : 120)
@@ -3584,7 +3658,7 @@ final class LocusUITests: XCTestCase {
         relaunchWithPlanOverview("running")
 
         let summary = anyElement("plan.summary")
-        let context = anyElement("plan.context")
+        let context = anyElement("workspace.overview.popover")
         XCTAssertTrue(summary.waitForExistence(timeout: 3))
         let viewAll = anyElement("plan.sources.viewAll")
         let panel = anyElement("plan.sources.panel")
@@ -3599,7 +3673,7 @@ final class LocusUITests: XCTestCase {
             )
         }
         XCTAssertTrue(waitUntil { !summary.exists })
-        XCTAssertTrue(context.exists, "the context card stays pinned under the detail page")
+        XCTAssertTrue(context.exists, "detail navigation stays inside the popup")
 
         let back = anyElement("plan.summary.back")
         XCTAssertTrue(back.waitForExistence(timeout: 3))
@@ -3632,7 +3706,7 @@ final class LocusUITests: XCTestCase {
         // text is read from the row rather than a standalone static text.
         XCTAssertTrue(refactor.label.contains("Refactor retry logic with backoff"))
         XCTAssertTrue(waitUntil { !summary.exists })
-        XCTAssertTrue(anyElement("plan.context").exists)
+        XCTAssertTrue(anyElement("workspace.overview.popover").exists)
 
         let back = anyElement("plan.summary.back")
         XCTAssertTrue(back.waitForExistence(timeout: 3))

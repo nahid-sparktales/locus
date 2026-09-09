@@ -8581,3 +8581,60 @@ def test_chatgpt_routes_refuse_an_account_id_that_could_escape_its_home(client):
         assert client.post(
             "/api/chatgpt/login/start", json={"account_id": hostile}
         ).status_code == 422
+
+
+def test_context_breakdown_partitions_the_real_prompt_without_exporting_content(tmp_path):
+    core = _core(tmp_path, [])
+    core.context_limit = 32_768
+    core.project_context = ("AGENTS.md", "workspace-private-marker")
+    core.memory_context = "memory-private-marker"
+    core.reset_system_message()
+    core.messages.append({"role": "user", "content": "message-private-marker" * 80})
+    before = json.dumps(core.messages)
+    result = core.session_info()["context_breakdown"]
+    rows = {row["id"]: row for row in result["categories"]}
+    assert rows["messages"]["tokens"] > 0
+    assert rows["memory"]["tokens"] > 0
+    assert rows["workspace_instructions"]["tokens"] > 0
+    assert rows["system_tools"]["tokens"] > 0
+    assert sum(row["tokens"] for row in rows.values()) == (
+        core.context_tokens() + core._tool_schema_tokens() + core._extension_prompt_tokens()
+    )
+    assert result["reserved_tokens"] == max(
+        core.context_limit - core.budget_tokens()
+        - core._tool_schema_tokens() - core._extension_prompt_tokens(), 0
+    )
+    assert "private-marker" not in json.dumps(result)
+    assert json.dumps(core.messages) == before
+
+
+def test_context_breakdown_unknown_window_and_tools_disabled(tmp_path):
+    core = _core(tmp_path, [])
+    core.context_limit = 0
+    core._turn_allows_tools = False
+    result = core.context_breakdown()
+    rows = {row["id"]: row for row in result["categories"]}
+    assert result["reserved_tokens"] is None
+    assert rows["system_tools"]["tokens"] == rows["mcp_tools"]["tokens"] == 0
+    assert rows["skills"]["tokens"] == 0
+    assert sum(row["tokens"] for row in rows.values()) == core.context_tokens()
+
+
+def test_context_breakdown_keeps_unattributed_provider_usage_separate(tmp_path):
+    core = _core(tmp_path, [])
+    core._measured_prompt_tokens = 40_000
+    result = core.context_breakdown()
+    rows = {row["id"]: row for row in result["categories"]}
+    assert rows["provider_context"]["tokens"] == core.context_tokens() - core.approx_tokens()
+    assert sum(row["tokens"] for row in rows.values()) == 40_000
+
+
+def test_context_breakdown_does_not_read_private_vault_sources(tmp_path):
+    core = _core(tmp_path, [])
+    core.identity_mode = True
+    def unexpected_read(*args):
+        raise AssertionError("Displaying usage must never request identity sharing")
+    core.identity_context_executor = unexpected_read
+    result = core.context_breakdown()
+    assert [row["id"] for row in result["categories"]] == ["provider_context"]
+    assert "unavailable" in result["note"]

@@ -62,10 +62,24 @@ normal agent workflow to make changes. The saved reference stays immutable.
 
 ## Getting Started
 
-New installations open setup automatically. Existing users can open it from
-**Help → Getting Started**. Its four steps are: choose a starting point, connect
-a model, choose a workspace, and complete a first task. Back and Skip preserve
-progress; failed connection and task checks remain retryable.
+New installations open setup automatically once the first main window is ready.
+The first appearance is remembered immediately, even if Locus is quit with the
+guide still open, so later launches do not interrupt the user. Existing users
+and anyone returning to unfinished setup can open it from
+**Help → Getting Started**. Choose **Documents and research**, **Coding**, or
+**Agents and recurring tasks**. The document and coding paths guide you through
+choosing AI, picking a sample or your own folder, and trying a first task.
+**Back** and **Not now** preserve progress; failed connection and task checks
+remain retryable. When AI is already connected, connection settings are tucked
+under **Change AI connection**.
+
+The agents path has two steps: choose the option, then read a short introduction
+with examples of recurring work. **Create an agent** opens the existing agent
+creator, where you can choose a schedule or an incoming event and review the
+instructions before saving. This path needs no sample folder or example run;
+the agent editor handles its model and workspace settings. Opening it preserves
+the current chat draft and does not create or activate an agent. Automatic work
+runs while Locus is open on the Mac.
 
 Local Ollama is the default. Existing connection editors, account authentication,
 model downloads, and model recommendations are reused. Hosted service costs and
@@ -73,12 +87,12 @@ local downloads are described beside their choices.
 
 The document example writes `Locus Summary.md` with citations. The coding example
 writes `Repository Overview.md`. Both can use bundled sample material or a
-chosen workspace. Nothing runs until **Run first task** is selected. Completion
+chosen workspace. Nothing runs until **Start my first task** is selected. Completion
 requires the original task's durable completed record and a saved Outputs version
 attributed to that same run and chat. Follow-up messages and workspace changes
 do not replace this evidence. A completed task allows 30 seconds for its output
-to be saved before reporting a retryable failure. Task time describes this run,
-not model quality. Skipping never records successful completion.
+to be saved before reporting a retryable failure. Optional timings are under
+**Task details** after completion. Skipping never records successful completion.
 
 ## Distribution and verification
 

@@ -1578,7 +1578,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 13)
+        XCTAssertEqual(InspectorTab.allCases.count, 14)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -1615,7 +1615,7 @@ final class FeatureLogicTests: XCTestCase {
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", nil, "2", "3", "4", "5", nil, "9", "6", "7", "8", nil, nil]
+            ["1", nil, "2", "3", "4", "5", nil, "9", "6", "7", "8", nil, nil, nil]
         )
     }
 
@@ -1809,6 +1809,49 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(AppSettings.clampZoomedChatWidth(.nan), 420, "a corrupt value must not survive")
     }
 
+    func testContextBreakdownAddsStreamingAndExcludesDeferredTools() {
+        let breakdown = SessionContextBreakdown(categories: [
+            .init(id: "messages", label: "Messages", tokens: 1_000),
+            .init(id: "system_tools", label: "System tools", tokens: 500),
+        ], deferred: [.init(id: "deferred_mcp", label: "Deferred tools", tokens: 20_000)], reservedTokens: 2_000)
+        let usage = ContextUsagePresentation(breakdown: breakdown, conversationTokens: 1_000,
+                                             streamingTokens: 100, window: 10_000, usable: 7_500)
+        XCTAssertEqual(usage.used, 1_600)
+        XCTAssertEqual(usage.free, 6_400)
+        XCTAssertEqual(usage.categories[0].children.last?.tokens, 100)
+        XCTAssertEqual(usage.fraction, 0.16)
+        XCTAssertEqual(usage.used + (usage.reserved ?? 0) + (usage.free ?? 0), 10_000)
+    }
+
+    func testContextBreakdownHandlesUnknownAndExhaustedWindows() {
+        let unknown = ContextUsagePresentation(breakdown: nil, conversationTokens: 200,
+                                               streamingTokens: 0, window: nil, usable: nil)
+        XCTAssertNil(unknown.free)
+        XCTAssertNil(unknown.fraction)
+        XCTAssertNil(unknown.reserved)
+        XCTAssertFalse(unknown.hasBreakdown)
+        let full = ContextUsagePresentation(breakdown: nil, conversationTokens: 12_000,
+                                            streamingTokens: 0, window: 10_000, usable: 8_000)
+        XCTAssertEqual(full.free, 0)
+        XCTAssertEqual(full.reserved, 2_000)
+        XCTAssertEqual(full.fraction, 1.2)
+    }
+
+    func testSessionContextBreakdownDecodesAndSurvivesLocalUpdates() throws {
+        let json = #"""
+        {"context_breakdown":{"categories":[{"id":"messages","label":"Messages","tokens":1200,"children":[]}],
+         "deferred":[],"reserved_tokens":4000,"note":"Estimated"}}
+        """#
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+        XCTAssertEqual(info.contextBreakdown?.categories.first?.tokens, 1_200)
+        XCTAssertEqual(info.replacingPermissions(.init(skipAll: true, allowed: [])).contextBreakdown, info.contextBreakdown)
+        XCTAssertEqual(info.replacingTask(nil).contextBreakdown, info.contextBreakdown)
+        let copy = try JSONDecoder().decode(SessionInfo.self, from: JSONEncoder().encode(info))
+        XCTAssertEqual(copy.contextBreakdown, info.contextBreakdown)
+        let malformed = try JSONDecoder().decode(SessionInfo.self, from: Data(#"{"context_breakdown":{"categories":false}}"#.utf8))
+        XCTAssertNil(malformed.contextBreakdown)
+    }
+
     func testAppearanceSettingsRoundTripAndResolveColorSchemes() throws {
         XCTAssertNil(AppAppearance.system.colorScheme)
         XCTAssertEqual(AppAppearance.light.colorScheme, .light)
@@ -1825,15 +1868,15 @@ final class FeatureLogicTests: XCTestCase {
         }
     }
 
-    func testAppearanceDefaultsLegacyAndUnknownSettingsToSystem() throws {
+    func testAppearanceDefaultsLegacyAndUnknownSettingsToDark() throws {
         let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
-        XCTAssertEqual(legacy.resolvedAppearance, .system)
+        XCTAssertEqual(legacy.resolvedAppearance, .dark)
 
         let future = try JSONDecoder().decode(
             AppSettings.self,
             from: Data(#"{"appearanceRaw":"midnight-blue"}"#.utf8)
         )
-        XCTAssertEqual(future.resolvedAppearance, .system)
+        XCTAssertEqual(future.resolvedAppearance, .dark)
     }
 
     func testAccentOffersSevenPresetsAndAnOpenEndedCustomColour() throws {
@@ -2439,8 +2482,8 @@ final class FeatureLogicTests: XCTestCase {
         let stored = #"{"inspectorOpenTabs":["files","quantum","files","plan","runs"]}"#
         let restored = try JSONDecoder().decode(AppSettings.self, from: Data(stored.utf8))
 
-        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files, .plan, .runs])
-        XCTAssertEqual(restored.inspectorOpenTabs, ["files", "plan", "runs"])
+        XCTAssertEqual(restored.resolvedInspectorOpenTabs, [.files, .runs])
+        XCTAssertEqual(restored.inspectorOpenTabs, ["files", "runs"])
     }
 
     func testStoredCheckpointTabMigratesOutOfInspectorRestoration() throws {
@@ -3208,7 +3251,8 @@ final class FeatureLogicTests: XCTestCase {
 
         send("cd child\n")
         let location = root.appendingPathComponent("location.txt")
-        send("pwd > '\(location.path)'\n")
+        let locationPending = root.appendingPathComponent("location.pending")
+        send("pwd > '\(locationPending.path)' && mv '\(locationPending.path)' '\(location.path)'\n")
         let locationResult = await waitForFile(location)
         let reportedLocation = URL(
             fileURLWithPath: try XCTUnwrap(locationResult)
@@ -3252,11 +3296,14 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(rendered.contains("LOCUS-UNICODE-λ-界"))
 
         let interrupted = root.appendingPathComponent("interrupted.txt")
+        let interruptedPending = root.appendingPathComponent("interrupted.pending")
         send("sleep 30\n")
         try? await Task.sleep(for: .milliseconds(150))
         let controlC: [UInt8] = [3]
         view.send(data: controlC[...])
-        send("printf interrupted > '\(interrupted.path)'\n")
+        // Publish only a completed write: opening the redirect creates an
+        // empty file before printf writes its content on a busy runner.
+        send("printf interrupted > '\(interruptedPending.path)' && mv '\(interruptedPending.path)' '\(interrupted.path)'\n")
         let interruptedResult = await waitForFile(interrupted)
         XCTAssertEqual(try XCTUnwrap(interruptedResult), "interrupted")
     }

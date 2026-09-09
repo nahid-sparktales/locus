@@ -101,8 +101,8 @@ extension AppModel {
         }
         // The suite's inspector tests assume the panel starts open; the
         // collapsed default is covered by a settings unit test instead.
-        openInspectorTabs = [.plan]
-        inspectorTab = .plan
+        openInspectorTabs = [.files]
+        inspectorTab = .files
         inspectorCollapsed = false
         // Section collapse state lives in @AppStorage, which UI tests share
         // across launches; start each launch expanded unless a test opts in.
@@ -146,6 +146,27 @@ extension AppModel {
             promptTokens: 20,
             completionTokens: 22,
             contextLimit: 32_768,
+            contextBreakdown: ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_CONTEXT_BREAKDOWN"] == "1"
+                ? SessionContextBreakdown(categories: [
+                    .init(id: "messages", label: "Messages", tokens: 8_400,
+                          children: [.init(id: "history", label: "Conversation and tool results", tokens: 8_400)]),
+                    .init(id: "system_tools", label: "System tools", tokens: 1_600,
+                          children: [.init(id: "read_file", label: "read_file", tokens: 650),
+                                     .init(id: "shell", label: "shell", tokens: 950)]),
+                    .init(id: "mcp_tools", label: "MCP tools", tokens: 420,
+                          children: [.init(id: "search", label: "Search project issues", tokens: 420)]),
+                    .init(id: "skills", label: "Skills", tokens: 720,
+                          children: [.init(id: "index", label: "Available skills", tokens: 720)]),
+                    .init(id: "system_prompt", label: "System prompt", tokens: 1_800),
+                    .init(id: "agent_instructions", label: "Agent instructions", tokens: 360),
+                    .init(id: "workspace_instructions", label: "Workspace instructions", tokens: 240),
+                    .init(id: "memory", label: "Memory", tokens: 120),
+                ], deferred: [
+                    .init(id: "deferred_mcp", label: "MCP tools (deferred)", tokens: 9_000,
+                          children: [.init(id: "tool-library", label: "Available integration tools", tokens: 9_000)]),
+                ], reservedTokens: 8_000,
+                note: "Category counts are estimates. The compaction buffer reserves room for replies and estimation headroom.")
+                : nil,
             maxIterations: 40,
             hasProjectContext: false,
             provider: "ollama",
@@ -621,6 +642,11 @@ extension AppModel {
             }
         }
         seedSessionOverviewUITest(workspace: workspace)
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_REQUEST_OVERVIEW"] == "1" {
+            isBusy = true
+            inspectorCollapsed = true
+            beginSessionFileCapture()
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LANDING"] == "1" {
             activeTaskRecord = TaskRecord(
                 id: "seed-task",
@@ -768,8 +794,9 @@ extension AppModel {
             inspectorCollapsed = false
             inspectorZoomed = documentationSurface == "files"
             let tab: InspectorTab = documentationSurface == "plan" ? .plan : .files
-            openInspectorTabs = [tab]
-            inspectorTab = tab
+            openInspectorTabs = [.files]
+            inspectorTab = .files
+            selectInspectorTab(tab)
         }
         seedResponseOutputFixture()
     }

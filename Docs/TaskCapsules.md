@@ -15,7 +15,10 @@ the plan or write a final summary.
    edits**. One profile can handle planning and implementation, or use separate
    profiles such as ChatGPT for planning and Kimi Code for implementation.
    Choose models available on those accounts; capsules do not hard-code model names.
-3. Open **Locus → Task Capsules…** (⌥⌘K) in the workspace you want to work on.
+3. Open the composer's **Work** dropdown and choose **Task Capsules…** in the
+   workspace you want to work on. **Locus → Task Capsules…** (⌥⌘K) also works.
+   Opening from the composer copies your message into an empty new capsule;
+   your chat draft and any unfinished capsule are preserved.
 4. Describe your task, or choose an editable example and replace its bracketed
    details. The capsule name is optional. Choose **Plan with** and **Implement
    with**, and optionally select **Review with**. The same profile can serve

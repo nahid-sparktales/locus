@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy The Inspector</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><p>The right rail keeps high-frequency tools reachable even when the inspector is collapsed. Open Side Chat, Overview, Terminal, Browser, or Notes directly; use the overflow menu for the remaining panels. Panels you open appear in a closable tab strip, and Locus remembers the selection and width.</p>
+
+<table>
+<thead>
+<tr>
+  <th>Panel</th>
+  <th>What it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Overview</strong></td>
+  <td>Collapsible Plan, Outputs, Subagents, Background Processes, and Sources, with Context Window pinned below</td>
+</tr>
+<tr>
+  <td><strong>Changes</strong></td>
+  <td>Git status, per-file and per-hunk diffs, staging, discard, branches, sync, commit, and pull-request handoff</td>
+</tr>
+<tr>
+  <td><strong>Files</strong></td>
+  <td>All file types and generated folders, path search, explicit hidden-file visibility, previews, and context actions</td>
+</tr>
+<tr>
+  <td><strong>Terminal</strong></td>
+  <td>A retained PTY for interactive commands</td>
+</tr>
+<tr>
+  <td><strong>Browser</strong></td>
+  <td>Shared responsive tabs, dev servers, screenshots, console, network, device controls, and guarded Autofill</td>
+</tr>
+<tr>
+  <td><strong>Notes</strong></td>
+  <td>The current chat or shared note, using the same document as Notebook</td>
+</tr>
+<tr>
+  <td><strong>Checkpoints</strong></td>
+  <td>On-demand named session rollback points</td>
+</tr>
+<tr>
+  <td><strong>Runs</strong></td>
+  <td>Durable Solo and team history, run-scoped evidence, attempts, budgets, recovery, and exports</td>
+</tr>
+<tr>
+  <td><strong>Instructions</strong></td>
+  <td>Durable workspace instructions and starter sections</td>
+</tr>
+<tr>
+  <td><strong>Model Router</strong></td>
+  <td>Route scorecards across quality, privacy, reliability, latency, cost, and footprint</td>
+</tr>
+<tr>
+  <td><strong>Proxies</strong></td>
+  <td>Named proxy profiles, assignments, strict tunnel, health, and failover</td>
+</tr>
+</tbody>
+</table>
+
+<p><img src="https://831891047-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FdQ03BivzJFZ7fKsPFhiD%2Fuploads%2F32XidrEy7OgDjkWCxOys%2Flocus-v2-plan.png?alt=media" alt="Planning and context in the Locus inspector" /></p>
+
+<p>Overview shows only sections that have content. Outputs catches files created through direct tools and shell commands, including gitignored results and work outside a Git repository. Clicking a produced document opens the Mac app associated with that file type.</p>
+
+<p>The Runs panel has its own icon; the three-node orchestration symbol is reserved for the team dispatcher. When one run is open while another continues, Overview and Activity remain scoped to the selected run. Files created and deleted within the same run are not reported as created, and expanded request/details state resets when you switch runs.</p>
+
+<p>A run never steals the selected panel. Attention appears as a badge. Use ⌘1–⌘5 and ⌘7–⌘9 for numbered panels, ⌘6 for checkpoints, ⌘⌥I to show or hide the inspector, and ⌘⌥E to expand or restore it.</p>
+
+<p>Open the Notebook separately with ⇧⌘9 to search and edit all notes without changing the Notes panel's current owner.</p>
+
+<h2>Overview, Agent, and Runs</h2>
+
+<p><strong>Overview</strong> follows the current request in the open conversation: the request summary, plan, sources, outputs, tool activity, helpers, and completion state. It does not combine every request into one plan.</p>
+
+<p>The <strong>Agent</strong> panel describes the selected persistent Agent, including instructions, trigger health, environment, access, and recent activity. Selecting an Agent and selecting one of its chats are separate actions. An Agent being active means it is enabled; it does not necessarily mean a chat is currently running.</p>
+
+<p><strong>Runs</strong> opens the current chat's executions and keeps exact event, occurrence, attempt, and output records. A received event is not proof of a successful execution. Use record details to distinguish waiting, skipped, failed, cancelled, and completed work.</p>
+
+<p><strong>Instructions</strong> is the workspace <code>AGENTS.md</code> panel. Reusable specialist profiles are configured through <strong>Specialists &amp; teams</strong>.</p>
+</body></html>

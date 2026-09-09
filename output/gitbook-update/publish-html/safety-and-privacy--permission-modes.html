@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Copy Permission Modes</title><style>body{max-width:900px;margin:36px auto;font:17px/1.6 system-ui;color:#202124}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px}pre{white-space:pre-wrap}</style></head><body><table>
+<thead>
+<tr>
+  <th>Mode</th>
+  <th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Ask every time</strong></td>
+  <td>File changes, commands, fetches, and mutations request approval</td>
+</tr>
+<tr>
+  <td><strong>Accept file edits</strong></td>
+  <td>Workspace edits can apply automatically; commands and outside access still ask</td>
+</tr>
+<tr>
+  <td><strong>Bypass all</strong></td>
+  <td>Ordinary tools can run without prompts, but hard safeguards remain</td>
+</tr>
+</tbody>
+</table>
+
+<p>Automatic reads stay bounded to the workspace, local session state, enabled Notes scope, and capabilities explicitly exposed to the route.</p>
+
+<h2>Boundaries that still ask or refuse</h2>
+
+<ul>
+<li>Browser JavaScript and starting a dev server always ask.</li>
+<li>Secure fields, credentials, password changes, contracts, security interstitials, final financial actions, and other high-consequence Computer Control steps require takeover or confirmation.</li>
+<li>Browser file-upload pickers and typed credentials are refused.</li>
+<li>Hosted screenshots require first-use consent for the provider.</li>
+<li>Automatic hosted team routing requires separate consent.</li>
+<li>Mobile cannot grant permanent permissions or perform Mac-only destructive session actions.</li>
+<li>Evaluation fixtures disable Computer Control and mutating MCP tools.</li>
+</ul>
+
+<h2>Hard command blocks</h2>
+
+<p>A deny list blocks catastrophic command patterns in every mode. Permission mode does not override workspace boundaries, credential handling, provider routing, extension policy, or operating-system entitlements.</p>
+
+<p>Use Bypass only in disposable workspaces whose contents and external accounts you can afford to lose.</p>
+
+<h2>Shared policy and Agent access</h2>
+
+<p>Tool approval mode is shared across chats and worker runtimes. Each Agent still has its own workspace/environment boundaries and explicitly allowed service actions. Receiving events from a connection does not automatically authorize sending or editing through it. Saving an empty action selection keeps all of those actions disabled.</p>
+
+<p>Adding a file to Context controls what is included in the chat; it does not expand filesystem permissions. Persistent goals, teams, and Task Capsules keep the existing approval boundaries. Optional question defaults are not user approval; required decisions remain pending.</p>
+</body></html>

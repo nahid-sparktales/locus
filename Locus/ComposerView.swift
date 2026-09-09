@@ -287,6 +287,7 @@ struct ComposerView: View {
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var contextPresented = false
     @State private var permissionModesPresented = false
+    @State private var workflowPresented = false
     @State private var teamPickerPresented = false
     @State private var quickTeamPresented = false
     @State private var popupSelection = 0
@@ -718,6 +719,10 @@ struct ComposerView: View {
             popupDismissedDraft = composerState.draftText
             return .handled
         }
+        if model.overviewPresented, model.requestOverviewVisible {
+            model.dismissOverview()
+            return .handled
+        }
         if model.isBusy, model.canAcceptTranscriptInput {
             commandRouter?.stop()
             return .handled
@@ -864,168 +869,116 @@ struct ComposerView: View {
         .accessibilityIdentifier(identifier)
     }
 
-    private var modeControls: some View {
-        Group {
-            if model.backendCapabilities["persistent_goals_v1"] == true {
-                Button { model.presentGoalEditor() } label: {
-                    Label("Goal", systemImage: "scope")
-                        .font(.locus(size: 9, weight: .semibold))
-                        .padding(.horizontal, 8).frame(height: 24)
-                }
-                .buttonStyle(.locus())
-                .disabled(!model.canStartGoal)
-                .help("Save an objective for this chat. The Agent keeps working until it completes the goal, pauses, or needs your input.")
-                .accessibilityIdentifier("composer.goal")
-            }
-            ForEach([WorkMode.plan, WorkMode.grill]) { mode in
-                Button {
-                    model.selectedMode = model.selectedMode == mode ? .work : mode
-                } label: {
-                    Text(mode.title)
-                        .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(model.selectedMode == mode ? LocusTheme.paper : LocusTheme.muted)
-                        .padding(.horizontal, 9)
-                        .frame(height: 24)
-                        .background(model.selectedMode == mode ? LocusTheme.ink : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                .buttonStyle(.locus())
-                .help(mode == .plan ? "Prepare a plan for this chat before making changes" : "Clarify your request with questions before starting work")
-                .accessibilityAddTraits(model.selectedMode == mode ? .isSelected : [])
-                .accessibilityLabel("\(mode.title) mode")
-                .accessibilityValue(model.selectedMode == mode ? "Selected" : "Not selected")
-                .accessibilityIdentifier("composer.mode.\(mode.rawValue)")
-            }
-            Button {
-                teamPickerPresented.toggle()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: agentTeams.teamModeEnabled
-                        ? "person.2.fill" : "person.fill")
-                    Text(agentTeams.selectedAgentTeam?.name ?? "Solo")
+    private var workflowControl: some View {
+        Button {
+            teamPickerPresented = false
+            workflowPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: ComposerWorkflowPopover.symbol(for: model.selectedMode))
+                Text(model.selectedMode.title)
+                if let team = agentTeams.selectedAgentTeam {
+                    Text("·")
+                    Text(team.name)
                         .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 100)
                 }
-                .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(agentTeams.teamModeEnabled ? accentAction : LocusTheme.muted)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                    .background(LocusTheme.paperDeep.opacity(0.8))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Image(systemName: "chevron.down")
+                    .font(.locus(size: 8, weight: .semibold))
             }
-            .buttonStyle(.locus())
-            .fixedSize(horizontal: false, vertical: true)
-            .popover(isPresented: $teamPickerPresented, arrowEdge: .bottom) {
+            .font(.locus(size: 10, weight: .medium))
+            .foregroundStyle(model.selectedMode == .work ? LocusTheme.inkSoft : accentAction)
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(model.selectedMode == .work ? LocusTheme.paperDeep.opacity(0.5) : accentAction.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus())
+        .popover(isPresented: $workflowPresented, arrowEdge: .bottom) {
+            if teamPickerPresented {
                 ComposerTeamPickerPopover(
-                    dismiss: { teamPickerPresented = false },
+                    dismiss: { workflowPresented = false },
                     createQuickTeam: {
-                        teamPickerPresented = false
-                        Task { @MainActor in
-                            await Task.yield()
-                            quickTeamPresented = true
-                        }
+                        presentWorkflowSheet { quickTeamPresented = true }
                     },
                     manageAdvanced: {
-                        teamPickerPresented = false
-                        model.presentSettings(.agents)
+                        presentWorkflowSheet { model.presentSettings(.agents) }
                     }
                 )
                 .environmentObject(model)
+            } else {
+                ComposerWorkflowPopover(
+                    selectMode: { mode in
+                        model.selectedMode = mode
+                        workflowPresented = false
+                    },
+                    openGoal: { presentWorkflowSheet { model.presentGoalEditor() } },
+                    openCapsules: {
+                        presentWorkflowSheet {
+                            model.taskCapsules.open(prefillingRequest: composerState.draftText)
+                        }
+                    },
+                    openTeams: { teamPickerPresented = true },
+                    dismiss: { workflowPresented = false }
+                )
+                .environmentObject(model)
             }
-            .accessibilityLabel("Solo or team routing")
-            .accessibilityValue(agentTeams.selectedAgentTeam?.name ?? "Solo")
-            .accessibilityIdentifier("composer.team")
+        }
+        .onChange(of: workflowPresented) {
+            if !workflowPresented { restoreFocus() }
+        }
+        .help("Choose how Locus works, set a goal, or open Task Capsules")
+        .accessibilityLabel("Work options")
+        .accessibilityValue("\(model.selectedMode.title) · \(agentTeams.selectedAgentTeam?.name ?? "Solo")")
+        .accessibilityIdentifier("composer.workflow")
+    }
+
+    /// Dismiss the popover before presenting a sheet on the workspace.
+    private func presentWorkflowSheet(_ action: @escaping @MainActor () -> Void) {
+        workflowPresented = false
+        Task { @MainActor in
+            await Task.yield()
+            action()
         }
     }
 
     private var actionRow: some View {
         ComposerActionLayout(rightToLeft: layoutDirection == .rightToLeft) {
+            ComposerAttachmentSourceMenu()
+                .environmentObject(model)
+
             if model.justChatEnabled {
-                Button {
-                    contextPresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperclip")
-                        Text("\(model.availableChatAttachments.count) attached")
-                    }
-                    .font(.locus(size: 9, weight: .semibold))
-                    .padding(.horizontal, 9)
-                    .frame(height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.68))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-                }
-                .buttonStyle(.locus())
-                .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
-                    ChatAttachmentsPopover()
-                        .environmentObject(model)
-                }
-                .accessibilityLabel("Open chat attachments")
-                .accessibilityIdentifier("composer.chatAttachments")
-
-                ComposerAttachmentSourceMenu(style: .plus)
-                    .environmentObject(model)
-
                 Label("Chat only", systemImage: "lock.fill")
-                    .font(.locus(size: 9, weight: .semibold))
+                    .font(.locus(size: 10, weight: .medium))
                     .foregroundStyle(LocusTheme.muted)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 8)
                     .frame(height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.68))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .accessibilityIdentifier("composer.justChatBoundary")
             } else {
-                Button {
-                    contextPresented.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.on.doc")
-                        if model.includedContextCount == 0 {
-                            Text("Context")
-                        } else {
-                            Text("\(model.includedContextCount)")
-                            Text(model.includedContextTokens.formatted(.number.notation(.compactName)))
-                                .foregroundStyle(LocusTheme.muted)
-                        }
-                    }
-                    .font(.locus(size: 9, weight: .semibold))
-                    .padding(.horizontal, 9)
-                    .frame(height: 30)
-                    .background(LocusTheme.paperDeep.opacity(0.68))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
-                    }
-                }
-                .buttonStyle(.locus())
-                .fixedSize()
-                .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
-                    ContextPopover()
-                        .environmentObject(model)
-                }
-                .help("Choose files to include as context in this chat. Access permissions are managed separately.")
-                .accessibilityLabel("Open chat context")
-                .accessibilityIdentifier("composer.context")
+                workflowControl
 
-                ComposerAttachmentSourceMenu(style: .paperclip)
-                    .environmentObject(model)
+                // Context earns a shortcut only when files are included.
+                // The Add menu always provides the full context manager.
+                if model.includedContextCount > 0 {
+                    Button { contextPresented.toggle() } label: {
+                        Label("\(model.includedContextCount)", systemImage: "doc.on.doc")
+                            .font(.locus(size: 10, weight: .medium))
+                            .foregroundStyle(LocusTheme.muted)
+                            .padding(.horizontal, 8)
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(.locus())
+                    .popover(isPresented: $contextPresented, arrowEdge: .bottom) {
+                        ContextPopover().environmentObject(model)
+                    }
+                    .help("\(model.includedContextCount) context files · \(model.includedContextTokens.formatted()) estimated tokens")
+                    .accessibilityLabel("Open chat context, \(model.includedContextCount) files")
+                    .accessibilityIdentifier("composer.context")
+                }
 
                 permissionChip
-            }
-
-            if model.justChatEnabled {
-                Button("Attach live application…", systemImage: "scope") {}
-                    .disabled(true)
-                    .help("Live application control is unavailable in Just Chat")
-                Button("Attach iOS Simulator…", systemImage: "ipad.and.iphone") {}
-                    .disabled(true)
-                    .help("iOS Simulator control is unavailable in Just Chat")
-            } else {
-                modeControls
-                    .transition(LocusMotion.transition(edge: .leading, reduceMotion: reduceMotion))
             }
 
             primaryActionControls
@@ -1167,12 +1120,6 @@ struct ComposerView: View {
         }
         .buttonStyle(.locus())
         .fixedSize()
-        .background(LocusTheme.paperDeep.opacity(0.68))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
-        }
         .popover(isPresented: $permissionModesPresented, arrowEdge: .bottom) {
             permissionModePopover
         }
@@ -1189,8 +1136,8 @@ struct ComposerView: View {
                 : "shield.lefthalf.filled")
             Text(model.permissionMode.shortTitle)
         }
-        .font(.locus(size: 9, weight: .semibold))
-        .padding(.horizontal, 9)
+        .font(.locus(size: 9, weight: .medium))
+        .padding(.horizontal, 8)
         .frame(height: 30)
         .contentShape(Rectangle())
     }
@@ -1793,31 +1740,39 @@ private struct ComposerTeamPickerPopover: View {
     }
 }
 
-private enum ComposerAttachmentMenuStyle {
-    case plus
-    case paperclip
-}
-
 private struct ComposerAttachmentSourceMenu: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var composerState: ComposerStateModel
     @EnvironmentObject private var applicationContext: ApplicationContextService
     @EnvironmentObject private var simulatorControl: SimulatorControlService
-    @State private var reviewPresented = false
+    private enum ReviewPanel: String, Identifiable {
+        case context, attachments
+        var id: String { rawValue }
+    }
+    @State private var reviewPanel: ReviewPanel?
     @State private var refreshRevision = 0
-    let style: ComposerAttachmentMenuStyle
 
     var body: some View {
         Menu {
-            Button("Review message attachments", systemImage: "tray.full") {
-                reviewPresented = true
-            }
-            .disabled(composerState.attachments.isEmpty)
-            Divider()
             Button("Add files or photos…", systemImage: "doc.badge.plus") {
                 model.addChatAttachments()
             }
             .disabled(composerState.isLoadingAttachments)
+            .accessibilityIdentifier("composer.addFiles")
+
+            if !model.justChatEnabled {
+                Button("Choose workspace context…", systemImage: "doc.on.doc") {
+                    reviewPanel = .context
+                }
+                .accessibilityIdentifier("composer.manageContext")
+            }
+            if !composerState.attachments.isEmpty {
+                Button("Review attachments (\(composerState.attachments.count))…", systemImage: "tray.full") {
+                    reviewPanel = .attachments
+                }
+                .accessibilityIdentifier("composer.chatAttachments")
+            }
+            Divider()
 
             Button("Use Identity Vault…", systemImage: "person.text.rectangle") {
                 model.identityVault.open()
@@ -1901,12 +1856,16 @@ private struct ComposerAttachmentSourceMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Attach files, application context, or an iOS Simulator")
-        .accessibilityLabel("Add message context")
+        .help("Add files, choose context, or attach an application")
+        .accessibilityLabel("Add attachments and context")
         .accessibilityIdentifier("composer.addChatAttachment")
-        .popover(isPresented: $reviewPresented, arrowEdge: .bottom) {
-            ChatAttachmentsPopover()
-                .environmentObject(model)
+        .popover(item: $reviewPanel, arrowEdge: .bottom) { panel in
+            switch panel {
+            case .context:
+                ContextPopover().environmentObject(model)
+            case .attachments:
+                ChatAttachmentsPopover().environmentObject(model)
+            }
         }
         .onAppear {
             // The service is seeded at initialization and stays current from
@@ -1931,40 +1890,18 @@ private struct ComposerAttachmentSourceMenu: View {
         }
     }
 
-    @ViewBuilder
     private var label: some View {
-        switch style {
-        case .plus:
-            Image(systemName: "plus")
-                .font(.locus(size: 11, weight: .semibold))
-                .frame(width: 30, height: 30)
-                .background(LocusTheme.paperDeep.opacity(0.68))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
-                }
-        case .paperclip:
-            HStack(spacing: 6) {
-                Image(systemName: "paperclip")
-                if !model.availableChatAttachments.isEmpty {
-                    Text("\(model.availableChatAttachments.count)")
+        Image(systemName: "plus")
+            .font(.locus(size: 12, weight: .medium))
+            .foregroundStyle(imageWarning ? LocusTheme.warning : LocusTheme.inkSoft)
+            .frame(width: 30, height: 30)
+            .background(LocusTheme.paperDeep.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                if imageWarning {
+                    Circle().fill(LocusTheme.warning).frame(width: 5, height: 5)
                 }
             }
-            .font(.locus(size: 9, weight: .semibold))
-            .foregroundStyle(imageWarning ? LocusTheme.warning : LocusTheme.ink)
-            .padding(.horizontal, 9)
-            .frame(height: 30)
-            .background(LocusTheme.paperDeep.opacity(0.68))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        imageWarning ? LocusTheme.warning.opacity(0.55) : LocusTheme.line,
-                        lineWidth: 1
-                    )
-            }
-        }
     }
 
     private var imageWarning: Bool {

@@ -171,134 +171,242 @@ struct InspectorPlanTab: View {
     }
 }
 
-/// The established Locus context card. It stays pinned beneath the dynamic
-/// session overview so context details remain available without changing the
-/// visual language used by the rest of the inspector.
+/// A detailed view of the runtime's context budget, separate from Overview.
+struct InspectorContextTab: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Chat context")
+                    .font(.locus(size: 16, weight: .semibold))
+                ContextWindowInfoCard()
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityIdentifier("inspector.context")
+    }
+}
+
 struct ContextWindowInfoCard: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("Locus.contextWindowInfo.collapsed") private var isCollapsed = true
+    @State private var expandedCategories: Set<String> = []
 
-    private var fraction: Double? { model.contextWindowUsageFraction }
-
-    private var accent: Color {
-        (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep
-    }
-
-    private var remainingTokens: Int? {
-        guard let usable = model.contextUsableTokens else { return nil }
-        return max(usable - model.contextUsedTokens, 0)
-    }
-
-    private var isAssumed: Bool {
-        !model.contextWindowProvenance.isMeasured && fraction != nil
-    }
-
-    private var usageLabel: String {
-        guard let fraction else { return "WINDOW UNKNOWN" }
-        let percent = fraction.formatted(.percent.precision(.fractionLength(0)))
-        return (isAssumed ? "≈ " : "") + percent + " USED"
+    private var usage: ContextUsagePresentation {
+        .init(breakdown: model.sessionInfo?.contextBreakdown,
+              conversationTokens: model.sessionInfo?.approxTokens ?? 0,
+              streamingTokens: model.estimatedStreamingTokens,
+              window: model.contextWindowTokens, usable: model.contextUsableTokens)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                isCollapsed.toggle()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "circle.dotted.circle")
-                    Text("Context window")
-                    Spacer()
-                    Text(usageLabel)
-                        .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                        .tracking(0.45)
-                        .foregroundStyle(accent)
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.locus(size: 10, weight: .bold))
+        let usage = usage
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Context window")
+                    .font(.locus(size: 12, weight: .medium))
+                    .foregroundStyle(LocusTheme.muted)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("≈\(compactTokens(usage.used))")
+                        .font(.locus(size: 20, weight: .semibold))
+                    Text(usage.window.map { "/ \(compactTokens($0))" } ?? "/ Unknown")
+                        .font(.locus(size: 13))
                         .foregroundStyle(LocusTheme.muted)
+                    Spacer(minLength: 0)
+                    if let fraction = usage.fraction {
+                        Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                            .font(.locus(size: 12, weight: .semibold))
+                            .foregroundStyle(fraction > 0.8 ? LocusTheme.warning : LocusTheme.ink)
+                    }
                 }
-                .frame(minHeight: 28)
-                .contentShape(Rectangle())
+                .monospacedDigit()
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("context.usage")
+                segmentedBar(usage)
             }
-            .buttonStyle(.locus())
-            .font(.locus(size: 12, weight: .bold))
-            .foregroundStyle(LocusTheme.inkSoft)
-            .accessibilityLabel(isCollapsed ? "Expand context window" : "Collapse context window")
-            .accessibilityIdentifier("plan.contextWindow.toggle")
 
-            if !isCollapsed {
-                VStack(alignment: .leading, spacing: 10) {
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(LocusTheme.line)
-                            if let fraction {
-                                Capsule()
-                                    .fill(accent)
-                                    .frame(width: proxy.size.width * fraction)
-                            }
-                        }
+            VStack(spacing: 3) {
+                ForEach(usage.categories) { category in
+                    categoryRow(category, window: usage.window)
+                }
+                Divider().padding(.vertical, 5)
+                if let reserved = usage.reserved {
+                    valueRow(id: "buffer", title: usage.hasBreakdown ? "Compaction buffer" : "Reserved capacity",
+                             tokens: reserved, window: usage.window)
+                }
+                valueRow(id: "free", title: "Free space", tokens: usage.free, window: usage.window)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("context.breakdown")
+
+            if !usage.deferred.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Available on demand")
+                        .font(.locus(size: 11, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                    ForEach(usage.deferred) { category in
+                        categoryRow(category, window: nil)
                     }
-                    .frame(height: 5)
-
-                    VStack(spacing: 7) {
-                        statRow("This conversation", "~\(model.contextUsedTokens.formatted()) tokens")
-                        statRow(
-                            "Remaining",
-                            remainingTokens.map { "~\($0.formatted()) tokens" } ?? "Unknown"
-                        )
-                        statRow(
-                            "Model window",
-                            model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
-                        )
-                        statRow("Source", model.contextWindowProvenance.label)
-                        if let usable = model.contextUsableTokens,
-                           let window = model.contextWindowTokens,
-                           usable < window {
-                            statRow("Usable for chat", "\(usable.formatted()) tokens")
-                        }
-                        statRow(
-                            "Attached context",
-                            "\(model.includedContextTokens.formatted()) · \(model.includedContextCount) files"
-                        )
-                        statRow("Messages", "\(model.sessionInfo?.messages ?? 0)")
-                    }
-
-                    Text("Locus compacts the conversation when it reaches the usable limit, preserving room for tools and the next response.")
+                    Text("Deferred tools do not use context until loaded.")
                         .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.muted)
-                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .accessibilityIdentifier("plan.contextWindow.details")
             }
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.white.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Context window information")
-        .accessibilityIdentifier("plan.contextWindow")
-        .animation(reduceMotion ? nil : LocusMotion.spatial, value: isCollapsed)
-    }
 
-    private func statRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
+            Text(usage.note)
                 .font(.locus(size: 11))
                 .foregroundStyle(LocusTheme.muted)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(value)
-                .font(.locus(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(model.contextWindowProvenance.label)
+                .font(.locus(size: 10))
+                .foregroundStyle(LocusTheme.muted)
         }
+        .padding(12)
+        .locusCard(radius: 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("plan.contextWindow.details")
+        .onChange(of: model.currentSessionID) { expandedCategories = [] }
+    }
+
+    private func categoryRow(_ category: ContextUsageCategory, window: Int?) -> some View {
+        let isExpanded = expandedCategories.contains(category.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if category.children.isEmpty {
+                    categoryLabel(category, isExpanded: false, window: window)
+                } else {
+                    Button {
+                        if isExpanded { expandedCategories.remove(category.id) }
+                        else { expandedCategories.insert(category.id) }
+                    } label: {
+                        categoryLabel(category, isExpanded: isExpanded, window: window)
+                    }
+                    .buttonStyle(.locus())
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(category.label + ", approximately \(category.tokens.formatted()) tokens")
+            .accessibilityValue(category.children.isEmpty ? "" : isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("context.category.\(category.id)")
+
+            if isExpanded {
+                LazyVStack(alignment: .leading, spacing: 9) {
+                    ForEach(category.children) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(item.label)
+                                .font(.locus(size: 11))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Text(compactTokens(max(item.tokens, 0)))
+                                .font(.locus(size: 11, design: .monospaced))
+                        }
+                        .foregroundStyle(LocusTheme.muted)
+                    }
+                }
+                .padding(.leading, 24)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("context.details.\(category.id)")
+            }
+        }
+    }
+
+    private func categoryLabel(_ category: ContextUsageCategory, isExpanded: Bool, window: Int?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.locus(size: 8, weight: .semibold))
+                .frame(width: 8)
+                .opacity(category.children.isEmpty ? 0 : 1)
+            swatch(category.id)
+            Text(category.label)
+                .font(.locus(size: 12))
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 2)
+            tokenColumns(category.tokens, window: window)
+        }
+        .foregroundStyle(LocusTheme.ink)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private func valueRow(id: String, title: String, tokens: Int?, window: Int?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Color.clear.frame(width: 8, height: 8)
+            swatch(id)
+            Text(title).font(.locus(size: 12))
+            Spacer(minLength: 2)
+            tokenColumns(tokens, window: window)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("context.\(id)")
+    }
+
+    private func tokenColumns(_ tokens: Int?, window: Int?) -> some View {
+        HStack(spacing: 7) {
+            Text(tokens.map(compactTokens) ?? "Unknown")
+                .foregroundStyle(LocusTheme.muted)
+            Text(percentage(tokens, window: window))
+                .foregroundStyle(LocusTheme.ink)
+                .frame(width: 43, alignment: .trailing)
+        }
+        .font(.locus(size: 11, design: .monospaced))
+        .fixedSize()
+    }
+
+    private func percentage(_ tokens: Int?, window: Int?) -> String {
+        guard let tokens, let window, window > 0 else { return "—" }
+        return (Double(tokens) / Double(window)).formatted(.percent.precision(.fractionLength(1)))
+    }
+
+    private func compactTokens(_ tokens: Int) -> String {
+        if tokens >= 1_000_000 { return String(format: "%.1fM", Double(tokens) / 1_000_000) }
+        if tokens >= 1_000 { return String(format: "%.1fk", Double(tokens) / 1_000) }
+        return tokens.formatted()
+    }
+
+    private func swatch(_ id: String) -> some View {
+        RoundedRectangle(cornerRadius: 2).fill(color(id)).frame(width: 8, height: 8)
+    }
+
+    private func color(_ id: String) -> Color {
+        switch id {
+        case "messages", "provider_context": .blue
+        case "system_tools": .orange
+        case "mcp_tools": .green
+        case "skills": .yellow
+        case "system_prompt": .purple
+        case "agent_instructions": .pink
+        case "workspace_instructions": .teal
+        case "memory": .indigo
+        case "free": LocusTheme.line
+        default: LocusTheme.muted.opacity(0.5)
+        }
+    }
+
+    private func segmentedBar(_ usage: ContextUsagePresentation) -> some View {
+        let items = usage.categories + [
+            .init(id: "buffer", label: "Reserved", tokens: usage.reserved ?? 0),
+            .init(id: "free", label: "Free", tokens: usage.free ?? 0),
+        ]
+        let total = max(usage.window ?? 0, items.reduce(0) { $0 + $1.tokens }, 1)
+        return GeometryReader { geometry in
+            HStack(spacing: 0) {
+                ForEach(items.filter { $0.tokens > 0 }) { item in
+                    color(item.id)
+                        .frame(width: geometry.size.width * Double(item.tokens) / Double(total))
+                        .overlay(alignment: .trailing) {
+                            Rectangle().fill(LocusTheme.paper).frame(width: 1)
+                        }
+                }
+            }
+            .background(LocusTheme.line)
+            .clipShape(Capsule())
+        }
+        .frame(height: 7)
+        .accessibilityHidden(true)
     }
 }
