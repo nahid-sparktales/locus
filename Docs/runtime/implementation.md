@@ -230,3 +230,15 @@ work overlaps this branch in `core.py`, `evaluation_runtime.py`, `evaluations.py
 `task_state.py`, `tools.py`, `test_evaluations.py` and `test_verified_tasks.py`.
 Review their final changes and reconcile overlaps before integration; do not replace
 the original checkout's files with this branch wholesale.
+
+### Main integration validation
+
+The branch incorporates the committed Duo mode changes from main. Regenerating
+the Xcode project preserves both features. Full integration validation passed:
+**2,256 backend tests** and **1,443 standard native unit tests**, with zero failures.
+The API route snapshot includes the new endpoints, the deployment account picker
+observes its feature owner directly, and the settings test includes Runtimes.
+The native runner required one retry after a macOS LaunchServices error before
+tests began; the completed retry ran the entire suite. Ruff, design-system and
+protocol audits, generated-project validation and the branch-history secret scan
+also passed. These local results do not replace the live release gates above.
