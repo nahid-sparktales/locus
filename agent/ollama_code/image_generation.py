@@ -331,6 +331,7 @@ class ImageProviderClient:
                 payload = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError) as exc:
                 raise ImageProviderError("the provider returned an unreadable response.") from exc
+            ctx.image_provider_usage = payload.get("usage") if isinstance(payload, dict) and isinstance(payload.get("usage"), dict) else {}
             return self._decode(payload)
         except ImageProviderError:
             if ctx.stopped():
@@ -752,7 +753,16 @@ class ImageGenerationService:
         if ctx.stopped():
             raise ImageProviderError("interrupted")
         try:
+            journal = getattr(ctx, "task_journal", None)
+            history = None
+            captures = []
+            if journal is not None:
+                from .file_history import FileHistory
+                history = FileHistory(journal, ctx.cwd)
+                captures = history.begin(getattr(ctx, "task_invocation_id", "image"), [relative])
             write_image_atomically(destination, data)
+            if history:
+                history.finish(captures, ok=True)
         except OSError as exc:
             raise ImageToolError(
                 proxy.redact(f"the image could not be saved to {relative}: {exc}")

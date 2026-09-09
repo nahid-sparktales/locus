@@ -1,7 +1,9 @@
 """Local evaluation definitions and deterministic grading."""
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import re
 import subprocess
 import time
@@ -155,6 +157,24 @@ class EvaluationStore:
             })
         return output
 
+    def human_grade(self, suite_id: str, result_id: str, *, score, reviewer: str, reason: str):
+        suite = self.get_suite(suite_id)
+        result = next((r for r in self.results(suite_id) if r["id"] == result_id), None)
+        case = next((c for c in (suite or {}).get("cases", []) if result and c["id"] == result["case_id"]), None)
+        if not case or case.get("grading") != "human" or not case.get("rubric"):
+            raise EvaluationError("This result does not request recorded human grading.")
+        if result.get("execution_outcome") != "completed" or not result.get("deterministic_passed"):
+            raise EvaluationError("Human grading cannot override incomplete execution or failed checks.")
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score) or not 0 <= score <= 100:
+            raise EvaluationError("A grade must be between 0 and 100.")
+        if not isinstance(reviewer, str) or not reviewer.strip() or not isinstance(reason, str) or not reason.strip():
+            raise EvaluationError("Record the reviewer and grading evidence.")
+        passed = score >= case.get("passing_score", 80)
+        return self.finish_result(result_id, {**result, "state": "passed" if passed else "failed",
+            "grading_outcome": "passed" if passed else "failed", "rubric_score": score,
+            "rubric_reason": reason[:8000], "human_grading": {"reviewer": reviewer[:256], "recorded_at": time.time()},
+            "failure_category": "" if passed else "subjective_rubric"})
+
     def expired_successful_task_ids(self, *, older_than_days: int = 7) -> list[str]:
         """Return disposable successful fixtures eligible for local cleanup."""
         cutoff = time.time() - max(older_than_days, 1) * 86_400
@@ -250,6 +270,7 @@ def validate_case(value: Any) -> dict[str, Any]:
         "budget": budget_value,
         "assertions": assertions, "rubric": str(value.get("rubric") or "")[:16_000],
         "judge_profile_id": str(value.get("judge_profile_id") or ""),
+        "grading": "human" if value.get("grading") == "human" else "automatic",
         "passing_score": min(max(_integer(value.get("passing_score"), 80), 0), 100),
         "baseline_fixture": sanitize_event(value.get("baseline_fixture"))
         if isinstance(value.get("baseline_fixture"), dict) else None,
@@ -385,8 +406,28 @@ def _minimal_schema(value: Any, schema: dict[str, Any], path: str = "$") -> tupl
     return True, "JSON matches the requested schema subset."
 
 
+def configuration_snapshot(core, case: dict, manifest: dict) -> dict:
+    """Record reproducible settings, never secrets or provider credentials."""
+    config = getattr(core, "config", {})
+    profiles = [{"id": p.get("id"), "role": p.get("role"), "model": p.get("model"),
+                 "route": {k: v for k, v in (p.get("route") or {}).items()
+                           if k in {"provider", "model", "account_kind", "effort"}},
+                 "access_ceiling": p.get("access_ceiling")}
+                for p in manifest.get("profiles", [])]
+    value = {"provider": getattr(core, "provider", ""), "model": getattr(core, "model", ""),
+             "provider_protocol": getattr(getattr(core, "client", None), "auth_style", None),
+             "mode": case.get("mode", "write"), "target": case.get("target", "team"),
+             "model_version": config.get("model_version", "unreported"),
+             "effort": config.get("chatgpt_reasoning_effort", config.get("reasoning_effort")),
+             "account_class": "subscription" if getattr(core, "provider", "") == "chatgpt" else "local" if getattr(core, "provider", "") == "ollama" else "metered",
+             "recipe": manifest.get("team") or {}, "profiles": profiles,
+             "tools": "local_evaluation", "permissions": "isolated_workspace", "app_version": __import__("ollama_code").__version__}
+    value["fingerprint"] = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return value
+
+
 def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
-    completed = [item for item in results if item.get("state") in {"passed", "failed"}]
+    completed = results  # Every started attempt remains in the denominator.
     latencies = sorted(int(item.get("duration_ms") or 0) for item in completed)
     scores = [float(item["rubric_score"]) for item in completed
               if item.get("rubric_score") is not None]
@@ -402,7 +443,10 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "model_calls": sum(int(item.get("model_calls") or 0) for item in completed),
         "prompt_tokens": sum(int(item.get("prompt_tokens") or 0) for item in completed),
         "completion_tokens": sum(int(item.get("completion_tokens") or 0) for item in completed),
-        "estimated_cost": sum(float(item.get("estimated_cost") or 0) for item in completed),
+        "estimated_cost": sum(float(item["estimated_cost"]) for item in completed) if completed and all(item.get("estimated_cost") is not None for item in completed) else None,
+        "known_cost_subtotal": sum(float(item.get("known_cost_subtotal", item.get("estimated_cost")) or 0) for item in completed),
+        "cost_known_cases": sum(item.get("estimated_cost") is not None for item in completed),
+        "ungraded": sum(item.get("state") == "ungraded" for item in completed),
     }
 
 
@@ -412,7 +456,8 @@ def compare_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for result in results:
         target = str(result.get("target") or "unknown")
         team_id = str(result.get("team_id") or "")
-        key = target if target == "solo" else f"team:{team_id or 'default'}"
+        configuration = result.get("configuration") or {}
+        key = configuration.get("fingerprint") or (target if target == "solo" else f"team:{team_id or 'default'}")
         groups.setdefault(key, []).append(result)
     output: list[dict[str, Any]] = []
     for configuration, values in sorted(groups.items()):

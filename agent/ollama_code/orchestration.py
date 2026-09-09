@@ -190,6 +190,7 @@ class AgentProfile:
     behavior: AgentConfiguration
     route: dict[str, Any] = field(repr=False)
     memory_context: str = field(default="", repr=False)
+    usage_rates: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def parse(cls, value: Any) -> AgentProfile:
@@ -216,6 +217,7 @@ class AgentProfile:
             ),
             route=dict(value.get("route") or {}),
             memory_context=str(value.get("_memory_context") or "")[:24_000],
+            usage_rates=dict(value.get("usage_rates") or {}),
         )
         if not profile.name or not profile.model:
             raise OrchestrationError("every team member needs a name and exact model")
@@ -295,6 +297,7 @@ class AgentJob:
     depth: int = 0
     execution_engine: str = "locus_managed"
     approved_goal: str = ""
+    execution_kind: str = "write"
 
 
 @dataclass
@@ -364,6 +367,7 @@ class DispatchPlan:
                     "goal": job.goal,
                     "dependencies": list(job.dependencies),
                     "kind": job.kind,
+                    "execution_kind": job.execution_kind,
                     "required_role": job.required_role,
                     "capability_tags": list(job.capability_tags),
                     "preferred_agent_id": job.preferred_agent_id,
@@ -886,8 +890,10 @@ class TeamOrchestrator:
         self, run_id: str, profile: AgentProfile, stop: Stop | None = None,
     ):
         effective_stop = stop or self.should_stop
+        wait_id = uuid.uuid4().hex
         self.emit({
             "type": "scheduler_lease_waiting",
+            "request_id": wait_id,
             "run_id": run_id,
             "agent_id": profile.id,
             "active_leases": self.scheduler.active_count,
@@ -895,6 +901,7 @@ class TeamOrchestrator:
         with self.scheduler.lease(run_id, effective_stop) as lease_id:
             self.emit({
                 "type": "scheduler_lease_acquired",
+                "request_id": wait_id,
                 "run_id": run_id,
                 "agent_id": profile.id,
                 "lease_id": lease_id,
@@ -1359,6 +1366,7 @@ class TeamOrchestrator:
             resolved.append(AgentJob(
                 job.id, selected_id, job.goal, job.dependencies, job.kind,
                 job.required_role, job.capability_tags, job.agent_id,
+                execution_kind=job.execution_kind,
             ))
             self.emit({
                 "type": "routing_decision", "run_id": run_id, "job_id": job.id,
@@ -1415,17 +1423,16 @@ class TeamOrchestrator:
             "limited_data": len(evaluations) < 5,
         }
 
+    @staticmethod
+    def required_reviewers(prepared: TeamPreparation) -> list[AgentProfile]:
+        identifiers = list(dict.fromkeys(job.agent_id for job in prepared.plan.jobs if job.kind == "reviewer"))
+        members = getattr(prepared.team, "member_ids", prepared.profiles.keys())
+        identifiers.extend(p.id for p in prepared.profiles.values()
+                           if p.id in members and p.id not in identifiers and p.role == "reviewer" and not p.can_write)
+        return [prepared.profiles[identifier] for identifier in identifiers]
+
     def review(self, prepared: TeamPreparation, diff_text: str, test_evidence: str = "") -> list[AgentResult]:
-        reviewers = [
-            prepared.profiles[job.agent_id]
-            for job in prepared.plan.jobs
-            if job.kind == "reviewer" and job.agent_id in prepared.profiles
-        ]
-        if not reviewers:
-            reviewers = [
-                profile for profile in prepared.profiles.values()
-                if profile.role == "reviewer" and not profile.can_write
-            ][:1]
+        reviewers = self.required_reviewers(prepared)
         if not reviewers:
             return []
         self.emit({
@@ -1593,23 +1600,38 @@ class TeamOrchestrator:
                 "deterministic_evidence": evidence,
             }, ensure_ascii=False)
         )
-        result = self._call_agent(
-            run_id,
-            AgentJob("rubric-judge", profile.id, prompt, (), "reviewer"),
-            profile,
-            budget,
-            stream_visible=False,
-        )
+        judge_run = run_id + ":judge"
+        if self.run_store is not None:
+            self.run_store.start_run(judge_run, request="Benchmark grading overhead", run_kind="evaluation", state="running")
         try:
+            result = self._call_agent(
+                judge_run,
+                AgentJob("rubric-judge", profile.id, prompt, (), "reviewer"),
+                profile,
+                budget,
+                stream_visible=False,
+            )
             value = _extract_json(result.output)
-            score = min(max(float(value.get("score")), 0.0), 100.0)
+            import math
+            score = float(value.get("score"))
+            if not math.isfinite(score) or not 0 <= score <= 100:
+                raise ValueError("Invalid grade")
             reason = str(value.get("reason") or "")[:4_000]
         except (AttributeError, TypeError, ValueError, OrchestrationError):
+            if self.run_store is not None:
+                self.run_store.set_state(judge_run, "failed")
             raise OrchestrationError("the rubric judge did not return a valid score") from None
+        except BaseException:
+            if self.run_store is not None:
+                self.run_store.set_state(judge_run, "failed")
+            raise
+        if self.run_store is not None:
+            self.run_store.set_state(judge_run, "completed")
         return {
             "score": score, "reason": reason, "subjective": True,
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
+            "run_id": judge_run,
         }
 
     def _dispatch_with_status(
@@ -1864,9 +1886,20 @@ class TeamOrchestrator:
 
         goal_calls = threading.local()
         def before_goal_request():
+            if self.run_store is not None:
+                from .task_journal import TaskJournal
+                from .usage_ledger import UsageLedger
+                journal = TaskJournal.for_owner(self.run_store, "run:" + run_id)
+                journal.run_id = run_id
+                goal_calls.ledger = UsageLedger(journal)
+                goal_calls.usage_id = goal_calls.ledger.reserve(provider="openai", model=dispatcher.model,
+                    stage="helpers", rates=dispatcher.usage_rates or {"input_tokens": dispatcher.input_cost_per_million or None,
+                    "output_tokens": dispatcher.output_cost_per_million or None})
             if self.goal_runtime is not None:
                 goal_calls.identifier = self.goal_runtime.reserve()
         def settle_goal_request(prompt_tokens, completion_tokens):
+            if self.run_store is not None:
+                goal_calls.ledger.settle(goal_calls.usage_id, {"input_tokens": prompt_tokens, "output_tokens": completion_tokens})
             if self.goal_runtime is not None:
                 self.goal_runtime.settle(goal_calls.identifier,
                     prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
@@ -2477,14 +2510,37 @@ class TeamOrchestrator:
                 }
         with self._scheduler_slot(run_id, profile, effective_stop):
             goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
+            task_call = None
+            if self.run_store is not None:
+                from .pricing import estimate_rates
+                from .task_journal import TaskJournal
+                from .usage_ledger import UsageLedger, request_bound
+                journal = TaskJournal.for_owner(self.run_store, "run:" + run_id)
+                journal.run_id = run_id
+                ledger = UsageLedger(journal)
+                rates = getattr(profile, "usage_rates", None) or {"input_tokens": profile.input_cost_per_million or None,
+                         "output_tokens": profile.output_cost_per_million or None}
+                rates = estimate_rates(profile.model, client, rates if any(v is not None for k, v in rates.items() if k.endswith("tokens")) else None)
+                bound = request_bound(client, rates, len(json.dumps([messages, tools]).encode()) + 4096, profile.token_limit)
+                try:
+                    task_call = ledger.reserve(provider=str(profile.route.get("provider") or ""), model=profile.model,
+                        stage="benchmark_judging" if run_id.endswith(":judge") else "review" if profile.role == "reviewer" else "planning" if profile.role == "dispatcher" else "helper",
+                        rates=rates, upper_bound=bound)
+                except BaseException:
+                    if goal_call is not None:
+                        self.goal_runtime.cancel_undispatched(goal_call)
+                    raise
             response = client.chat_stream(
                 profile.model,
                 messages,
                 tools=tools or [],
                 on_token=stream,
                 should_stop=effective_stop,
-                options=options,
+                options={**(options or {}), "num_predict": profile.token_limit},
             )
+            if task_call:
+                from .usage_ledger import response_usage
+                ledger.settle(task_call, response_usage(response))
             if goal_call is not None:
                 self.goal_runtime.settle(goal_call, response)
         if effective_stop():
@@ -2639,6 +2695,7 @@ def validate_dispatch_plan(
             goal=str(raw.get("goal") or "").strip()[:16_000],
             dependencies=tuple(str(item) for item in raw.get("dependencies") or []),
             kind=kind,
+            execution_kind=str(raw.get("execution_kind") or "write"),
             required_role=str(raw.get("required_role") or "").strip().lower()[:40],
             capability_tags=tuple(str(item).strip().lower()[:40]
                                   for item in raw.get("capability_tags") or [])[:24],
@@ -2653,6 +2710,8 @@ def validate_dispatch_plan(
         )
         if job.agent_id not in profiles or job.agent_id not in team.member_ids:
             raise OrchestrationError(f"job {job.id} names an unknown team member")
+        if job.execution_kind not in {"read", "check", "write"} or (job.execution_kind != "write" and not team.id.startswith("capsule-")):
+            raise OrchestrationError("Only saved capsule steps can select a read/check execution lane.")
         if not job.goal or job.kind not in {"specialist", "writer", "reviewer"}:
             raise OrchestrationError(f"job {job.id} is incomplete")
         if job.node_id != job.id or job.parent_node_id or job.depth != 0:
@@ -2694,7 +2753,7 @@ def validate_dispatch_plan(
     if not writers:
         raise OrchestrationError("dispatcher plan must contain at least one coding job")
     if not team.parallel_writers:
-        _reject_unordered_writers(jobs, writers)
+        _reject_unordered_writers(jobs, [job for job in writers if job.execution_kind == "write"])
     if team.swarm_policy.delegation_mode == "read_only_children":
         roots = sum(job.kind == "specialist" for job in jobs)
         if roots > team.swarm_policy.max_total_agents:

@@ -46,6 +46,20 @@ def test_goal_schema_and_unfinished_uniqueness(stores):
     assert make_goal(goals)["id"] != goal["id"]
 
 
+def test_old_task_evidence_and_paraphrased_reports_do_not_restart_progress(stores):
+    from ollama_code.task_journal import TaskJournal
+    runs, goals = stores
+    TaskJournal(runs, "session:chat").milestone("check_passed", {"check_hash": "prior-task-result"})
+    goal = make_goal(goals)
+    for index, summary in enumerate(("Investigating the issue", "Looking into a different approach", "Considering another possibility")):
+        run = start(goals, runs, goal)
+        report(goals, goal, run, summary=summary)
+        runs.set_state(run["id"], "completed")
+        saved = goals.reconcile_run(goal["id"], run["id"])
+        assert saved["no_progress_count"] == index + 1
+    assert saved["status"] == "paused"
+
+
 def test_claim_is_atomic_across_store_instances(stores):
     runs, goals = stores
     goal = make_goal(goals)

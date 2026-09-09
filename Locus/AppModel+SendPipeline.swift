@@ -30,7 +30,8 @@ extension AppModel {
         preparedModelRoute: ModelRoutingPreparedTurn? = nil,
         consumeMatchingDraft: Bool = true,
         allowLocalCommands: Bool = true,
-        capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil
+        capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil,
+        approvedPlan: [String: JSONValue]? = nil
     ) {
         guard admitTranscriptInput() else { return }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
@@ -84,6 +85,11 @@ extension AppModel {
         }
 
         if isBusy || hasPendingPermission {
+            if approvedPlan != nil {
+                planApprovalPending = true
+                showToast("Finish the active turn before implementing the saved plan")
+                return
+            }
             if hasChatAttachments {
                 showToast("Wait for the current reply before sending attachments")
                 return
@@ -103,7 +109,7 @@ extension AppModel {
             return
         }
         guard isAgentOnline else {
-            stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure)
+            stashUnsent(text, requeue: requeueingOnFailure, preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan)
             return
         }
 
@@ -168,7 +174,8 @@ extension AppModel {
                     automaticRoutingPrepared: true,
                     preparedModelRoute: route,
                     consumeMatchingDraft: consumeMatchingDraft,
-                    allowLocalCommands: allowLocalCommands
+                    allowLocalCommands: allowLocalCommands,
+                    approvedPlan: approvedPlan
                 )
             }
             return
@@ -353,9 +360,9 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
                     )
-                } else if requeueingOnFailure,
+                } else if requeueingOnFailure, approvedPlan == nil,
                           let runtime = self.taskWorkers[dispatchedSessionID] {
                     runtime.queuedMessages.insert(text, at: 0)
                 }
@@ -392,6 +399,7 @@ extension AppModel {
                 "request_id": reservedRunID,
             ]
             if privateIdentity { request["identity_mode"] = true }
+            if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
             if let capsuleDispatch { request["capsule_context"] = capsuleDispatch.context }
             if let savedConfig = savedGoal?.execution["agent_config"],
                let agentConfig = encodedJSONValue(savedConfig) {
@@ -438,7 +446,7 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
                     )
                 }
                 return
@@ -523,7 +531,7 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
                     )
                 }
                 return
@@ -549,7 +557,7 @@ extension AppModel {
                         self.stashUnsent(
                             text,
                             requeue: requeueingOnFailure,
-                            preserveDraft: preservingDraftOnFailure
+                            preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
                         )
                     }
                     self.showToast("The agent did not accept this chat. It is ready to retry.")
@@ -725,7 +733,12 @@ extension AppModel {
     /// Where a message goes when it could not be delivered. A drained queue
     /// entry returns to the head of the queue — writing it into the draft
     /// would destroy whatever the user typed while waiting.
-    private func stashUnsent(_ text: String, requeue: Bool, preserveDraft: Bool) {
+    private func stashUnsent(_ text: String, requeue: Bool, preserveDraft: Bool, approvedPlan: [String: JSONValue]? = nil) {
+        if approvedPlan != nil {
+            planApprovalPending = true
+            showToast("The saved plan was not sent. Use Implement to retry its approval.")
+            return
+        }
         if requeue {
             queuedMessages.insert(text, at: 0)
             showToast("Kept in queue — reconnect the local agent to send")

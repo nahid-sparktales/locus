@@ -68,7 +68,9 @@ def execution_manifest(capsule: dict, profiles: list[dict], run_id: str) -> dict
     previous = None
     for step in details:
         # Serialize writes even when the author described independent steps.
-        dependencies = list(dict.fromkeys([*step.get("dependencies", []), *([previous] if previous else [])]))
+        execution_kind = step.get("execution_kind", "write")
+        barriers = [job["id"] for job in jobs] if execution_kind == "write" else ([previous] if previous else [])
+        dependencies = list(dict.fromkeys([*step.get("dependencies", []), *barriers]))
         goal = json.dumps({
             "request": capsule["request"],
             "summary": plan.get("summary", ""),
@@ -77,12 +79,13 @@ def execution_manifest(capsule: dict, profiles: list[dict], run_id: str) -> dict
             "decisions": plan.get("decisions", []),
             "overall_verification": plan.get("tests", []),
         }, ensure_ascii=False)
-        jobs.append({"id": step["id"], "agent_id": executor_id, "kind": "writer",
+        jobs.append({"id": step["id"], "agent_id": executor_id, "kind": "writer", "execution_kind": execution_kind,
                      "dependencies": dependencies, "goal":
                      "Implement this saved capsule step. Inspect the named sources, preserve prior steps, "
                      "and perform the specified checks. Report evidence and unresolved blockers truthfully. "
                      "Do not redesign the overall plan or call a different model.\n" + goal})
-        previous = step["id"]
+        if execution_kind == "write":
+            previous = step["id"]
     manifest = {
         "run_id": run_id,
         "profiles": members,
@@ -120,8 +123,26 @@ def review_request(reviews: list) -> str:
             raise ValueError("The reviewer did not return a verifiable verdict. Review is still required.") from None
         if not isinstance(result, dict) or result.get("verdict") not in {"approved", "revise"}:
             raise ValueError("The reviewer did not return an approved or revise verdict.")
+        if not isinstance(result.get("findings", []), list):
+            raise ValueError("Review findings must be a list. Review is still required.")
         if result["verdict"] == "revise":
-            revisions.append(raw)
+            from .task_state import digest
+            findings = []
+            raw_findings = result.get("findings", [])
+            if not raw_findings and result.get("revision_request"):
+                raw_findings = [result["revision_request"]]
+            if not raw_findings:
+                raise ValueError("The reviewer requested revision without a finding. Review is still required.")
+            for finding in raw_findings:
+                item = dict(finding) if isinstance(finding, dict) else {"message": str(finding)}
+                item.pop("id", None)
+                item.setdefault("files", [])
+                item.setdefault("check_ids", [])
+                item["id"] = digest([getattr(review, "agent_id", "reviewer"), item])[:20]
+                findings.append(item)
+            result["findings"] = findings
+            review.output = json.dumps(result, ensure_ascii=False)
+            revisions.append(json.dumps(result, ensure_ascii=False))
     return "\n\n".join(revisions)
 
 

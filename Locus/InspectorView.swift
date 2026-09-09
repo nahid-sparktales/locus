@@ -1829,6 +1829,9 @@ struct InspectorRunsTab: View {
             .frame(height: 31)
             .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
             runSummary(run)
+            Button("Open task") { model.showTaskDetail(runID: run.id) }
+                .accessibilityIdentifier("runs.openTask")
+                .padding(.vertical, 6)
             Picker("View", selection: $viewMode) {
                 Text("Overview")
                     .accessibilityIdentifier("runs.view.overview")

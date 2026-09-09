@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TaskCapsuleView: View {
     @ObservedObject var model: TaskCapsuleModel
+    var openTask: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locusAccent) private var accent
     @State private var showLimits = false
@@ -402,6 +403,10 @@ struct TaskCapsuleView: View {
                 Label(capsuleState(capsule), systemImage: "doc.text")
                     .font(.caption.weight(.medium)).foregroundStyle(LocusTheme.accentAction)
                 Text(capsule.title).font(.title2.weight(.semibold)).textSelection(.enabled)
+                if let run = capsule.runs.last, let openTask {
+                    Button("Task details") { openTask(run.runID) }
+                        .accessibilityIdentifier("capsules.taskDetails")
+                }
                 Text("Revision \(capsule.revision) · \(stepSummary(capsule.plan)) · \(workspaceName)")
                     .font(.caption).foregroundStyle(LocusTheme.textSecondary)
                 if !capsule.request.isEmpty {

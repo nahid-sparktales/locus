@@ -173,7 +173,7 @@ Existing session safeguards remain 64 MiB per session and 2 MiB per record.
 Exceeding a required bound produces an explicit limitation. Large-workspace
 performance and broader snapshot scaling remain unbenchmarked.
 
-## Validation
+## Foundation validation
 
 The focused backend suites passed **776 tests**, including 53 verification and
 recovery regressions. They cover task verification, capsules, goal lifecycle,
@@ -205,19 +205,19 @@ provider behavior is covered by deterministic fixtures, not a live subscription
 session. These are validation limits, not measured parity claims against Claude
 or Codex.
 
-## Remaining work
+## Task reliability extension
 
-The foundations above are implemented. The following audit recommendations stay
-separate from this release, in suggested order:
+The subsequent two-phase implementation adds immutable plan approval references,
+execution-evidence progress detection, shared bounded team repair, invocation
+receipts, evaluation startup/grading fixes, whole-task usage accounting, a unified
+macOS task detail view, and selective file restoration. Schema migrations 15–17
+are additive to the schema 14 foundation described above.
 
-1. Repair evaluation startup, incomplete-run grading, rubric handling, and
-   configuration grouping; then run comparable live task benchmarks.
-2. Finish whole-task cost accounting, including Anthropic cache usage,
-   unknown-cost coverage, and charges outside the compaction fix.
-3. Replace wording-based no-progress detection with execution evidence.
-4. Make ordinary team repair and re-review behavior consistent.
-5. Tune planning depth, Grill stopping rules, and imported planning instructions.
-6. Measure parallel reading/checking and evaluate execution recipes.
+See [Task reliability implementation and validation](TaskReliability.md) for
+interfaces, measured local checks, current validation records, and limitations.
+The user deferred all live-provider recovery and comparative benchmark campaigns
+until after feature implementation. Those release gates remain open; local
+regressions and timing measurements do not count as live-provider passes.
 7. Unify the broader task interface and implement selective file restoration.
 8. Evaluate the five proposed differentiation ideas: reusable checks from
    corrections, visible assumptions that would invalidate a plan, measured
@@ -228,3 +228,6 @@ separate from this release, in suggested order:
 Before distribution, exercise live-provider recovery and real external-action
 uncertainty with disposable tasks. The deterministic validation does not consume
 or estimate those live-provider results.
+
+The macOS task surface and selective file restoration follow-up is documented
+in [Task restoration](TaskRestoration.md), with separate raw acceptance records.

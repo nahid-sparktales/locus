@@ -309,7 +309,7 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            GoalCardView(model: goals, sessionID: model.currentSessionID)
+            GoalCardView(model: goals, sessionID: model.currentSessionID, openTask: { model.showTaskDetail() })
                 .frame(maxWidth: 740)
             if !composerState.queuedMessages.isEmpty {
                 queueRow

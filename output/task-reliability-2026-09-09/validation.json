@@ -1,0 +1,206 @@
+{
+  "recorded_at": "2026-09-09T21:12:59.656185+00:00",
+  "base_commit": "4b49373def980c86f347dfa39b2791e9d5305194",
+  "working_tree_source_fingerprint": "9f5e224a4360e8927eb7d2eda9e61fa11c2ceed073cfb56b76eb8d2432e46353",
+  "source_files": {
+    "Docs/DuoMode.md": "4432e38f18e186c09dc91be0366c47631eef7715eafd75c323d534eae2d902b6",
+    "Docs/TaskReliability.md": "6a442bd8740a321b3ad0ae335194e311c4333d94e859b81b436f3820f8eed3e2",
+    "Docs/VerifiedTaskRecovery.md": "bb5332fbb05a870db56b36f78cdab42a40f57cfa86a66b6438607cac3026e487",
+    "Locus.xcodeproj/project.pbxproj": "e94e85ec98afc02549716ce4f22911a6488c7c8b7fa5f9e3f047759662bdf346",
+    "Locus/AgentTeams.swift": "e659638e9787cc9755c9645b1f77908e93fbe97d404b7c327c3385b5859aa1c8",
+    "Locus/AgentTeamsSettingsView.swift": "513b44a84b053451163a4ece81fa403a3a5fbf9ecdbd06c903ad9b31b00e5004",
+    "Locus/AppModel+BackendEvents.swift": "447f70a7fe7f5f13ec105261487dceedde2979952df3d8f1fae14272add90b32",
+    "Locus/AppModel+ChatWorkers.swift": "030c5c8a3cd7abb855f2a9eb763304a6b04a451bd6d9f046954f5ebe8def58c1",
+    "Locus/AppModel+PlanAndCheckpoints.swift": "98f683632b1380a1fe623b47047de5227621943fb2d5795240d18dfbd1dfdc6c",
+    "Locus/AppModel+SendPipeline.swift": "c2242bdbb3b93310e2c16eee2fd2791f8655eb79f3e68111ef20d54884549d34",
+    "Locus/AppModel+TaskCapsules.swift": "ecce42113ea7925e58a47d1d48345a33db017bd7dd951ec5718107cad3d45c97",
+    "Locus/AppModel+UITestFixtures.swift": "cf690c2a2891a7f4805152adf6f1ee16e20b63e899d0591259d104dbb97947b3",
+    "Locus/AppModel.swift": "077e03687dcc58afa7bec0ab27bc5220cfbc32bce9a1ffdccc98b4b2401d90e0",
+    "Locus/AutomationWorkflowEditorView.swift": "72410f8d3e94fd33799a92ad18082740fe323e6bf7f70804334ec09c3e0f3393",
+    "Locus/ComposerView.swift": "56493ecb36ed0fd25efd81f01eaef5eeac63ae9d9605fd30ec1b93288ed43d32",
+    "Locus/ComposerWorkflowPopover.swift": "0e678d9da6e027304bc1c726c13df8ff4ca0b7cf965ab493522f0f3d188c2c0e",
+    "Locus/DuoComposerView.swift": "f3304964773cbfcb018ba2ccd9eb6bb8cc4f6ca7f7e31d79457cd981ea27c1ad",
+    "Locus/DuoMode.swift": "9b98a1ead2f2cb4a9b25e55e67b21e7872ca47d095ba3a37b2a3bce7fd517c98",
+    "Locus/EventAutomationsView.swift": "5af8ff4a9279d023b3d84357e7f4bf6dfe1c94e2cb3ad1472f59c2a58225e514",
+    "Locus/GoalView.swift": "00524ee6e2e576ff59df177792f2309b2aeaafbc79ca3cb416a573a4f25dbe12",
+    "Locus/InspectorPlanTab.swift": "2becbbcdc9ddf7e6f66a2913995acc47e6e5192c03f577a87d66b305f88af8e8",
+    "Locus/InspectorView.swift": "4f43addd65f7081efd49460f4d86afd0ee0fa3e0c6bbbb0634538275e3b1c11a",
+    "Locus/LocusApp.swift": "7f259d9148a3eacbafe0deafad9af022f5c61166b19c0fe900f2126c95906861",
+    "Locus/Models/AgentModels.swift": "f79445ae168dfffb69400c08888423e1f0dd2bcaae67774f425959cb109060dc",
+    "Locus/Models/PlanningModels.swift": "dca773cfc4e8cb759dd8a645e0a162d66a9ba1d8f36d977f659f6d4398a66616",
+    "Locus/Models/ScheduleModels.swift": "78b9bd7b408403f21eb0006324f4404deff5096009daacff0b3ad3fae5085a2d",
+    "Locus/TaskCapsuleModel.swift": "f07bc3a3da2dc2d6819640aaa2495eef759b4d885ced2d4c320e4ae4e9c1cb61",
+    "Locus/TaskCapsuleTypes.swift": "c3b6e545ec31daf18492401c59dfd6011b299760a6b0557903b3a0c3612f7be2",
+    "Locus/TaskCapsuleView.swift": "22046a0f92b20ce7a6ce05ebcdafc1f4b677e8d9e4b5e938b52f04c2b33b832d",
+    "Locus/TaskDetailView.swift": "e0232a84b0a1167f33fa23ef4d86f7835692f7aa20150ce07630d78d74be08e5",
+    "Locus/WorkspaceView.swift": "122c22a6e680ff12884c9246102025b41eb9ee18ebcd0b1655642c925540de6c",
+    "LocusTests/AppModelTests.swift": "6a8e92273278fd8cf2bf6b5794a5e57b5a8e692ece59c7bbe3e74c0d5223d660",
+    "LocusTests/DuoModeTests.swift": "2747e37fdc0aee3a65cb1cf005ce0f169fb85e4c12b68d5a89a8684eb3ddf7c9",
+    "LocusTests/TaskCapsuleModelTests.swift": "0f4e72e4978d738925ff0fb37ecd8748323ccf4d436bf5e8d274e046860ab35e",
+    "LocusUITests/GoalUITests.swift": "de89eb969744de2193cf2caf9f1e48ac7ce19495e5aa7f60719c54b18ac8bb78",
+    "agent/ollama_code/api/__init__.py": "37702f88d23ae10dbd1469ef27f547263e08ad5218fee3d81c76e960b276ece8",
+    "agent/ollama_code/api/evaluations.py": "f6ff23662013b06a5e52a1dddbe2e553903798ad10b4e270aeb0f39f2ad98c87",
+    "agent/ollama_code/api/task_details.py": "40f40e9e936846bcc551d7d6a2852b173522ae6a53eb4be81ff7473868aafdcd",
+    "agent/ollama_code/benchmark_campaign.py": "ae2f17a41c54532b88a412a185a557233758f0561c4d62260e131dcc9d298ecd",
+    "agent/ollama_code/builtin_skills/executing-plans/SKILL.md": "99e78c9385eb577f28cff797260e097e0832b78e0f0dea1d4078b54313408fc5",
+    "agent/ollama_code/builtin_skills/grilling/SKILL.md": "3abae1988181597d7b169f32724518b48d2905e003c0e676ae80d487449152df",
+    "agent/ollama_code/builtin_skills/writing-plans/SKILL.md": "69d303b805df17bb8387597b36a794b698b911232c792d03d78cd5992e77fe5b",
+    "agent/ollama_code/capsule_execution.py": "e8b95d9ac27c37871aa2244ae2465a205ab0a6a362cdaab77f11b0533b182543",
+    "agent/ollama_code/capsule_progress.py": "fd972e81e9919079835531ad55ac26c2d3c7cc1b8a36d20a4c35c5051c7eb8df",
+    "agent/ollama_code/capsule_read_checks.py": "d82735651d1e9de99d64d84dc72e044fc25a11ad1ba074026eb768751a514663",
+    "agent/ollama_code/capsules.py": "cdc370ed213c784eba6c44e3c8aa0d20735d8e596351a5bf526d33a73c1c35db",
+    "agent/ollama_code/chat_service.py": "a23f59087b4ddc1e2aef7b59fa23acd1a171d2387c9ad7806a188489a4f7c707",
+    "agent/ollama_code/collaboration.py": "09e15dc7f3d40073574930b115a304f7b3beff5e7033255d09010e915ccac079",
+    "agent/ollama_code/collaboration_bridge.py": "a0b56c3dbf18656262c1b6532a0531f45beec6232c71f421159eb63e1d752a03",
+    "agent/ollama_code/context_preservation.py": "1dc08d31a25effef5d63e65706c476287d50205dd87954e92cab31e1833e357b",
+    "agent/ollama_code/core.py": "0e8e5f2d02edb8ec21410a149ea92147ca4b71177aed5dd9b78c3bb56f79d708",
+    "agent/ollama_code/evaluation_runtime.py": "8206ee43a5d203a3c47c694f744bac9b7046077a7c296a00314cb00ec272abb7",
+    "agent/ollama_code/evaluations.py": "cfbcd39cfc1de00ee0ff3ea0711c88c873f0b2636ce9b00f4be25747e891cc0e",
+    "agent/ollama_code/file_history.py": "fefc5a0ef092317c646bed46533c06a31d9ef8bd966079f388f953f865c9b4c7",
+    "agent/ollama_code/goal_runtime.py": "941bb67aaee2db5498e8e6b09f37d586fb090359b7e704adac5c5697837d9d61",
+    "agent/ollama_code/goals.py": "260b7c9bea59bda3698d98bb4951418be4dbd9cbfa53f4fc3cc3d9b1959cc32a",
+    "agent/ollama_code/image_generation.py": "1c6d028dfaf62fdc580bb6680f9cfbea82bc1a1281cd15b8c3a886284bfaaa6d",
+    "agent/ollama_code/ollama.py": "899cc421179f9b92179c969b1abb9e8b6a3e1824ee8c1e9974a4df531e289a8d",
+    "agent/ollama_code/orchestration.py": "4f8431b0969a5b3eb9c70b41f0aa138821c6472846d7b6043ca395e89b05bba7",
+    "agent/ollama_code/planning.py": "d26a4d9863559e3d90b087d52864ba32ce9a7c7438a70fe9d2b74843de108f2b",
+    "agent/ollama_code/pricing.py": "7e2a3b6cba92f9420fe81efef5dab1ef95a748927a1cbd66274f2c34b05f5af8",
+    "agent/ollama_code/remote.py": "98c9afc8b2678644c8f7a52eb86a46c5295b3def51639dcdf39bc5dff6a16fc9",
+    "agent/ollama_code/runstore.py": "552d36c065e4b2ca0634e3e52466887a07127cc342f24324e450eea1163e5974",
+    "agent/ollama_code/server.py": "4ce9050fe7f6f30c72258b667e62ac5815f388b45338926a22c8ea356cd727f5",
+    "agent/ollama_code/solo_swarm.py": "42a4c30463a1090c80ae5d9d10ad38f93fa7e8aee367b33a44db3922d4f0b193",
+    "agent/ollama_code/task_journal.py": "bbce26c64d8ae1d8246d28dd805305b2b83a179cba59768bc8bef4460d03e895",
+    "agent/ollama_code/task_state.py": "298efbe93ad17974f95e75bab8bd5b099b7ab13c24bd708d1701836950991835",
+    "agent/ollama_code/tools.py": "4d230afaacba0ab898ed0b00d332e2044a03798443898d1ffa0340b5ab3bc6c9",
+    "agent/ollama_code/usage_ledger.py": "4878059621bc437e6c4a1dcaa1b88567755d85a90fbef905f9afe0e0c1add188",
+    "agent/tests/fixtures/server-routes.txt": "dc5edc5894e753a63e73884b55024a2558d051d5ddf8ba86b6783fb7dd0d7449",
+    "agent/tests/live/durable_actions.py": "21557aa9c838ffca85325ac7a53785fcde7d5727db5e746c2fe5c77f5237a219",
+    "agent/tests/live/parallel_checks_benchmark.py": "a25fa1a59531b59aeba0562430405e8bf98ec5948eeb11ffa801ebaecccae8e0",
+    "agent/tests/test_campaigns.py": "ee88c081dc351ebd106447b01c459d356d297a5e0641a900623d387fe2ff9942",
+    "agent/tests/test_capsule_execution.py": "3a36b2a63c2c6e87be7f5e03aa61ee43cab9d1d175e8be0381052970637a01d4",
+    "agent/tests/test_capsules.py": "52e4e3ca52bbc47b20c1416978132969542dc084bc28514936c648baf4167ae8",
+    "agent/tests/test_evaluation_entrypoint.py": "21d6208f92fa7ba385ae6f9ff4d2999c5d318b24ad55277c46c6521aa78d5062",
+    "agent/tests/test_evaluations.py": "bb8a67a0b2f1fa1ac358ebec40889e42b8a9e659af3c15a95f775df63a4cf65e",
+    "agent/tests/test_goals.py": "2ccffd7db2b447b3be33ab7bf52c935e6a3c06ac8d3c3acba5c7d185410e1409",
+    "agent/tests/test_task_reliability.py": "a6c933b92c6bdca1d35d752d31b2301608f7745603e45a5dca6dd495e82d8c5e",
+    "agent/tests/test_verified_tasks.py": "c3a950779612b20fe4ba7e080ecfa4f0abe4c9fbd25a54deb89a8665bec5433d"
+  },
+  "source_scope": "Shared working tree, including concurrent Duo/capsule changes. This report claims task-reliability work only. The full run is supplemented by focused checks after the listed final fixes.",
+  "schema_version": 17,
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "tests": {
+    "backend_full": {
+      "status": "passed",
+      "count": 2233,
+      "log": "logs/backend-full.log.gz",
+      "selection": "agent/.venv/bin/python -m pytest -q agent/tests --ignore=agent/tests/live --tb=short"
+    },
+    "backend_feature_regressions": {
+      "status": "passed",
+      "count": 117,
+      "log": "logs/backend-features.log.gz",
+      "selection": "agent/tests/test_task_reliability.py agent/tests/test_evaluation_entrypoint.py agent/tests/test_evaluations.py agent/tests/test_campaigns.py agent/tests/test_goal_runtime.py agent/tests/test_goals.py"
+    },
+    "final_accounting_progress": {
+      "status": "passed",
+      "count": 105,
+      "log": "logs/backend-accounting-progress.log.gz",
+      "selection": "agent/tests/test_goals.py agent/tests/test_goal_runtime.py agent/tests/test_task_reliability.py agent/tests/test_campaigns.py"
+    },
+    "actual_saved_plan_work_entrypoint": {
+      "status": "passed",
+      "suite_count": 28,
+      "log": "logs/backend-plan-entrypoint.log.gz",
+      "selection": "agent/tests/test_task_reliability.py"
+    },
+    "recovery_invocation_regressions": {
+      "status": "passed",
+      "count": 151,
+      "log": "logs/backend-recovery.log.gz",
+      "selection": "agent/tests/test_task_reliability.py agent/tests/test_verified_tasks.py agent/tests/test_capsule_execution.py"
+    },
+    "desktop_models_routing_render": {
+      "status": "passed",
+      "count": 49,
+      "log": "logs/desktop-final.log.gz",
+      "suites": [
+        "TaskCapsuleModelTests",
+        "TaskCapsuleRoutingTests",
+        "EvaluationsModelTests",
+        "GoalRoutingTests",
+        "AppModelTests/testImplementingThePlanSwitchesToBuildMode"
+      ]
+    },
+    "task_detail_accessibility_ui": {
+      "status": "passed",
+      "count": 1,
+      "log": "logs/desktop-final.log.gz"
+    },
+    "goal_ui_suite": {
+      "status": "passed",
+      "count": 5,
+      "log": "logs/desktop-goal-ui.log.gz"
+    },
+    "capsule_ui_suite": {
+      "status": "passed",
+      "count": 5,
+      "log": "logs/desktop-capsule-ui-and-fixed-fixture-failure.log.gz",
+      "note": "Capsule suite passed. This earlier mixed run also contains the task-panel fixture failure fixed and verified by the final desktop run."
+    },
+    "unique_desktop_ui_tests": 10,
+    "build": "passed; Debug macOS, ad hoc signing, LocusDirectAdHoc.entitlements",
+    "static_checks": "Python compileall, ruff, git diff --check passed"
+  },
+  "final_fixes_after_full_run": [
+    "Handle absent optional model request options at the real Work entry point",
+    "Keep provider execution end time distinct from reconciliation time",
+    "Exclude milestones predating the goal when counting inactivity",
+    "Keep required ungraded campaign results incomplete and require a model-version configuration field"
+  ],
+  "parallel_measurement": {
+    "report": "parallel-checks.json",
+    "paired_repetitions_per_workspace": 20,
+    "automatic_concurrency_enabled": false,
+    "all_evidence_equal": true,
+    "provider_calls": 0
+  },
+  "captures": {
+    "TaskDetail-compact.png": {
+      "test": "TaskCapsuleModelTests/testOpeningTaskDetailOnlyReadsAndRendersAtCompactWidth()",
+      "raw_attachment": "37A73F44-3317-4E49-93B3-E99B224D2BD0.png"
+    },
+    "TaskDetail-macOS.png": {
+      "test": "GoalUITests/testRestoredTaskDetailsExposeEvidenceAndDoNotResumeWork()",
+      "raw_attachment": "9BD1ECD3-5E10-476A-A7A4-D21C22EC3535.png"
+    }
+  },
+  "live_campaigns": {
+    "status": "deferred_by_user",
+    "model_calls": 0,
+    "known_metered_estimate_usd": 0,
+    "phase_1_cap_usd": 50,
+    "phase_2_cap_usd": 200,
+    "report": "campaigns-deferred.json"
+  },
+  "acceptance_gates": {
+    "phase_1": {
+      "deterministic": "passed",
+      "live_recovery_matrix": "deferred_not_run",
+      "release_gate": "pending_live_coverage"
+    },
+    "phase_2": {
+      "backend_and_desktop_features": "passed",
+      "comparative_campaign": "deferred_not_run",
+      "release_gate": "pending_benchmark_coverage"
+    }
+  },
+  "limitations": [
+    "Provider-specific campaign adapters and live interruption orchestration remain part of deferred campaign work. No parity or superiority claim.",
+    "Restoration covers bounded captured task-owned edits in the selected execution location; opaque and uncertain mutations are excluded.",
+    "API figures are estimates with dated/configured provenance, not invoices; missing prices or usage remain unknown.",
+    "Local timing uses warm filesystem caches on one shared development machine.",
+    "Early LaunchServices/automation startup failures were retried successfully; their raw log is retained.",
+    "The desktop capture fixture connection failure was fixed; final UI tests pass."
+  ],
+  "raw_log_storage": "Lossless gzip; uncompressed hashes and sizes are in logs/manifest.json."
+}

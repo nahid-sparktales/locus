@@ -1656,10 +1656,10 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(WorkMode.plan.instruction.contains("do not modify"))
         XCTAssertTrue(WorkMode.grill.instruction.contains("Do not modify"))
         XCTAssertTrue(WorkMode.work.instruction.contains("Choose whether"))
-        // The `$` mention is what makes the runtime preload the grilling skill.
+        // The mode supplies its question contract without requiring a skill.
         XCTAssertEqual(WorkMode.grill.title, "Grill")
         XCTAssertEqual(WorkMode.grill.rawValue, "grill")
-        XCTAssertTrue(WorkMode.grill.instruction.contains("$grilling"))
+        XCTAssertTrue(WorkMode.grill.instruction.contains("ask_question"))
     }
 
     func testRetiredBuildModeStillDecodesOntoWork() throws {
@@ -5873,6 +5873,8 @@ final class AppModelTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         model.agentRuntimePhase = .online
         armPlanApproval(model)
+
+        model.activePlan?.approvalReference = ["id": .string("plan"), "revision": .number(1), "content_hash": .string("hash"), "execution_path": .string("/tmp")]
 
         model.resolvePlanApproval(.proceed)
 

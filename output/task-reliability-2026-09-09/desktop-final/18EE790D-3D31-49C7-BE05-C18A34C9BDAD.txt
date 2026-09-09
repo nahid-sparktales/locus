@@ -1,0 +1,9 @@
+AXDisclosureTriangle capsules.step.edit-coat {{234.5, 340}, {682, 57}}
+AXButton capsules.expandSteps {{851, 441}, {65, 13}}
+AXButton capsules.editRecipe {{876.5, 589.5}, {23.5, 16}}
+AXButton capsules.saved.capsule-1 {{16, 515}, {188, 75}}
+AXTextField capsules.search {{16, 604}, {188, 24}}
+AXButton capsules.run {{245, 123}, {92.5, 30}}
+AXButton capsules.new {{15.5, 641.5}, {189, 37}}
+AXButton arrow.clockwise {{190.5, 719}, {13.5, 16}}
+AXButton capsules.done {{888, 785}, {32, 16}}

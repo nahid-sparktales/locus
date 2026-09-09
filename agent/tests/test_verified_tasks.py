@@ -657,7 +657,8 @@ def test_additive_migration_keeps_historical_runs_unverified(tmp_path):
     assert migrated.run("historical")["state"] == "completed"
     assert TaskStateStore(migrated).completion("historical")[0] == "needs_review"
     with migrated._connect(readonly=True) as db:
-        assert db.execute("SELECT version FROM schema_meta").fetchone()[0] == 14
+        from ollama_code.runstore import SCHEMA_VERSION
+        assert db.execute("SELECT version FROM schema_meta").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_dead_worker_is_presented_as_paused_without_launching(environment):

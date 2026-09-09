@@ -102,7 +102,10 @@ def normalize_plan(value: Any) -> dict[str, Any]:
     for item in raw_details:
         if not isinstance(item, dict):
             raise CapsuleError("each plan step must be an object")
+        if item.get("execution_kind", "write") not in {"read", "check", "write"}:
+            raise CapsuleError("step.execution_kind must be read, check, or write")
         details.append({
+            "execution_kind": item.get("execution_kind", "write"),
             "id": _identifier(item.get("id"), "step.id"),
             "title": _text(item.get("title"), "step.title", required=True, limit=500),
             "instructions": _text(item.get("instructions", ""), "step.instructions"),

@@ -67,6 +67,25 @@ final class GoalUITests: XCTestCase {
         XCTAssertTrue(element("goal.pause").waitForExistence(timeout: 5))
     }
 
+    func testRestoredTaskDetailsExposeEvidenceAndDoNotResumeWork() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_GOAL"] = "blocked"
+        app.launch()
+        let details = element("goal.taskDetails")
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        details.click()
+        XCTAssertTrue(element("task.status").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("task.progress").exists)
+        XCTAssertTrue(element("task.usage").exists)
+        XCTAssertTrue(element("task.restorePreview").exists)
+        XCTAssertFalse(element("task.restorePreview").isEnabled)
+        XCTAssertFalse(element("goal.pause").exists, "Opening task details must preserve the blocked state")
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "Unified task details with retained blocker and unknown usage"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testGoalEditorRejectsInvalidAllowanceWithoutLosingTheObjective() {
         element("composer.workflow").click()
         element("composer.goal").click()
@@ -82,6 +101,37 @@ final class GoalUITests: XCTestCase {
         XCTAssertTrue(element("goal.editor.save").isEnabled)
         element("goal.editor.cancel").click()
         XCTAssertFalse(element("goal.card").exists)
+    }
+
+    func testTaskRestorationPreviewsConflictsAndRequiresExplicitApply() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_GOAL"] = "blocked"
+        app.launchEnvironment["LOCUS_UI_TESTING_TASK_RESTORE"] = "1"
+        app.launch()
+        XCTAssertTrue(element("goal.taskDetails").waitForExistence(timeout: 10))
+        element("goal.taskDetails").click()
+        XCTAssertTrue(element("task.file.edit").waitForExistence(timeout: 5))
+        element("task.file.edit").click()
+        element("task.file.notes").click()
+        element("task.restorePreview").click()
+        XCTAssertTrue(element("task.restoreApply").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("task.restoreFile.notes.txt").isEnabled)
+        XCTAssertFalse(element("task.notice").exists, "Previewing files must not apply them")
+        element("task.restoreFile.result.txt").click()
+        XCTAssertFalse(element("task.restoreApply").isEnabled)
+        element("task.restoreFile.result.txt").click()
+        element("task.restoreApply").click()
+        XCTAssertTrue(element("task.notice").waitForExistence(timeout: 5))
+        XCTAssertTrue(text("task.notice").contains("Selected files restored"))
+        XCTAssertFalse(element("task.restoreApply").exists)
+        XCTAssertFalse(element("goal.pause").exists)
+        XCTAssertTrue(element("task.restoreRecover").waitForExistence(timeout: 5))
+        element("task.restoreRecover").click()
+        waitForText("task.notice", containing: "Previous files recovered")
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "Selective restoration with preserved conflict and explicit recovery"
+        capture.lifetime = .keepAlways
+        add(capture)
     }
 
     func testNeedsReviewRequiresExplicitAcceptanceAndLabelsItHonestly() {

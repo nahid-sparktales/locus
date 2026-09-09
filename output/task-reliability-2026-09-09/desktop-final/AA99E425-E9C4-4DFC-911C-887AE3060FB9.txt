@@ -1,0 +1,10 @@
+AXDisclosureTriangle capsules.step.edit-coat {{13.5, 155}, {643, 57}}
+AXButton capsules.expandSteps {{591, 256}, {65, 13}}
+AXButton capsules.editRecipe {{616.5, 404.5}, {23.5, 16}}
+AXMenuButton capsules.libraryMenu {{20, 577}, {131.5, 24}}
+AXButton capsules.retryChecks {{24, 136}, {103, 24}}
+AXButton capsules.run {{126, 177}, {60, 16}}
+AXButton capsules.resume {{24, 170}, {88, 30}}
+AXButton arrow.clockwise {{646.5, 581}, {13.5, 16}}
+AXButton capsules.new {{586, 581}, {48.5, 16}}
+AXButton capsules.done {{628, 645}, {32, 16}}

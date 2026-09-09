@@ -495,6 +495,10 @@ final class AppModel: ObservableObject {
     private var modelLibraryPendingSettingsDismissal = false
     @Published var commandPalettePresented = false
     @Published var checkpointPresented = false
+    @Published var taskDetailPresented = false
+    @Published var taskDetailSessionID: String?
+    var taskDetailAfterCapsuleDismissal = false
+    var taskRecipeAfterDetailDismissal: String?
     @Published var notebookPresented = false
     /// A workspace file opened for reading in the large viewer sheet.
     @Published var fileViewerRequest: WorkspaceFileViewerRequest?
@@ -985,9 +989,9 @@ final class AppModel: ObservableObject {
         openInspectorTabs = restoredOpenInspectorTabs
         inspectorTab = initialInspectorTab
 
-        backend = backendOverride ?? BackendService(
+        backend = backendOverride ?? (isUITesting && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GOAL"] != nil ? Self.goalUITestBackend() : BackendService(
             baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
-        )
+        ))
         sessionCatalog.configure(
             persistenceEnabled: !isUITesting && persistenceEnabled,
             defaults: defaults,

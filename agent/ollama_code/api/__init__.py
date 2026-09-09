@@ -17,6 +17,7 @@ from . import (
     schedules,
     sessions,
     system,
+    task_details,
     workspace,
 )
 
@@ -32,6 +33,7 @@ _ROUTE_MODULES = (
     automation_workflows,
     capsules,
     goals,
+    task_details,
     runs,
     workspace,
     extensions,

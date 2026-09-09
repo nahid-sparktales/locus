@@ -129,8 +129,8 @@ def test_result_summary_reports_pass_rate_and_tail_latency() -> None:
         {"state": "failed", "duration_ms": 300, "rubric_score": 70, "model_calls": 1},
         {"state": "running", "duration_ms": 10},
     ])
-    assert summary["cases"] == 2
-    assert summary["pass_rate"] == 0.5
+    assert summary["cases"] == 3
+    assert summary["pass_rate"] == 1 / 3
     assert summary["average_rubric_score"] == 80
     assert summary["p95_latency_ms"] == 300
 
@@ -208,3 +208,17 @@ def test_git_evaluation_suite_captures_and_cleans_immutable_fixture(
     assert worktrees.TaskCheckoutStore.load(fixture_id) is None
     assert worktrees.TaskCheckoutStore.load(cloned_fixture_id) is not None
     assert store.delete_suite(cloned["id"])
+
+
+def test_recorded_human_grading_cannot_override_execution_failure(tmp_path):
+    store = EvaluationStore(RunStore(tmp_path / 'runs.db'))
+    definition = _suite(tmp_path)
+    definition['cases'][0].update(grading='human', rubric='Clarity', passing_score=80)
+    suite = store.save_suite(definition)
+    store.run_store.start_run('human')
+    result_id = store.start_result(suite['id'], 'case-1', 'human')
+    store.finish_result(result_id, {'state': 'ungraded', 'execution_outcome': 'completed', 'deterministic_passed': True})
+    assert store.human_grade(suite['id'], result_id, score=90, reviewer='Fixture reviewer', reason='Read the result')['state'] == 'passed'
+    store.finish_result(result_id, {'state': 'failed', 'execution_outcome': 'timeout', 'deterministic_passed': True})
+    with pytest.raises(EvaluationError, match='incomplete'):
+        store.human_grade(suite['id'], result_id, score=100, reviewer='Fixture reviewer', reason='Output looked good')

@@ -1,0 +1,11 @@
+AXPopUpButton capsules.reviewer {{277, 450}, {207.5, 24}}
+AXPopUpButton capsules.executor {{277, 547}, {205, 24}}
+AXPopUpButton capsules.planner {{277, 644}, {207.5, 24}}
+AXDisclosureTriangle capsules.step.edit-coat {{234.5, 169.5}, {682, 57}}
+AXButton capsules.expandSteps {{851, 270.5}, {65, 13}}
+AXButton capsules.saved.capsule-1 {{16, 515}, {188, 75}}
+AXTextField capsules.search {{16, 604}, {188, 24}}
+AXButton capsules.saveRecipe {{245, 113}, {99.5, 30}}
+AXButton capsules.new {{15.5, 641.5}, {189, 37}}
+AXButton arrow.clockwise {{190.5, 719}, {13.5, 16}}
+AXButton capsules.done {{888, 785}, {32, 16}}

@@ -166,7 +166,7 @@ struct InspectorPlanTab: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        SessionOverviewView(session: model.sessionOverview)
+        TaskDetailView(compact: true)
             .environmentObject(model)
     }
 }

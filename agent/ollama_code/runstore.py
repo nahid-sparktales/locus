@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 17
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -733,6 +733,15 @@ class RunStore(AgentInspectorStore):
             if version < 14:
                 from .task_state import initialize_schema as initialize_task_schema
                 initialize_task_schema(connection)
+            if version < 15:
+                from .task_journal import initialize_schema as initialize_journal_schema
+                initialize_journal_schema(connection)
+            if version < 16:
+                from .usage_ledger import initialize_schema as initialize_usage_schema
+                initialize_usage_schema(connection)
+            if version < 17:
+                from .file_history import initialize_schema as initialize_history_schema
+                initialize_history_schema(connection)
             # A model turn that died with the previous app process is never
             # silently replayed. Keep the session lease and make the exact
             # step explicitly retryable in Attention.
@@ -903,6 +912,18 @@ class RunStore(AgentInspectorStore):
         if row is None:
             return None
         return {**dict(row), "payload": json.loads(row["payload_json"] or "{}")}
+
+    def record_plan_approval(self, run_id: str, reference: dict[str, Any]) -> None:
+        if self.read_only:
+            raise RunStoreError("Run storage is read-only.")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT manifest_json FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise RunStoreError("The plan approval has no owning run.")
+            manifest = json.loads(row[0])
+            manifest.update(_approved_task_plan=reference, _approved_plan_started=True)
+            connection.execute("UPDATE runs SET manifest_json=? WHERE id=?", (json.dumps(manifest), run_id))
 
     def start_run(
         self,

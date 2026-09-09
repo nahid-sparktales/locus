@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ from typing import Any
 from . import USER_AGENT, proxy
 from .response_parts import ATTACH_OUTPUT_PARTS_SCHEMA
 from .task_state import CHECK_SCHEMA
+
+COMMAND_OBSERVATION: ContextVar[dict | None] = ContextVar("command_observation", default=None)
 
 MAX_OUTPUT = 30_000
 MAX_WEB_FETCH_BYTES = 2 * 1024 * 1024
@@ -554,6 +557,7 @@ def _impl_bash(args: dict[str, Any], ctx: ToolContext) -> str:
             return f"Error: command interrupted and terminated.{suffix}"
         return f"Error: command timed out after {timeout}s and was terminated.{suffix}"
     ctx.last_command_receipt = {"command": command, "exit_code": proc.returncode}
+    COMMAND_OBSERVATION.set(dict(ctx.last_command_receipt))
     out = stdout
     if stderr:
         out += ("\n[stderr]\n" if out else "[stderr]\n") + stderr
@@ -1615,6 +1619,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "items": {"type": "object", "properties": {
                     "id": {"type": "string"}, "title": {"type": "string"},
                     "instructions": {"type": "string"},
+                    "execution_kind": {"type": "string", "enum": ["read", "check", "write"], "description": "read collects named source files; check executes declared acceptance checks; write uses the saved implementation model."},
                     "dependencies": {"type": "array", "items": {"type": "string"}},
                     "files": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative source and destination files. Include missing files to be created."},
                     "inputs": {"type": "array", "items": {"type": "string"}},

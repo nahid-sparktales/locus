@@ -132,9 +132,12 @@ def runtime_context(core: Any) -> str:
 def summarize_section(core: Any, messages: list[dict]) -> Any:
     """Use the selected route, including the native route, with ordinary metering."""
     if core.provider != "chatgpt":
+        from .usage_ledger import reserve_core, settle_core
+        task_call = reserve_core(core, stage="compaction", messages=messages)
         reservation = core.goal_runtime.reserve() if core.goal_runtime is not None else None
         response = core.client.chat_stream(core.model, messages, options=core.chat_options(),
                                            should_stop=core._interrupt.is_set)
+        settle_core(task_call, response)
         if reservation:
             core.goal_runtime.settle(reservation, response)
         return response
@@ -170,8 +173,11 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
     options = dict(thread_id=thread, text=messages[1]["content"], model=core.model,
                    tool_handler=None, event_handler=observe, should_interrupt=core._interrupt.is_set)
     try:
-        result = (core.goal_runtime.run_native(manager.run_turn, **options)
-                  if core.goal_runtime is not None else manager.run_turn(**options))
+        from .usage_ledger import native_accounted
+        def execute_native(**kwargs):
+            return (core.goal_runtime.run_native(manager.run_turn, **kwargs)
+                    if core.goal_runtime is not None else manager.run_turn(**kwargs))
+        result = native_accounted(core, execute_native, options, stage="compaction")
         incomplete = incomplete or result.get("status") not in {None, "completed"} or core._interrupt.is_set()
     except Exception:
         incomplete = True

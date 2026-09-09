@@ -144,9 +144,14 @@ class SoloSwarmExecutor:
         tool_is_parallel_safe: Callable[[str], bool] | None = None,
         virtual_tools: Callable[[], set[str]] | None = None,
         goal_runtime: Any = None,
+        task_journal: Any = None,
+        usage_rates: dict | None = None,
     ) -> None:
         self.route = route
         self.goal_runtime = goal_runtime
+        from .usage_ledger import UsageLedger
+        self.usage_ledger = UsageLedger(task_journal) if task_journal is not None else None
+        self.usage_rates = usage_rates or {}
         self.emit = emit
         self.should_stop = should_stop
         self.workspace_tools = ReadOnlyWorkspaceTools(route.workspace, knowledge_search)
@@ -391,6 +396,7 @@ class SoloSwarmExecutor:
             calls += 1
             try:
                 goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
+                task_call = self._reserve_task_usage()
                 response = self.route.client.chat_stream(
                     self.route.model,
                     messages,
@@ -399,6 +405,9 @@ class SoloSwarmExecutor:
                 )
                 if goal_call is not None:
                     self.goal_runtime.settle(goal_call, response)
+                if task_call:
+                    from .usage_ledger import response_usage
+                    self.usage_ledger.settle(task_call, response_usage(response))
             except InterruptedError:
                 raise
             except Exception:  # noqa: BLE001 - retain this worker's usage and its siblings
@@ -497,6 +506,7 @@ class SoloSwarmExecutor:
             return self._execute_task_tool(task, name, arguments, call_id)
 
         run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
+        task_call = self._reserve_task_usage()
         run_native(
             thread_id=thread_id,
             text=self._worker_prompt(task),
@@ -509,6 +519,8 @@ class SoloSwarmExecutor:
         last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
         prompt_tokens = max(int(last.get("inputTokens") or 0), 0)
         completion_tokens = max(int(last.get("outputTokens") or 0), 0)
+        if task_call:
+            self.usage_ledger.settle(task_call, {"input_tokens": prompt_tokens, "output_tokens": completion_tokens} if last else {})
         self._record_tokens(prompt_tokens, completion_tokens)
         if self.should_stop():
             raise InterruptedError("Solo delegation cancelled")
@@ -570,10 +582,13 @@ class SoloSwarmExecutor:
         child_goal_calls = [self.goal_runtime.reserve() for _ in tasks] if self.goal_runtime is not None else []
         def reserve_hosted_request():
             self._reserve_call()
+            goal_requests.task_call = self._reserve_task_usage()
             if self.goal_runtime is not None:
                 goal_requests.identifier = self.goal_runtime.reserve()
         def record_hosted_usage(prompt, completion):
             self._record_tokens(prompt, completion)
+            if goal_requests.task_call:
+                self.usage_ledger.settle(goal_requests.task_call, {"input_tokens": prompt, "output_tokens": completion})
             if self.goal_runtime is not None:
                 self.goal_runtime.settle(goal_requests.identifier, prompt_tokens=prompt, completion_tokens=completion)
         hosted = OpenAIResponsesMultiAgentClient(
@@ -631,6 +646,10 @@ class SoloSwarmExecutor:
         if len({item["id"] for item in results}) != len(tasks):
             raise OpenAIResponsesMultiAgentError("hosted root omitted an approved task")
         return results, max(response.agent_count - 1, 0)
+
+    def _reserve_task_usage(self):
+        return self.usage_ledger.reserve(provider=self.route.provider, model=self.route.model,
+            stage="helpers", rates=self.usage_rates) if self.usage_ledger else None
 
     def _reserve_call(self) -> None:
         self._reserve_calls(1)

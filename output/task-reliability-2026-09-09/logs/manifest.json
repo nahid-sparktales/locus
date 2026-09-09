@@ -1,0 +1,100 @@
+{
+  "encoding": "gzip; original log bytes preserved",
+  "files": [
+    {
+      "file": "backend-accounting-progress.log.gz",
+      "uncompressed_sha256": "2dedead4d0f5595462523f6cb45ffc7c9dcc3a52fcf8fc5af746d14b73c113c5",
+      "uncompressed_bytes": 180
+    },
+    {
+      "file": "backend-features.log.gz",
+      "uncompressed_sha256": "286a5c1eb09ffb19d7a7d477a37ead0978788ac50421911f8d4c78edbd02edd4",
+      "uncompressed_bytes": 180
+    },
+    {
+      "file": "backend-full.log.gz",
+      "uncompressed_sha256": "fcbe65234729aa47ec9e687e9db84b7e8f8f84f1e573a49ba6afe8e1348039c3",
+      "uncompressed_bytes": 2593
+    },
+    {
+      "file": "backend-plan-entrypoint.log.gz",
+      "uncompressed_sha256": "09ce3183bf313adc603eb18325de7093b646c54f122544347f10e5121016f70e",
+      "uncompressed_bytes": 99
+    },
+    {
+      "file": "backend-recovery.log.gz",
+      "uncompressed_sha256": "7242ad383a5dc4ee2714b9bb5dd73374e6718012afeb834af756899c0c775168",
+      "uncompressed_bytes": 260
+    },
+    {
+      "file": "backend-restoration-focused.log.gz",
+      "uncompressed_sha256": "dab592f657be62e7efa8f505dd06c26284a620239c6545b9e7cbfedcf19af829",
+      "uncompressed_bytes": 261
+    },
+    {
+      "file": "backend-restoration-full.log.gz",
+      "uncompressed_sha256": "c60bde9ed088b810ad5268a22fdbc4881427f47791a365dbceb88ea51e316af7",
+      "uncompressed_bytes": 2593
+    },
+    {
+      "file": "backend-restoration-initial-import-path-failure.log.gz",
+      "uncompressed_sha256": "7a8f9907432e462dcebc04b11480545bdb5b4782578dc9a0117d4c9b0b22e22e",
+      "uncompressed_bytes": 1007
+    },
+    {
+      "file": "desktop-capsule-ui-and-fixed-fixture-failure.log.gz",
+      "uncompressed_sha256": "5ba16b302083850c9892c6357535fa23e0d71f19e5a1b6c6d8ba08e792e2b49f",
+      "uncompressed_bytes": 295479
+    },
+    {
+      "file": "desktop-final.log.gz",
+      "uncompressed_sha256": "5a1fa0781c2e14aab7b287e921349cad434148078f1f088c36125f0d127e0902",
+      "uncompressed_bytes": 233008
+    },
+    {
+      "file": "desktop-goal-ui.log.gz",
+      "uncompressed_sha256": "7afeb8c14e92c2a1d295d7fe7adf3423744453703a28fcafda465e4c4eb50229",
+      "uncompressed_bytes": 252154
+    },
+    {
+      "file": "desktop-initial-launch-failure.log.gz",
+      "uncompressed_sha256": "57b63720f5465f5de279a7960d792fc2c2831632695c58b947d1cb815aff0415",
+      "uncompressed_bytes": 302606
+    },
+    {
+      "file": "desktop-restoration-acceptance.log.gz",
+      "uncompressed_sha256": "de5b552a1c635fb0084e4435d212bef568a689129ccaaf8e5107d73526502de5",
+      "uncompressed_bytes": 283543
+    },
+    {
+      "file": "desktop-restoration-disclosure-failure.log.gz",
+      "uncompressed_sha256": "7aa07756f625a67568aef567024dd03d5fd7a78b7c1beee4b9a0a3805fb89d9f",
+      "uncompressed_bytes": 325526
+    },
+    {
+      "file": "desktop-restoration-identifier-failure.log.gz",
+      "uncompressed_sha256": "18c45960bb695d79d18ea8a9ead923b0268e04a5df20991fa86513dbb4c31423",
+      "uncompressed_bytes": 238168
+    },
+    {
+      "file": "desktop-restoration-initial-launch-conflict.log.gz",
+      "uncompressed_sha256": "6c76b566a12ac0171961fb572eff2bf31c12fbdcc297e6b7fcb2d6c61f27044f",
+      "uncompressed_bytes": 881233
+    },
+    {
+      "file": "desktop-restoration-routing-final.log.gz",
+      "uncompressed_sha256": "ca2b302a0548a40842f4d3e9683f5c028792026d5bde6439b0eb420640f65b32",
+      "uncompressed_bytes": 277084
+    },
+    {
+      "file": "restoration-reviewability.log.gz",
+      "uncompressed_sha256": "dfda9adbbcb99c763c402e3c1606e9bb2c502a078f7f85ded574f1c569a96ac0",
+      "uncompressed_bytes": 2049
+    },
+    {
+      "file": "restoration-secret-scan.log.gz",
+      "uncompressed_sha256": "f95bae55810980ea0a2c0ceb1bcf103c93dcb8bcdeddbac02f147765129e40fe",
+      "uncompressed_bytes": 80
+    }
+  ]
+}

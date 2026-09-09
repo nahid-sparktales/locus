@@ -96,12 +96,18 @@ extension AppModel {
             }
             planApprovalPending = false
             selectedMode = .work
+            guard let reference = activePlan?.approvalReference else {
+                showToast("Refresh this plan to save an execution reference before implementing it")
+                selectedMode = .plan
+                return
+            }
             Task { [weak self] in
                 guard let self else { return }
                 send(
-                    "Implement the plan you just created, in order. Keep the todo list updated as you complete each step.",
+                    "Implement the approved plan and verify its acceptance criteria.",
                     preservingDraftOnFailure: false,
-                    requeueingOnFailure: true
+                    requeueingOnFailure: true,
+                    approvedPlan: reference
                 )
             }
         }

@@ -4,10 +4,12 @@ import Foundation
 private final class GoalUITestProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var goal: [String: Any]?
+    private static var restorationState: String?
 
     static func reset(_ record: [String: Any]?) {
         lock.lock()
         goal = record
+        restorationState = nil
         lock.unlock()
     }
 
@@ -60,6 +62,32 @@ private final class GoalUITestProtocol: URLProtocol {
             record["updated_at"] = Date().timeIntervalSince1970
             Self.goal = record
             response = record
+        } else if url.path.hasSuffix("/task/restore") {
+            if input["action"] as? String == "apply" {
+                let valid = input["token"] as? String == "fixture-preview" && input["revision"] as? Int == 2
+                    && input["selected_paths"] as? [String] == ["result.txt"]
+                    && (input["fingerprints"] as? [String: Any])?["result.txt"] != nil
+                if valid { Self.restorationState = "completed" }
+                response = ["ok": valid]
+            } else if input["action"] as? String == "recover" {
+                Self.restorationState = "recovered"
+                response = ["ok": true]
+            } else {
+                response = ["token": "fixture-preview", "revision": 2, "entries": [
+                    ["path": "result.txt", "status": "ready", "current": ["exists": true, "hash": "fixture-hash"], "diff": "--- result.txt\n+++ result.txt\n-after\n+before\n"],
+                    ["path": "notes.txt", "status": "conflict", "reason": "This file contains a later edit. Its contents will be preserved."]]]
+            }
+        } else if url.path.hasSuffix("/task") {
+            let restorationFixture = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_TASK_RESTORE"] == "1"
+            var files: [[String: Any]] = [["id": "edit", "path": "result.txt", "state": "captured"]]
+            if restorationFixture { files.append(["id": "notes", "path": "notes.txt", "state": "captured"]) }
+            response = ["id": "fixture-task", "request": "Repair and verify the saved result", "state": "blocked", "revision": Self.restorationState == nil ? 2 : 3,
+                "owner_kind": "goal", "actions": ["resume", "restore"], "interface_version": 1,
+                "blocker": "The final review is unresolved", "usage": ["known_subtotal": 0.25, "coverage": "partial", "unknown_entries": 1,
+                "pending_entries": 1, "subscription_entries": 2, "local_entries": 0, "entries": [], "spans": []],
+                "files": files,
+                "progress": [["kind": "check_passed"]], "links": [],
+                "restorations": Self.restorationState.map { [["token": "fixture-preview", "state": $0, "paths": ["result.txt"]]] } ?? [], "reviews": []]
         } else if url.path == "/api/goals" {
             response = ["goals": Self.goal.map { [$0] } ?? []]
         } else {
@@ -76,6 +104,13 @@ private final class GoalUITestProtocol: URLProtocol {
 }
 
 extension AppModel {
+    static func goalUITestBackend() -> BackendService {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GoalUITestProtocol.self]
+        return BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, authToken: "goal-ui-fixture",
+                              session: URLSession(configuration: configuration))
+    }
+
     func seedUITestState(runFixture: String? = nil) {
         // A fixed path so UI tests see a deterministic workspace name ("tmp")
         // regardless of the runner's TMPDIR.
