@@ -531,6 +531,29 @@ final class TranscriptRelayoutTests: XCTestCase {
             "Following the tail must retain lazy history rather than mount the whole transcript")
     }
 
+    func testFollowingSurvivesCrossingTheEagerHistoryBoundaryAndSessionReplacement() throws {
+        let model = makeGrowthModel()
+        model.blocks = (0..<40).map { index in
+            ChatBlock(kind: index.isMultiple(of: 2) ? .user : .assistant,
+                      text: index == 39 ? "Eager history tail" : "Boundary row \(index)")
+        }
+        let host = mount(model, size: NSSize(width: 720, height: 640))
+        let scroll = try XCTUnwrap(transcriptScrollView(in: host))
+        XCTAssertNotNil(waitForRenderedSuffix("Eager history tail", in: scroll))
+
+        model.updateTranscriptBlocks {
+            $0.append(ChatBlock(kind: .user, text: "Continue across the boundary"))
+            $0.append(ChatBlock(kind: .assistant, text: "Lazy history tail"))
+        }
+        XCTAssertNotNil(waitForRenderedSuffix("Lazy history tail", in: scroll))
+
+        model.installTranscriptSession("short-replacement", blocks: [
+            ChatBlock(kind: .user, text: "A replacement chat"),
+            ChatBlock(kind: .assistant, text: "Replacement eager tail"),
+        ])
+        XCTAssertNotNil(waitForRenderedSuffix("Replacement eager tail", in: scroll))
+    }
+
     func testEqualCountNewRowIDsRevealTheReplacementSuffix() throws {
         let model = makeGrowthModel()
         let host = mount(model, size: NSSize(width: 720, height: 640))

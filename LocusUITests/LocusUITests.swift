@@ -1382,6 +1382,24 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 
+    func testSidebarMenuExposesSoftwareUpdatesForThisBuild() {
+        let automatic = ProcessInfo.processInfo.environment["LOCUS_EXPECT_AUTOMATIC_UPDATES"] == "1"
+        revealSidebarForNavigation()
+        anyElement("sidebar.more").click()
+        if automatic {
+            let check = app.menuItems["Check for Updates…"]
+            XCTAssertTrue(check.waitForExistence(timeout: 3))
+            XCTAssertFalse(check.isEnabled, "Fixture launches do not start the updater")
+            app.typeKey(.escape, modifierFlags: [])
+        } else {
+            let updates = app.menuItems["Software Updates…"]
+            XCTAssertTrue(updates.waitForExistence(timeout: 3))
+            updates.click()
+            XCTAssertTrue(anyElement("settings.updateVersion").waitForExistence(timeout: 5))
+            XCTAssertTrue(anyElement("settings.manualUpdates").exists)
+        }
+    }
+
     func testNativeSettingsClosesCleanlyByButtonCommandWAndTrafficLight() {
         let settingsPage = anyElement("settings.page.general")
         let workspace = anyElement("workspace.modelPicker")
@@ -2906,11 +2924,18 @@ final class LocusUITests: XCTestCase {
     func testBusyTranscriptKeepsBrowserAndDraftAcrossRepeatedExpansion() {
         app.terminate()
         app.launchEnvironment["LOCUS_UI_TESTING_PERFORMANCE_TRANSCRIPT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_PERFORMANCE_SECTIONS"] = "36"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
+        for _ in 0..<2 {
+            app.typeKey("3", modifierFlags: .command)
+            XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
+            app.typeKey("4", modifierFlags: .command)
+            XCTAssertTrue(anyElement("terminal.output").waitForExistence(timeout: 3))
+        }
         app.typeKey("5", modifierFlags: .command)
         let address = anyElement("browser.url")
         XCTAssertTrue(address.waitForExistence(timeout: 5))

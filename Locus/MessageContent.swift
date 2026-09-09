@@ -511,7 +511,10 @@ struct StreamingPlainTextView: NSViewRepresentable {
         nsView: AppendOnlyTextView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width, width > 0 else { return nil }
+        // Match completed text: unspecified, zero and infinite probes must
+        // use a finite wrapping width rather than AppKit's intrinsic fallback.
+        let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            ?? max(nsView.bounds.width, 1)
         nsView.setLiveResizeMeasurementActive(isLiveResizing)
         return CGSize(
             width: width,

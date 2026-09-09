@@ -458,7 +458,10 @@ extension AppModel {
                 )
                 return "- `\(name)` — source file with a description that wraps in a narrow conversation."
             }.joined(separator: "\n")
-            let prose = (0..<12).map { index in
+            let sectionCount = min(max(Int(ProcessInfo.processInfo.environment[
+                "LOCUS_UI_TESTING_PERFORMANCE_SECTIONS"
+            ] ?? "") ?? 12, 1), 60)
+            let prose = (0..<sectionCount).map { index in
                 """
                 ## Performance section \(index + 1)
 

@@ -17,12 +17,44 @@ struct TranscriptSessionLoadToken: Equatable {
     let requestRevision: UInt64
 }
 
+enum TranscriptScrollTarget: Hashable {
+    case item(UInt64, TranscriptPresentationItem.ID)
+    case end(UInt64)
+}
+
+/// The lazy stack's indexed, session-scoped rows are built once per content
+/// commit. Layout, tab changes and selection can reuse the same array storage.
+struct TranscriptRenderRow: Identifiable, Equatable {
+    let index: Int
+    let item: TranscriptPresentationItem
+    let generation: UInt64
+    var id: TranscriptScrollTarget { .item(generation, item.id) }
+}
+
+enum TranscriptPanelLayoutPolicy {
+    /// A long answer can contain hundreds of native text leaves even when
+    /// history has only a few rows. Avoid rewrapping them at every spring frame.
+    static func prefersImmediateLayout(blocks: [ChatBlock], itemCount: Int) -> Bool {
+        if itemCount >= 100 { return true }
+        var bytes = 0
+        for block in blocks {
+            bytes += block.text.utf8.count
+            bytes += block.reasoningText?.utf8.count ?? 0
+            bytes += block.tool?.detail.utf8.count ?? 0
+            if bytes >= 16_384 { return true }
+        }
+        return false
+    }
+}
+
 struct TranscriptPresentationSnapshot: Equatable {
     let sessionID: String
     let renderToken: TranscriptRenderToken
     let blocks: [ChatBlock]
     let blocksByID: [UUID: ChatBlock]
     let items: [TranscriptPresentationItem]
+    let rows: [TranscriptRenderRow]
+    let prefersImmediatePanelLayout: Bool
     let assistantMarkerItemIDs: Set<TranscriptPresentationItem.ID>
     let assistantActionItemIDs: Set<TranscriptPresentationItem.ID>
     let toolActivityVisibility: ToolActivityVisibility
@@ -37,6 +69,8 @@ struct TranscriptPresentationSnapshot: Equatable {
         blocks: [],
         blocksByID: [:],
         items: [],
+        rows: [],
+        prefersImmediatePanelLayout: false,
         assistantMarkerItemIDs: [],
         assistantActionItemIDs: [],
         toolActivityVisibility: .collapsed,
@@ -132,6 +166,8 @@ final class TranscriptPresentationModel: ObservableObject {
             blocks: previous.blocks,
             blocksByID: previous.blocksByID,
             items: previous.items,
+            rows: previous.rows,
+            prefersImmediatePanelLayout: previous.prefersImmediatePanelLayout,
             assistantMarkerItemIDs: previous.assistantMarkerItemIDs,
             assistantActionItemIDs: previous.assistantActionItemIDs,
             toolActivityVisibility: previous.toolActivityVisibility,
@@ -236,6 +272,12 @@ final class TranscriptPresentationModel: ObservableObject {
                 uniquingKeysWith: { existing, _ in existing }
             ),
             items: items,
+            rows: items.enumerated().map {
+                TranscriptRenderRow(index: $0.offset, item: $0.element, generation: state.sessionGeneration)
+            },
+            prefersImmediatePanelLayout: TranscriptPanelLayoutPolicy.prefersImmediateLayout(
+                blocks: state.blocks, itemCount: items.count
+            ),
             assistantMarkerItemIDs: TranscriptPresentation.assistantMarkerItemIDs(in: items),
             assistantActionItemIDs: TranscriptPresentation.assistantActionItemIDs(in: items),
             toolActivityVisibility: state.toolActivityVisibility,

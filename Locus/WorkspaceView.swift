@@ -2889,6 +2889,27 @@ struct TranscriptFollowState: Equatable {
     }
 }
 
+/// Small transcripts need no estimated row heights. In particular, a handful
+/// of very tall Markdown answers can make a lazy stack repeatedly revise its
+/// scroll extent during a width change. Large histories still virtualize.
+private struct TranscriptLayoutStack<Content: View>: View {
+    let itemCount: Int
+    let content: Content
+
+    init(itemCount: Int, @ViewBuilder content: () -> Content) {
+        self.itemCount = itemCount
+        self.content = content()
+    }
+
+    var body: some View {
+        if itemCount <= 40 {
+            VStack(alignment: .leading, spacing: 0) { content }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0) { content }
+        }
+    }
+}
+
 private struct ConversationView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
@@ -2907,29 +2928,32 @@ private struct ConversationView: View {
     @State private var deferredSelectionRows: Set<String> = []
 
     var body: some View {
+        GeometryReader { viewport in
+            transcriptContent(viewportWidth: viewport.size.width)
+        }
+    }
+
+    private func transcriptContent(viewportWidth: CGFloat) -> some View {
         let transcript = transcriptPresentation.snapshot
         let items = transcript.items
         let token = transcript.renderToken
-        let rows = items.enumerated().map {
-            TranscriptRenderRow(index: $0.offset, item: $0.element, generation: token.sessionGeneration)
-        }
         let bottomID = TranscriptScrollTarget.end(token.sessionGeneration)
         let predecessorID = items.dropLast().last?.id
-        ScrollViewReader { proxy in
+        return ScrollViewReader { proxy in
             let realizePredecessor: (() -> Void)? = predecessorID.map { id in
                 // Discover the row's leading edge without using its still-
                 // estimated height. Its actual end is measured after layout.
                 { proxy.scrollTo(TranscriptScrollTarget.item(token.sessionGeneration, id), anchor: .top) }
             }
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                TranscriptLayoutStack(itemCount: items.count) {
                     if transcript.isEmpty {
                         EmptyConversationView()
                             .environmentObject(model)
                     }
                     // Keep repeating rows directly visible to the lazy
                     // container's ID traversal even before they are realized.
-                    ForEach(rows) { row in
+                    ForEach(transcript.rows) { row in
                         renderRow(row, in: transcript)
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
@@ -2976,7 +3000,11 @@ private struct ConversationView: View {
                     .accessibilityHidden(true)
                     #endif
                 }
-                .frame(maxWidth: 780)
+                // A lazy transcript must get its wrapping width from the
+                // viewport. Letting native text's ideal size participate in
+                // a flexible-width proposal can make restored panels loop
+                // between incompatible row measurements.
+                .frame(width: max(1, min(780, viewportWidth - 48)))
                 .padding(.horizontal, 24)
                 .padding(.top, transcript.isEmpty ? 0 : 24)
                 .frame(maxWidth: .infinity)
@@ -3572,11 +3600,6 @@ struct TranscriptScrollMetrics {
     }
 }
 
-private enum TranscriptScrollTarget: Hashable {
-    case item(UInt64, TranscriptPresentationItem.ID)
-    case end(UInt64)
-}
-
 #if DEBUG
 @MainActor
 private enum TranscriptRowGeometryDiagnostics {
@@ -3600,13 +3623,6 @@ private enum TranscriptRowGeometryDiagnostics {
     }
 }
 #endif
-
-private struct TranscriptRenderRow: Identifiable {
-    let index: Int
-    let item: TranscriptPresentationItem
-    let generation: UInt64
-    var id: TranscriptScrollTarget { .item(generation, item.id) }
-}
 
 enum TranscriptTailLayoutKind: Equatable { case content, end, predecessor }
 

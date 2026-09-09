@@ -107,6 +107,57 @@ final class WorkspaceFileModelTests: XCTestCase {
         XCTAssertNil(model.previewedPath)
         XCTAssertNil(model.previewedContents)
     }
+
+    @MainActor
+    func testRepeatedTabSelectionReusesInFlightScan() async {
+        let root = "/tmp/locus-workspace-files"
+        let old = URL(fileURLWithPath: root).appendingPathComponent("first.md")
+        let current = URL(fileURLWithPath: root).appendingPathComponent("forced.md")
+        let scanner = ControlledWorkspaceIndexScanner(old: old, current: current)
+        let model = WorkspaceFileModel(scanner: { _ in scanner.scan() })
+        model.configure(isUITesting: false, workspacePath: { root }, canIndex: { true })
+        defer { scanner.releaseFirst.signal(); model.stop() }
+
+        model.refresh()
+        await fulfillment(of: [scanner.firstStarted], timeout: 1)
+        for _ in 0..<20 { model.refresh() }
+        scanner.releaseFirst.signal()
+        for _ in 0..<40 where model.files.isEmpty {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(model.files, [old], "Tab changes must not replace an in-flight scan")
+        XCTAssertEqual(scanner.callCount, 1)
+
+        model.refresh(force: true)
+        await fulfillment(of: [scanner.secondStarted], timeout: 1)
+        for _ in 0..<40 where model.files != [current] {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(model.files, [current], "Explicit refresh still scans again")
+    }
+
+    @MainActor
+    func testEmptyIndexIsCachedUntilInvalidated() async {
+        let root = "/tmp/locus-empty-workspace"
+        let calls = expectation(description: "Exactly two scans: initial and invalidated")
+        calls.expectedFulfillmentCount = 2
+        calls.assertForOverFulfill = true
+        let model = WorkspaceFileModel(scanner: { _ in calls.fulfill(); return [] })
+        model.configure(isUITesting: false, workspacePath: { root }, canIndex: { true })
+        defer { model.stop() }
+        let initial = expectation(description: "Initial empty index committed")
+        let subscription = model.$files.dropFirst().prefix(1).sink { _ in initial.fulfill() }
+        model.refresh()
+        await fulfillment(of: [initial], timeout: 1)
+        for _ in 0..<20 {
+            model.refresh()
+            await Task.yield()
+        }
+        model.invalidateIndex()
+        model.refresh()
+        await fulfillment(of: [calls], timeout: 1)
+        withExtendedLifetime(subscription) {}
+    }
 }
 
 private final class ControlledWorkspaceIndexScanner: @unchecked Sendable {
@@ -116,6 +167,11 @@ private final class ControlledWorkspaceIndexScanner: @unchecked Sendable {
     let releaseFirst = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var calls = 0
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
     private let old: URL
     private let current: URL
 

@@ -289,7 +289,7 @@ extension AppModel {
     /// Live width during a drag. Persistence waits for release so the settings
     /// writer is not restarted on every pointer movement.
     func setSidebarWidth(_ width: CGFloat) {
-        sidebarWidth = CGFloat(AppSettings.clampSidebarWidth(Double(width)))
+        workspaceLayout.setSidebarWidth(width)
     }
 
     func commitSidebarWidth() {
@@ -304,7 +304,7 @@ extension AppModel {
     /// Live width during a drag. Deliberately does not persist — see
     /// `commitInspectorWidth()`.
     func setInspectorWidth(_ width: CGFloat) {
-        inspectorWidth = CGFloat(AppSettings.clampInspectorWidth(Double(width)))
+        workspaceLayout.setInspectorWidth(width)
     }
 
     /// Called once when a drag ends. Writing on every frame would restart the
@@ -316,7 +316,7 @@ extension AppModel {
     /// Live width of the chat column during a zoomed-divider drag. Same
     /// commit-on-release contract as `setInspectorWidth`.
     func setZoomedChatWidth(_ width: CGFloat) {
-        zoomedChatWidth = CGFloat(AppSettings.clampZoomedChatWidth(Double(width)))
+        workspaceLayout.setZoomedChatWidth(width)
     }
 
     func commitZoomedChatWidth() {
