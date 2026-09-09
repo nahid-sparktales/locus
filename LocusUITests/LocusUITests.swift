@@ -545,8 +545,14 @@ final class LocusUITests: XCTestCase {
         // Help tag as a separate, undescribed accessibility element even when
         // the control that owns it has a complete label.
         app.windows.firstMatch.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.52, dy: 0.52)
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01)
         ).hover()
+        let helpTags = app.descendants(matching: .helpTag)
+        let tooltipsDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in helpTags.count == 0 },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [tooltipsDismissed], timeout: 3), .completed)
         try app.performAccessibilityAudit(for: [
             .contrast,
             .hitRegion,
@@ -2621,6 +2627,10 @@ final class LocusUITests: XCTestCase {
 
         let planMode = anyElement("composer.workflow")
         XCTAssertTrue(planMode.waitForExistence(timeout: 3))
+        // At compact sizes the navigation sidebar overlays the composer.
+        // Close it before interacting with the conversation controls below.
+        anyElement("sidebar.collapse").click()
+        XCTAssertTrue(waitUntilHittable(planMode))
         planMode.click()
         XCTAssertTrue(anyElement("composer.mode.plan").exists)
         XCTAssertTrue(anyElement("composer.mode.grill").exists)
@@ -2633,6 +2643,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("workspace.overview").exists)
 
+        revealSidebarForNavigation()
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
         XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
@@ -3127,16 +3138,16 @@ final class LocusUITests: XCTestCase {
         }
         app.menuItems["Create document"].click()
 
-        // The prompt lands in the composer while the summary stays on screen.
+        // Prefilling dismisses the floating Overview and leaves the composer
+        // available. The panel toggle can still restore the previous Files tab.
         let composer = app.textViews["composer.input"]
         XCTAssertTrue(waitUntil {
             (composer.value as? String)?.localizedCaseInsensitiveContains("document") == true
         })
-        XCTAssertTrue(
-            anyElement("files.search").exists,
-            "prefilling the composer from the summary must not collapse the inspector"
-        )
         XCTAssertFalse(anyElement("workspace.overview.popover").exists)
+        XCTAssertTrue(composer.isHittable)
+        anyElement("inspector.rail.toggle").click()
+        XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
 
         // Running: the header "+" offers the same actions above real rows.
         relaunchWithPlanOverview("running")

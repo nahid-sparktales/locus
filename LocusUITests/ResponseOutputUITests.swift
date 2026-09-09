@@ -41,13 +41,13 @@ final class ResponseOutputUITests: XCTestCase {
                 || count.value as? String == "11 items in workspace root"
         })
         for filename in ["AGENTS.md", "audit_findings_report.pdf", "code_audit_report.pdf", "storyboobible-influencer-intro-email.pdf", "reddit_latest.py"] {
-            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "files.row.", filename)).firstMatch.exists, filename)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "files.row.", "Open " + filename)).firstMatch.exists, filename)
         }
         capture("Response files and all-type workspace browser")
         search.click()
         search.typeText("audit_findings_report.pdf")
         let result = element("files.row.0")
-        XCTAssertTrue(waitUntil { result.label == "audit_findings_report.pdf" })
+        XCTAssertTrue(waitUntil { result.label == "Open audit_findings_report.pdf" })
         result.click()
         XCTAssertTrue(element("library.pdf.page").waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["This file is not readable as UTF-8 text."].exists)

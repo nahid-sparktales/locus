@@ -183,10 +183,13 @@ private struct WorkspaceBrowserFilesContent: View {
                     }
                     Spacer(minLength: 0)
                 }
+                .frame(minHeight: search ? 42 : 32)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .accessibilityLabel(entry.path)
+            .accessibilityLabel(entry.isDirectory
+                ? "\(browser.expanded.contains(entry.path) ? "Collapse" : "Expand") folder \(entry.path)"
+                : "Open \(entry.path)")
             .accessibilityIdentifier("files.row.\(index)")
             if let title = entry.contextAction.label {
                 Button { model.addWorkspaceBrowserEntry(entry) } label: {

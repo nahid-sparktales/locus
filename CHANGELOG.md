@@ -62,6 +62,8 @@
 
 ### Fixed
 
+- Workspace file rows have full-height click targets and describe their open,
+  expand, or collapse action to screen readers.
 - Avoid redundant workspace refreshes when switching chats with Overview
   already closed.
 - Updated the bundled HTTP transport to HTTPX2 and HTTPCore2 2.12.0 to include
