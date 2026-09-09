@@ -229,7 +229,17 @@ def evaluation_cancel(
     return {"ok": True, "evaluation_id": evaluation_id, "state": "cancelling"}
 
 
+def evaluation_human_grade(suite_id: str, result_id: str, service: ServiceDependency,
+                           body: dict[str, Any] = Body(default_factory=dict)):
+    try:
+        return EvaluationStore(service.run_store).human_grade(suite_id, result_id,
+            score=body.get("score"), reviewer=body.get("reviewer"), reason=body.get("reason"))
+    except EvaluationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 def register_routes(router: APIRouter) -> None:
+    router.add_api_route("/api/evaluations/{suite_id}/results/{result_id}/human-grade", evaluation_human_grade, methods=["POST"])
     router.add_api_route("/api/evaluations", evaluation_list, methods=["GET"])
     router.add_api_route("/api/evaluations", evaluation_create, methods=["POST"])
     router.add_api_route("/api/evaluations/{suite_id}", evaluation_detail, methods=["GET"])

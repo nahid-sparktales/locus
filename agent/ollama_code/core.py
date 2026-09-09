@@ -514,6 +514,7 @@ class AgentCore:
         self._native_guidance: dict[str, dict[str, Any]] = {}
         self._native_rehydrated_input: list[str] = []
         self.tool_action_lock: Any | None = None
+        self._task_write_lock = threading.RLock()
         self.tool_event_context: dict[str, Any] = {}
         self.external_should_stop: Callable[[], bool] | None = None
         self.last_turn_result: dict[str, Any] = {"reason": "complete", "duration_ms": 0}
@@ -895,6 +896,9 @@ class AgentCore:
             memory_context=self.memory_context,
             continuity_context=self.continuity_context,
         )
+        from .planning import planning_contract
+        text += "\n\n" + planning_contract(resolved_mode, native=False,
+            available_tools={s["function"]["name"] for s in self.tool_registry.schemas()})
         if self.tool_ctx.delegate_read_only is not None and resolved_mode != "ask":
             solo_contract = self._adaptive_solo_contract()
             text += "\n" + solo_contract
@@ -1768,21 +1772,8 @@ class AgentCore:
             sections.append(f"Instructions from the workspace's {name}:\n\n{content}")
         if self.tool_ctx.delegate_read_only is not None:
             sections.append(self._adaptive_solo_contract())
-        if self.agent_mode == "plan":
-            sections.append(
-                "You are in Locus Plan mode: investigate, then call the "
-                "submit_plan tool exactly once with your final implementation "
-                "plan. Ask clarifying questions through the ask_user_question "
-                "tool. Do not modify any files in this mode."
-            )
-        if self.agent_mode == "grill":
-            sections.append(
-                "You are in Locus Grill mode: after writing your question in "
-                "the transcript, deliver it by calling the ask_user_question "
-                "tool with the same title, question, options, and your "
-                "recommended answer, then end your turn. Do not modify any "
-                "files in this mode."
-            )
+        from .planning import planning_contract
+        sections.append(planning_contract(self.agent_mode, native=True))
         if self.tool_ctx.goal is not None:
             from .goal_runtime import GOAL_CONTRACT
             sections.append(GOAL_CONTRACT)
@@ -1802,6 +1793,7 @@ class AgentCore:
         ``cwd`` lets the native workspace tree create a chat beneath a folder
         without first creating a throwaway session in the previous workspace.
         """
+        self.task_journal = None
         self.identity_mode = False
         self.tool_registry.identity_mode = False
         self.identity_source_refs = []
@@ -2214,8 +2206,12 @@ class AgentCore:
                 ):
                     kwargs.pop("client_message_id")
             from .model_usage import tracked_native
-            call = (lambda **options: self.goal_runtime.run_native(manager.run_turn, usage_baseline=(self._chatgpt_thread_total_input, self._chatgpt_thread_total_output), **options)) if self.goal_runtime is not None else manager.run_turn
-            completed = tracked_native(self, call, **kwargs)
+            from .task_usage_ledger import native_accounted
+            baseline = (self._chatgpt_thread_total_input, self._chatgpt_thread_total_output)
+            def execute_native(**options):
+                return (self.goal_runtime.run_native(manager.run_turn, usage_baseline=baseline, **options)
+                        if self.goal_runtime is not None else manager.run_turn(**options))
+            completed = native_accounted(self, lambda **options: tracked_native(self, execute_native, **options), kwargs, baseline=baseline)
             if isinstance(completed, dict):
                 if completed.get("status") == "failed":
                     failure = completed.get("error") or {}
@@ -3736,6 +3732,13 @@ class AgentCore:
             if configured_timeout is not None and previous_timeout is not None:
                 self.client.timeout = configured_timeout
             try:
+                from .task_usage_ledger import reserve_core, settle_core
+                try:
+                    task_call = reserve_core(self, messages=self._request_messages() + list(extra_messages or []))
+                except BaseException:
+                    if goal_call is not None:
+                        self.goal_runtime.cancel_undispatched(goal_call)
+                    raise
                 from .model_usage import tracked_chat
                 resp = tracked_chat(self, self.client, purpose=("verification" if getattr(self, "_verification_running", False) else "retry" if not allow_image_retry or not allow_overflow_retry else "planning" if getattr(self, "agent_mode", "work") == "plan" else "worker"),
                     model=self.model,
@@ -3750,6 +3753,7 @@ class AgentCore:
                     on_thinking=on_thinking,
                     options=self.chat_options(),
                 )
+                settle_core(task_call, resp)
                 if goal_call is not None and resp is not None:
                     self.goal_runtime.settle(goal_call, resp)
             finally:
@@ -4027,6 +4031,28 @@ class AgentCore:
         return f"{verb} {' '.join(label.split())}"
 
     def _run_tool_call(
+        self, tc: ToolCall, decider: PermissionDecider | None, **kwargs: Any,
+    ) -> str:
+        tc.call_id = tc.call_id or uuid.uuid4().hex
+        invocation_id = uuid.uuid4().hex
+        tc.execution_receipt = {"id": tc.call_id, "tool": tc.name, "executed": False,
+                                "execution_path": self.cwd, "ok": False}
+        journal = getattr(self, "task_journal", None)
+        try:
+            result = self._execute_tool_call(tc, decider, **kwargs)
+            tc.execution_receipt.update(ok=not result.startswith(("Error", "Permission denied")), result=result[-8000:])
+            return result
+        except BaseException as exc:
+            tc.execution_receipt.update(outcome="interrupted_or_failed", error=type(exc).__name__)
+            raise
+        finally:
+            tc.execution_receipt.update(id=invocation_id, provider_call_id=tc.call_id)
+            if journal is not None:
+                from .file_history import FileHistory
+                tc.execution_receipt["task_revision"] = FileHistory(journal, self.cwd).revision()
+                journal.observe(invocation_id, "tool", tc.execution_receipt)
+
+    def _execute_tool_call(
         self,
         tc: ToolCall,
         decider: PermissionDecider | None,
@@ -4062,7 +4088,7 @@ class AgentCore:
         if execution_lock is None and not self.tool_registry.is_parallel_safe_tool(tc.name):
             # Collaboration control may wait on helpers which themselves need this lock.
             if tc.name not in _SOLO_ROOT_ONLY_TOOLS:
-                execution_lock = self.tool_action_lock
+                execution_lock = self.tool_action_lock or self._task_write_lock
         allowed = getattr(self, "helper_allowed_tools", None)
         if allowed is not None and tc.name not in allowed:
             return "Error: this tool is outside this helper's inherited capabilities."
@@ -4078,7 +4104,9 @@ class AgentCore:
             return "Error: private Identity tasks can use only the native Identity Vault."
         if tc.name == "identity_vault":
             return self._run_identity_tool(tc)
-        call_id = uuid.uuid4().hex[:10]
+        call_id = tc.call_id or uuid.uuid4().hex
+        tc.execution_receipt = {"id": call_id, "tool": tc.name, "executed": False,
+                                "execution_path": self.cwd}
         summary, detail = build_preview(tc.name, tc.arguments, self.tool_ctx)
         # Computed before the call runs: telling a create from an overwrite
         # depends on whether the target exists yet.
@@ -4191,6 +4219,39 @@ class AgentCore:
                 })
                 return result
         with execution_lock if execution_lock is not None else nullcontext():
+            history = None
+            history_ids = []
+            journal = getattr(self, "task_journal", None)
+            self.tool_ctx.task_journal = journal
+            self.tool_ctx.task_invocation_id = call_id
+            charge = None
+            charge_config = (self.config.get("charge_reporting_tools") or {}).get(tc.name)
+            if journal is not None and (tc.name in IMAGE_TOOL_NAMES or isinstance(charge_config, dict)):
+                self.tool_ctx.image_provider_usage = {}
+                from .task_usage_ledger import UsageLedger
+                ledger = UsageLedger(journal)
+                charge_config = charge_config or {}
+                image_config = self.tool_ctx.image_provider or {}
+                charge = ledger.reserve(provider=str(charge_config.get("provider") or image_config.get("provider") or tc.name),
+                    model=str(charge_config.get("model") or image_config.get("model") or tc.name),
+                    stage="images" if tc.name in IMAGE_TOOL_NAMES else "tools", metering="metered",
+                    upper_bound=charge_config.get("upper_bound"), rates=charge_config.get("rates"), identifier="charge:" + journal.run_id + ":" + call_id)
+            before_files = {}
+            source_before = None
+            if journal is not None and tc.name == "read_file":
+                from .task_state import fingerprints
+                try:
+                    source_path = str(self.tool_ctx.resolve(tc.arguments["path"]).relative_to(Path(self.cwd)))
+                    source_before = fingerprints(self.cwd, [source_path])
+                except (KeyError, ValueError, OSError):
+                    pass
+            if journal is not None and effects:
+                from .task_state import fingerprints
+                before_files = fingerprints(self.cwd, [e["path"] for e in effects if not Path(e["path"]).is_absolute()])
+            if journal is not None and effects:
+                from .file_history import FileHistory
+                history = FileHistory(journal, self.cwd)
+                history_ids = history.begin(call_id, [e["path"] for e in effects if not Path(e["path"]).is_absolute()])
             goal_action = (self.goal_runtime is not None
                            and not self.tool_registry.is_read_only_tool(tc.name)
                            and tc.name not in {"get_goal", "update_goal"})
@@ -4203,6 +4264,7 @@ class AgentCore:
                 self.active_tool_call_id = call_id
             try:
                 if info.get("origin") == "native":
+                    tc.execution_receipt["executed"] = self.computer_executor is not None
                     result = (
                         self.computer_executor(tc.name, tc.arguments, call_id)
                         if self.computer_executor is not None
@@ -4216,6 +4278,7 @@ class AgentCore:
                     elif self.simulator_executor is None:
                         result = "Error: iOS Simulator control is unavailable."
                     else:
+                        tc.execution_receipt["executed"] = True
                         result = self.simulator_executor(tc.name, tc.arguments, call_id)
                 elif info.get("origin") == "browser":
                     # Checked here rather than relying on schema omission: a team's
@@ -4227,6 +4290,7 @@ class AgentCore:
                     elif self.browser_executor is None:
                         result = "Error: the browser is unavailable."
                     else:
+                        tc.execution_receipt["executed"] = True
                         result = self.browser_executor(tc.name, tc.arguments, call_id)
                 elif info.get("origin") == "notes":
                     if not self.tool_registry.notes_tool_allowed(tc.name):
@@ -4234,8 +4298,10 @@ class AgentCore:
                     elif self.notes_executor is None:
                         result = "Error: Notes are unavailable."
                     else:
+                        tc.execution_receipt["executed"] = True
                         result = self.notes_executor(tc.name, tc.arguments, call_id)
                 elif self.tool_registry.product_features.owns(tc.name):
+                    tc.execution_receipt["executed"] = True
                     result = self.tool_registry.product_features.execute(
                         tc.name, tc.arguments, call_id
                     )
@@ -4246,24 +4312,76 @@ class AgentCore:
                     elif self.connector_executor is None:
                         result = "Error: connector actions are unavailable."
                     else:
+                        tc.execution_receipt["executed"] = True
                         result = self.connector_executor(tc.name, tc.arguments, call_id)
                 else:
                     if getattr(self, "_verification_running", False) and info.get("origin") == "builtin":
                         self._verification_tool_started = tc.call_id
-                    result = (
-                        execute_tool(tc.name, tc.arguments, self.tool_ctx)
-                        if info.get("origin") == "builtin"
-                        else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
-                    )
+                    from .tools import COMMAND_OBSERVATION
+                    observation_token = COMMAND_OBSERVATION.set(None)
+                    try:
+                        tc.execution_receipt["executed"] = True
+                        result = (
+                            execute_tool(tc.name, tc.arguments, self.tool_ctx)
+                            if info.get("origin") == "builtin"
+                            else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
+                        )
+                    finally:
+                        tc.execution_receipt["command"] = COMMAND_OBSERVATION.get()
+                        COMMAND_OBSERVATION.reset(observation_token)
             except Exception:
                 if goal_action:
                     self.goal_runtime.stop_reason = "goal_unavailable"
                 raise
             finally:
+                if history is not None:
+                    history.finish(history_ids, ok="result" in locals() and not result.startswith(("Error", "Permission denied")))
                 if track_active:
                     self.active_tool_call_id = ""
         ok = not result.startswith("Error")
+        if charge:
+            try:
+                reported = json.loads(result)
+            except (ValueError, TypeError):
+                reported = {}
+            if not isinstance(reported, dict):
+                reported = {}
+            if tc.name in IMAGE_TOOL_NAMES:
+                reported["usage"] = getattr(self.tool_ctx, "image_provider_usage", {})
+            ledger.settle(charge, reported.get("usage") if isinstance(reported.get("usage"), dict) else {},
+                          model_calls=0, reported_cost=reported.get("reported_cost"))
+        tc.execution_receipt.update(ok=ok, result=result[-8000:])
+        journal = getattr(self, "task_journal", None)
+        if journal is not None:
+            from .task_state import fingerprints
+            observed_paths = [e["path"] for e in effects if not Path(e["path"]).is_absolute()]
+            if tc.name == "read_file":
+                try:
+                    observed_paths.append(str(self.tool_ctx.resolve(tc.arguments["path"]).relative_to(Path(self.cwd))))
+                except (KeyError, ValueError):
+                    pass
+            try:
+                tc.execution_receipt["fingerprints"] = fingerprints(self.cwd, observed_paths)
+            except (ValueError, OSError):
+                tc.execution_receipt["fingerprints"] = {}
+            if tc.name == "read_file":
+                tc.execution_receipt["source_stable"] = source_before == tc.execution_receipt["fingerprints"] and bool(source_before)
+            if tc.name in {"web_fetch", "fetch_url"} and ok:
+                tc.execution_receipt["source"] = {"url": tc.arguments.get("url"), "hash": hashlib.sha256(result.encode()).hexdigest()}
+            if tc.name == "bash":
+                journal.observe(call_id + ":opaque", "restoration_exclusion", {"reason": "Shell changes have uncertain file ownership and cannot be restored automatically.", "tool": tc.name})
+            if ok and effects and tc.execution_receipt["fingerprints"]:
+                plan = self.tool_ctx.plan_document or {}
+                declared = set(plan.get("files", []))
+                for step in plan.get("step_details", []):
+                    declared.update(step.get("files", []))
+                    declared.update(step.get("outputs", []))
+                if self.capsule_runtime is not None and self.capsule_runtime.step_id:
+                    declared.update(self.capsule_runtime.definition(self.capsule_runtime.step_id).get("outputs", []))
+                journal.artifact_progress(before_files, tc.execution_receipt["fingerprints"], declared)
         if ok and tc.name == "submit_plan" and self.tool_ctx.plan_document and not self.identity_mode:
+            if journal is not None:
+                self.tool_ctx.plan_document["approval_reference"] = journal.save_plan(self.tool_ctx.plan_document, self.cwd)
             self.session.append_strict({"type": "task_plan", "plan": self.tool_ctx.plan_document,
                                         "workspace_root": self.workspace_root})
         if capsule_action:
@@ -4581,6 +4699,7 @@ class AgentCore:
         if path is None:
             raise FileNotFoundError(f"session not found: {session_id}")
         messages = SessionStore.load(path)
+        self.task_journal = None
         self.tool_ctx.response_parts.clear()
         self.tool_ctx.image_generations_this_session = 0
         self.tool_ctx.image_generations_this_turn = 0

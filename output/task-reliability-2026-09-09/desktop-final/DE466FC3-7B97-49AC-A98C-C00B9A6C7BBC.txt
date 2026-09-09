@@ -1,0 +1,15 @@
+AXPopUpButton capsules.reviewer {{261, 55}, {207.5, 24}}
+AXPopUpButton capsules.executor {{261, 152}, {205, 24}}
+AXPopUpButton capsules.planner {{261, 249}, {207.5, 24}}
+AXTextField capsules.title {{245, 403}, {671, 24}}
+AXTextArea capsules.request {{253, 472}, {655, 104}}
+AXButton capsules.example.Improve a workflow {{401.5, 439}, {93.5, 13}}
+AXButton capsules.example.Build a feature {{323.5, 439}, {70, 13}}
+AXButton capsules.example.Fix a bug {{271.5, 439}, {44, 13}}
+AXButton capsules.saved.capsule-1 {{16, 515}, {188, 75}}
+AXTextField capsules.search {{16, 604}, {188, 24}}
+AXStaticText capsules.nextStep {{245, 90}, {305.5, 13}}
+AXButton capsules.generate {{245, 113}, {128, 30.5}}
+AXButton capsules.new {{15.5, 641.5}, {189, 37}}
+AXButton arrow.clockwise {{190.5, 719}, {13.5, 16}}
+AXButton capsules.done {{888, 785}, {32, 16}}

@@ -18,6 +18,7 @@ struct CapsulePlanStep: Codable, Hashable, Identifiable {
     var checks: [String]
     var inputs: [String] = []
     var outputs: [String] = []
+    var executionKind: String = "write"
     var acceptanceChecks: [[String: JSONValue]] = []
 
     init(id: String = UUID().uuidString, title: String = "", instructions: String = "",
@@ -34,6 +35,7 @@ struct CapsulePlanStep: Codable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey { case id, title, instructions, dependencies, files, checks, inputs, outputs
+        case executionKind = "execution_kind"
         case acceptanceChecks = "acceptance_checks"
     }
 
@@ -47,6 +49,7 @@ struct CapsulePlanStep: Codable, Hashable, Identifiable {
         checks = try c.decodeIfPresent([String].self, forKey: .checks) ?? []
         inputs = try c.decodeIfPresent([String].self, forKey: .inputs) ?? []
         outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
+        executionKind = try c.decodeIfPresent(String.self, forKey: .executionKind) ?? "write"
         acceptanceChecks = try c.decodeIfPresent([[String: JSONValue]].self, forKey: .acceptanceChecks) ?? []
     }
 }

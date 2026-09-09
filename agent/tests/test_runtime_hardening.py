@@ -46,7 +46,8 @@ def test_pause_is_persisted_but_controller_detach_does_not_change_it(runtime):
     assert not RuntimeSupervisor(runtime.app, runtime.root, port=1).paused
 
 
-def test_controller_http_disconnect_keeps_durable_admission(runtime):
+@pytest.mark.parametrize("path", ["api/reusable-checks/propose", "api/sessions/worker/task/restore", "api/sessions/worker/task/checks"])
+def test_controller_http_disconnect_keeps_durable_admission(runtime, path):
     from ollama_code.api.runtime import proxy
     async def scenario():
         worker = SimpleNamespace(session_id='worker', active_command='', session_info={})
@@ -60,7 +61,7 @@ def test_controller_http_disconnect_keeps_durable_admission(runtime):
         async def receive():
             return {'type': 'http.request', 'body': b'{}'}
         request = Request({'type': 'http', 'method': 'POST', 'app': runtime.app, 'path': '/', 'query_string': b'', 'headers': []}, receive)
-        call = asyncio.create_task(proxy('worker', 'api/reusable-checks/propose', request))
+        call = asyncio.create_task(proxy('worker', path, request))
         await began.wait()
         call.cancel()
         with pytest.raises(asyncio.CancelledError):

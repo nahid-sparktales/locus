@@ -185,12 +185,15 @@ async def proxy(session_id: str, path: str, request: Request):
         forwarded += "?" + request.url.query
     controller_work = request.method == "POST" and path.startswith("api/reusable-checks/") and path.rsplit("/", 1)[-1] in {"propose", "test", "verify"}
     recovery_turn = request.method == "POST" and path.startswith("api/orchestrations/") and path.rsplit("/", 1)[-1] in {"resume", "retry", "reassign", "replay", "duplicate", "run-with-locus"}
-    admitted = controller_work or recovery_turn
+    task_file_work = request.method == "POST" and path in {
+        f"api/sessions/{session_id}/task/restore", f"api/sessions/{session_id}/task/checks",
+    }
+    admitted = controller_work or recovery_turn or task_file_work
     if admitted:
         if runtime.paused:
             raise HTTPException(409, "Resume this runtime before starting work.")
         if worker.active_command or any(other.active_command and runtime.store.worker(other.session_id)["workspace"] == runtime.store.worker(session_id)["workspace"] for other in runtime.workers.values()) or sum(bool(other.active_command) for other in runtime.workers.values()) >= runtime.limit:
-            raise HTTPException(409, "Wait for an available runtime slot before generating or testing a check.")
+            raise HTTPException(409, "Wait for an available runtime slot before running checks or changing task files.")
         # Persist admission before the request crosses the worker boundary. The
         # operation outlives its HTTP subscriber, just like a websocket turn.
         operation = runtime.store.enqueue(session_id, {"type": "controller_check", "path": path})

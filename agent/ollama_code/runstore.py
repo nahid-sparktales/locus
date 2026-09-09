@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 20
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -754,6 +754,15 @@ class RunStore(AgentInspectorStore):
                 initialize_reusable_schema(connection)
                 connection.execute("UPDATE schema_meta SET version=17 WHERE singleton=1")
                 connection.commit()
+            if version < 18:
+                from .task_journal import initialize_schema as initialize_journal_schema
+                initialize_journal_schema(connection)
+            if version < 19:
+                from .task_usage_ledger import initialize_schema as initialize_task_usage_schema
+                initialize_task_usage_schema(connection)
+            if version < 20:
+                from .file_history import initialize_schema as initialize_history_schema
+                initialize_history_schema(connection)
             if not os.environ.get("LOCUS_RUNTIME_COORDINATOR") and not os.environ.get("LOCUS_RUNTIME_CHILD"):
                 # A model turn that died with the previous app process is never
                 # silently replayed. Keep the session lease and make the exact
@@ -926,6 +935,18 @@ class RunStore(AgentInspectorStore):
         if row is None:
             return None
         return {**dict(row), "payload": json.loads(row["payload_json"] or "{}")}
+
+    def record_plan_approval(self, run_id: str, reference: dict[str, Any]) -> None:
+        if self.read_only:
+            raise RunStoreError("Run storage is read-only.")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT manifest_json FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise RunStoreError("The plan approval has no owning run.")
+            manifest = json.loads(row[0])
+            manifest.update(_approved_task_plan=reference, _approved_plan_started=True)
+            connection.execute("UPDATE runs SET manifest_json=? WHERE id=?", (json.dumps(manifest), run_id))
 
     def start_run(
         self,

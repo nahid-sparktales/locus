@@ -3,8 +3,10 @@ import SwiftUI
 
 struct TaskCapsulePresentation: ViewModifier {
     @ObservedObject var capsules: TaskCapsuleModel
+    var openTask: ((String) -> Void)? = nil
+    var onDismiss: (() -> Void)? = nil
     func body(content: Content) -> some View {
-        content.sheet(isPresented: $capsules.isPresented) { TaskCapsuleView(model: capsules) }
+        content.sheet(isPresented: $capsules.isPresented, onDismiss: onDismiss) { TaskCapsuleView(model: capsules, openTask: openTask) }
     }
 }
 

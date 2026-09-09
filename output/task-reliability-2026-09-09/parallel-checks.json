@@ -1,0 +1,767 @@
+{
+  "version": 1,
+  "kind": "offline_deterministic_checks",
+  "platform": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "measured_at": 1788987944.327874,
+  "workloads": [
+    {
+      "workspace_files": 100,
+      "checks": 32,
+      "paired_repetitions": 20,
+      "median_improvement": 0.005498024630751219,
+      "p95_regression": -0.03544107813835873,
+      "correctness_equal": true,
+      "qualified": false,
+      "pairs": [
+        {
+          "1": {
+            "seconds": 0.09161170793231577,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.07903416699264199,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.07866400002967566,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.08155437500681728,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06960491603240371,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.07033266592770815,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.061617166036739945,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06571100000292063,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.07047533302102238,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06867891596630216,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06854550004936755,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06524108396843076,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06310758297331631,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.05940566607750952,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06307266699150205,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06313158292323351,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06378849991597235,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.0643218751065433,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06811141700018197,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.07356187503319234,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06772629194892943,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06313316593877971,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06199733295943588,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.07106441701762378,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06377433298621327,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06523645808920264,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06305283296387643,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06356224999763072,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06391425000037998,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06360908399801701,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.0635364999761805,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06271145900245756,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06391258293297142,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06195145798847079,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06421512505039573,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06461662496440113,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06313116697128862,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.05991404200904071,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06562820798717439,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06194287503603846,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        }
+      ]
+    },
+    {
+      "workspace_files": 1024,
+      "checks": 32,
+      "paired_repetitions": 20,
+      "median_improvement": 0.003701132167565846,
+      "p95_regression": 2.973806878658891e-05,
+      "correctness_equal": true,
+      "qualified": false,
+      "pairs": [
+        {
+          "1": {
+            "seconds": 0.0692080829758197,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06725637498311698,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.0697165000019595,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06627866707276553,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.0650115420576185,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.05655987490899861,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06395279197022319,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.067254374967888,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06608525000046939,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.0635987080167979,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.0607098750770092,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06362050003372133,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06373387505300343,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.0637860419228673,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06333483301568776,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06385154195595533,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06300795904826373,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06501416699029505,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06526724994182587,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06463795900344849,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.0629828330129385,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.059287124895490706,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06465308403130621,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06367120903450996,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06247483298648149,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06298658298328519,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.0624547500628978,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06268666696269065,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06179466599132866,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06367816601414233,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06428370904177427,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06216820899862796,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06402241706382483,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.060594042064622045,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.061373666976578534,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.062008833047002554,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.062218124978244305,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06312729197088629,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06315575004555285,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06645399995613843,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        }
+      ]
+    },
+    {
+      "workspace_files": 4096,
+      "checks": 32,
+      "paired_repetitions": 20,
+      "median_improvement": -0.002754755899432082,
+      "p95_regression": -0.08756789246696772,
+      "correctness_equal": true,
+      "qualified": false,
+      "pairs": [
+        {
+          "1": {
+            "seconds": 0.07338924997020513,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06432179198600352,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.07016220805235207,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06782412505708635,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06646741600707173,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06544124998617917,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06077533308416605,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06366366695147008,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06653483305126429,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06540724996011704,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06204337498638779,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06379258306697011,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.0633084160508588,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06417016696650535,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06210966606158763,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.0631747500738129,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06195295799989253,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06416837498545647,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.0633493330096826,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06375954195391387,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06412987492512912,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.0669627080205828,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06134016707073897,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.0676430839812383,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.07475320901721716,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.061666958034038544,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06422924995422363,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.0647595829796046,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.061099625076167285,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06256220897193998,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.057793708983808756,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06367649999447167,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06249412498436868,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.06423791707493365,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06373512500431389,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06368420901708305,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "1": {
+            "seconds": 0.06402533291839063,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "2": {
+            "seconds": 0.062061665928922594,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        },
+        {
+          "2": {
+            "seconds": 0.06431525002699345,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          },
+          "1": {
+            "seconds": 0.06285754207056016,
+            "outcome": "passed",
+            "evidence_hash": "01f3960c34404c307e2d41c440a1f3adffa9186601bf6e9ef6762a1c2a3d3c21"
+          }
+        }
+      ]
+    }
+  ],
+  "automatic_concurrency": false,
+  "limitations": [
+    "Local file/JSON verification only; no provider performance claim.",
+    "One machine and warm filesystem cache; invocation-attribution regressions run separately."
+  ]
+}

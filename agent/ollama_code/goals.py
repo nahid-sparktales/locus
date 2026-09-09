@@ -548,6 +548,17 @@ class GoalStore:
             return dict(connection.execute("SELECT * FROM goal_usage WHERE goal_id=? AND run_id=? AND call_id=?",
                                            (goal_id, run_id, call_id)).fetchone())
 
+    def cancel_undispatched_usage(self, goal_id: str, run_id: str, call_id: str) -> None:
+        """Release admission only when the runtime has not dispatched the call."""
+        with self._write() as connection:
+            self._binding(connection, goal_id, run_id)
+            prior = connection.execute("SELECT * FROM goal_usage WHERE goal_id=? AND run_id=? AND call_id=?",
+                                       (goal_id, run_id, call_id)).fetchone()
+            if not prior or prior["state"] != "reserved" or prior["prompt_tokens"] or prior["completion_tokens"]:
+                raise GoalError("Only an undispatched reservation can be released.")
+            connection.execute("DELETE FROM goal_usage WHERE goal_id=? AND run_id=? AND call_id=?", (goal_id, run_id, call_id))
+            connection.execute("UPDATE goals SET model_calls=model_calls-? WHERE id=?", (prior["model_calls"], goal_id))
+
     def _usage(self, goal_id: str, run_id: str, call_id: str, *, model_calls: int,
                prompt_tokens: int, completion_tokens: int, completed: bool,
                tokens_known: bool = True, model_calls_known: bool = True) -> dict[str, Any]:
@@ -682,7 +693,7 @@ class GoalStore:
                 else:
                     state, message = "paused", reason or "The run stopped at an error or runtime safety limit. Review it before resuming."
             elif report is None:
-                failures += 1
+                failures += int(bool(link["automatic"]))
                 if failures >= 3:
                     state, message = "paused", "Three consecutive turns ended without a goal progress report."
                 elif self._budget_exhausted(row):
@@ -706,11 +717,24 @@ class GoalStore:
             elif report["status"] == "blocked":
                 state, message = "blocked", report["blocker"]
             else:
-                fresh = hashlib.sha256(_json([report["summary"], report["evidence"], report["next_step"]]).encode()).hexdigest()
-                failures = failures + 1 if fresh == fingerprint else 1
+                owner = "goal:" + goal_id
+                linked = connection.execute("SELECT task_id FROM task_links WHERE owner=?", (owner,)).fetchone()
+                milestones = [r[0] for r in connection.execute(
+                    "SELECT fingerprint FROM task_milestones WHERE task_id=? AND created_at>=? ORDER BY fingerprint",
+                    (linked[0] if linked else owner, row["created_at"]))]
+                fresh = "evidence:" + hashlib.sha256(_json(milestones).encode()).hexdigest()
+                advanced = bool(milestones) and fresh != fingerprint
+                failures = 0 if advanced else failures + int(bool(link["automatic"]))
                 fingerprint = fresh
                 if failures >= 3:
-                    state, message = "paused", "Three consecutive turns repeated the same progress report without advancing."
+                    latest = connection.execute("SELECT payload FROM task_observations WHERE task_id=? AND kind='tool' ORDER BY created_at DESC LIMIT 1",
+                                                (linked[0] if linked else owner,)).fetchone()
+                    receipt = json.loads(latest[0]) if latest else {}
+                    blocker = report.get("blocker") or (receipt.get("result", "")[-1000:] if receipt.get("ok") is False else "") or report.get("next_step", "")
+                    state, message = "paused", "Three consecutive turns produced no new execution evidence. Next action: " + (blocker or "Identify the unresolved requirement and a new way to verify it.")
+                elif failures == 2:
+                    report["next_step"] = ("Two turns produced no new execution evidence. Within the remaining allowance, "
+                        "try a different evidence-backed approach or report the specific missing decision. " + report["next_step"])
                 elif self._budget_exhausted(row):
                     state, message = "limit_reached", "The goal usage allowance has been reached."
             connection.execute("UPDATE goals SET status=?,reason=?,summary=?,evidence_json=?,next_step=?,"

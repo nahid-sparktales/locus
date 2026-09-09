@@ -197,7 +197,7 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
                     "kind": "interval",
                     "every": 1,
                     "unit": "hours",
-                    "anchor": time.time() + 2,
+                    "anchor": time.time() + 10,  # Leave time for isolated worker setup.
                 },
             },
         }
@@ -262,6 +262,26 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
             for item in task["reusable_checks"]
         )
         assert "check_generation" in returned["accounting"]["by_purpose"]
+        # The desktop task projection and file restoration operate through the
+        # same independent worker without replaying a model turn.
+        endpoint = worker + f"/api/sessions/{session}/task"
+        detail = call("GET", endpoint)
+        assert detail["interface_version"] == 1
+        assert detail["run_id"] == latest["id"]
+        assert detail["verification"]["current_status"] == "passed"
+        assert "restore" in detail["actions"]
+        change = next(item for item in detail["files"] if item["path"] == "result.txt")
+        proposed = call("POST", endpoint + "/restore", json={"action": "preview", "change_ids": [change["id"]]})
+        ready = [item for item in proposed["entries"] if item["status"] == "ready"]
+        assert ready
+        call("POST", endpoint + "/restore", json={"action": "apply", "token": proposed["token"],
+             "revision": proposed["revision"], "selected_paths": [item["path"] for item in ready],
+             "fingerprints": {item["path"]: item["current"] for item in ready}})
+        restored = call("GET", endpoint)
+        assert restored["run_id"] == latest["id"]
+        assert restored["restorations"][0]["state"] == "completed"
+        call("POST", endpoint + "/restore", json={"action": "recover", "token": proposed["token"]})
+        assert call("GET", endpoint)["restorations"][0]["state"] == "recovered"
     finally:
         process.terminate()
         try:

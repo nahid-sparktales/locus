@@ -150,6 +150,8 @@ class AgentWorkerRuntime:
             host=parent.host,
         )
         from .goal_runtime import attach_goal_runtime
+        core.task_journal = getattr(parent, "task_journal", None)
+        core.task_usage_stage = "helper"
         attach_goal_runtime(core, getattr(svc, "goal_runtime", None), coordinator=False)
         if core.goal_runtime is not None:
             core.goal_checkpoint = self._persist
@@ -701,6 +703,10 @@ class CollaborationBridge:
             plan_mode=self.core.agent_mode in {"plan", "grill"},
             mutation_lock=self.lock,
         )
+        journal = getattr(self.core, "task_journal", None)
+        if journal is not None:
+            from .file_history import FileHistory
+            self.manager.file_history = FileHistory(journal, self.core.cwd)
 
     def call(self, name: str, args: dict[str, Any]) -> str:
         manager = self.manager

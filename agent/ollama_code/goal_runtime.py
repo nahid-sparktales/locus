@@ -41,6 +41,10 @@ GOAL_TOOL_SCHEMAS = [
             "evidence": {"type": "array", "items": {"type": "string"}},
             "next_step": {"type": "string"}, "blocker": {"type": "string"},
             "acceptance_checks": {"type": "array", "items": CHECK_SCHEMA},
+            "source_findings": {"type": "array", "maxItems": 16, "items": {
+                "type": "object", "properties": {"receipt_id": {"type": "string"},
+                    "requirement": {"type": "string"}, "quote": {"type": "string"}},
+                "required": ["receipt_id", "requirement", "quote"], "additionalProperties": False}},
         }, "required": ["status", "summary", "evidence"], "additionalProperties": False},
     }},
 ]
@@ -48,7 +52,7 @@ GOAL_TOOL_NAMES = frozenset({"get_goal", "update_goal"})
 
 
 def validate_goal_report(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) - {"status", "summary", "evidence", "next_step", "blocker", "acceptance_checks"}:
+    if not isinstance(value, dict) or set(value) - {"status", "summary", "evidence", "next_step", "blocker", "acceptance_checks", "source_findings"}:
         raise GoalError("The goal report must contain only status, summary, evidence, next_step and blocker.")
     if value.get("status") not in {"continue", "complete", "blocked"}:
         raise GoalError("The goal report has an invalid status.")
@@ -122,7 +126,11 @@ class GoalRuntime:
             if name == "get_goal":
                 if arguments:
                     raise GoalError("get_goal accepts no arguments.")
-                return json.dumps(self.snapshot(), ensure_ascii=False)
+                snapshot = self.snapshot()
+                journal = getattr(self.core, "task_journal", None)
+                if journal is not None:
+                    snapshot["execution_evidence"] = journal.snapshot()["receipts"]
+                return json.dumps(snapshot, ensure_ascii=False)
             if name != "update_goal":
                 raise GoalError("Unknown goal tool.")
             goal = self.submit_report(arguments)
@@ -138,6 +146,19 @@ class GoalRuntime:
 
     def submit_report(self, value: Any) -> dict[str, Any]:
         report = validate_goal_report(value)
+        findings = value.get("source_findings", [])
+        if not isinstance(findings, list) or len(findings) > 16:
+            raise ValueError("Source findings must be a bounded list.")
+        if findings:
+            journal = getattr(self.core, "task_journal", None)
+            if journal is None or self.snapshot()["revision"] != self.revision:
+                raise ValueError("Source findings require current task evidence.")
+            saved = TaskStateStore(self.store.run_store).get("goal:" + self.goal_id) or {}
+            saved["requirements"] = [self.snapshot()["objective"]]
+            for finding in findings:
+                if not isinstance(finding, dict) or any(not isinstance(finding.get(k), str) for k in ("receipt_id", "requirement", "quote")):
+                    raise ValueError("A source finding needs a receipt, requirement and quotation.")
+                journal.source_finding(finding["receipt_id"], finding["requirement"], finding["quote"], saved)
         if self.core is not None and report["status"] != "complete" and "acceptance_checks" in value:
             state_store = TaskStateStore(self.store.run_store)
             saved = state_store.get("goal:" + self.goal_id)
@@ -185,6 +206,9 @@ class GoalRuntime:
             self.stop_reason = "goal_unavailable"
             raise
         return identifier
+
+    def cancel_undispatched(self, identifier: str) -> None:
+        self.store.cancel_undispatched_usage(self.goal_id, self.run_id, identifier)
 
     def settle(self, identifier: str, response: Any = None, *, model_calls: int = 1,
                prompt_tokens: int | None = None, completion_tokens: int | None = None,

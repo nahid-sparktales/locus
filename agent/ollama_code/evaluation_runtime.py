@@ -14,12 +14,12 @@ from .evaluations import (
     EvaluationError,
     EvaluationStore,
     configuration_fingerprint,
+    configuration_snapshot,
     grade_case,
     summarize_results,
 )
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
-    OrchestrationError,
     TeamOrchestrator,
     parse_manifest,
 )
@@ -73,6 +73,7 @@ def run_evaluation_suite(
                 parent.run_store.set_state(run_id, "interrupted")
                 store.finish_result(result_id, {"state": "interrupted", "execution_outcome": "interrupted", "failure_category": "cancelled_before_start", "repetition": repetition + 1})
                 continue
+            configuration = configuration_snapshot(parent.core, case, selected)
             started = time.monotonic()
             parent.emit({
                 "type": "evaluation_case_started", "evaluation_id": evaluation_id,
@@ -82,6 +83,8 @@ def run_evaluation_suite(
             evaluation_core: AgentCore | None = None
             timeout_timer: threading.Timer | None = None
             timed_out = threading.Event()
+            succeeded = False
+            grade = {}
             try:
                 fixture = case.get("baseline_fixture")
                 fixture_id = (
@@ -159,6 +162,7 @@ def run_evaluation_suite(
                 if profile_values:
                     case_manifest["profiles"] = profile_values
                 target = str(case.get("target") or "team")
+                configuration = configuration_snapshot(parent.core, case, case_manifest)
                 timeout_seconds = int(case.get("timeout_seconds") or 1_800)
 
                 def timeout_case(
@@ -187,6 +191,8 @@ def run_evaluation_suite(
                         execution_environment="worktree",
                     )
                     evaluation_service.active_run_id = run_id
+                    from .task_journal import TaskJournal
+                    evaluation_core.task_journal = TaskJournal.bind(parent.run_store, parent.run_store.run(run_id))
                     if frozen_checks:
                         from .reusable_check_runtime import RunChecks
                         evaluation_service.reusable_run_checks = RunChecks(evaluation_service, run_id, str(case["prompt"]), frozen=frozen_checks)
@@ -277,6 +283,7 @@ def run_evaluation_suite(
                             case=case, output=output, diff_text=patch_text, evidence=grade,
                         )
                 rubric_required = bool(str(case.get("rubric") or "").strip())
+                ungraded = rubric_required and rubric_result is None
                 rubric_passed = (not rubric_required) or (rubric_result is not None and (
                     float(rubric_result["score"]) >= float(case.get("passing_score") or 80)
                 ))
@@ -287,6 +294,9 @@ def run_evaluation_suite(
                     and rubric_passed
                 )
                 usage = run.get("usage") if isinstance(run.get("usage"), dict) else {}
+                from .task_journal import TaskJournal
+                from .task_usage_ledger import UsageLedger as TaskUsageLedger
+                task_accounting = TaskUsageLedger(TaskJournal.for_owner(parent.run_store, "run:" + run_id)).summary()
                 model_calls = int(
                     usage.get("model_calls")
                     or evaluation_core.last_turn_result.get("model_calls")
@@ -302,15 +312,18 @@ def run_evaluation_suite(
                     "setup_ms": setup_ms, "queue_ms": queue_ms,
                     "execution_ms": max(int((verification_started - execution_started) * 1000) - queue_ms, 0),
                     "verification_ms": max(int((time.monotonic() - verification_started) * 1000), 0),
-                    "environment": {"platform": __import__("platform").platform(), "python": __import__("sys").version.split()[0], "baseline_tree": task.baseline_tree, "runtime_protocol": 1},
+                    "environment": {"platform": __import__("platform").platform(), "python": __import__("sys").version.split()[0], "baseline_tree": getattr(task, "baseline_tree", ""), "runtime_protocol": 1},
                     "accounting": accounting,
                     "estimated_api_cost": accounting["estimated_api_cost"], "cost_coverage": accounting["cost_coverage"],
+                    "grading_outcome": "ungraded" if ungraded else "passed" if passed else "failed",
+                    "configuration": configuration,
                     **grade,
                     "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
                     "model_calls": model_calls,
                     "prompt_tokens": evaluation_core.total_prompt_tokens,
                     "completion_tokens": evaluation_core.total_completion_tokens,
                     "estimated_cost": accounting["estimated_api_cost"],
+                    "known_cost_subtotal": task_accounting["known_subtotal"], "usage_accounting": task_accounting, "judging": rubric_result,
                     "output": output,
                     "rubric_score": rubric_result["score"] if rubric_result else None,
                     "rubric_reason": rubric_result["reason"] if rubric_result else "",
@@ -333,7 +346,7 @@ def run_evaluation_suite(
                         "budget_exhausted" if outcome == "budget_exhausted" else
                         "provider_or_runtime" if not succeeded else
                         "deterministic_assertion" if not grade["deterministic_passed"] else
-                        "subjective_rubric"
+                        "ungraded" if ungraded else "subjective_rubric"
                     ),
                 })
                 if target == "team" and case_manifest.get("profiles"):
@@ -367,11 +380,25 @@ def run_evaluation_suite(
                     "suite_id": suite["id"], "case_id": case["id"],
                     "run_id": run_id, "result": value,
                 })
-            except (
-                EvaluationError, InterruptedError, WorktreeError, OrchestrationError, OSError, ValueError, RuntimeError,
-            ) as exc:
+            except Exception as exc:
+                if not succeeded:
+                    parent.run_store.set_state(run_id, "failed")
+                failed_run = parent.run_store.run(run_id) or {}
+                failed_usage = failed_run.get("usage") or {}
+                from .task_journal import TaskJournal
+                from .task_usage_ledger import UsageLedger
+                accounting = UsageLedger(TaskJournal.for_owner(parent.run_store, "run:" + run_id)).summary()
+                judging_accounting = UsageLedger(TaskJournal.for_owner(parent.run_store, "run:" + run_id + ":judge")).summary()
                 value = store.finish_result(result_id, {
-                    "state": "timed_out" if timed_out.is_set() else "interrupted" if isinstance(exc, InterruptedError) else "failed", "error": str(exc),
+                    "state": "ungraded" if succeeded else "failed", "error": str(exc),
+                    "execution_outcome": "completed" if succeeded else "failed", "grading_outcome": "ungraded", **grade,
+                    "configuration": configuration,
+                    "estimated_cost": None,
+                    "known_cost_subtotal": accounting["known_subtotal"], "usage_accounting": accounting,
+                    "cost_coverage": accounting["coverage"], "judging_usage_accounting": judging_accounting,
+                    "model_calls": failed_usage.get("model_calls", 0),
+                    "prompt_tokens": evaluation_core.total_prompt_tokens if evaluation_core else 0,
+                    "completion_tokens": evaluation_core.total_completion_tokens if evaluation_core else 0,
                     "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
                     "target": str(case.get("target") or "team"),
                     "team_id": str(case.get("team_id") or ""),

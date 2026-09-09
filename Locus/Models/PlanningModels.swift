@@ -22,6 +22,7 @@ struct PlanDocument: Codable, Hashable, Identifiable {
     var constraints: [String]
     var decisions: [String]
     var acceptanceChecks: [[String: JSONValue]] = []
+    var approvalReference: [String: JSONValue]? = nil
 
     init(
         id: String = UUID().uuidString,
@@ -49,6 +50,7 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         case id, title, summary, steps, tests
         case stepDetails = "step_details"
         case acceptanceChecks = "acceptance_checks"
+        case approvalReference = "approval_reference"
         case constraints, decisions
     }
 
@@ -63,6 +65,7 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
         decisions = try container.decodeIfPresent([String].self, forKey: .decisions) ?? []
         acceptanceChecks = try container.decodeIfPresent([[String: JSONValue]].self, forKey: .acceptanceChecks) ?? []
+        approvalReference = try container.decodeIfPresent([String: JSONValue].self, forKey: .approvalReference)
     }
 }
 

@@ -14,6 +14,7 @@ import asyncio
 import base64
 import binascii
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -467,6 +468,7 @@ def _run_user_turn(
     workflow_outputs: list[dict[str, Any]] | None = None,
     model_call_limit: int | None = None,
     capsule_context: dict[str, Any] | None = None,
+    approved_plan: dict[str, Any] | None = None,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     if capsule_context is not None:
@@ -494,6 +496,9 @@ def _run_user_turn(
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
         **({"identity_mode": True} if private_identity else {}),
     }
+    approved_plan = approved_plan or existing_manifest.get("_approved_task_plan")
+    if approved_plan is not None:
+        run_manifest["_approved_task_plan"] = approved_plan
     environment = "worktree" if svc.current_task is not None else "local"
     svc.run_store.start_run(
         run_id,
@@ -510,6 +515,27 @@ def _run_user_turn(
         execution_environment=environment,
     )
     svc.active_run_id = run_id
+    from .task_journal import TaskJournal
+    svc.core.task_journal = None if private_identity else TaskJournal.bind(svc.run_store, svc.run_store.run(run_id))
+    if approved_plan is not None:
+        try:
+            if private_identity or mode != "work" or not isinstance(approved_plan, dict):
+                raise ValueError("Plan approval requires a regular Work task.")
+            saved_plan = svc.core.task_journal.approved_plan(approved_plan, svc.core.cwd,
+                validate_sources=not bool(existing_manifest.get("_approved_plan_started")))
+            svc.core.tool_ctx.plan_document = {**saved_plan, "approval_reference": approved_plan}
+            text += "\n\nExecute this exact approved plan:\n" + json.dumps(saved_plan, ensure_ascii=False)
+            svc.core.session.append_strict({"type": "approved_task_plan", "reference": approved_plan,
+                                           "plan": saved_plan, "run_id": run_id})
+            svc.core.task_journal.observe("approved:" + run_id, "plan_approved", approved_plan)
+            run_manifest["_approved_plan_started"] = True
+            svc.run_store.record_plan_approval(run_id, approved_plan)
+        except (ValueError, OSError) as exc:
+            svc.run_store.set_state(run_id, "failed")
+            svc.emit({"type": "error", "message": str(exc)})
+            svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
+            svc.active_run_id = None
+            return
     try:
         bind_goal_runtime(svc, run_id, mode=mode, excluded=(just_chat or private_identity or bool(workflow_outputs)))
     except Exception as exc:
@@ -595,6 +621,8 @@ def _run_user_turn(
                 tool_is_parallel_safe=svc.core.solo_worker_tool_is_parallel_safe,
                 virtual_tools=svc.core.solo_worker_virtual_tools,
                 goal_runtime=getattr(svc, "goal_runtime", None),
+                task_journal=getattr(svc.core, "task_journal", None),
+                usage_rates=svc.core.config.get("usage_rates"),
             )
         except SoloSwarmError as exc:
             # Durable, so the Runs panel can tell "the agent saw no reason to
@@ -647,7 +675,7 @@ def _run_user_turn(
               "reason": "ready" if swarm else "unavailable" if solo_swarm_enabled else "disabled_for_turn"})
     svc.core.reset_system_message()
     previous_suppress = svc.core._suppress_turn_done
-    if bridge:
+    if bridge or approved_plan is not None:
         svc.core._suppress_turn_done = True
     completed = False
     try:
@@ -677,10 +705,25 @@ def _run_user_turn(
             persisted_user_metadata=persisted_metadata,
             **({"model_call_limit": model_call_limit} if model_call_limit is not None else {}),
         )
+        if approved_plan is not None and svc.core.last_turn_result.get("reason") == "complete":
+            from .task_state import TaskStateError, TaskStateStore, TaskVerifier
+            try:
+                svc.core.task_journal.approved_plan(approved_plan, svc.core.cwd, validate_sources=False)
+                store = TaskStateStore(svc.run_store)
+                task_id = "work:" + svc.core.task_journal.task_id
+                store.ensure(task_id, request=saved_plan.get("summary", text), revision=approved_plan["revision"],
+                             workspace=svc.core.workspace_root, execution=svc.core.cwd, plan=saved_plan)
+                checked = TaskVerifier(store, task_id, svc.core, run_id).verify(saved_plan.get("acceptance_checks", []), svc.decide)
+                svc.core.task_journal.approved_plan(approved_plan, svc.core.cwd, validate_sources=False)
+            except TaskStateError as exc:
+                checked = {"verification_status": "needs_review", "verification_reason": str(exc)}
+            if checked["verification_status"] != "passed":
+                svc.core.last_turn_result.update(reason="verification_required")
+                svc.emit({"type": "note", "text": checked["verification_reason"]})
         if bridge:
             bridge.close()
-            if not previous_suppress:
-                svc.emit(dict(svc.core.last_turn_result))
+        if (bridge or approved_plan is not None) and not previous_suppress:
+            svc.emit(dict(svc.core.last_turn_result))
         completed = True
     except GoalError as exc:
         svc.emit({"type": "note", "text": str(exc)})
@@ -817,6 +860,17 @@ def _run_team_turn(
             )
             svc.emit({"type": "task_ready", "task": task.as_dict(), "state": "running"})
 
+        from .task_journal import TaskJournal
+        core.task_journal = TaskJournal.bind(svc.run_store, svc.run_store.run(run_id))
+        reference = manifest.get("_approved_task_plan")
+        if reference is not None:
+            saved_plan = core.task_journal.approved_plan(reference, core.cwd, validate_sources=not bool(manifest.get("_approved_plan_started")))
+            core.tool_ctx.plan_document = {**saved_plan, "approval_reference": reference}
+            text += "\n\nExecute this exact approved plan using the selected team:\n" + json.dumps(saved_plan, ensure_ascii=False)
+            core.session.append_strict({"type": "approved_task_plan", "reference": reference, "plan": saved_plan, "run_id": run_id})
+            core.task_journal.observe("approved:" + run_id, "plan_approved", reference)
+            manifest["_approved_plan_started"] = True
+            svc.run_store.record_plan_approval(run_id, reference)
         from .reusable_check_runtime import bind_run_checks
         bind_run_checks(svc, run_id, text)
         # Each team member gets independently scoped, policy-bounded recall.
@@ -966,176 +1020,8 @@ def _run_team_turn(
                     reviews=reviews, usage=orchestrator.usage(),
                 ),
             )
-            if manifest.get("capsule"):
-                from .capsule_execution import review_request
-                from .capsules import CapsuleError, CapsuleStore
-                capsule_store = CapsuleStore(core.workspace_root)
-                capsule_record = capsule_store.get(manifest["capsule"]["id"])
-                while True:
-                    if core._interrupt.is_set():
-                        raise InterruptedError("interrupted")
-                    try:
-                        revision = review_request(reviews)
-                    except ValueError as exc:
-                        raise TeamWriterBudgetPause("capsule-review", "review_required", str(exc)) from None
-                    if not revision:
-                        break
-                    if orchestrator.remaining_model_calls(prepared.team.budget) <= 1:
-                        raise TeamWriterBudgetPause("capsule-review", "model_call_budget", "The review found issues. Increase the execution allowance or ask the planner for help.")
-                    if capsule_progress is not None:
-                        if capsule_progress.value.get("repair_count", 0) >= capsule_record["recipe"]["max_repair_attempts"]:
-                            raise TeamWriterBudgetPause("capsule-review", "review_required", "The original attempt has used its repair allowance.")
-                        capsule_progress.value["repair_count"] = capsule_progress.value.get("repair_count", 0) + 1
-                        capsule_progress.value["recheck_after_repair"] = True
-                        capsule_progress.store.save(capsule_progress.value)
-                    repair_id = f"{run_id}-repair-{uuid.uuid4().hex[:8]}"
-                    try:
-                        capsule_store.record_run(capsule_record["id"], repair_id, "repair", "running",
-                                                 attempt_id=capsule_progress.value["id"] if capsule_progress is not None else None)
-                    except CapsuleError as exc:
-                        raise TeamWriterBudgetPause("capsule-review", "review_required", str(exc)) from None
-                    try:
-                        snapshot = _install_writer_route(core, prepared.writer)
-                        try:
-                            repair = _run_team_writer(
-                                svc, orchestrator, prepared, prepared.writer,
-                                "Resolve the verified capsule review findings and run the specified checks.\n\n" + revision,
-                                persisted_user_text="[Capsule review repair]", job_id=repair_id,
-                                goal="Resolve capsule review findings",
-                                model_call_limit=orchestrator.remaining_model_calls(prepared.team.budget) - 1,
-                            )
-                        finally:
-                            _restore_writer_route(core, snapshot)
-                    except Exception as exc:
-                        try:
-                            capsule_store.record_run(capsule_record["id"], repair_id, "repair",
-                                                     "interrupted" if isinstance(exc, InterruptedError) else "failed")
-                        except (CapsuleError, OSError, sqlite3.DatabaseError):
-                            pass
-                        raise
-                    repair_reason = str(core.last_turn_result.get("reason") or "complete")
-                    capsule_store.record_run(capsule_record["id"], repair_id, "repair", "completed" if repair_reason == "complete" else "paused")
-                    if repair_reason != "complete":
-                        raise TeamWriterBudgetPause(repair_id, repair_reason, "Capsule repair stopped before verification finished. The existing changes are preserved.")
-                    prepared.writer_results.append(repair)
-                    diff_text = _task_diff(svc, core.workspace_root, core.cwd)
-                    reviews = _review_team(svc, orchestrator, prepared, diff_text, test_evidence=_latest_assistant_output(core))
-                    svc.checkpoint("capsule_repair_complete", _team_checkpoint_state(prepared, "reviewing", svc.current_task, reviews=reviews, usage=orchestrator.usage()))
-                revision = ""
-            else:
-                revision = _revision_request(reviews)
-            if (
-                revision
-                and prepared.team.budget.max_rounds > 1
-                and not core._interrupt.is_set()
-                and orchestrator.remaining_model_calls(prepared.team.budget) > 1
-            ):
-                lead = prepared.writer
-                route_snapshot = _install_writer_route(core, lead)
-                revision_result: AgentResult | None = None
-                revision_continuation = False
-                revision_calls = 0
-                try:
-                    while True:
-                        available = orchestrator.remaining_model_calls(
-                            prepared.team.budget,
-                        ) - 1
-                        if available <= 0:
-                            raise TeamWriterBudgetPause(
-                                "writer-revision",
-                                "model_call_budget",
-                                "The Lead Writer revision reached its model-call budget "
-                                "before it finished. The run was saved and can be resumed.",
-                            )
-                        revision_slice = _run_team_writer(
-                            svc,
-                            orchestrator,
-                            prepared,
-                            lead,
-                            (
-                                "Continue the Lead Writer revision from the current workspace "
-                                "state and finish verification."
-                                if revision_continuation else
-                                "Team review found issues that must be resolved before handoff. "
-                                "Verify each finding against the workspace, make warranted revisions, "
-                                "and rerun focused tests.\n\n" + revision
-                            ),
-                            persisted_user_text=(
-                                "[Team Lead Writer revision continuation]"
-                                if revision_continuation else
-                                "[Team review requested a revision]"
-                            ),
-                            job_id="writer-revision",
-                            goal="Resolve verified reviewer findings and rerun focused tests",
-                            model_call_limit=min(TEAM_WRITER_CALL_SLICE, available),
-                            continuation=revision_continuation,
-                            emit_completion=False,
-                        )
-                        revision_result = _merge_writer_results(
-                            revision_result, revision_slice,
-                        )
-                        revision_calls += int(
-                            core.last_turn_result.get("model_calls") or 0
-                        )
-                        terminal_reason = str(
-                            core.last_turn_result.get("reason") or "complete"
-                        )
-                        if terminal_reason == "complete":
-                            break
-                        if (
-                            terminal_reason == "model_call_budget"
-                            and orchestrator.remaining_model_calls(prepared.team.budget) > 1
-                        ):
-                            revision_continuation = True
-                            continue
-                        if terminal_reason not in {"model_call_budget", "max_iterations"}:
-                            raise InterruptedError(terminal_reason)
-                        message = (
-                            "The Lead Writer revision reached its "
-                            + ("model-call budget" if terminal_reason == "model_call_budget"
-                               else "100-step safety limit")
-                            + " before it finished. The run was saved and can be resumed."
-                        )
-                        svc.emit({
-                            "type": "agent_job_incomplete",
-                            "run_id": prepared.run_id,
-                            "job_id": "writer-revision",
-                            "agent_id": lead.id,
-                            "agent_name": lead.name,
-                            "state": "paused",
-                            "reason": terminal_reason,
-                            "message": message,
-                            "limit": core.last_turn_result.get(
-                                "model_call_limit" if terminal_reason == "model_call_budget"
-                                else "iteration_limit"
-                            ),
-                            "model_calls": revision_calls,
-                            "result": revision_result.structured(),
-                            "usage": orchestrator.usage(),
-                        })
-                        raise TeamWriterBudgetPause(
-                            "writer-revision", terminal_reason, message,
-                        )
-                finally:
-                    _restore_writer_route(core, route_snapshot)
-                assert revision_result is not None
-                prepared.writer_results.append(revision_result)
-                svc.emit({
-                    "type": "agent_job_completed",
-                    "run_id": prepared.run_id,
-                    "job_id": "writer-revision",
-                    "state": "completed",
-                    "result": revision_result.structured(),
-                    "usage": orchestrator.usage(),
-                })
-                diff_text = _task_diff(svc, core.workspace_root, core.cwd)
-                svc.checkpoint(
-                    "revision_complete",
-                    _team_checkpoint_state(
-                        prepared, "reviewing", svc.current_task,
-                        reviews=reviews, usage=orchestrator.usage(),
-                    ),
-                )
+            reviews = _repair_team_reviews(svc, orchestrator, prepared, manifest, reviews)
+            diff_text = _task_diff(svc, core.workspace_root, core.cwd)
 
             capsule_progress = getattr(core, "capsule_runtime", None)
             if capsule_progress is not None:
@@ -1171,33 +1057,14 @@ def _run_team_turn(
                     capsule_progress.final_check(svc.decide)
                     diff_text = _task_diff(svc, core.workspace_root, core.cwd)
                     reviews = _review_team(svc, orchestrator, prepared, diff_text, test_evidence=_latest_assistant_output(core))
-                    from .capsule_execution import review_request
-                    if review_request(reviews):
-                        raise TeamWriterBudgetPause("capsule-review", "review_required", "The reviewer found remaining issues after repair.")
-            reusable = getattr(svc, "reusable_run_checks", None)
-            if reusable:
-                while True:
-                    checked = reusable.verify()
-                    if checked["verification_status"] in {"passed", "not_applicable"}:
-                        break
-                    remaining = orchestrator.remaining_model_calls(prepared.team.budget)
-                    if checked["verification_status"] == "needs_review" or remaining <= 1 or not reusable.reserve_repair(max(prepared.team.budget.max_rounds - 1, 0)):
-                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", checked["verification_reason"])
-                    snapshot = _install_writer_route(core, prepared.writer)
-                    try:
-                        repair = _run_team_writer(svc, orchestrator, prepared, prepared.writer,
-                            "Repair the failed reusable checks with the existing files.\n" + checked["verification_reason"],
-                            persisted_user_text="[Reusable check repair]", job_id="reusable-check-repair",
-                            goal="Repair required checks", model_call_limit=remaining - 1)
-                    finally:
-                        _restore_writer_route(core, snapshot)
-                    if core.last_turn_result.get("reason") != "complete":
-                        raise TeamWriterBudgetPause("reusable-checks", "verification_failed", "The existing repair allowance is exhausted.")
-                    prepared.writer_results.append(repair)
-                    diff_text = _task_diff(svc, core.workspace_root, core.cwd)
+                    reviews = _repair_team_reviews(svc, orchestrator, prepared, manifest, reviews)
             stage = "preparing the final handoff"
             core.begin_steerable_turn()
             synthesis = orchestrator.synthesize(prepared, reviews, diff_text)
+            if hasattr(prepared, "review_files"):
+                from .capsule_progress import workspace_state
+                if prepared.review_files != workspace_state(core.cwd):
+                    raise TeamWriterBudgetPause("review", "review_required", "Files changed after review. Review the current result again.")
             if synthesis and not core._interrupt.is_set():
                 svc.emit({"type": "message_start", "agent": "dispatcher"})
                 svc.emit({"type": "token", "text": synthesis, "agent": "dispatcher"})
@@ -1463,6 +1330,7 @@ def _team_checkpoint_state(
         "plan": prepared.plan.structured(),
         "results": [result.structured() for result in prepared.results],
         "writer_results": [result.structured() for result in prepared.writer_results],
+        "repair_count": getattr(prepared, "repair_count", 0),
         "completed_writer_job_ids": sorted(prepared.completed_writer_job_ids),
         "reviews": [result.structured() for result in reviews or []],
         "usage": dict(usage or {}),
@@ -1476,13 +1344,7 @@ def _team_checkpoint_state(
 
 
 def _review_call_count(prepared: TeamPreparation) -> int:
-    planned = sum(job.kind == "reviewer" for job in prepared.plan.jobs)
-    if planned:
-        return planned
-    return int(any(
-        profile.role == "reviewer" and not profile.can_write
-        for profile in prepared.profiles.values()
-    ))
+    return len(TeamOrchestrator.required_reviewers(prepared))
 
 
 TEAM_WRITER_ITERATION_LIMIT = 100
@@ -1514,6 +1376,15 @@ def _run_prepared_writers(
     ]
     if not pending:
         return
+    capsule_progress = getattr(svc.core, "capsule_runtime", None)
+    if capsule_progress is not None and pending[0].execution_kind != "write":
+        from .capsule_read_checks import run_read_wave
+        ready = [job for job in pending if job.execution_kind != "write"
+                 and set(job.dependencies) <= prepared.completed_writer_job_ids]
+        if not ready:
+            raise TeamWriterBudgetPause(pending[0].id, "review_required", "A read/check step has unresolved dependencies.")
+        run_read_wave(svc, prepared, capsule_progress, ready)
+        return _run_prepared_writers(svc, orchestrator, prepared, first_persisted_user_text=first_persisted_user_text, first_attachments=first_attachments)
     non_writer_reserve = _review_call_count(prepared) + 1
     if prepared.team.budget.max_rounds > 1:
         non_writer_reserve += 1
@@ -1572,6 +1443,8 @@ def _run_prepared_writers(
     for job in prepared.writer_jobs:
         if job.id in prepared.completed_writer_job_ids:
             continue
+        if capsule_progress is not None and job.execution_kind != "write":
+            return _run_prepared_writers(svc, orchestrator, prepared, first_persisted_user_text="[Continuing saved plan]")
         if svc.core._interrupt.is_set():
             raise InterruptedError("orchestration cancelled before the next coding job")
         pending_count = sum(
@@ -1742,6 +1615,7 @@ def _parallel_writer_core(
         config=dict(svc.core.config),
         model=svc.core.model,
     )
+    core.task_journal = getattr(svc.core, "task_journal", None)
     core.workspace_root = checkout.workspace_root
     core.execution_path = checkout.execution_path
     core.task_metadata = checkout.as_dict()
@@ -1899,9 +1773,23 @@ def _run_parallel_writer_wave(
 
     for job in sorted(jobs, key=lambda item: plan_position[item.id]):
         child = children[job.id]
+        from pathlib import Path
+
+        from .file_history import FileHistory
+        from .worktrees import _changed_paths
+        history = FileHistory(svc.core.task_journal, parent.execution_path) if getattr(svc.core, "task_journal", None) else None
+        captured = []
         try:
+            if history:
+                _, current_tree = child.patch()
+                paths = _changed_paths(Path(child.execution_path), child.applied_tree or child.baseline_tree, current_tree)
+                captured = history.begin("integration:" + child.id, paths)
             integration = parent.integrate(child)
+            if history:
+                history.finish(captured, ok=True)
         except WorktreeError as exc:
+            if history:
+                history.finish(captured, ok=False)
             svc.emit({
                 "type": "agent_worktree_conflict",
                 "run_id": prepared.run_id,
@@ -1937,16 +1825,160 @@ def _run_parallel_writer_wave(
 
 
 def _review_team(svc: Any, orchestrator: TeamOrchestrator, prepared: TeamPreparation, diff_text: str, **kwargs: Any) -> list:
+    from .capsule_progress import workspace_state
+    from .task_usage_ledger import UsageLedger
+    journal = getattr(svc.core, "task_journal", None)
+    ledger = UsageLedger(journal) if journal else None
+    span_id = "review:" + uuid.uuid4().hex
+    before = workspace_state(svc.core.cwd)
     progress = getattr(svc.core, "capsule_runtime", None)
     if progress is not None:
         progress.value["stage"] = "review"
         progress.start_model_work(orchestrator.usage(), prepared.writer)
-    reviews = orchestrator.review(prepared, diff_text, **kwargs)
+    if ledger:
+        ledger.span(span_id, "review")
+    try:
+        reviews = orchestrator.review(prepared, diff_text, **kwargs)
+    finally:
+        if ledger:
+            ledger.span(span_id, "review", finish=True)
+    if len(reviews) < _review_call_count(prepared):
+        raise TeamWriterBudgetPause("review", "review_required", "A required reviewer did not return a verdict.")
+    if workspace_state(svc.core.cwd) != before:
+        raise TeamWriterBudgetPause("review", "review_required", "Files changed during review. Review the current files again.")
+    if reviews:
+        prepared.review_files = before
+    from .capsule_execution import review_request
+    try:
+        review_request(reviews)
+    except ValueError:
+        pass  # Retain malformed evidence; the shared loop keeps it unresolved.
+    journal = getattr(svc.core, "task_journal", None)
+    if journal:
+        journal.observe(uuid.uuid4().hex, "review", {"files": before,
+            "execution_path": svc.core.cwd,
+            "approved_plan": (svc.core.tool_ctx.plan_document or {}).get("approval_reference"),
+            "capsule_id": progress.value["capsule_id"] if progress else None,
+            "capsule_revision": progress.value["revision"] if progress else None,
+            "reviews": [r.structured() for r in reviews], "plan": prepared.plan.structured()})
     if progress is not None:
         progress.finish_model_work(orchestrator.usage())
         progress.value["reviews"] = [review.structured() for review in reviews]
         progress.store.save(progress.value)
     return reviews
+
+
+def _repair_team_reviews(svc, orchestrator, prepared, manifest, reviews):
+    """One persisted repair/re-review policy for ordinary teams and capsules."""
+    from .capsule_execution import review_request
+    from .task_state import TaskStateStore, TaskVerifier
+    core = svc.core
+    progress = getattr(core, "capsule_runtime", None)
+    capsule_store = None
+    capsule = None
+    if manifest.get("capsule"):
+        from .capsules import CapsuleError, CapsuleStore
+        capsule_store = CapsuleStore(core.workspace_root)
+        capsule = capsule_store.get(manifest["capsule"]["id"])
+    repair_count = int((manifest.get("_resume") or {}).get("repair_count", 0))
+    reusable = getattr(svc, "reusable_run_checks", None)
+    previous_checks = reusable.tasks.get(reusable.id) if reusable else {}
+    prepared.repair_count = max(getattr(prepared, "repair_count", 0), repair_count,
+                                (previous_checks or {}).get("repair_attempts", 0))
+    limit = capsule["recipe"]["max_repair_attempts"] if capsule else prepared.team.budget.max_rounds - 1
+    while True:
+        if manifest.get("_approved_task_plan"):
+            reference = manifest["_approved_task_plan"]
+            plan = core.task_journal.approved_plan(reference, core.cwd, validate_sources=False)
+            states = TaskStateStore(svc.run_store)
+            task_id = "work:" + core.task_journal.task_id
+            states.ensure(task_id, request=plan.get("summary", prepared.original_request), revision=reference["revision"],
+                          workspace=core.workspace_root, execution=core.cwd, plan=plan)
+            checked = TaskVerifier(states, task_id, core, prepared.run_id).verify(plan.get("acceptance_checks", []), svc.decide)
+            if checked["verification_status"] == "needs_review":
+                raise TeamWriterBudgetPause("checks", "review_required", checked["verification_reason"])
+            if hasattr(prepared, "review_files"):
+                from .capsule_progress import workspace_state
+                if prepared.review_files != workspace_state(core.cwd):
+                    if orchestrator.remaining_model_calls(prepared.team.budget) < _review_call_count(prepared):
+                        raise TeamWriterBudgetPause("review", "review_required", "Checks changed the reviewed files; fresh review needs another call.")
+                    reviews = _review_team(svc, orchestrator, prepared, _task_diff(svc, core.workspace_root, core.cwd), test_evidence=_latest_assistant_output(core))
+            reviews = [r for r in reviews if r.agent_id != "runtime-checks"]
+            if checked["verification_status"] == "failed":
+                reviews.append(AgentResult("runtime-checks", "runtime-checks", "Acceptance checks", "reviewer",
+                    json.dumps({"verdict": "revise", "findings": [{"message": checked["verification_reason"],
+                        "check_ids": [c["id"] for c in checked["checks"]], "files": sorted({c["path"] for c in checked["checks"] if c.get("path")})}]}), [], 0, 0, 0))
+        if reusable:
+            checked = reusable.verify()
+            if checked["verification_status"] == "needs_review":
+                raise TeamWriterBudgetPause("reusable-checks", "review_required", checked["verification_reason"])
+            if hasattr(prepared, "review_files"):
+                from .capsule_progress import workspace_state
+                if prepared.review_files != workspace_state(core.cwd):
+                    if orchestrator.remaining_model_calls(prepared.team.budget) < _review_call_count(prepared):
+                        raise TeamWriterBudgetPause("review", "review_required", "Checks changed the reviewed files; fresh review needs another call.")
+                    reviews = _review_team(svc, orchestrator, prepared, _task_diff(svc, core.workspace_root, core.cwd), test_evidence=_latest_assistant_output(core))
+            reviews = [r for r in reviews if r.agent_id != "runtime-reusable-checks"]
+            if checked["verification_status"] == "failed":
+                reviews.append(AgentResult("runtime-reusable-checks", "runtime-reusable-checks", "Required checks", "reviewer",
+                    json.dumps({"verdict": "revise", "findings": [{"message": checked["verification_reason"],
+                        "check_ids": [c["id"] for c in checked["checks"]], "files": sorted({c["path"] for c in checked["checks"] if c.get("path")})}]}), [], 0, 0, 0))
+        try:
+            revision = review_request(reviews)
+        except ValueError as exc:
+            raise TeamWriterBudgetPause("review", "review_required", str(exc)) from None
+        if not revision:
+            return reviews
+        used = progress.value.get("repair_count", 0) if progress else prepared.repair_count
+        reserve = _review_call_count(prepared) + (0 if capsule else 1)
+        available = orchestrator.remaining_model_calls(prepared.team.budget) - reserve
+        if used >= limit or available <= 0:
+            raise TeamWriterBudgetPause("review", "model_call_budget" if available <= 0 else "review_required", "Review findings remain. The saved repair or model-call allowance is exhausted.")
+        if progress:
+            progress.value.update(repair_count=used + 1, recheck_after_repair=True)
+            progress.store.save(progress.value)
+        prepared.repair_count = used + 1
+        if reusable:
+            check_task = reusable.tasks.get(reusable.id)
+            check_task["repair_attempts"] = prepared.repair_count
+            reusable.tasks.save(check_task, expected_revision=check_task["revision"])
+        svc.checkpoint("repair_started", _team_checkpoint_state(prepared, "reviewing", svc.current_task, reviews=reviews, usage=orchestrator.usage()))
+        repair_id = "review-repair-" + uuid.uuid4().hex[:12]
+        if capsule_store:
+            try:
+                capsule_store.record_run(capsule["id"], repair_id, "repair", "running", attempt_id=progress.value["id"] if progress else None)
+            except CapsuleError as exc:
+                raise TeamWriterBudgetPause("review", "review_required", str(exc)) from None
+        route = _install_writer_route(core, prepared.writer)
+        try:
+            repair = _run_team_writer(svc, orchestrator, prepared, prepared.writer,
+                "Verify these review findings, repair warranted issues, and rerun their focused checks.\n" + revision,
+                persisted_user_text="[Review repair]", job_id=repair_id,
+                goal="Resolve current review findings", model_call_limit=available)
+        except Exception:
+            if capsule_store:
+                capsule_store.record_run(capsule["id"], repair_id, "repair", "failed")
+            raise
+        finally:
+            _restore_writer_route(core, route)
+        if capsule_store:
+            capsule_store.record_run(capsule["id"], repair_id, "repair",
+                                     "completed" if core.last_turn_result.get("reason") == "complete" else "paused")
+        if core.last_turn_result.get("reason") != "complete":
+            raise TeamWriterBudgetPause(repair_id, core.last_turn_result.get("reason", "paused"), "Repair is incomplete. Existing files and consumed allowances are preserved.")
+        prepared.writer_results.append(repair)
+        if progress:
+            checked = progress.final_check(svc.decide)
+            if checked["verification_status"] == "needs_review":
+                raise TeamWriterBudgetPause("checks", "review_required", checked["reason"])
+        elif getattr(core, "goal_runtime", None):
+            store = TaskStateStore(svc.run_store)
+            task_id = "goal:" + core.goal_runtime.goal_id
+            task = store.get(task_id) or {}
+            if task.get("checks"):
+                TaskVerifier(store, task_id, core, prepared.run_id).verify(task["checks"], svc.decide)
+        reviews = _review_team(svc, orchestrator, prepared, _task_diff(svc, core.workspace_root, core.cwd), test_evidence=_latest_assistant_output(core))
+        svc.checkpoint("repair_reviewed", _team_checkpoint_state(prepared, "reviewing", svc.current_task, reviews=reviews, usage=orchestrator.usage()))
 
 
 def _run_team_writer(
@@ -1969,6 +2001,8 @@ def _run_team_writer(
 ) -> AgentResult:
     """Run one bounded slice of a mutation-capable member's coding job."""
     core = core_override or svc.core
+    previous_usage_stage = getattr(core, "task_usage_stage", None)
+    core.task_usage_stage = "repair" if "repair" in job_id or "revision" in job_id else "execution"
     if getattr(svc, "goal_runtime", None) is not None:
         attach_goal_runtime(core, svc.goal_runtime, coordinator=False)
     remaining = orchestrator.remaining_model_calls(prepared.team.budget)
@@ -2004,6 +2038,12 @@ def _run_team_writer(
         capsule_progress.start_model_work(orchestrator.usage(), writer)
     if previous_iteration_limit is not None:
         core.max_iterations = TEAM_WRITER_ITERATION_LIMIT
+    from .task_usage_ledger import UsageLedger
+    journal = getattr(core, "task_journal", None)
+    ledger = UsageLedger(journal) if journal else None
+    span_id = "work:" + uuid.uuid4().hex
+    if ledger:
+        ledger.span(span_id, core.task_usage_stage)
     try:
         with orchestrator.writer_slot(prepared.run_id, writer):
             # Lightweight unit-test doubles exercise allocation independently
@@ -2030,6 +2070,9 @@ def _run_team_writer(
                 persist_user_message=False,
             )
     finally:
+        if ledger:
+            ledger.span(span_id, core.task_usage_stage, finish=True)
+        core.task_usage_stage = previous_usage_stage
         if previous_iteration_limit is not None:
             core.max_iterations = previous_iteration_limit
     prompt_tokens = max(core.total_prompt_tokens - prompt_before, 0)
@@ -2104,7 +2147,11 @@ def _latest_assistant_output(core: AgentCore) -> str:
         (message for message in reversed(core.messages) if message.get("role") == "assistant"),
         {},
     )
-    return str(assistant.get("content") or "")[:120_000]
+    claims = str(assistant.get("content") or "")[:20_000]
+    journal = getattr(core, "task_journal", None)
+    if not journal:
+        return claims
+    return json.dumps({"execution_receipts": journal.snapshot()["receipts"], "assistant_claims": claims}, ensure_ascii=False)[:120_000]
 
 
 def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, Any]:
@@ -2139,6 +2186,8 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         "max_iterations": getattr(core, "max_iterations", 50),
     }
     core.model = writer.model
+    core.config["usage_rates"] = getattr(writer, "usage_rates", None) or {"input_tokens": getattr(writer, "input_cost_per_million", None) or None,
+        "output_tokens": getattr(writer, "output_cost_per_million", None) or None}
     if writer.route.get("provider") == "chatgpt":
         core.codex_manager = writer_client.broker
         core.provider = "chatgpt"
@@ -2383,6 +2432,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), str(exc))
             return
         team_manifest = msg.get("team")
+        approved_plan = msg.get("approved_plan")
+        if approved_plan is not None and not isinstance(approved_plan, dict):
+            _command_error(svc, str(mtype), "An approved plan requires an ordinary Work execution.")
+            return
         capsule_context = msg.get("capsule_context")
         if capsule_context is not None and (
             not isinstance(capsule_context, dict) or team_manifest is not None
@@ -2426,6 +2479,8 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         elif text.startswith("/") and not just_chat:
             call, args = _run_slash, (svc, text)
         elif team_manifest is not None:
+            if approved_plan is not None:
+                team_manifest = {**team_manifest, "_approved_task_plan": approved_plan}
             call = _run_team_turn
             args = (svc, text, team_manifest, attachments)
             if workflow_outputs is not None:
@@ -2441,6 +2496,9 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             if workflow_outputs is not None:
                 args = (*args, workflow_outputs)
             call = _run_user_turn
+            if approved_plan is not None:
+                args = (svc, text, just_chat, attachments, agent_config, mode or "work",
+                        reserved_run_id, adaptive_solo, workflow_outputs, None, None, approved_plan)
         if not core.identity_mode and not getattr(svc, "busy", False):
             try:
                 core.session.append_strict({"type": "pending_task_input", "text": text,

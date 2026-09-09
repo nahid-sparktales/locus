@@ -294,7 +294,7 @@ class CapsuleRuntime:
         if current["revision"] != self.capsule["revision"]:
             raise TaskStateError("The capsule changed during execution. Resume against the current plan before continuing.")
 
-    def finish_step(self, identifier: str, decider: Any) -> dict:
+    def finish_step(self, identifier: str, decider: Any, *, checked: dict | None = None) -> dict:
         self.assert_plan_current()
         if self.value.get("uncertain_action"):
             raise TaskStateError("An action remains uncertain; verification cannot clear it.")
@@ -302,8 +302,9 @@ class CapsuleRuntime:
         task_id = f"capsule:{self.value['id']}:{identifier}"
         self.tasks.ensure(task_id, request=step.get("title", identifier), revision=self.capsule["revision"],
                           workspace=self.core.workspace_root, execution=self.core.cwd, plan=step, include_reusable=False)
-        checked = TaskVerifier(self.tasks, task_id, self.core, self.run_id).verify(
-            step.get("acceptance_checks", []), decider, fallback="; ".join(step.get("checks", [])) or step.get("title", identifier))
+        if checked is None:
+            checked = TaskVerifier(self.tasks, task_id, self.core, self.run_id).verify(
+                step.get("acceptance_checks", []), decider, fallback="; ".join(step.get("checks", [])) or step.get("title", identifier))
         self.assert_plan_current()
         after = workspace_state(self.core.cwd)
         changed = {p for p in self.before.keys() | after.keys() if self.before.get(p) != after.get(p)}
@@ -318,6 +319,10 @@ class CapsuleRuntime:
         receipt["workspace_scope"] = any(c["kind"] == "command" and not c.get("files") for c in checked["checks"])
         receipt.update(state="verified" if checked["verification_status"] == "passed" else checked["verification_status"],
                        evidence_ids=checked["evidence_ids"], changed_files=sorted(changed | set(receipt.get("changed_files", []))), reason=checked["verification_reason"])
+        journal = getattr(self.core, "task_journal", None)
+        if journal is not None and receipt["state"] == "verified":
+            journal.milestone("step_verified", {"signature": receipt["signature"],
+                "files": fingerprints(self.core.cwd, receipt["files"])})
         self.value["expected_files"].update(fingerprints(self.core.cwd, list(changed | set(receipt["files"]))))
         if any(s.get("workspace_scope") for s in self.value["steps"].values()):
             self.value["expected_workspace"] = after

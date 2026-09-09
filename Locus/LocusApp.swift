@@ -1037,7 +1037,7 @@ struct RootView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(AppEdition.current.displayName) workspace")
         .modifier(IdentityVaultPresentation(vault: model.identityVault))
-        .modifier(TaskCapsulePresentation(capsules: model.taskCapsules))
+        .modifier(TaskCapsulePresentation(capsules: model.taskCapsules, openTask: { model.showTaskDetail(runID: $0) }, onDismiss: { model.completeCapsuleTaskDismissal() }))
         .sheet(isPresented: $library.isPresented) {
             if model.isUITesting, locusEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
                 LibraryUITestFixtureView().appFeatureEnvironment(from: model)
@@ -1066,6 +1066,9 @@ struct RootView: View {
         .sheet(isPresented: $model.checkpointPresented) {
             CheckpointSheet()
                 .environmentObject(model)
+        }
+        .sheet(isPresented: $model.taskDetailPresented, onDismiss: { model.completeTaskDetailDismissal() }) {
+            TaskDetailView(sessionID: model.taskDetailSessionID).environmentObject(model)
         }
         .sheet(isPresented: $model.notebookPresented) {
             NotebookSheet(notebook: model.notebook, availableSize: workspaceLayout.geometry.windowSize)

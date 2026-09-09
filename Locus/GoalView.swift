@@ -3,6 +3,7 @@ import SwiftUI
 struct GoalCardView: View {
     @ObservedObject var model: GoalModel
     let sessionID: String
+    var openTask: (() -> Void)? = nil
 
     var body: some View {
         if let goal = model.goal(for: sessionID) {
@@ -17,6 +18,7 @@ struct GoalCardView: View {
                             .accessibilityIdentifier("goal.objective")
                     }
                     Spacer(minLength: 4)
+                    if let openTask { Button("Task details", action: openTask).accessibilityIdentifier("goal.taskDetails") }
                 }
                 if let detail = goal.reason?.nilIfEmpty ?? goal.summary, !detail.isEmpty {
                     Text(detail).font(.caption).foregroundStyle(LocusTheme.textSecondary)

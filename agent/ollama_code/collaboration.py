@@ -634,6 +634,8 @@ class SoloCollaborationManager:
                        "run_id": self.run_id, "agent_id": agent_id, "result_id": result_id,
                        "state": "prepared", "created_at": time.time()}
             self.store.put("receipts", receipt)
+            history = getattr(self, "file_history", None)
+            captured = history.begin(receipt_id, result["paths"]) if history else []
             try:
                 apply_helper_integration(result, receipt)
                 observed = execution_snapshot(self.execution_path)
@@ -644,8 +646,12 @@ class SoloCollaborationManager:
                 result["state"] = "integrated"
                 self._save(helper)
                 self._event("agent_worktree_integrated", helper, paths=result["paths"])
+                if history:
+                    history.finish(captured, ok=True)
                 return {"ok": True, "receipt": receipt, "paths": result["paths"]}
             except Exception as exc:
+                if history:
+                    history.finish(captured, ok=False)
                 receipt.update(state="uncertain", error=str(exc))
                 self.store.put("receipts", receipt)
                 return {"ok": False, "code": "integration_uncertain", "receipt": receipt}

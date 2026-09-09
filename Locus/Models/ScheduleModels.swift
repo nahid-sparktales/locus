@@ -60,9 +60,9 @@ enum WorkMode: String, CaseIterable, Codable, Identifiable {
         case .duo:
             WorkMode.plan.instruction + " Prepare a handoff for the user's selected implementation model. Execution starts only after the user accepts the saved plan."
         case .plan:
-            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed by calling ask_question with your options and recommended answer. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
+            "Inspect files if useful, but do not modify anything. Ask clarifying questions when needed by calling ask_question with your options and recommended answer. Stop once material decisions, interfaces, constraints and acceptance criteria are settled; record low-impact assumptions. Use deliverable-sized steps. When the plan is final and decision-complete, call submit_plan exactly once with its title, summary, ordered steps, and test scenarios; do not call submit_plan for a question or partial plan."
         case .grill:
-            "Stress-test the request with the activated $grilling skill: map the design tree of decisions, ask exactly one highest-leverage frontier question at a time with your recommended answer, and discover facts from the workspace yourself instead of asking for them. Deliver each question by calling ask_question and wait for its result before continuing. Do not modify anything, and do not implement until the user explicitly confirms the shared understanding."
+            "Stress-test material decisions; explore every branch only when exhaustive grilling is explicitly requested. Stop when interfaces, constraints and acceptance criteria are settled and record remaining assumptions. Map the design tree of decisions, ask exactly one highest-leverage frontier question at a time with your recommended answer, and discover facts from the workspace yourself instead of asking for them. Deliver each question by calling ask_question and wait for its result before continuing. Do not modify anything, and do not implement until the user explicitly confirms the shared understanding."
         }
     }
 }

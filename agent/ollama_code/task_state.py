@@ -218,8 +218,12 @@ class TaskStateStore:
 
 
 class TaskVerifier:
-    def __init__(self, store: TaskStateStore, identifier: str, core: Any, run_id: str):
+    def __init__(self, store: TaskStateStore, identifier: str, core: Any, run_id: str, *, parallelism: int | None = None):
         self.store, self.identifier, self.core, self.run_id = store, identifier, core, run_id
+        policy = getattr(core, "config", {}).get("parallel_check_policy") or {}
+        measured = (policy.get("version") == 1 and policy.get("correctness_equal") is True
+                    and policy.get("median_improvement", 0) >= 0.10 and policy.get("p95_regression", 1) <= 0.05)
+        self.parallelism = min(max(parallelism if parallelism is not None else 2 if measured else 1, 1), 2)
 
     def _call(self, call: Any, decider: Any) -> str:
         prior = getattr(self.core, "_verification_running", False)
@@ -228,7 +232,7 @@ class TaskVerifier:
             call.call_id = uuid.uuid4().hex
             self.core._verification_tool_started = None
             result = self.core._run_tool_call(call, decider)
-            if self.core._verification_tool_started != call.call_id:
+            if not call.execution_receipt.get("executed"):
                 result = "Permission denied: the acceptance check was not executed. " + result
             self.core.session.append_strict({"type": "verification_observation", "task_id": self.identifier,
                                             "tool": call.name, "result": result, "run_id": self.run_id})
@@ -237,7 +241,6 @@ class TaskVerifier:
             self.core._verification_running = prior
 
     def verify(self, checks: list[dict], decider: Any, *, fallback: str = "Review the requested result") -> dict:
-        from .ollama import ToolCall
         value = self.store.get(self.identifier)
         if value is None:
             raise TaskStateError("Task verification was not initialized.")
@@ -265,59 +268,93 @@ class TaskVerifier:
         self.store.save(value, expected_revision=value["revision"])
         self.core._emit({"type": "task_verification", "task_id": self.identifier, "state": "checking"})
         receipts = []
-        for check in checks:
-            if self.core._interrupt.is_set():
-                raise InterruptedError("Verification interrupted")
-            files = list(dict.fromkeys([*check.get("files", []), *([check["path"]] if check.get("path") else [])]))
-            receipt = {"id": uuid.uuid4().hex, "check_id": check["id"], "check_hash": digest(check),
-                       "requirement": check["requirement"], "revision": value["revision"], "requirements_hash": digest(value.get("requirements", [])), "run_id": self.run_id,
-                       "execution_path": value["execution_path"], "state": "needs_review", "fingerprints": {}}
-            try:
-                before = fingerprints(value["execution_path"], files)
-                kind = check["kind"]
-                if kind == "human_review":
-                    receipt["detail"] = check["requirement"]
-                elif kind == "command":
-                    if not files:
-                        from .capsule_progress import workspace_state
-                        before = workspace_state(value["execution_path"])
-                        receipt["workspace_scope"] = True
-                    self.core.tool_ctx.last_command_receipt = None
-                    result = self._call(ToolCall("bash", {"command": check["command"], "timeout": check.get("timeout", 120)}), decider)
-                    observed = self.core.tool_ctx.last_command_receipt
-                    if observed and observed.get("command") == check["command"]:
-                        receipt["exit_code"] = observed["exit_code"]
-                        receipt["state"] = "passed" if observed["exit_code"] == 0 else "failed"
-                    receipt["detail"] = result[-8000:]
-                else:
-                    # Reading uses the same permission and tool access checks as ordinary work.
-                    result = self._call(ToolCall("read_file", {"path": check["path"]}), decider)
-                    if result.startswith(("Error", "Permission denied")):
-                        receipt["state"] = "failed" if not result.startswith("Permission denied") and before[check["path"]]["status"] == "missing" else "needs_review"
-                        receipt["detail"] = result[:8000]
-                    else:
-                        target = (Path(value["execution_path"]) / check["path"]).resolve()
-                        target.relative_to(Path(value["execution_path"]))
-                        passed = target.is_file()
-                        if kind == "file_contains":
-                            passed = check["value"] in target.read_text()
-                        elif kind == "json_value":
-                            from .evaluations import _json_pointer
-                            passed = _json_pointer(json.loads(target.read_text()), check.get("pointer", "")) == check["value"]
-                        receipt["state"] = "passed" if passed else "failed"
-                        receipt["detail"] = "Observed file matches the check." if passed else "Observed file does not match the check."
-                receipt["fingerprints"] = (workspace_state(value["execution_path"]) if receipt.get("workspace_scope")
-                                            else fingerprints(value["execution_path"], files))
-                if kind != "command" and receipt["fingerprints"] != before:
-                    receipt.update(state="needs_review", detail="Input changed during verification.")
-            except (ValueError, OSError, KeyError, IndexError, TypeError) as exc:
-                receipt.update(state="needs_review", detail=str(exc))
-            receipts.append(receipt)
+        index = 0
+        while index < len(checks):
+            batch = []
+            while index < len(checks) and checks[index]["kind"] in {"file_exists", "file_contains", "json_value"}:
+                batch.append(checks[index])
+                index += 1
+            if len(batch) > 1 and self.parallelism > 1:
+                import copy
+                from concurrent.futures import ThreadPoolExecutor
+                def worker(check):
+                    core = copy.copy(self.core)
+                    core.tool_ctx = copy.copy(self.core.tool_ctx)
+                    core.tool_ctx.read_files = set(self.core.tool_ctx.read_files)
+                    verifier = TaskVerifier(self.store, self.identifier, core, self.run_id, parallelism=1)
+                    return verifier._check(check, value, decider)
+                with ThreadPoolExecutor(max_workers=self.parallelism, thread_name_prefix="task-check") as pool:
+                    receipts.extend(pool.map(worker, batch))
+            else:
+                receipts.extend(self._check(check, value, decider) for check in batch)
+            if index < len(checks):
+                receipts.append(self._check(checks[index], value, decider))
+                index += 1
         states = {r["state"] for r in receipts}
         status = "failed" if "failed" in states else "needs_review" if "needs_review" in states else "passed"
         value.update(verification_status=status, evidence_ids=[r["id"] for r in receipts],
                      verification_reason="; ".join(r["requirement"] + ": " + r["detail"] for r in receipts if r["state"] != "passed"))
         self.store.record(value, receipts, expected_revision=value["revision"])
+        from .task_journal import TaskJournal
+        journal = getattr(self.core, "task_journal", None) or TaskJournal.for_owner(self.store.runs, self.identifier)
+        journal.run_id = self.run_id
+        for receipt in receipts:
+            if receipt["state"] == "passed":
+                journal.milestone("check_passed", {"check_hash": receipt["check_hash"],
+                    "fingerprints": receipt["fingerprints"], "revision": receipt["revision"]})
         self.core._emit({"type": "task_verification", "task_id": self.identifier, "state": status,
                          "reason": value["verification_reason"], "evidence_ids": value["evidence_ids"]})
         return value
+
+    def _check(self, check: dict, value: dict, decider: Any) -> dict:
+        from .ollama import ToolCall
+        if self.core._interrupt.is_set():
+            raise InterruptedError("Verification interrupted")
+        files = list(dict.fromkeys([*check.get("files", []), *([check["path"]] if check.get("path") else [])]))
+        receipt = {"id": uuid.uuid4().hex, "check_id": check["id"], "check_hash": digest(check),
+                   "requirement": check["requirement"], "revision": value["revision"], "requirements_hash": digest(value.get("requirements", [])), "run_id": self.run_id,
+                   "execution_path": value["execution_path"], "state": "needs_review", "fingerprints": {}}
+        try:
+            before = fingerprints(value["execution_path"], files)
+            kind = check["kind"]
+            if kind == "human_review":
+                receipt["detail"] = check["requirement"]
+            elif kind == "command":
+                if not files:
+                    from .capsule_progress import workspace_state
+                    before = workspace_state(value["execution_path"])
+                    receipt["workspace_scope"] = True
+                invocation = ToolCall("bash", {"command": check["command"], "timeout": check.get("timeout", 120)})
+                result = self._call(invocation, decider)
+                observed = invocation.execution_receipt.get("command")
+                receipt["tool_invocation_id"] = invocation.execution_receipt["id"]
+                if observed and observed.get("command") == check["command"]:
+                    receipt["exit_code"] = observed["exit_code"]
+                    receipt["state"] = "passed" if observed["exit_code"] == 0 else "failed"
+                receipt["detail"] = result[-8000:]
+            else:
+                # Reading uses the same permission and tool access checks as ordinary work.
+                invocation = ToolCall("read_file", {"path": check["path"]})
+                result = self._call(invocation, decider)
+                receipt["tool_invocation_id"] = invocation.execution_receipt["id"]
+                if result.startswith(("Error", "Permission denied")):
+                    receipt["state"] = "failed" if not result.startswith("Permission denied") and before[check["path"]]["status"] == "missing" else "needs_review"
+                    receipt["detail"] = result[:8000]
+                else:
+                    target = (Path(value["execution_path"]) / check["path"]).resolve()
+                    target.relative_to(Path(value["execution_path"]))
+                    passed = target.is_file()
+                    if kind == "file_contains":
+                        passed = check["value"] in target.read_text()
+                    elif kind == "json_value":
+                        from .evaluations import _json_pointer
+                        passed = _json_pointer(json.loads(target.read_text()), check.get("pointer", "")) == check["value"]
+                    receipt["state"] = "passed" if passed else "failed"
+                    receipt["detail"] = "Observed file matches the check." if passed else "Observed file does not match the check."
+            receipt["fingerprints"] = (workspace_state(value["execution_path"]) if receipt.get("workspace_scope")
+                                        else fingerprints(value["execution_path"], files))
+            if kind != "command" and receipt["fingerprints"] != before:
+                receipt.update(state="needs_review", detail="Input changed during verification.")
+        except (ValueError, OSError, KeyError, IndexError, TypeError) as exc:
+            receipt.update(state="needs_review", detail=str(exc))
+        return receipt

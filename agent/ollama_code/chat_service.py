@@ -326,6 +326,19 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        journal = getattr(self.core, "task_journal", None)
+        if journal is not None and not self.core.identity_mode:
+            from .task_usage_ledger import UsageLedger
+            if event_type == "question_resolved" and event.get("answer_evidence"):
+                journal.milestone("question_resolved", event["answer_evidence"])
+            span_kind = {"permission_request": "user_wait", "question_required": "user_wait",
+                         "question_ready": "user_wait", "scheduler_lease_waiting": "queue",
+                         "tool_call_proposed": "tool"}.get(event_type)
+            identifier = str(event.get("request_id") or event.get("id") or event.get("run_id") or journal.run_id)
+            if span_kind:
+                UsageLedger(journal).span(identifier, span_kind)
+            elif event_type in {"permission_resolved", "question_resolved", "tool_result", "scheduler_lease_acquired"}:
+                UsageLedger(journal).span(identifier, "", finish=True)
         reusable = getattr(self, "reusable_run_checks", None)
         if event_type == "turn_done" and reusable is not None:
             event = reusable.terminal(event)
@@ -605,6 +618,8 @@ class ChatService:
             self.emit({
                 "type": "question_resolved",
                 "request_id": request_id,
+                "action": response.get("action") if "response" in locals() else "cancel",
+                "answer_evidence": {"questions": questions, "answers": response.get("answers")} if "response" in locals() and response.get("answers") and response.get("action") != "cancel" else None,
             })
         return _format_question_answers(questions, response)
 
@@ -790,6 +805,14 @@ class ChatService:
     def mark_question_delivery_applied(self, delivery_id: str) -> bool:
         applied = self.optional_questions.mark_applied(self.core.session.session_id, delivery_id)
         if applied:
+            journal = getattr(self.core, "task_journal", None)
+            if journal is not None:
+                for request in self.optional_questions.snapshot(self.core.session.session_id):
+                    if request.get("delivery_id") == delivery_id and request.get("status") == "answered":
+                        questions = request.get("questions", [])
+                        journal.milestone("question_resolved", {"questions": [
+                            {"question": q.get("question"), "answer": {k: (q.get("answer") or {}).get(k)
+                                for k in ("selected", "text", "source")}} for q in questions]})
             self.publish_question_snapshot(tick=False)
         return applied
 

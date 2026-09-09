@@ -219,6 +219,13 @@ GET /api/sessions/{session_id}/goal
 POST /api/sessions/{session_id}/goal
 PATCH /api/goals/{goal_id}
 POST /api/goals/{goal_id}/claim
+GET /api/sessions/{session_id}/task
+POST /api/evaluations/{suite_id}/results/{result_id}/human-grade
+POST /api/sessions/{session_id}/task/accept
+POST /api/sessions/{session_id}/task/checks
+POST /api/sessions/{session_id}/task/limit
+POST /api/sessions/{session_id}/task/restore
+POST /api/sessions/{session_id}/task/usage
 DELETE /api/runtime/remotes/{runtime_id}
 DELETE,GET,PATCH,POST,PUT /api/runtime/workers/{session_id}/{path:path}
 GET /api/reusable-checks

@@ -211,6 +211,20 @@ def test_git_evaluation_suite_captures_and_cleans_immutable_fixture(
     assert store.delete_suite(cloned["id"])
 
 
+def test_recorded_human_grading_cannot_override_execution_failure(tmp_path):
+    store = EvaluationStore(RunStore(tmp_path / 'runs.db'))
+    definition = _suite(tmp_path)
+    definition['cases'][0].update(grading='human', rubric='Clarity', passing_score=80)
+    suite = store.save_suite(definition)
+    store.run_store.start_run('human')
+    result_id = store.start_result(suite['id'], 'case-1', 'human')
+    store.finish_result(result_id, {'state': 'ungraded', 'execution_outcome': 'completed', 'deterministic_passed': True})
+    assert store.human_grade(suite['id'], result_id, score=90, reviewer='Fixture reviewer', reason='Read the result')['state'] == 'passed'
+    store.finish_result(result_id, {'state': 'failed', 'execution_outcome': 'timeout', 'deterministic_passed': True})
+    with pytest.raises(EvaluationError, match='incomplete'):
+        store.human_grade(suite['id'], result_id, score=100, reviewer='Fixture reviewer', reason='Output looked good')
+
+
 def test_configuration_identity_changes_with_model_team_and_checks(tmp_path):
     from ollama_code.core import AgentCore
     from ollama_code.evaluations import configuration_fingerprint

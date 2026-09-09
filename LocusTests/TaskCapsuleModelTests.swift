@@ -554,4 +554,93 @@ extension TaskCapsuleModelTests {
                                     primaryAction: state == "needs_review" ? "capsules.accept" : "capsules.resume", output: output)
         }
     }
+    func testTaskDetailDecodesUnknownUsageAndExactPlanApproval() throws {
+        let data = Data(#"{"id":"task","request":"Make a result","state":"paused","revision":4,"blocker":"Review pending","plan":{"id":"plan","title":"Saved","approval_reference":{"id":"plan","revision":2,"content_hash":"hash","execution_path":"/tmp"}},"usage":{"known_subtotal":0.25,"coverage":"partial","unknown_entries":1,"pending_entries":1,"subscription_entries":2,"local_entries":0,"entries":[],"spans":[]},"files":[],"progress":[],"links":[],"restorations":[],"reviews":[]}"#.utf8)
+        let task = try JSONDecoder().decode(TaskDetailSnapshot.self, from: data)
+        XCTAssertEqual(task.usage.coverage, "partial")
+        XCTAssertTrue(task.usage.label.contains("partial"))
+        XCTAssertFalse(task.allows("restore"), "Older projections do not authorize new mutations")
+        XCTAssertFalse(task.allows("run_again"))
+        XCTAssertEqual(task.verificationState, "unverified")
+        XCTAssertEqual(task.plan?.approvalReference?["content_hash"]?.string, "hash")
+        let saved = try JSONEncoder().encode(task.plan)
+        let restored = try JSONDecoder().decode(PlanDocument.self, from: saved)
+        XCTAssertEqual(restored.approvalReference, task.plan?.approvalReference)
+    }
+
+    func testOpeningTaskDetailOnlyReadsAndRendersAtCompactWidth() async throws {
+        let record: [String: Any] = ["id": "task", "request": "Repair and verify the saved result", "state": "paused", "revision": 2,
+            "blocker": "The final review is unresolved", "usage": ["known_subtotal": 0.25, "coverage": "partial", "unknown_entries": 1,
+            "pending_entries": 1, "subscription_entries": 2, "local_entries": 0, "entries": [], "spans": []],
+            "files": [["id": "edit", "path": "result.txt", "state": "captured"]],
+            "progress": [["kind": "check_passed"]], "links": [], "restorations": [], "reviews": []]
+        BackendStub.respond(toPath: "/api/sessions/fixture/task") { _ in record }
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let host = NSHostingView(rootView: TaskDetailView(sessionID: "fixture", compact: true).environmentObject(app))
+        host.sizingOptions = []
+        host.frame = NSRect(x: 0, y: 0, width: 340, height: 740)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        for _ in 0..<12 { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertTrue(BackendStub.requests.contains { $0.url?.path == "/api/sessions/fixture/task" })
+        XCTAssertTrue(BackendStub.requests.allSatisfy { $0.httpMethod == "GET" })
+        XCTAssertEqual(host.bounds.width, 340)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        XCTAssertGreaterThan(png.count, 2000)
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Unified task detail at compact width"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testTaskDetailUsesPersistedActionsAndAcceptsAdditiveFields() throws {
+        let data = Data(#"{"id":"task","request":"Saved result","state":"paused","revision":8,"blocker":"","usage":{"known_subtotal":0,"coverage":"unknown","unknown_entries":0,"pending_entries":0,"subscription_entries":0,"local_entries":0,"entries":[],"spans":[]},"files":[],"progress":[],"links":[],"restorations":[],"reviews":[],"owner_kind":"work","run_id":"saved-run","actions":["restore","retry_checks"],"interface_version":1,"future_field":{"version":2},"outputs":[{"path":"result.txt","state":"present"}],"recovery_history":[{"state":"interrupted","reason":"Check interrupted"}]}"#.utf8)
+        let task = try JSONDecoder().decode(TaskDetailSnapshot.self, from: data)
+        XCTAssertTrue(task.allows("restore"))
+        XCTAssertTrue(task.allows("retry_checks"))
+        XCTAssertFalse(task.allows("resume"), "A paused label alone must not enable execution")
+        XCTAssertFalse(task.allows("accept"))
+        XCTAssertEqual(task.run_id, "saved-run")
+        XCTAssertEqual(task.outputs?.first?.path, "result.txt")
+        XCTAssertEqual(task.recovery_history?.first?["reason"]?.string, "Check interrupted")
+    }
+
+    func testCapsuleAndTaskDetailSheetsWaitForEachOtherToDismiss() {
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        app.taskCapsules.isPresented = true
+        app.showTaskDetail(sessionID: "saved-session")
+        XCTAssertFalse(app.taskCapsules.isPresented)
+        XCTAssertFalse(app.taskDetailPresented)
+        XCTAssertTrue(app.taskDetailAfterCapsuleDismissal)
+        app.completeCapsuleTaskDismissal()
+        XCTAssertTrue(app.taskDetailPresented)
+        XCTAssertEqual(app.taskDetailSessionID, "saved-session")
+        app.showTaskRecipe("saved-capsule")
+        XCTAssertFalse(app.taskDetailPresented)
+        XCTAssertFalse(app.taskCapsules.isPresented)
+        app.completeTaskDetailDismissal()
+        XCTAssertTrue(app.taskCapsules.isPresented)
+        XCTAssertNil(app.taskRecipeAfterDetailDismissal)
+        XCTAssertTrue(BackendStub.requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+
+    func testTaskDetailsDoNotRestartATeamWhenResumeNeedsRepair() async throws {
+        let reset = expectation(description: "A repairable team must retain its checkpoint and allowance")
+        reset.isInverted = true
+        BackendStub.respond(toPath: "/api/runs/saved-team/retry") { _ in reset.fulfill(); return [:] }
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let run = try JSONDecoder().decode(OrchestrationRun.self, from: JSONSerialization.data(withJSONObject: [
+            "id": "saved-team", "team_id": UUID().uuidString, "run_kind": "team", "workspace_root": "/tmp",
+            "state": "paused", "request": "Preserve the saved plan", "created_at": 1,
+            "updated_at": 2, "last_seq": 0, "pinned": false, "legacy": false, "recoverable": true]))
+        app.resumeTaskRun(run)
+        await fulfillment(of: [reset], timeout: 0.2)
+        XCTAssertFalse(app.isBusy)
+    }
+
 }
