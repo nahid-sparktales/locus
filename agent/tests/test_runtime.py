@@ -148,7 +148,8 @@ def test_disconnect_pauses_only_ordinary_work_and_keeps_approval(tmp_path, store
             runtime.workers[key] = SimpleNamespace(session_id=key, active_command=key, subscribers=set())
             runtime.store.decision(key, {"type": "permission_request", "request_id": key})
         await runtime.detach()
-        assert [key for key, _ in sent] == ["ordinary"]
+        assert [key for key, message in sent if message["type"] == "interrupt"] == ["ordinary"]
+        assert [key for key, message in sent if message["type"] == "runtime_desktop_disconnected"] == ["ordinary", "background"]
         assert runtime.store.worker("ordinary")["state"] == "paused"
         assert len(runtime.store.decisions("background")) == 1
     asyncio.run(scenario())

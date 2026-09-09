@@ -62,7 +62,7 @@ def test_approved_versions_are_frozen_and_later_edits_require_approval(setup):
     edited = store.review(value['id'], 'edit', value['revision'], {'check': {**value['check'], 'value': 'changed'}})
     assert edited['version'] == 2
     assert edited['state'] == 'proposed'
-    assert not freeze(service, root, 'next')['reusable_checks']
+    assert freeze(service, root, 'next')['reusable_checks'][0]['version'] == 1
     approved = store.review(edited['id'], 'approve', edited['revision'])
     assert freeze(service, root, 'after')['reusable_checks'][0]['version'] == 2
     assert freeze(service, root)['reusable_checks'][0]['check']['value'] == 'ready'
@@ -177,3 +177,16 @@ def test_testing_excludes_duplicate_tests_and_edits(setup):
         store.review(value['id'], 'approve', 1)
     store.record_test(value['id'], 1, 1, {'verification_status': 'passed'})
     assert store.review(value['id'], 'approve', 1)['state'] == 'approved'
+
+
+def test_dismissed_replacement_keeps_prior_approved_check_but_disabled_does_not(setup):
+    root, _, service, store = setup
+    approved = store.review(propose(store, root)['id'], 'approve', 1)
+    replacement = store.review(approved['id'], 'edit', approved['revision'], {'check': {**approved['check'], 'value': 'new'}})
+    dismissed = store.review(replacement['id'], 'dismiss', replacement['revision'])
+    assert store.active(root)[0]['version'] == 1
+    assert freeze(service, root)['reusable_checks'][0]['version'] == 1
+    store.review(dismissed['id'], 'disable', dismissed['revision'])
+    assert not store.active(root)
+    with pytest.raises(TaskStateError, match='disabled'):
+        store.freeze(root, root, selected=[{'id': approved['id'], 'version': 1}])

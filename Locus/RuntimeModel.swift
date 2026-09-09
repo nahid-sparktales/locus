@@ -36,16 +36,24 @@ struct RuntimeWorkerRecord: Decodable, Identifiable {
     let workspace: String
     let keepRunning: Bool
     let state: String
+    let waitingReason: String?
+    let interruptedCommands: [RuntimeInterruptedCommand]?
     var id: String { sessionID }
     enum CodingKeys: String, CodingKey {
-        case sessionID = "session_id", workspace, keepRunning = "keep_running", state
+        case sessionID = "session_id", workspace, keepRunning = "keep_running", state, waitingReason = "waiting_reason", interruptedCommands = "interrupted_commands"
     }
+}
+
+struct RuntimeInterruptedCommand: Decodable, Identifiable {
+    let id: String
+    let command: [String: JSONValue]
 }
 
 struct RuntimeSnapshot: Decodable {
     let id: String
     let version: Int
     let workers: [RuntimeWorkerRecord]
+    let paused: Bool?
 }
 
 struct RuntimeWorkerAttachment: Decodable {
@@ -145,6 +153,22 @@ final class RuntimeModel: ObservableObject {
         guard let backend else { return }
         do {
             let _: RuntimeWorkerRecord = try await backend.patch("/api/runtime/workers/\(sessionID)", body: ["action": action], as: RuntimeWorkerRecord.self)
+            await refresh()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func acknowledgeInterruption(_ worker: RuntimeWorkerRecord) async {
+        guard let backend else { return }
+        do {
+            let _: RuntimeWorkerRecord = try await backend.patch("/api/runtime/workers/\(worker.sessionID)", body: ["action": "acknowledge_interruption", "reviewed_command_ids": (worker.interruptedCommands ?? []).map(\.id)], as: RuntimeWorkerRecord.self)
+            await refresh()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func resumeRuntime() async {
+        guard let backend else { return }
+        do {
+            let _: [String: Bool] = try await backend.post("/api/runtime/resume", body: [:], as: [String: Bool].self)
             await refresh()
         } catch { self.error = error.localizedDescription }
     }

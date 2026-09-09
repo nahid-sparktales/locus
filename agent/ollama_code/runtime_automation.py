@@ -104,19 +104,29 @@ class RuntimeAutomation:
         session_id = run["session_id"]
         manifest = run.get("manifest") or {}
         workspace = run["workspace_root"]
-        worker = await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
+        await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
         saved = runtime.private.read()
         automation_configuration = saved.get(f"automation:schedule:{manifest.get('schedule_id', '')}") or saved.get(f"automation:event:{manifest.get('event_trigger_id', '')}") or {}
         if automation_configuration.get("agent_id"):
             from .sessions import SessionMeta
             SessionMeta.update(session_id, agent_profile_id=str(automation_configuration["agent_id"]))
-        account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}")
-        if automation_configuration.get("permissions") and not worker.active_command:
-            await runtime.request(worker, "POST", "/api/permissions", automation_configuration["permissions"])
-        if account and not worker.active_command:
-            await runtime.request(worker, "POST", "/api/provider", account)
+        account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}") or saved.get(f"worker:{session_id}", {}).get("/api/provider")
+        if not account and manifest.get("provider") in {"remote", "chatgpt"}:
+            runtime.store.state(session_id, "waiting_for_account", "Provision the selected model account on this runtime to continue.")
+            return
         command = {"type": "user_message", "text": run["request"], "mode": manifest.get("mode", "work"),
                    "run_id": run["id"], "request_id": run["id"]}
+        configuration = {}
+        if account:
+            configuration["/api/provider"] = account
+        model = (account or {}).get("model") or manifest.get("model")
+        if model:
+            configuration["/api/config"] = {"model": model}
+        if automation_configuration.get("permissions"):
+            configuration["/api/permissions"] = automation_configuration["permissions"]
+        command["runtime_configuration"] = configuration
+        if runtime.store.worker(session_id)["state"] == "waiting_for_account":
+            runtime.store.state(session_id, "idle")
         for key in ("agent_config", "goal_id", "goal_revision", "workflow_outputs"):
             if key in manifest:
                 command[key] = manifest[key]

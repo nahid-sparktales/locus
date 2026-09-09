@@ -25,10 +25,21 @@ struct RuntimesSettingsView: View {
             }
             if let snapshot = runtimes.snapshot {
                 Section("Agents on this runtime") {
+                    if snapshot.paused == true { Button("Resume scheduling") { Task { await runtimes.resumeRuntime() } } }
                     if snapshot.workers.isEmpty { Text("Open a chat to start its runtime worker.").foregroundStyle(.secondary) }
                     ForEach(snapshot.workers) { worker in
                         VStack(alignment: .leading, spacing: 8) {
                             LabeledContent(URL(fileURLWithPath: worker.workspace).lastPathComponent, value: worker.state.replacingOccurrences(of: "_", with: " ").capitalized)
+                            if let reason = worker.waitingReason, !reason.isEmpty { Text(reason).font(.caption).textSelection(.enabled) }
+                            if let interrupted = worker.interruptedCommands, !interrupted.isEmpty {
+                                DisclosureGroup("Review interrupted requests") {
+                                    Text("Their outcomes are uncertain. Inspect saved files and activity before allowing new work. These requests will not be replayed.").font(.caption)
+                                    ForEach(interrupted) { item in
+                                        Text(item.command["text"]?.string ?? item.command["path"]?.string ?? item.id).font(.caption).textSelection(.enabled)
+                                    }
+                                    Button("Keep saved work and allow new tasks") { Task { await runtimes.acknowledgeInterruption(worker) } }
+                                }
+                            }
                             Toggle("Keep running when Locus closes", isOn: Binding(
                                 get: { worker.keepRunning },
                                 set: { enabled in Task { await runtimes.setKeepRunning(sessionID: worker.sessionID, enabled: enabled) } }

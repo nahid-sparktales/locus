@@ -41,6 +41,7 @@ def context_for(core, purpose='worker'):
     goal = getattr(core, 'goal_runtime', None)
     capsule = getattr(core, 'capsule_runtime', None)
     task_id = 'goal:' + goal.goal_id if goal is not None else 'capsule:' + str(capsule.value['id']) if capsule is not None else 'run:' + run_id
+    task_id = getattr(core, 'usage_owner_task_id', '') or task_id
     route = safe_route(getattr(getattr(core, 'client', None), 'base_url', '') or getattr(core, 'host', ''))
     policy = getattr(getattr(core, 'agent_configuration', None), 'runtime_policy', None)
     limits = {key: getattr(policy, field, None) for key, field in [('max_calls', 'max_model_calls'), ('max_tokens', 'max_total_tokens'), ('max_estimated_usd', 'max_estimated_usd')]}
@@ -63,19 +64,31 @@ def response_usage(provider, response):
 def tracked_chat(core, client, *args, purpose='worker', context=None, runs=None, **kwargs):
     context = dict(context or context_for(core, purpose))
     context['purpose'] = purpose
+    context['route'] = safe_route(context.get('route', ''))
+    ledger = ledger_for(core, runs)
+    if context.get('limits'):
+        ledger.set_limits(context['task_id'], context['limits'], only_if_absent=True)
+    effective_limits = ledger.limits(context['task_id'])
     context['model'] = str(kwargs.get('model') or (args[0] if args else context.get('model', '')))
     messages = kwargs.get('messages') or (args[1] if len(args) > 1 else [])
     options = kwargs.get('options') or {}
     context['service_tier'] = options.get('service_tier', '')
-    estimated_input = (len(json.dumps(messages, ensure_ascii=False, default=str).encode()) + len(json.dumps(kwargs.get('tools') or []).encode())) // 3 + 128
+    estimated_input = len(json.dumps(messages, ensure_ascii=False, default=str).encode()) + len(json.dumps(kwargs.get('tools') or []).encode()) + 256
+    # UTF-8 bytes conservatively bound ordinary text tokenization. Image/model
+    # overhead remains an estimate, never an invoice or a hard provider cap.
     estimated_output = options.get('max_completion_tokens') or options.get('max_tokens') or options.get('num_predict') or 8192
+    remaining = ledger.remaining_tokens(context['task_id'])
+    if remaining is not None:
+        from .usage_ledger import UsageLimitError
+        if remaining <= estimated_input:
+            raise UsageLimitError('The remaining token allowance cannot reserve this input')
+        estimated_output = min(count(estimated_output), remaining - estimated_input)
     # Spending reservations require a bounded output allowance at the provider.
-    if context.get('limits', {}).get('max_estimated_usd') or context.get('limits', {}).get('max_tokens'):
+    if effective_limits.get('max_estimated_usd') or effective_limits.get('max_tokens'):
         options = dict(options)
         family = 'num_predict' if context['provider'] == 'ollama' else 'max_tokens' if 'anthropic.com' in context.get('route', '') else 'max_completion_tokens'
         options[family] = count(estimated_output)
         kwargs['options'] = options
-    ledger = ledger_for(core, runs)
     invocation = ledger.begin(context, input_tokens=estimated_input, output_tokens=max(count(estimated_output), 1))
     try:
         response = client.chat_stream(*args, **kwargs)

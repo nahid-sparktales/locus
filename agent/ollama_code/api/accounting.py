@@ -1,6 +1,8 @@
 """Durable invocation detail and explicit task spending controls."""
 from typing import Annotated
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+
 from ..chat_service import ChatService
 from ..usage_ledger import UsageLedger
 from .dependencies import get_service
@@ -23,6 +25,14 @@ def limits(task_id: str, service: Service, body: dict = Body()):
         raise HTTPException(422, str(exc)) from exc
 
 
+def reconcile(invocation_id: str, service: Service, body: dict = Body()):
+    try:
+        return UsageLedger(service.run_store).reconcile(invocation_id, body.get('family'), body.get('usage'), body.get('provider_reference'))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 def register_routes(router: APIRouter):
+    router.add_api_route('/api/usage/invocations/{invocation_id}/reconcile', reconcile, methods=['POST'])
     router.add_api_route('/api/usage/invocations', invocations, methods=['GET'])
     router.add_api_route('/api/usage/tasks/{task_id}/limits', limits, methods=['PUT'])

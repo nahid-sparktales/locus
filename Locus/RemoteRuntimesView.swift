@@ -81,6 +81,7 @@ struct RemoteRuntimesView: View {
                         Button("Deploy agent") { deployTarget = runtime }
                         Button("Health and approvals") { statusTarget = runtime }
                         Button("Pause runtime") { perform { let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/request", body: ["method": "POST", "path": "/api/runtime/pause", "body": [:]], as: [String: JSONValue].self); message = "Remote agents are pausing." } }
+                        Button("Resume scheduling") { perform { let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/request", body: ["method": "POST", "path": "/api/runtime/resume", "body": [:]], as: [String: JSONValue].self) } }
                         Button("Stop service") { perform { let _: [String: Bool] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/control", body: ["action": "stop"], timeout: 60, as: [String: Bool].self); message = "Remote service stopped. Saved work remains on the host." } }
                         Button("Start service") { perform { let _: [String: Bool] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/control", body: ["action": "start"], timeout: 60, as: [String: Bool].self); await refresh() } }
                         Button("Remove connection") { perform { let _: [String: Bool] = try await model.backend.delete("/api/runtime/remotes/\(runtime.id)", as: [String: Bool].self); await refresh() } }
@@ -257,10 +258,10 @@ struct DeployAgentView: View {
             modelName = model.activeAccount?.preferredModel ?? ""
             accountID = model.activeAccount?.id.uuidString ?? ""
             perform {
-                struct CheckListing: Decodable { let checks: [ReusableCheckRecord]; let agent_id: String }
+                struct CheckListing: Decodable { let active_checks: [ReusableCheckRecord]; let agent_id: String }
                 let listing: CheckListing = try await model.conversationBackend.get("/api/reusable-checks", as: CheckListing.self)
                 sourceAgentID = listing.agent_id
-                approvedChecks = listing.checks.filter { $0.state == "approved" && ($0.scope.agentID.isEmpty || $0.scope.agentID == sourceAgentID) }
+                approvedChecks = listing.active_checks.filter { $0.state == "approved" && ($0.scope.agentID.isEmpty || $0.scope.agentID == sourceAgentID) }
                 let value: RuntimeProjectReview = try await model.backend.post("/api/runtime/snapshots/preview", body: ["workspace": model.workspacePath], timeout: 60, as: RuntimeProjectReview.self)
                 review = value; selectedFiles = Set(value.files.map(\.path))
             }
@@ -311,11 +312,14 @@ private struct RemoteDecision: Decodable, Identifiable {
         return value
     }
 }
+private struct RuntimeAccountReadiness: Decodable, Identifiable { let id: String; let provider: String; let model: String; let readiness: String }
 private struct RemoteStatus: Decodable {
     let version: Int
     let workers: [RuntimeWorkerRecord]
     let pendingApprovals: [RemoteDecision]
-    enum CodingKeys: String, CodingKey { case version, workers, pendingApprovals = "pending_approvals" }
+    let accounts: [RuntimeAccountReadiness]?
+    let packageID: String?
+    enum CodingKeys: String, CodingKey { case version, workers, accounts, packageID = "package_id", pendingApprovals = "pending_approvals" }
 }
 struct RemoteRuntimeStatusView: View {
     let runtime: RemoteRuntimeRecord
@@ -330,8 +334,20 @@ struct RemoteRuntimeStatusView: View {
             Form {
                 if let status {
                     LabeledContent("Runtime version", value: String(status.version))
+                    if let package = status.packageID { Text("Package: " + package).font(.caption).textSelection(.enabled) }
+                    ForEach(status.accounts ?? []) { account in
+                        LabeledContent(account.model.isEmpty ? account.provider : account.model, value: account.readiness)
+                    }
                     ForEach(status.workers) { worker in
                         LabeledContent(worker.sessionID, value: worker.state.replacingOccurrences(of: "_", with: " "))
+                            if let reason = worker.waitingReason, !reason.isEmpty { Text(reason).font(.caption).textSelection(.enabled) }
+                        if let interrupted = worker.interruptedCommands, !interrupted.isEmpty {
+                            DisclosureGroup("Review interrupted requests") {
+                                Text("Inspect saved files and activity. These uncertain requests will not be replayed.").font(.caption)
+                                ForEach(interrupted) { item in Text(item.command["text"]?.string ?? item.command["path"]?.string ?? item.id).font(.caption).textSelection(.enabled) }
+                                Button("Keep saved work and allow new tasks") { action("PATCH", "/api/runtime/workers/\(worker.id)", ["action": "acknowledge_interruption", "reviewed_command_ids": interrupted.map(\.id)]) }
+                            }
+                        }
                         HStack {
                             Button("Pause agent") { action("PATCH", "/api/runtime/workers/\(worker.id)", ["action": "pause"]) }
                             Button("Resume agent") { action("PATCH", "/api/runtime/workers/\(worker.id)", ["action": "resume"]) }

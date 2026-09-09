@@ -128,13 +128,14 @@ class RemoteRuntimes:
             return result
 
     def status(self, key):
-        result = self.request(key, "GET", "/api/runtime")
-        if result.get("protocol_version") != 1:
-            raise ValueError("This runtime version is incompatible with this controller")
-        record = self.record(key)
-        record.update(last_connection_at=time.time(), runtime_id=result["id"])
-        self.save(record)
-        return {**result, "connection": record}
+        with self.lock:
+            result = self.request(key, "GET", "/api/runtime")
+            if result.get("protocol_version") != 1:
+                raise ValueError("This runtime version is incompatible with this controller")
+            record = self.record(key)
+            record.update(last_connection_at=time.time(), runtime_id=result["id"])
+            self.save(record)
+            return {**result, "connection": record}
 
     def control(self, key, action):
         if action == "pause":
@@ -179,57 +180,61 @@ class RemoteRuntimes:
                 tunnel[0].wait()
 
     def remove(self, key):
-        # Removing a controller connection never deletes a remote workspace.
-        self.disconnect(key)
-        with self.runtime.store.runs._connect() as db:
-            db.execute("DELETE FROM runtime_deployments WHERE id=?", (key,))
-        self.runtime.private.set(f"remote:{key}", None)
-        return {"ok": True}
+        with self.lock:
+            # Removing a controller connection never deletes a remote workspace.
+            self.disconnect(key)
+            with self.runtime.store.runs._connect() as db:
+                db.execute("DELETE FROM runtime_deployments WHERE id=?", (key,))
+            self.runtime.private.set(f"remote:{key}", None)
+            return {"ok": True}
 
     def deploy(self, key, review, configuration):
-        deployment_id = uuid.uuid4().hex
-        payload = {"deployment_id": deployment_id, "snapshot": review, "archive": base64.b64encode(runtime_snapshots.archive(review)).decode(),
-                   "configuration": configuration}
-        record = self.record(key)
-        pending = {"id": deployment_id, "session_id": "", "workspace": "", "baseline": review, "state": "uploading", "created_at": time.time()}
-        record["deployments"].append(pending)
-        self.save(record)
-        self.runtime.private.set(f"deployment:{deployment_id}", configuration)
-        try:
-            result = self.request(key, "POST", "/api/runtime/snapshots/import", payload, timeout=120)
-        except ValueError:
-            pending["state"] = "uncertain"
+        with self.lock:
+            deployment_id = uuid.uuid4().hex
+            payload = {"deployment_id": deployment_id, "snapshot": review, "archive": base64.b64encode(runtime_snapshots.archive(review)).decode(),
+                       "configuration": configuration}
+            record = self.record(key)
+            pending = {"id": deployment_id, "session_id": "", "workspace": "", "baseline": review, "state": "uploading", "created_at": time.time()}
+            record["deployments"].append(pending)
             self.save(record)
-            raise ValueError("Deployment response was interrupted. Retry this saved deployment to reconcile its existing remote workspace.") from None
-        pending.update(result)
-        self.save(record)
-        return result
+            self.runtime.private.set(f"deployment:{deployment_id}", configuration)
+            try:
+                result = self.request(key, "POST", "/api/runtime/snapshots/import", payload, timeout=120)
+            except ValueError:
+                pending["state"] = "uncertain"
+                self.save(record)
+                raise ValueError("Deployment response was interrupted. Retry this saved deployment to reconcile its existing remote workspace.") from None
+            pending.update(result)
+            self.save(record)
+            return result
 
     def retry_deployment(self, key, deployment_id):
-        record = self.record(key)
-        deployment = next((row for row in record["deployments"] if row["id"] == deployment_id), None)
-        if not deployment:
-            raise ValueError("Unknown deployment")
-        review = deployment["baseline"]
-        configuration = self.runtime.private.read().get(f"deployment:{deployment_id}")
-        if configuration is None:
-            raise ValueError("Reconfigure the selected accounts before retrying")
-        payload = {"deployment_id": deployment_id, "snapshot": review, "configuration": configuration,
-                   "archive": base64.b64encode(runtime_snapshots.archive(review)).decode()}
-        result = self.request(key, "POST", "/api/runtime/snapshots/import", payload, timeout=120)
-        deployment.update(result)
-        self.save(record)
-        return result
+        with self.lock:
+            record = self.record(key)
+            deployment = next((row for row in record["deployments"] if row["id"] == deployment_id), None)
+            if not deployment:
+                raise ValueError("Unknown deployment")
+            review = deployment["baseline"]
+            configuration = self.runtime.private.read().get(f"deployment:{deployment_id}")
+            if configuration is None:
+                raise ValueError("Reconfigure the selected accounts before retrying")
+            payload = {"deployment_id": deployment_id, "snapshot": review, "configuration": configuration,
+                       "archive": base64.b64encode(runtime_snapshots.archive(review)).decode()}
+            result = self.request(key, "POST", "/api/runtime/snapshots/import", payload, timeout=120)
+            deployment.update(result)
+            self.save(record)
+            return result
 
     def retrieve(self, key, deployment_id):
-        record = self.record(key)
-        deployment = next((row for row in record["deployments"] if row["id"] == deployment_id), None)
-        if not deployment:
-            raise ValueError("Unknown deployment")
-        result = self.request(key, "GET", f"/api/runtime/snapshots/{deployment_id}", timeout=120)
-        destination = self.runtime.root / "returns" / uuid.uuid4().hex
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        runtime_snapshots.unpack(base64.b64decode(result.pop("archive"), validate=True), destination, result["snapshot"]["files"])
-        deployment["return"] = {**result, "directory": str(destination), "changes": runtime_snapshots.changes(deployment["baseline"], result["snapshot"])}
-        self.save(record)
-        return deployment["return"]
+        with self.lock:
+            record = self.record(key)
+            deployment = next((row for row in record["deployments"] if row["id"] == deployment_id), None)
+            if not deployment:
+                raise ValueError("Unknown deployment")
+            result = self.request(key, "GET", f"/api/runtime/snapshots/{deployment_id}", timeout=120)
+            destination = self.runtime.root / "returns" / uuid.uuid4().hex
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            runtime_snapshots.unpack(base64.b64decode(result.pop("archive"), validate=True), destination, result["snapshot"]["files"])
+            deployment["return"] = {**result, "directory": str(destination), "changes": runtime_snapshots.changes(deployment["baseline"], result["snapshot"])}
+            self.save(record)
+            return deployment["return"]

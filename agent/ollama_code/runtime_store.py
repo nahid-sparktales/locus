@@ -100,15 +100,16 @@ class RuntimeStore:
     def worker(self, session_id: str) -> dict[str, Any] | None:
         with self.runs._connect(readonly=True) as db:
             row = db.execute("SELECT * FROM runtime_workers WHERE session_id=?", (session_id,)).fetchone()
-        return self._worker(row) if row else None
+        return {**self._worker(row), "interrupted_commands": self.commands(session_id, "uncertain")} if row else None
 
     @staticmethod
     def _worker(row) -> dict[str, Any]:
-        return {**dict(row), "keep_running": bool(row["keep_running"]), "configuration": json.loads(row["payload"])}
+        return {**dict(row), "keep_running": bool(row["keep_running"]), "configuration": json.loads(row["payload"]), "waiting_reason": json.loads(row["payload"]).get("waiting_reason")}
 
     def workers(self) -> list[dict[str, Any]]:
         with self.runs._connect(readonly=True) as db:
-            return [self._worker(row) for row in db.execute("SELECT * FROM runtime_workers ORDER BY updated_at")]
+            rows = [self._worker(row) for row in db.execute("SELECT * FROM runtime_workers ORDER BY updated_at")]
+        return [{**row, "interrupted_commands": self.commands(row["session_id"], "uncertain")} for row in rows]
 
     def save_worker(self, session_id: str, workspace: str, *, keep_running: bool | None = None,
                     state: str | None = None, configuration: dict | None = None) -> dict:
@@ -128,9 +129,9 @@ class RuntimeStore:
                         json.dumps(configuration) if configuration is not None else (row["payload"] if row else "{}"), time.time()))
         return self.worker(session_id)
 
-    def state(self, session_id: str, state: str) -> None:
+    def state(self, session_id: str, state: str, reason: str = "") -> None:
         with self.runs._connect() as db:
-            db.execute("UPDATE runtime_workers SET state=?,updated_at=? WHERE session_id=?", (state, time.time(), session_id))
+            db.execute("UPDATE runtime_workers SET state=?,payload=json_set(payload,'$.waiting_reason',?),updated_at=? WHERE session_id=?", (state, reason, time.time(), session_id))
 
     def append(self, session_id: str, event: dict) -> dict:
         from .runstore import sanitize_event
@@ -169,33 +170,57 @@ class RuntimeStore:
             db.execute("UPDATE runtime_commands SET state=? WHERE id=?", (state, key))
 
     def decision(self, session_id: str, event: dict) -> dict:
-        payload = json.dumps(event, sort_keys=True)
-        fingerprint = hashlib.sha256(payload.encode()).hexdigest()
+        from .runstore import sanitize_event
+        fingerprint = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+        payload = json.dumps(sanitize_event(event), sort_keys=True)
         key = f"{session_id}:{fingerprint}"
         with self.runs._connect() as db:
             db.execute("INSERT OR IGNORE INTO runtime_decisions VALUES(?,?,?,?,'waiting',NULL,?)",
                        (key, session_id, payload, fingerprint, time.time()))
         return {"id": key, "fingerprint": fingerprint, "event": event}
 
-    def decisions(self, session_id: str = "") -> list[dict]:
+    def decisions(self, session_id: str = "", *, include_inflight=False) -> list[dict]:
         with self.runs._connect(readonly=True) as db:
-            rows = db.execute("SELECT * FROM runtime_decisions WHERE state='waiting' AND (?='' OR session_id=?) ORDER BY created_at",
-                              (session_id, session_id)).fetchall()
+            rows = db.execute("SELECT * FROM runtime_decisions WHERE (state='waiting' OR (? AND state IN ('executing','uncertain'))) AND (?='' OR session_id=?) ORDER BY created_at",
+                              (int(include_inflight), session_id, session_id)).fetchall()
         return [{**dict(row), "event": json.loads(row["payload"])} for row in rows]
+
+    def claim_native(self, session_id: str, key: str, fingerprint: str):
+        from .runtime import NATIVE_EVENTS
+        with self.runs._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM runtime_decisions WHERE id=?", (key,)).fetchone()
+            if not row or row['session_id'] != session_id or row['fingerprint'] != fingerprint or row['state'] != 'waiting' or json.loads(row['payload']).get('type') not in NATIVE_EVENTS:
+                raise ValueError('This native operation is already claimed or needs review. It must not be replayed.')
+            db.execute("UPDATE runtime_decisions SET state='executing' WHERE id=?", (key,))
+        return {"ok": True}
+
+    def broker_left(self, session_id: str):
+        with self.runs._connect() as db:
+            changed = db.execute("UPDATE runtime_decisions SET state='uncertain' WHERE session_id=? AND state='executing'", (session_id,)).rowcount
+            if changed:
+                reason = "A desktop action has an uncertain outcome. Review its effects, then stop this agent before allowing new work."
+                db.execute("UPDATE runtime_workers SET state='waiting_for_locus',payload=json_set(payload,'$.waiting_reason',?) WHERE session_id=?", (reason, session_id))
 
     def resolve(self, key: str, fingerprint: str, response: dict) -> str:
         with self.runs._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM runtime_decisions WHERE id=?", (key,)).fetchone()
-            if not row or row["fingerprint"] != fingerprint or row["state"] != "waiting":
+            from .runtime import NATIVE_EVENTS
+            allowed_states = {"executing", "uncertain"} if row and json.loads(row["payload"]).get("type") in NATIVE_EVENTS else {"waiting"}
+            if not row or row["fingerprint"] != fingerprint or row["state"] not in allowed_states:
                 raise ValueError("This decision is no longer current")
-            db.execute("UPDATE runtime_decisions SET state='sending',response=? WHERE id=?", (json.dumps(response), key))
+            from .runstore import sanitize_event
+            saved_response = sanitize_event(response)
+            if json.loads(row["payload"]).get("type") in {"identity_context_request", "identity_action_request"}:
+                saved_response = {"type": response.get("type"), "request_id": response.get("request_id"), "result": "[private result omitted]"}
+            db.execute("UPDATE runtime_decisions SET state='sending',response=? WHERE id=?", (json.dumps(saved_response), key))
             return row["session_id"]
 
     def interrupted(self, session_id: str) -> None:
         with self.runs._connect() as db:
             db.execute("UPDATE runtime_commands SET state='uncertain' WHERE session_id=? AND state='sent'", (session_id,))
-            db.execute("UPDATE runtime_decisions SET state='interrupted' WHERE session_id=? AND state IN ('waiting','sending')", (session_id,))
+            db.execute("UPDATE runtime_decisions SET state='interrupted' WHERE session_id=? AND state IN ('waiting','sending','executing','uncertain')", (session_id,))
             db.execute("UPDATE runtime_workers SET state='interrupted' WHERE session_id=?", (session_id,))
 
     def automation_enabled(self, kind: str, key: str) -> bool:

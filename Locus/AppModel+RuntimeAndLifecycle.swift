@@ -132,6 +132,9 @@ extension AppModel {
 
     private func performRuntimeRecovery(reason: String) async -> Bool {
         if RuntimeInstallation.enabled {
+            // Enabling is restricted to idle agents; transfer an app-owned CLI
+            // before the supervisor becomes its sole lifecycle owner.
+            if ollamaRuntime.ownsRunningCLI { ollamaRuntime.stopOwnedCLI() }
             backend.updateAuthentication(BackendSecurity.launchToken)
             if backend.currentBaseURL != RuntimeInstallation.endpoint {
                 backend.updateBaseURL(RuntimeInstallation.endpoint)
@@ -276,6 +279,14 @@ extension AppModel {
         modelRuntimePhase = modelRuntimePhase.isOnline
             ? .recovering("Restarting Ollama…")
             : .starting("Starting Ollama…")
+        if RuntimeInstallation.enabled {
+            do {
+                let result: [String: JSONValue] = try await backend.post("/api/runtime/providers/ollama", body: ["host": host.absoluteString], timeout: 30, as: [String: JSONValue].self)
+                backendLogHint = result["message"]?.string ?? "Ollama is running."
+                modelRuntimePhase = .online
+            } catch { modelRuntimePhase = .unavailable(error.localizedDescription) }
+            return
+        }
         switch await ollamaRuntime.ensureRunning(at: host) {
         case .online(let message):
             backendLogHint = message

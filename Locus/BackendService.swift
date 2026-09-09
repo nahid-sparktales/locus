@@ -246,6 +246,16 @@ final class BackendService {
                         if let cursor = event["runtime_seq"] as? Int {
                             self.runtimeCursor = max(self.runtimeCursor, cursor)
                         }
+                        let nativeRequests: Set<String> = ["computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "identity_context_request", "identity_action_request"]
+                        if nativeRequests.contains(event["type"] as? String ?? ""), let decision = event["runtime_decision"] as? [String: Any] {
+                            do {
+                                let _: [String: Bool] = try await self.post("/api/runtime/native/claim", body: decision, as: [String: Bool].self)
+                            } catch {
+                                self.onEvent?(["type": "note", "text": "This desktop action has an uncertain outcome. Review saved progress before retrying it."])
+                                self.receive(from: task)
+                                return
+                            }
+                        }
                         self.onEvent?(event)
                     }
                     self.receive(from: task)

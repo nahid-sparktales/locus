@@ -56,7 +56,7 @@ def bind_run_checks(service, run_id, request):
         return None
     workspace = service.core.workspace_root or service.core.cwd
     frozen = getattr(service, 'evaluation_frozen_checks', None)
-    if frozen is None and not TaskStateStore(service.run_store).get('run:' + run_id) and not any(row['state'] == 'approved' for row in ReusableCheckStore(service.run_store).list(workspace)):
+    if frozen is None and not TaskStateStore(service.run_store).get('run:' + run_id) and not ReusableCheckStore(service.run_store).active(workspace):
         return None
     runtime = RunChecks(service, run_id, request, frozen=frozen)
     if not runtime.task.get('reusable_checks'):

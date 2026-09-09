@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from ..chat_service import ChatService
 from ..model_usage import context_for, tracked_chat
 from ..reusable_checks import ReusableCheckStore
-from ..sessions import SessionStore, SessionMeta
+from ..sessions import SessionMeta, SessionStore
 from ..task_state import TaskStateError, TaskStateStore, TaskVerifier, digest
 from .dependencies import get_service
 
@@ -19,7 +19,9 @@ Service = Annotated[ChatService, Depends(get_service)]
 
 def listing(service: Service, workspace: str = Query(default='')):
     metadata = SessionMeta.get(service.core.session.session_id)
-    return {'agent_id': metadata.get('agent_profile_id') or metadata.get('agent_trigger_id') or service.core.session.session_id, 'checks': ReusableCheckStore(service.run_store).list(workspace or service.core.workspace_root or service.core.cwd)}
+    store = ReusableCheckStore(service.run_store)
+    root = workspace or service.core.workspace_root or service.core.cwd
+    return {'active_checks': store.active(root), 'agent_id': metadata.get('agent_profile_id') or metadata.get('agent_trigger_id') or service.core.session.session_id, 'checks': store.list(root)}
 
 
 def detail(key: str, service: Service):
@@ -28,7 +30,8 @@ def detail(key: str, service: Service):
         from ..usage_ledger import UsageLedger
         ledger = UsageLedger(service.run_store)
         records = [row for row in ledger.records(task_id=value['generation_task_id']) if row['context'].get('proposal_id') == key] if value['generation_task_id'] else []
-        return {**value, 'accounting': ledger.summarize(records)}
+        active_version = next((item['version'] for item in ReusableCheckStore(service.run_store).active(value['workspace_root']) if item['id'] == key), None)
+        return {**value, 'active_version': active_version, 'accounting': ledger.summarize(records)}
     except TaskStateError as exc:
         raise HTTPException(404, str(exc)) from exc
 

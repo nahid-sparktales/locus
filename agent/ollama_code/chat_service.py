@@ -201,6 +201,8 @@ class ChatService:
         # alive until explicitly stopped — see devserver.py's docstring.
         self.dev_servers = DevServerManager(perms=core.perms, config=core.config)
         self.core.tool_ctx.background_service = self._execute_background_service
+        self.core.tool_registry.runtime_wait_enabled = bool(os.environ.get("LOCUS_RUNTIME_CHILD"))
+        self.core.tool_ctx.wait_for_locus = self.wait_for_locus
         # A question needs somebody on the other end. Only a live chat session
         # has one, so the tool is installed and advertised here rather than in
         # `AgentCore`, which the CLI and every evaluation core also build.
@@ -839,6 +841,20 @@ class ChatService:
         self.core.mcp.cancel_pending_inputs()
         for core in self._parallel_cores():
             core.mcp.cancel_pending_inputs()
+
+    def wait_for_locus(self, arguments):
+        capability = str(arguments.get("capability") or "")
+        reason = str(arguments.get("reason") or "").strip()[:2000]
+        if capability not in {"browser", "computer", "simulator", "notes", "identity"} or not reason:
+            return "Error: name the desktop capability and the remaining task step."
+        if getattr(self.core.tool_registry, capability + "_enabled", False):
+            return "The desktop capability is available. Use its tools with existing permissions."
+        self.emit({"type": "runtime_waiting_for_locus", "capability": capability, "reason": reason})
+        while not self.core._interrupt.wait(.2):
+            if getattr(self.core.tool_registry, capability + "_enabled", False):
+                self.emit({"type": "runtime_capability_ready", "capability": capability})
+                return "Locus reconnected this capability. Use its tools with existing permissions."
+        return "Error: waiting for Locus was interrupted. The required step has not been performed."
 
     def execute_computer(
         self,

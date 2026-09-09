@@ -14,6 +14,7 @@ do {
     else { exit(78) }
     let environmentPath = package + "/source:" + package + "/site-packages"
     setenv("PYTHONPATH", environmentPath, 1)
+    setenv("LOCUS_RUNTIME_PACKAGE_ID", URL(fileURLWithPath: package).lastPathComponent, 1)
     setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
     setenv("PYTHONUNBUFFERED", "1", 1)
     setenv("LOCUS_DOCUMENT_COORDINATOR", "1", 1)

@@ -3,7 +3,6 @@
 from fastapi import APIRouter
 
 from . import (
-    reusable_checks,
     accounting,
     automation_workflows,
     capsules,
@@ -15,6 +14,7 @@ from . import (
     goals,
     knowledge,
     providers,
+    reusable_checks,
     runs,
     runtime,
     runtime_deploy,

@@ -19,6 +19,8 @@ MAX_PACKAGE = 2 * 1024 * 1024 * 1024
 
 
 def host_info():
+    if sys.version_info < (3, 10):  # noqa: UP036 - bootstrap runs on the host Python
+        raise ValueError("Install Python 3.10 or newer for runtime setup on this host")
     system, architecture = platform.system(), platform.machine()
     if system == "Linux" and architecture in {"x86_64", "aarch64", "arm64"}:
         target = "linux-" + ("arm64" if architecture != "x86_64" else "x86_64")
@@ -46,7 +48,7 @@ def extract_package(data, expected, root, target):
     destination = root / "versions" / actual
     if destination.exists():
         manifest = json.loads((destination / "manifest.json").read_text())
-        if manifest["target"] != target or manifest["protocol_version"] != PROTOCOL:
+        if manifest["target"] != target or manifest["protocol_version"] != PROTOCOL or manifest.get("codex_version") != "0.147.0":
             raise ValueError("Runtime package is incompatible with this host")
         for name, checksum in manifest["files"].items():
             path = destination / name
@@ -79,7 +81,7 @@ def extract_package(data, expected, root, target):
                 raise ValueError("Runtime package file integrity check failed")
         if seen != set(manifest["files"]) | {"manifest.json"}:
             raise ValueError("Runtime package contains unverified files")
-        for required in ("python/bin/python3", "source/ollama_code/runtime.py", "codex-app-server"):
+        for required in ("python/bin/python3", "source/ollama_code/runtime.py", "codex-app-server", "codex-code-mode-host"):
             if required not in seen:
                 raise ValueError("Runtime package is incomplete")
         os.replace(staging, destination)
@@ -107,16 +109,23 @@ def install(header, data):
                 request = urllib.request.Request(endpoint["url"] + "/api/runtime", headers={"X-Locus-Token": token})
                 with opener.open(request, timeout=3) as response:
                     status = json.load(response)
-                if any(worker["state"] not in {"idle", "paused", "completed", "interrupted"} for worker in status["workers"]):
+                if status.get("active_work") or any(worker["state"] not in {"idle", "paused", "completed", "interrupted"} for worker in status["workers"]):
                     raise ValueError("Pause and drain active agents before updating this runtime")
             except (urllib.error.URLError, TimeoutError):
                 pass
     package = extract_package(data, header["sha256"], root, info["target"])
+    helper = subprocess.run([str(package / "codex-app-server"), "--version"], capture_output=True, text=True, timeout=20)
+    if helper.returncode or not helper.stdout.strip().endswith(" 0.147.0"):
+        raise ValueError("The packaged ChatGPT helper does not match pinned version 0.147.0")
     python = str(package / "python/bin/python3")
     environment = {"PYTHONPATH": str(package / "source") + ":" + str(package / "site-packages"),
                    "OLLAMA_CODE_HOME": str(root / "profile"), "LOCUS_CODEX_HOME": str(root / "accounts"),
                    "LOCUS_CODEX_APP_SERVER_PATH": str(package / "codex-app-server"),
-                   "LOCUS_DOCUMENT_COORDINATOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+                   "LOCUS_RUNTIME_PACKAGE_ID": header["sha256"], "LOCUS_DOCUMENT_COORDINATOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+    check = subprocess.run([python, '-c', 'import sys; assert sys.version_info >= (3,10); import ollama_code.runtime'],
+                           env={**os.environ, **environment}, capture_output=True, timeout=30)
+    if check.returncode:
+        raise ValueError("The packaged Python runtime cannot import its required dependencies")
     workspaces = root / "workspaces"
     workspaces.mkdir(exist_ok=True, mode=0o700)
     port = int(header.get("port", 8793))
@@ -159,7 +168,17 @@ def install(header, data):
         if (root / "runtime-secrets.json").exists():
             secrets = json.loads((root / "runtime-secrets.json").read_text())
             if secrets.get("controller_token"):
-                return {**info, "root": str(root), "port": port, "package": header["sha256"], "token": secrets["controller_token"]}
+                import urllib.error
+                import urllib.request
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                request = urllib.request.Request(f"http://127.0.0.1:{port}/api/runtime", headers={"X-Locus-Token": secrets["controller_token"]})
+                try:
+                    with opener.open(request, timeout=1) as response:
+                        ready = json.load(response)
+                    if ready.get("protocol_version") == PROTOCOL and ready.get("package_id") == header["sha256"]:
+                        return {**info, "root": str(root), "port": port, "package": header["sha256"], "token": secrets["controller_token"]}
+                except (urllib.error.URLError, TimeoutError, ValueError):
+                    pass
         time.sleep(.2)
     raise ValueError("The runtime did not become ready")
 

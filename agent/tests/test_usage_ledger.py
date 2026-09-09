@@ -130,3 +130,32 @@ def test_limits_from_agent_context_are_not_reset_by_later_calls(ledger):
     ledger.settle(first['id'], normalize_usage('openai', {'prompt_tokens': 1, 'completion_tokens': 1}))
     with pytest.raises(UsageLimitError):
         ledger.begin(context(limits={'max_calls': 100}), input_tokens=1, output_tokens=1)
+
+
+def test_persisted_task_limits_bound_output_at_the_provider(ledger):
+    from types import SimpleNamespace
+
+    from ollama_code.model_usage import tracked_chat
+    from ollama_code.ollama import ChatResponse
+    calls = []
+    def chat(*args, **kwargs):
+        calls.append(kwargs)
+        return ChatResponse(content_parts=['ready'], done=True, done_reason='stop', prompt_eval_count=10, eval_count=5)
+    ledger.set_limits('task', {'max_tokens': 100000})
+    core = SimpleNamespace(usage_store=ledger.runs)
+    tracked_chat(core, SimpleNamespace(chat_stream=chat), model='fixture', messages=[{'role': 'user', 'content': 'Work'}], context=context(task_id='task', limits={}))
+    assert calls[0]['options']['max_completion_tokens'] == 8192
+
+
+def test_reconciliation_requires_reported_usage_and_is_idempotent(ledger):
+    invocation = ledger.begin(context())
+    ledger.uncertain(invocation['id'])
+    with pytest.raises(ValueError, match='both input and output'):
+        ledger.reconcile(invocation['id'], 'openai', {'total_tokens': 10}, 'req-123')
+    raw = {'prompt_tokens': 10, 'completion_tokens': 4}
+    first = ledger.reconcile(invocation['id'], 'openai', raw, 'req-123')
+    assert first['state'] == 'settled'
+    assert ledger.reconcile(invocation['id'], 'openai', raw, 'req-123')['id'] == first['id']
+    with pytest.raises(ValueError):
+        ledger.reconcile(invocation['id'], 'openai', {'prompt_tokens': 99, 'completion_tokens': 4}, 'req-123')
+    assert ledger.summary(task_id='task')['invocations'] == 1

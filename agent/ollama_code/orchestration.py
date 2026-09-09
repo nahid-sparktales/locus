@@ -2479,7 +2479,8 @@ class TeamOrchestrator:
             goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
             from .model_usage import tracked_chat
             run = self.run_store.run(run_id) if self.run_store is not None else {}
-            context = {"task_id": "goal:" + self.goal_runtime.goal_id if self.goal_runtime is not None else "run:" + run_id, "run_id": run_id, "session_id": (run or {}).get("session_id", ""),
+            owner = getattr(self, "usage_context", {})
+            context = {**owner, "task_id": owner.get("task_id") or ("goal:" + self.goal_runtime.goal_id if self.goal_runtime is not None else "run:" + run_id), "run_id": run_id, "session_id": (run or {}).get("session_id", ""),
                        "provider": profile.route.get("provider", "remote"), "model": profile.model,
                        "route": str(getattr(client, "base_url", getattr(client, "host", ""))),
                        "agent_id": profile.id, "workspace": (run or {}).get("workspace_root", "")}

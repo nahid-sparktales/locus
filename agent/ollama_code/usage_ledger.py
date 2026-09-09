@@ -146,6 +146,20 @@ class UsageLedger:
             db.execute('INSERT INTO usage_limits VALUES(?,?,?) ON CONFLICT(task_id) ' + ('DO NOTHING' if only_if_absent else 'DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at'), (task_id, json.dumps(normalized), time.time()))
         return normalized
 
+    def limits(self, task_id):
+        with self.runs._connect(readonly=True) as db:
+            row = db.execute("SELECT payload FROM usage_limits WHERE task_id=?", (task_id,)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def remaining_tokens(self, task_id):
+        limits = self.limits(task_id)
+        if not limits.get('max_tokens'):
+            return None
+        with self.runs._connect(readonly=True) as db:
+            rows = db.execute('SELECT state,usage,reserved_tokens FROM usage_invocations WHERE task_id=?', (task_id,)).fetchall()
+        consumed = sum(count(json.loads(row['usage']).get('total_tokens')) if row['state'] == 'settled' else max(row['reserved_tokens'], count(json.loads(row['usage']).get('total_tokens'))) for row in rows)
+        return max(limits['max_tokens'] - consumed, 0)
+
     def begin(self, context, *, input_tokens=0, output_tokens=4096, invocation_id=None, attempt=1):
         context = dict(context)
         for key in ('task_id', 'run_id', 'session_id', 'provider', 'model', 'purpose'):
@@ -234,6 +248,36 @@ class UsageLedger:
             db.execute('UPDATE usage_invocations SET state=?,usage=?,estimated_cost=?,coverage=?,completed_at=? WHERE id=?',
                        ('settled' if complete and usage.get('reported') else 'uncertain', payload, cost, coverage, time.time(), key))
         return self.get(key)
+
+    def reconcile(self, key, family, raw, reference):
+        import re
+        if family not in {'openai', 'anthropic', 'ollama'} or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,239}', reference or ''):
+            raise ValueError('Reconciliation requires a provider usage response and its reference ID')
+        if not isinstance(raw, dict) or not any(left in raw and right in raw for left, right in [('input_tokens', 'output_tokens'), ('prompt_tokens', 'completion_tokens'), ('inputTokens', 'outputTokens')]):
+            raise ValueError('The provider must report both input and output usage')
+        for field in ('input_tokens', 'output_tokens', 'prompt_tokens', 'completion_tokens', 'inputTokens', 'outputTokens'):
+            if field in raw and (isinstance(raw[field], bool) or not isinstance(raw[field], (int, float)) or not math.isfinite(raw[field]) or raw[field] < 0 or int(raw[field]) != raw[field]):
+                raise ValueError('Reported token counts must be nonnegative whole numbers')
+        # Reject malformed counts instead of turning unavailable usage into zero.
+        def validate(value):
+            if isinstance(value, dict):
+                for item in value.values():
+                    validate(item)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    validate(item)
+            elif isinstance(value, (int, float)) and (isinstance(value, bool) or not math.isfinite(value) or value < 0):
+                raise ValueError('Provider usage must contain finite nonnegative values')
+        validate(raw)
+        usage = normalize_usage(family, raw)
+        usage['model_calls'] = max(count(raw.get('model_calls', 1)), 1)
+        usage['reconciliation_reference'] = reference
+        record = self.get(key)
+        if record is None or record['state'] not in {'uncertain', 'settled'}:
+            raise ValueError('Only an interrupted invocation can be reconciled')
+        if record['state'] == 'settled' and json.loads(record['usage']).get('reconciliation_reference') != reference:
+            raise ValueError('This invocation already has final usage')
+        return self.settle(key, usage, complete=True)
 
     def uncertain(self, key):
         with self.runs._connect() as db:

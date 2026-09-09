@@ -12,7 +12,7 @@ from ollama_code.core import AgentCore
 from ollama_code.goal_runtime import GoalRuntime, attach_goal_runtime
 from ollama_code.goals import GoalStore
 from ollama_code.ollama import ChatResponse, ToolCall
-from ollama_code.runstore import RunStore, SCHEMA_VERSION
+from ollama_code.runstore import SCHEMA_VERSION, RunStore
 from ollama_code.sessions import SessionStore
 from ollama_code.task_state import TaskStateError, TaskStateStore, TaskVerifier, normalize_checks
 

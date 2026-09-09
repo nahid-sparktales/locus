@@ -70,7 +70,7 @@ The macOS runtime preparation scripts pin Python and helper source/dependency ha
 Linux release packages must be built and smoke-tested on their target architecture;
 this change does not claim that macOS executables can be deployed to Linux.
 The generated package and SHA-256 are selected in Settings → Runtimes. Installation
-requires Python 3 for the bootstrap and a working systemd user session on Linux, or
+requires Python 3.10 or newer for the bootstrap and a working systemd user session on Linux, or
 an active GUI login on macOS. The installed service uses its own bundled Python.
 
 Do not release a package before checking its helper version, architecture, runtime
@@ -136,6 +136,8 @@ allowances. Explicit Apply to this task invalidates a chat's prior evidence;
 goals/capsules retain their own requirement-edit controls. Disabling a check affects
 future admissions, never silently changes an existing contract. Evaluations freeze
 check definitions once for identical repetitions and include them in fingerprints.
+An approved version stays active while its replacement is being reviewed. Disabling
+the series also prevents an old approved version from being selected for new work.
 
 Remote snapshots include only explicitly selected approved versions with their
 provenance. Returned results expose current verification evidence and the same
@@ -149,6 +151,62 @@ acceptance test imports a reviewed deployment, disconnects the controller, runs 
 schedule, retrieves verified output and usage, approves an explicitly requested
 correction check and enforces its exact version on the next task. It does not use
 SSH or claim a real remote installation. The native app and protocol test targets
-compile. XCTest execution failed before connection: a process sample shows the
-host blocked in dyld's file-open path before application code. This remains a
-native execution gate; no unit test pass is inferred from compilation.
+compile. The initial XCTest host stalled in dyld before application code when run
+from Documents. Running the built test products from a temporary directory resolved
+that issue; all 59 selected native tests passed in the final gate below.
+
+## Final hardening and validation
+
+Runtime pause survives restart. Interrupted commands require explicit review and
+are never automatically resent. Long-running HTTP operations retain their durable
+admission after the controller disconnects. Existing recovery API operations use
+the supervisor's admission and workspace coordination. Scheduled commands freeze
+their selected model, account and permissions at admission; unavailable credentials
+leave them waiting for that account. The service owns Ollama processes it starts
+and restores configured local hosts after restart.
+
+Desktop capabilities use a live broker lease. Native work can explicitly wait for
+Locus with a reason. The broker must claim a native action before executing it;
+disconnecting after that claim preserves an uncertain result for reconciliation.
+Consumed decisions are not replayed. Private native results are omitted from the
+event database, and pending private request data is kept in the separate private
+store. Controller presence is relayed to remote runtimes without relay loops so
+ordinary remote work follows the same disconnect policy as local work.
+
+Helper and team invocations retain their owning task's ledger attribution. Stored
+task limits bound provider output and remaining token allowances. Explicit usage
+reconciliation requires reported token counts and a provider reference, rejects
+malformed counts, and treats duplicate reports idempotently. Unknown and unsettled
+charges still block estimated monetary enforcement when coverage is insufficient.
+
+Installation checks the helper version, runtime imports and the running package
+identity before reporting readiness. Interrupted snapshot installation and schedule
+creation reconcile stable deployment IDs. Remote connection records are updated
+under a lock, and updates refuse work that is still draining. These checks are
+covered by fixtures; they do not replace installation tests on supported hosts.
+
+Final validation on this branch:
+
+- **514 backend tests passed**, including real supervisor/worker processes, the
+  scheduled deployment acceptance scenario with a deterministic provider, recovery,
+  replay, approvals, accounting, evaluations and reusable checks.
+- **59 native tests passed**, covering runtime protocol, evaluations, goals and
+  capsules. The temporary-directory XCTest run completed with zero failures.
+- **Direct-download Locus, LocusX and App Store builds passed**, and all three
+  edition artifact audits passed. Bundled backend assets were skipped for these
+  compile/audit runs; portable runtime packaging remains a separate release gate.
+- Ruff passed for the changed backend Python files, and `git diff --check` passed.
+
+No live provider calls, SSH deployments, OS service registrations or host reboots
+were performed. Release still requires disposable Linux and Apple Silicon Mac
+hosts, signed Service Management installation, login/reboot and connector delivery
+tests, target-architecture portable package smoke tests, and bounded API, Ollama
+and independent ChatGPT account login/expiration/recovery checks. An existing
+SSH-enabled host name is sufficient to begin those checks; no host was supplied.
+
+The original checkout remains separate and has not been integrated. Its unfinished
+work overlaps this branch in `core.py`, `evaluation_runtime.py`, `evaluations.py`,
+`orchestration.py`, `remote.py`, `runstore.py`, `server.py`, `solo_swarm.py`,
+`task_state.py`, `tools.py`, `test_evaluations.py` and `test_verified_tasks.py`.
+Review their final changes and reconcile overlaps before integration; do not replace
+the original checkout's files with this branch wholesale.

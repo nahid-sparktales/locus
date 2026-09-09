@@ -116,12 +116,17 @@ async def import_snapshot(request: Request, body: dict = Body(default_factory=di
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         from ..sessions import SessionStore
         if not previous:
+            # An interrupted rename may have installed the reviewed files before
+            # its descriptor was written. Adopt only an identical untouched tree.
+            if destination.exists() and snapshots.preview(destination)["fingerprint"] != review["fingerprint"]:
+                raise ValueError("The interrupted upload has changed. Review it before deploying again")
             # Only a fresh staging directory is removed on a failed transfer.
             staging = destination.with_name(".upload-" + uuid.uuid4().hex)
             try:
                 await invoke(snapshots.unpack, base64.b64decode(body["archive"], validate=True), staging, review["files"])
                 import os
-                os.replace(staging, destination)
+                if not destination.exists():
+                    os.replace(staging, destination)
             finally:
                 if staging.exists():
                     import shutil
@@ -151,7 +156,11 @@ async def import_snapshot(request: Request, body: dict = Body(default_factory=di
         provider = configuration.get("provider") or {}
         if not provider:
             raise ValueError("Select a model account for the remote agent")
+        if provider.get("provider") == "ollama":
+            await runtime.providers.ensure_ollama(str(provider.get("host") or "http://127.0.0.1:11434"))
         await runtime.request(worker, "POST", "/api/provider", provider)
+        if provider.get("model"):
+            await runtime.request(worker, "POST", "/api/config", {"model": provider["model"]})
         account_key = identifier(str(provider.get("account_id") or "ollama"))
         runtime.private.set(f"account:{account_key}", provider)
         await runtime.request(worker, "POST", "/api/permissions", configuration.get("permissions") or {"mode": "ask"})
@@ -161,7 +170,11 @@ async def import_snapshot(request: Request, body: dict = Body(default_factory=di
         (imports / (deployment_id + ".baseline.json")).write_text(json.dumps({**review, "workspace": str(destination)}))
         if configuration.get("schedule") and not previous.get("schedule_id"):
             from .schedules import schedule_create
-            schedule = await invoke(schedule_create, runtime.service, {**configuration["schedule"], "id": deployment_id, "workspace_root": str(destination), "execution_environment": "local"})
+            schedule = runtime.service.run_store.schedule(deployment_id)
+            if schedule is None:
+                schedule = await invoke(schedule_create, runtime.service, {**configuration["schedule"], "id": deployment_id, "workspace_root": str(destination), "execution_environment": "local"})
+            elif schedule.get("workspace_root") != str(destination):
+                raise ValueError("The deployment schedule already belongs to another workspace")
             runtime.store.set_automation("schedule", schedule["id"], keep)
             runtime.private.set(f"automation:schedule:{schedule['id']}", configuration)
             result["schedule_id"] = schedule["id"]
@@ -205,14 +218,14 @@ async def export_snapshot(deployment_id: str, request: Request):
 
 async def pause_runtime(request: Request):
     runtime = supervisor(request.app)
+    runtime.paused = True
+    runtime.private.set("paused", True)
     for row in runtime.store.workers():
         runtime.store.state(row["session_id"], "paused")
         worker = runtime.workers.get(row["session_id"])
         if worker and worker.active_command:
             await runtime.send(worker, {"type": "interrupt", "reason": "app_shutdown"})
     runtime.controller_seen = 0
-    if runtime.automation:
-        runtime.automation.next_scan = float("inf")
     return {"ok": True, "message": "Agents are checkpointing; wait until active work has drained before updating or stopping the service"}
 
 

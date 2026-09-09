@@ -10,6 +10,8 @@ import hashlib
 import io
 import json
 import tarfile
+import subprocess
+import platform
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -19,6 +21,17 @@ parser.add_argument('--codex-code-mode-host', type=Path, required=True)
 parser.add_argument('--target', choices=['linux-x86_64', 'linux-arm64', 'macos-arm64'], required=True)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
+system = platform.system()
+architecture = 'arm64' if platform.machine() in {'arm64', 'aarch64'} else 'x86_64'
+actual_target = ('macos-' if system == 'Darwin' else 'linux-' if system == 'Linux' else 'unsupported-') + architecture
+if actual_target != args.target:
+    parser.error('Build and validate this package on its target operating system and architecture.')
+version = subprocess.run([str(args.codex_helper.resolve()), '--version'], capture_output=True, text=True, timeout=20)
+if version.returncode or not version.stdout.strip().endswith(' 0.147.0'):
+    parser.error('The ChatGPT helper must be pinned to version 0.147.0.')
+for required in ['python/bin/python3', 'source/ollama_code/runtime.py']:
+    if not (args.runtime / required).is_file():
+        parser.error('The portable runtime layout is incomplete: ' + required)
 files = {}
 for path in sorted(args.runtime.rglob('*')):
     if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':

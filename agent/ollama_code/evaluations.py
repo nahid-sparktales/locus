@@ -446,10 +446,11 @@ def compare_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def configuration_fingerprint(core, case, manifest, reusable_checks=None):
     import hashlib
+
     from .model_usage import safe_route
     # Volatile run IDs and credentials cannot influence or leak through a fingerprint.
     def scrub(value):
-        from .runstore import _SECRET_KEY, _SAFE_TOKEN_KEYS
+        from .runstore import _SAFE_TOKEN_KEYS, _SECRET_KEY
         if isinstance(value, dict):
             return {key: "[redacted]" if _SECRET_KEY.search(key) and key not in _SAFE_TOKEN_KEYS else scrub(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):

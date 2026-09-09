@@ -67,7 +67,7 @@ def test_ssh_uses_existing_auth_and_strict_host_keys():
 
 def package(target='linux-arm64', protocol=1):
     payload = io.BytesIO()
-    files = {'python/bin/python3': b'python', 'source/ollama_code/runtime.py': b'runtime', 'codex-app-server': b'helper'}
+    files = {'python/bin/python3': b'python', 'source/ollama_code/runtime.py': b'runtime', 'codex-app-server': b'helper', 'codex-code-mode-host': b'code host'}
     manifest = {'target': target, 'protocol_version': protocol, 'codex_version': '0.147.0',
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files['manifest.json'] = json.dumps(manifest).encode()

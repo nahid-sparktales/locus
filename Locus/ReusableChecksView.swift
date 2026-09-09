@@ -21,10 +21,11 @@ struct ReusableCheckRecord: Decodable, Identifiable {
     let verificationLimits: String
     let lastTest: [String: JSONValue]?
     let accounting: UsageAccounting?
+    let activeVersion: Int?
     struct Scope: Decodable { let agentID: String; let files: [String]; enum CodingKeys: String, CodingKey { case agentID = "agent_id", files } }
     enum CodingKeys: String, CodingKey {
         case id, version, revision, state, correction, check, scope, source, accounting
-        case workspaceRoot = "workspace_root", verificationLimits = "verification_limits", lastTest = "last_test"
+        case activeVersion = "active_version", workspaceRoot = "workspace_root", verificationLimits = "verification_limits", lastTest = "last_test"
     }
 }
 
@@ -58,6 +59,7 @@ struct ReusableChecksView: View {
                     Text(record?.workspaceRoot ?? model.workspacePath).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     if let record {
                         Text("Version \(record.version) · \(record.state.capitalized)").font(.caption)
+                        if let active = record.activeVersion, active != record.version { Text("Approved version \(active) remains active for future tasks while this proposal is reviewed.").font(.caption) }
                         Form {
                             TextField("Requirement", text: $requirement, axis: .vertical)
                             Picker("Check", selection: $kind) {
@@ -107,8 +109,8 @@ struct ReusableChecksView: View {
                                         message = "Task checks: " + (result["verification_status"]?.string ?? "pending")
                                     } }
                                 }
-                                Button("Disable for future tasks") { perform { try await review("disable") } }
                             }
+                            if record.activeVersion != nil { Button("Disable for future tasks") { perform { try await review("disable") } } }
                         }.disabled(busy)
                         Text("Approval fixes this version into future task requirements. Editing an approved check creates a new proposal. Existing tasks keep their saved versions.").font(.caption).foregroundStyle(.secondary)
                         if let test = record.lastTest {

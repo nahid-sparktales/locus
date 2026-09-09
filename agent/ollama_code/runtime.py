@@ -53,11 +53,20 @@ class RuntimeSupervisor:
         self.launch_lock = asyncio.Lock()
         self.coordinator: asyncio.Task | None = None
         self.controller_seen = 0.0
+        self.direct_controller_seen = 0.0
+        self.remote_heartbeat_at = 0.0
+        self.remote_heartbeats = {}
+        from .runtime_remote import RemoteRuntimes
+        self.remotes = RemoteRuntimes(self)
         self.stopping = False
         self.automation = None
+        from .runtime_providers import RuntimeProviders
+        self.providers = RuntimeProviders(self)
+        self.paused = bool(self.private.read().get("paused", False))
         identity = self.private.read().get("runtime_id") or secrets.token_hex(16)
         self.private.set("runtime_id", identity)
         self.runtime_id = identity
+        self.package_id = os.environ.get("LOCUS_RUNTIME_PACKAGE_ID", str(Path(__file__).resolve().parents[1]))
 
     async def start(self) -> None:
         from .usage_ledger import UsageLedger
@@ -66,6 +75,11 @@ class RuntimeSupervisor:
         for row in self.store.workers():
             if row["state"] not in {"idle", "paused", "completed"} or self.store.commands(row["session_id"], "sent"):
                 self.store.interrupted(row["session_id"])
+        for address in self.private.read().get("ollama_hosts", []):
+            try:
+                await self.providers.ensure_ollama(address)
+            except (ValueError, OSError):
+                self.store.append("runtime", {"type": "provider_unavailable", "message": "Ollama could not restart; check the runtime host."})
         self.coordinator = asyncio.create_task(self.coordinate())
 
     async def close(self) -> None:
@@ -81,12 +95,19 @@ class RuntimeSupervisor:
                 self.remotes.disconnect(key)
             for process in self.remotes.login_tunnels.values():
                 process.terminate()
-        for session_id in list(self.workers):
-            await self.stop_worker(session_id)
+        for worker in list(self.workers.values()):
+            if worker.active_command:
+                with contextlib.suppress(Exception):
+                    await self.send(worker, {"type": "interrupt", "reason": "app_shutdown"})
+        deadline = time.monotonic() + 4
+        while any(worker.active_command for worker in self.workers.values()) and time.monotonic() < deadline:
+            await asyncio.sleep(.1)
+        await asyncio.gather(*(self.stop_worker(key) for key in list(self.workers)), return_exceptions=True)
+        await self.providers.close()
 
     def status(self) -> dict:
         return {"id": self.runtime_id, "version": 1, "protocol_version": 1,
-                "independent": True, "connected": True, "workers": self.store.workers(),
+                "independent": True, "connected": True, "paused": self.paused, "package_id": self.package_id, "workers": self.store.workers(),
                 "pending_approvals": self.store.decisions(), "max_active_chats": self.limit,
                 "active_work": sum(bool(worker.active_command) for worker in self.workers.values()),
                 "capabilities": {"durable_events": True, "background_schedules": True,
@@ -139,7 +160,7 @@ class RuntimeSupervisor:
                                           additional_headers={"X-Locus-Token": token}, max_size=4*1024*1024)
                 worker.pump = asyncio.create_task(self._pump(worker))
                 await self.connector_capabilities(worker)
-                self.store.state(session_id, "interrupted" if record["state"] == "interrupted" else "idle")
+                self.store.state(session_id, record["state"] if record["state"] in {"interrupted", "paused"} else "idle")
                 return worker
             except BaseException:
                 await self.stop_worker(session_id)
@@ -182,6 +203,11 @@ class RuntimeSupervisor:
             if not row:
                 raise ValueError("Unknown runtime session")
             worker = await self.ensure_worker(session_id, row["workspace"])
+        if message.get("type") in {"set_computer_control", "set_browser_control", "set_simulator_control", "set_notes_control", "set_identity_control"}:
+            message = {**message, "runtime_broker": True}
+        if message.get("type") == "set_model":
+            await self.request(worker, "POST", "/api/config", {"model": message.get("model")})
+            return {"ok": True}
         if message.get("type") in TURN_COMMANDS:
             key = self.enqueue(session_id, message)
             return {"ok": True, "state": "queued", "request_id": key}
@@ -202,6 +228,18 @@ class RuntimeSupervisor:
         self.private.set(f"command:{key}", message)
         return key
 
+    def restore_decision_event(self, event):
+        decision = event.get("runtime_decision") or {}
+        if decision.get("id") and event.get("type") in DECISION_EVENTS | NATIVE_EVENTS:
+            with self.store.runs._connect(readonly=True) as db:
+                current = db.execute("SELECT state FROM runtime_decisions WHERE id=?", (decision["id"],)).fetchone()
+            if not current or current[0] != "waiting":
+                return {"type": "runtime_cursor", "runtime_seq": event.get("runtime_seq", 0), "runtime_session_id": event.get("runtime_session_id", "")}
+            original = self.private.read().get("decision:" + decision["id"])
+            if original:
+                return {**event, **original, "runtime_decision": decision}
+        return event
+
     async def publish(self, worker: Worker, event: dict) -> None:
         durable = self.store.append(worker.session_id, event)
         for subscriber in tuple(worker.subscribers):
@@ -221,10 +259,15 @@ class RuntimeSupervisor:
                 kind = event.get("type")
                 if kind == "session_info":
                     worker.session_info = event
+                if kind == "runtime_waiting_for_locus":
+                    self.store.state(worker.session_id, "waiting_for_locus", event.get("reason", "Desktop capability unavailable"))
+                elif kind == "runtime_capability_ready":
+                    self.store.state(worker.session_id, "running" if worker.active_command else "idle")
                 if kind in DECISION_EVENTS | NATIVE_EVENTS:
                     decision = self.store.decision(worker.session_id, event)
+                    self.private.set("decision:" + decision["id"], event)
                     event["runtime_decision"] = {"id": decision["id"], "fingerprint": decision["fingerprint"]}
-                    self.store.state(worker.session_id, "waiting_for_locus" if kind in NATIVE_EVENTS else "waiting_approval")
+                    self.store.state(worker.session_id, "waiting_for_locus" if kind in NATIVE_EVENTS else "waiting_approval", "Locus is needed for " + str(event.get("tool") or kind) if kind in NATIVE_EVENTS else "Awaiting your decision")
                 if str(kind).startswith("evaluation_"):
                     self.service.emit(event)
                 if kind in {"turn_done", "evaluation_completed"}:
@@ -241,7 +284,9 @@ class RuntimeSupervisor:
         except asyncio.CancelledError:
             raise
         except Exception:
-            if not self.stopping:
+            pass
+        finally:
+            if not self.stopping and self.workers.get(worker.session_id) is worker:
                 self.store.interrupted(worker.session_id)
                 await self.publish(worker, {"type": "runtime_worker_interrupted", "message": "The worker stopped. Review saved progress before resuming."})
 
@@ -255,6 +300,8 @@ class RuntimeSupervisor:
     async def controller_left(self, worker: Worker) -> None:
         if worker.subscribers:
             return
+        self.store.broker_left(worker.session_id)
+        await self.send(worker, {"type": "runtime_desktop_disconnected", "runtime_broker": True})
         record = self.store.worker(worker.session_id)
         if record and not record["keep_running"]:
             self.store.state(worker.session_id, "paused")
@@ -278,7 +325,7 @@ class RuntimeSupervisor:
         await self.send(worker, {"type": "connector_action_result", "request_id": event.get("request_id"), "result": result})
 
     async def resolve(self, key: str, fingerprint: str, response: dict) -> None:
-        decisions = [row for row in self.store.decisions() if row["id"] == key]
+        decisions = [row for row in self.store.decisions(include_inflight=True) if row["id"] == key]
         if not decisions:
             raise ValueError("This decision is no longer current")
         event = decisions[0]["event"]
@@ -294,6 +341,7 @@ class RuntimeSupervisor:
         await self.send(worker, response)
         with self.store.runs._connect() as db:
             db.execute("UPDATE runtime_decisions SET state='resolved' WHERE id=? AND state='sending'", (key,))
+        self.private.set("decision:" + key, None)
         self.store.state(session_id, "running" if worker.active_command else "idle")
 
     async def stop_worker(self, session_id: str) -> None:
@@ -317,13 +365,35 @@ class RuntimeSupervisor:
             await worker.log_task
 
     async def detach(self) -> None:
+        was_direct = bool(self.direct_controller_seen)
         self.controller_seen = 0
+        self.direct_controller_seen = 0
         for session_id, worker in list(self.workers.items()):
+            self.store.broker_left(session_id)
+            await self.send(worker, {"type": "runtime_desktop_disconnected", "runtime_broker": True})
             record = self.store.worker(session_id)
             if not record or not record["keep_running"]:
                 if worker.active_command:
                     await self.send(worker, {"type": "interrupt", "reason": "app_shutdown"})
                 self.store.state(session_id, "paused")
+        if was_direct:
+            async def disconnect_remote(key):
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(self.remotes.request, key, "POST", "/api/runtime/detach", {}, timeout=5)
+            await asyncio.gather(*(disconnect_remote(row["id"]) for row in self.remotes.records()))
+
+    def relay_controller_presence(self):
+        now = time.monotonic()
+        if not self.direct_controller_seen or now - self.direct_controller_seen > 35 or now - self.remote_heartbeat_at < 15:
+            return
+        self.remote_heartbeat_at = now
+        async def heartbeat(key):
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(self.remotes.request, key, "POST", "/api/runtime/heartbeat", {"relayed": True}, timeout=5)
+        for row in self.remotes.records():
+            prior = self.remote_heartbeats.get(row["id"])
+            if prior is None or prior.done():
+                self.remote_heartbeats[row["id"]] = asyncio.create_task(heartbeat(row["id"]))
 
     async def coordinate(self) -> None:
         from .runtime_automation import RuntimeAutomation
@@ -332,12 +402,16 @@ class RuntimeSupervisor:
             try:
                 if self.controller_seen and time.monotonic() - self.controller_seen > 35:
                     await self.detach()
+                self.relay_controller_presence()
+                if self.paused:
+                    await asyncio.sleep(1)
+                    continue
                 await automation.tick()
                 active = sum(bool(worker.active_command) for worker in self.workers.values())
                 for record in self.store.workers():
                     if active >= self.limit:
                         break
-                    if record["state"] in {"paused", "interrupted", "waiting_for_locus", "waiting_approval"}:
+                    if record["state"] in {"paused", "interrupted", "waiting_for_locus", "waiting_approval", "waiting_for_account"}:
                         continue
                     if not self.controller_seen and not record["keep_running"]:
                         continue
@@ -352,10 +426,17 @@ class RuntimeSupervisor:
                            for other in self.workers.values() if other is not worker):
                         continue
                     item = commands[0]
+                    command = dict(self.private.read().get(f"command:{item['id']}", item["command"]))
+                    try:
+                        for path, body in command.pop("runtime_configuration", {}).items():
+                            if path in CONFIG_PATHS:
+                                await self.request(worker, "POST", path, body)
+                    except RuntimeError:
+                        self.store.state(worker.session_id, "waiting_for_account", "The selected account or model is unavailable. Review its configuration.")
+                        continue
                     self.store.command_state(item["id"], "sent")
                     worker.active_command = item["id"]
                     self.store.state(worker.session_id, "running")
-                    command = self.private.read().get(f"command:{item['id']}", item["command"])
                     if command.get("type") == "evaluation_run":
                         await self.request(worker, "POST", f"/api/evaluations/{identifier(command['suite_id'])}/run", command["body"])
                     else:

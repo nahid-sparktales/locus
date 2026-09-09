@@ -64,6 +64,19 @@ class ReusableCheckStore:
             rows = db.execute('SELECT payload FROM reusable_checks r WHERE workspace=? AND version=(SELECT MAX(version) FROM reusable_checks WHERE id=r.id) ORDER BY updated_at DESC', (str(Path(workspace).resolve()),)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def active(self, workspace):
+        """An unapproved edit cannot silently suspend an approved requirement."""
+        latest = self.list(workspace)
+        active = []
+        with self.runs._connect(readonly=True) as db:
+            for value in latest:
+                if value['state'] == 'disabled':
+                    continue
+                row = db.execute("SELECT payload FROM reusable_checks WHERE id=? AND state='approved' ORDER BY version DESC LIMIT 1", (value['id'],)).fetchone()
+                if row:
+                    active.append(json.loads(row[0]))
+        return active
+
     def get(self, key, version=None):
         with self.runs._connect(readonly=True) as db:
             row = db.execute('SELECT payload FROM reusable_checks WHERE id=? AND (? IS NULL OR version=?) ORDER BY version DESC LIMIT 1', (key, version, version)).fetchone()
@@ -127,7 +140,7 @@ class ReusableCheckStore:
             value.update(state='approved', approved_at=time.time())
         elif action == 'dismiss' and value['state'] == 'proposed':
             value['state'] = 'dismissed'
-        elif action == 'disable' and value['state'] == 'approved':
+        elif action == 'disable' and any(item['id'] == key for item in self.active(value['workspace_root'])):
             value['state'] = 'disabled'
         else:
             raise TaskStateError('That review action is unavailable for this version.')
@@ -179,11 +192,15 @@ class ReusableCheckStore:
         return existing
 
     def freeze(self, workspace, execution, *, agent_id='', selected=None):
-        values = self.list(workspace)
+        active_values = self.active(workspace)
+        values = active_values
         if selected is not None:
             if not isinstance(selected, list) or len(selected) > 64:
                 raise TaskStateError('Select at most 64 approved checks.')
             values = [self.get(item['id'], item['version']) for item in selected]
+            approved = {(item['id'], item['version']) for item in active_values}
+            if any((item['id'], item['version']) not in approved for item in values):
+                raise TaskStateError('A selected check changed or was disabled. Review its current approved version.')
             if any(value['workspace_root'] != str(Path(workspace).resolve()) for value in values):
                 raise TaskStateError('Selected checks belong to another project.')
         frozen = []

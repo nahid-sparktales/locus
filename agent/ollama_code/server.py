@@ -860,6 +860,8 @@ def _run_team_turn(
             run_store=svc.run_store,
             approve_dispatch=svc.request_dispatch_approval,
         )
+        from .model_usage import context_for
+        orchestrator.usage_context = context_for(core)
         orchestrator.goal_runtime = getattr(svc, "goal_runtime", None)
         orchestrator.strict_completion = bool(manifest.get("capsule") or orchestrator.goal_runtime)
         svc.active_orchestrator = orchestrator
@@ -1746,6 +1748,9 @@ def _parallel_writer_core(
     core.tool_ctx.memory_workspace = checkout.workspace_root
     core.codex_manager = svc.codex
     core.mcp.task_store = svc.run_store
+    from .model_usage import context_for
+    core.usage_owner_task_id = context_for(svc.core)["task_id"]
+    core.usage_store = svc.run_store
     core.mcp.context_provider = lambda: {
         "run_id": prepared.run_id,
         "job_id": job.id,
@@ -2282,6 +2287,16 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     mtype = msg.get("type")
     core = svc.core
     loop = asyncio.get_running_loop()
+    runtime_broker = bool(os.environ.get("LOCUS_RUNTIME_CHILD")) and msg.get("runtime_broker") is True
+    if mtype == "runtime_desktop_disconnected" and runtime_broker:
+        for target in [core, *svc._parallel_cores()]:
+            for capability in ("computer", "browser", "simulator", "notes", "identity"):
+                setattr(target.tool_registry, capability + "_enabled", False)
+            target.tool_registry.browser_history_enabled = False
+            target.tool_registry.browser_autofill_categories = set()
+        # Pending native actions remain durable; never infer cancellation or
+        # repeat their external effects when the broker disappears.
+        return
     if mtype == "set_question_capability":
         svc.configure_async_questions(msg.get("async_questions_v1") is True or msg.get("enabled") is True)
         svc.collaboration_enabled = msg.get("collaboration_v1") is True
@@ -2448,7 +2463,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                     "run_id": str(msg.get("run_id") or "")[:160],
                 })
     elif mtype == "set_identity_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, str(mtype), "Wait for the active turn to finish.")
             return
         enabled = msg.get("enabled") is True
@@ -2516,7 +2531,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if bridge:
             bridge.broadcast_guidance(text)
     elif mtype == "set_computer_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_computer_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
@@ -2532,7 +2547,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # intentionally ignored.
         svc.answer_computer(request_id, result)
     elif mtype == "set_simulator_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_simulator_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled")) and bool(msg.get("native_available"))
@@ -2554,7 +2569,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         result = raw if isinstance(raw, dict) else {"error": "invalid simulator result"}
         svc.answer_simulator(request_id, result)
     elif mtype == "set_browser_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_browser_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled"))
@@ -2586,7 +2601,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         # than raising: Stop, timeout and reconnect all race the broker.
         svc.answer_browser(request_id, result)
     elif mtype == "set_notes_control":
-        if svc.busy:
+        if svc.busy and not runtime_broker:
             _command_error(svc, "set_notes_control", "Wait for the active turn to finish.")
             return
         enabled = bool(msg.get("enabled"))
