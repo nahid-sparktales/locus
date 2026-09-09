@@ -605,6 +605,9 @@ def _run_user_turn(
                 "text": str(exc),
                 "solo_swarm_unavailable": True,
             })
+    if swarm is not None:
+        from .model_usage import context_for
+        swarm.usage_context = context_for(svc.core, "worker")
     svc.active_solo_swarm = swarm
     svc.core.tool_ctx.delegate_read_only = swarm.execute if swarm is not None else None
     svc.core.tool_registry.set_solo_swarm_enabled(swarm is not None)

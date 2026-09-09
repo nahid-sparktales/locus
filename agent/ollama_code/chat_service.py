@@ -174,6 +174,7 @@ class ChatService:
         self.active_evaluation_core: AgentCore | None = None
         self.current_task: TaskCheckout | None = None
         self.run_store = RunStore()
+        self.core.usage_store = self.run_store
         self.core.mcp.task_store = self.run_store
         self.core.mcp.context_provider = self.mcp_context
         self.recoverable_runs = self.run_store.mark_abandoned(

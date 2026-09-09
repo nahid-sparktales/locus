@@ -133,7 +133,8 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
     """Use the selected route, including the native route, with ordinary metering."""
     if core.provider != "chatgpt":
         reservation = core.goal_runtime.reserve() if core.goal_runtime is not None else None
-        response = core.client.chat_stream(core.model, messages, options=core.chat_options(),
+        from .model_usage import tracked_chat
+        response = tracked_chat(core, core.client, core.model, messages, purpose="compaction", options=core.chat_options(),
                                            should_stop=core._interrupt.is_set)
         if reservation:
             core.goal_runtime.settle(reservation, response)
@@ -170,8 +171,9 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
     options = dict(thread_id=thread, text=messages[1]["content"], model=core.model,
                    tool_handler=None, event_handler=observe, should_interrupt=core._interrupt.is_set)
     try:
-        result = (core.goal_runtime.run_native(manager.run_turn, **options)
-                  if core.goal_runtime is not None else manager.run_turn(**options))
+        from .model_usage import tracked_native
+        call = (lambda **kwargs: core.goal_runtime.run_native(manager.run_turn, **kwargs)) if core.goal_runtime is not None else manager.run_turn
+        result = tracked_native(core, call, purpose="compaction", **options)
         incomplete = incomplete or result.get("status") not in {None, "completed"} or core._interrupt.is_set()
     except Exception:
         incomplete = True

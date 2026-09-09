@@ -1107,11 +1107,15 @@ private struct EvaluationReportView: View {
             }
             HStack(spacing: 18) {
                 metric("Pass rate", "\(Int(report.summary.passRate * 100))%")
+                metric("Completed", report.summary.completionRate.map { "\(Int($0 * 100))%" } ?? "Unavailable")
+                metric("Rubric coverage", report.summary.rubricCoverage.map { "\(Int($0 * 100))%" } ?? "No rubric")
                 metric("Median", "\(report.summary.medianLatencyMilliseconds) ms")
                 metric("p95", "\(report.summary.p95LatencyMilliseconds) ms")
                 metric("Calls", report.summary.modelCalls.formatted())
                 metric("Tokens", (report.summary.promptTokens + report.summary.completionTokens).formatted())
             }
+            Text((report.summary.estimatedAPICost.map { $0.formatted(.currency(code: "USD")) + " estimated" } ?? "API estimate unavailable") + " · " + (report.summary.costCoverage ?? "Historical pricing unavailable")).font(.caption)
+            if let outcomes = report.summary.outcomes { Text(outcomes.keys.sorted().map { "\($0): \(outcomes[$0] ?? 0)" }.joined(separator: " · ")).font(.caption) }
             if !report.comparison.isEmpty {
                 Text("COMPARISON")
                     .font(.locus(size: 8, weight: .bold))
@@ -1119,7 +1123,7 @@ private struct EvaluationReportView: View {
                     .foregroundStyle(LocusTheme.muted)
                 ForEach(report.comparison) { comparison in
                     HStack {
-                        Text(comparison.configuration).font(.locus(size: 9, weight: .semibold))
+                        Text((comparison.label ?? "Historical configuration unavailable") + " · " + comparison.configuration.prefix(8)).font(.locus(size: 9, weight: .semibold))
                         Spacer()
                         Text("\(Int(comparison.passRate * 100))% pass")
                         Text("p95 \(comparison.p95LatencyMilliseconds) ms")
@@ -1405,7 +1409,20 @@ private struct AgentBehaviorEditor: View {
                     step: 256
                 )
             }
-            Text("Local and compatible provider APIs use these limits; managed providers may keep their own limits.")
+            Toggle("Task model-call limit", isOn: Binding(get: { draft.runtimePolicy.maxModelCalls != nil }, set: { draft.runtimePolicy.maxModelCalls = $0 ? 100 : nil }))
+            if draft.runtimePolicy.maxModelCalls != nil {
+                TextField("Maximum calls", value: Binding(get: { draft.runtimePolicy.maxModelCalls ?? 100 }, set: { draft.runtimePolicy.maxModelCalls = max($0, 1) }), format: .number)
+            }
+            Toggle("Task token limit", isOn: Binding(get: { draft.runtimePolicy.maxTotalTokens != nil }, set: { draft.runtimePolicy.maxTotalTokens = $0 ? 100_000 : nil }))
+            if draft.runtimePolicy.maxTotalTokens != nil {
+                TextField("Maximum tokens", value: Binding(get: { draft.runtimePolicy.maxTotalTokens ?? 100_000 }, set: { draft.runtimePolicy.maxTotalTokens = max($0, 1) }), format: .number)
+            }
+            Toggle("Estimated spending control", isOn: Binding(get: { draft.runtimePolicy.maxEstimatedUSD != nil }, set: { draft.runtimePolicy.maxEstimatedUSD = $0 ? 5 : nil }))
+            if draft.runtimePolicy.maxEstimatedUSD != nil {
+                TextField("Maximum estimated USD", value: Binding(get: { draft.runtimePolicy.maxEstimatedUSD ?? 5 }, set: { draft.runtimePolicy.maxEstimatedUSD = max($0, 0.01) }), format: .number)
+                Text("New API calls pause when pricing or unsettled usage prevents a meaningful estimate. Subscription usage is separate.").font(.caption)
+            }
+            Text("Managed providers are interrupted at the next usage boundary they report.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
         }

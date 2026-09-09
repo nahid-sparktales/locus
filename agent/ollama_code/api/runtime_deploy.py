@@ -164,13 +164,16 @@ async def export_snapshot(deployment_id: str, request: Request):
     try:
         descriptor = runtime.root / "imports" / (identifier(deployment_id) + ".json")
         record = json.loads(descriptor.read_text())
-        worker = runtime.store.worker(record["session_id"])
-        if worker and worker["state"] in {"running", "waiting_for_locus", "waiting_approval"}:
+        workers = [worker for worker in runtime.store.workers() if worker["workspace"] == record["workspace"]]
+        if any(worker["state"] in {"running", "waiting_for_locus", "waiting_approval"} for worker in workers):
             raise ValueError("Pause or finish this agent before retrieving a consistent snapshot")
         review = await invoke(snapshots.preview, Path(record["workspace"]))
         data = await invoke(snapshots.archive, review)
         runs = [run for run in runtime.service.run_store.list_runs(limit=500) if run.get("session_id") == record["session_id"] or run.get("workspace_root") == record["workspace"]]
-        return {"snapshot": review, "archive": base64.b64encode(data).decode(), "runs": runs,
+        from ..usage_ledger import UsageLedger
+        ledger = UsageLedger(runtime.service.run_store)
+        usage = [row for row in ledger.records() if row["context"].get("workspace") == record["workspace"] or row["session_id"] == record["session_id"]]
+        return {"snapshot": review, "archive": base64.b64encode(data).decode(), "runs": runs, "usage_records": usage, "accounting": ledger.summarize(usage),
                 "events": runtime.store.events(record["session_id"], limit=1000)}
     except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc

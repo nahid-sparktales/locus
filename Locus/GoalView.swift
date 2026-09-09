@@ -49,6 +49,9 @@ struct GoalCardView: View {
                     .font(.caption).foregroundStyle(LocusTheme.textSecondary)
                     .accessibilityIdentifier("goal.evidence")
                 }
+                if let accounting = goal.accounting, accounting.invocations > 0 {
+                    UsageAccountingView(accounting: accounting)
+                }
                 HStack(spacing: 12) {
                     Text(usage(goal)).font(.caption).foregroundStyle(LocusTheme.textTertiary)
                         .accessibilityIdentifier("goal.usage")
@@ -90,6 +93,7 @@ struct GoalCardView: View {
     }
 
     private func usage(_ goal: PersistentGoal) -> String {
+        if let accounting = goal.accounting, accounting.invocations > 0 { return accounting.activityText }
         let calls = goal.modelCallUsageAvailable
             ? goal.modelCallBudget.map { "\(goal.modelCalls)/\($0) calls" } ?? "\(goal.modelCalls) calls"
             : "Call usage unavailable"

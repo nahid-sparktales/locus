@@ -114,6 +114,7 @@ struct UsageSummary: Codable, Hashable {
         }
     }
 
+    let accounting: UsageAccounting?
     let since: Double
     let generatedAt: Double
     let readOnly: Bool
@@ -127,7 +128,7 @@ struct UsageSummary: Codable, Hashable {
     let expensiveRuns: [ExpensiveRun]
 
     enum CodingKeys: String, CodingKey {
-        case since, orchestration, evaluations, solo
+        case since, orchestration, evaluations, solo, accounting
         case generatedAt = "generated_at"
         case readOnly = "read_only"
         case byDay = "by_day"
@@ -236,6 +237,10 @@ struct UsageDashboardView: View {
                 if let usage = providerAccounts.activeChatGPTUsage, usage.status == "signed_in" {
                     chatGPTPlanUsage(usage)
                 }
+                if let accounting = summary.accounting, accounting.invocations > 0 {
+                    UsageAccountingView(accounting: accounting)
+                }
+                DisclosureGroup("Historical aggregate records · incomplete provenance") {
                 totals(summary)
                 if !summary.expensiveRuns.isEmpty {
                     expensiveRuns(summary.expensiveRuns)
@@ -263,6 +268,7 @@ struct UsageDashboardView: View {
                     }
                 }
             }
+                }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }

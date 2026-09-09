@@ -145,6 +145,7 @@ class SoloSwarmExecutor:
         virtual_tools: Callable[[], set[str]] | None = None,
         goal_runtime: Any = None,
     ) -> None:
+        self.usage_context = None
         self.route = route
         self.goal_runtime = goal_runtime
         self.emit = emit
@@ -391,9 +392,8 @@ class SoloSwarmExecutor:
             calls += 1
             try:
                 goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
-                response = self.route.client.chat_stream(
-                    self.route.model,
-                    messages,
+                from .model_usage import tracked_chat
+                response = tracked_chat(None, self.route.client, self.route.model, messages, purpose="worker", context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model, "route": getattr(self.route.client, "base_url", "")},
                     tools=schemas,
                     should_stop=self._worker_should_stop,
                 )
@@ -497,7 +497,8 @@ class SoloSwarmExecutor:
             return self._execute_task_tool(task, name, arguments, call_id)
 
         run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
-        run_native(
+        from .model_usage import tracked_native
+        tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": "chatgpt", "model": self.route.model},
             thread_id=thread_id,
             text=self._worker_prompt(task),
             model=self.route.model,

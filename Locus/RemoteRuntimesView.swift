@@ -39,6 +39,7 @@ struct RuntimeReturnedChange: Decodable, Identifiable {
 struct RuntimeReturnedResult: Decodable {
     let changes: [RuntimeReturnedChange]
     let runs: [OrchestrationRun]
+    let accounting: UsageAccounting?
 }
 
 struct RemoteRuntimesView: View {
@@ -96,6 +97,8 @@ struct RemoteRuntimesView: View {
                 ForEach(result.changes) { change in
                     Toggle("\(change.state.capitalized): \(change.path)", isOn: Binding(get: { selectedChanges.contains(change.path) }, set: { if $0 { selectedChanges.insert(change.path) } else { selectedChanges.remove(change.path) } }))
                 }
+                if let accounting = result.accounting { UsageAccountingView(accounting: accounting) }
+                ForEach(result.runs) { run in Text("\(run.id) · \(run.state)").font(.caption).textSelection(.enabled) }
                 Text("\(result.runs.count) saved runs. Local edits are checked before applying selected changes.").font(.caption)
                 Button("Apply selected changes") { perform {
                     let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(target.0)/deployments/\(target.1)/apply", body: ["selected_files": Array(selectedChanges)], as: [String: JSONValue].self)
@@ -247,7 +250,7 @@ struct DeployAgentView: View {
     private func deploy() async throws {
         guard let reviewed = review else { return }
         let value: RuntimeProjectReview = try await model.backend.post("/api/runtime/snapshots/preview", body: ["workspace": model.workspacePath, "selected_files": Array(selectedFiles)], timeout: 60, as: RuntimeProjectReview.self)
-        if Set(reviewed.files.map(\.path)) == selectedFiles && value.fingerprint != reviewed.fingerprint {
+        if value.fingerprint != reviewed.fingerprint {
             review = value; message = "Project files changed. Review the updated snapshot and deploy again."; return
         }
         var configuration: [String: Any] = ["provider": provider, "permissions": ["mode": permissionMode], "keep_running": keepRunning]

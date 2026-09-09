@@ -18,7 +18,7 @@ from websockets.asyncio.client import connect
 
 from .runtime_store import PrivateStore, RuntimeStore, identifier
 
-TURN_COMMANDS = {"user_message", "retry_last"}
+TURN_COMMANDS = {"user_message", "retry_last", "evaluation_run"}
 DECISION_EVENTS = {"permission_request", "question_required", "dispatch_plan_ready", "mcp_input_request"}
 NATIVE_EVENTS = {"computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "identity_context_request", "identity_action_request"}
 CONFIG_PATHS = {"/api/provider", "/api/permissions", "/api/config", "/api/images/provider"}
@@ -60,6 +60,8 @@ class RuntimeSupervisor:
         self.runtime_id = identity
 
     async def start(self) -> None:
+        from .usage_ledger import UsageLedger
+        UsageLedger(self.service.run_store).recover()
         # A prior process's sent work has an uncertain outcome. Never replay it.
         for row in self.store.workers():
             if row["state"] not in {"idle", "paused", "completed"} or self.store.commands(row["session_id"], "sent"):
@@ -223,7 +225,9 @@ class RuntimeSupervisor:
                     decision = self.store.decision(worker.session_id, event)
                     event["runtime_decision"] = {"id": decision["id"], "fingerprint": decision["fingerprint"]}
                     self.store.state(worker.session_id, "waiting_for_locus" if kind in NATIVE_EVENTS else "waiting_approval")
-                if kind == "turn_done":
+                if str(kind).startswith("evaluation_"):
+                    self.service.emit(event)
+                if kind in {"turn_done", "evaluation_completed"}:
                     if worker.active_command:
                         self.store.command_state(worker.active_command, "completed")
                     worker.active_command = ""
@@ -351,7 +355,11 @@ class RuntimeSupervisor:
                     self.store.command_state(item["id"], "sent")
                     worker.active_command = item["id"]
                     self.store.state(worker.session_id, "running")
-                    await self.send(worker, self.private.read().get(f"command:{item['id']}", item["command"]))
+                    command = self.private.read().get(f"command:{item['id']}", item["command"])
+                    if command.get("type") == "evaluation_run":
+                        await self.request(worker, "POST", f"/api/evaluations/{identifier(command['suite_id'])}/run", command["body"])
+                    else:
+                        await self.send(worker, command)
                     active += 1
             except asyncio.CancelledError:
                 raise

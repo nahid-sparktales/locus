@@ -13,6 +13,7 @@ from .core import AgentCore
 from .evaluations import (
     EvaluationError,
     EvaluationStore,
+    configuration_fingerprint,
     grade_case,
     summarize_results,
 )
@@ -44,16 +45,30 @@ def run_evaluation_suite(
     store = EvaluationStore(parent.run_store)
     parent.emit({
         "type": "evaluation_started", "evaluation_id": evaluation_id,
-        "suite_id": suite["id"], "case_count": len(suite["cases"]),
+        "suite_id": suite["id"], "case_count": len(suite["cases"]) * int(suite.get("repetitions", 1)),
     })
     parent.active_evaluation_id = evaluation_id
     try:
-        for index, case in enumerate(suite["cases"]):
-            if parent.core._interrupt.is_set():
-                break
+        repeated = [(repetition, case) for repetition in range(int(suite.get("repetitions", 1))) for case in suite["cases"]]
+        for index, (repetition, case) in enumerate(repeated):
             run_id = f"eval-{evaluation_id[:12]}-{index + 1}"
             task_id = run_id
-            result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id)
+            # Admission precedes the result foreign key, including setup failures.
+            parent.run_store.start_run(run_id, request=str(case["prompt"]), state="queued", workspace_root=str(suite["workspace_root"]), run_kind="evaluation")
+            requested = str(case.get("team_id") or "")
+            selected = manifests.get(requested) or (next(iter(manifests.values())) if not requested and len(manifests) == 1 else manifest)
+            try:
+                frozen = configuration_fingerprint(parent.core, case, selected)
+                result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id, frozen)
+            except Exception as exc:
+                result_id = store.start_result(str(suite["id"]), str(case["id"]), run_id)
+                parent.run_store.set_state(run_id, "failed")
+                store.finish_result(result_id, {"state": "failed", "execution_outcome": "failed", "failure_category": "configuration", "error": str(exc)})
+                continue
+            if parent.core._interrupt.is_set():
+                parent.run_store.set_state(run_id, "interrupted")
+                store.finish_result(result_id, {"state": "interrupted", "execution_outcome": "interrupted", "failure_category": "cancelled_before_start", "repetition": repetition + 1})
+                continue
             started = time.monotonic()
             parent.emit({
                 "type": "evaluation_case_started", "evaluation_id": evaluation_id,
@@ -77,11 +92,12 @@ def run_evaluation_suite(
                 )
                 task.state = "running"
                 task.save()
+                import copy
                 evaluation_core = AgentCore(
                     model=parent.core.model,
                     cwd=task.execution_path,
                     skip_permissions=True,
-                    config=parent.core.config,
+                    config=copy.deepcopy(parent.core.config),
                 )
                 parent.active_evaluation_core = evaluation_core
                 evaluation_core.tool_registry.computer_enabled = False
@@ -103,6 +119,7 @@ def run_evaluation_suite(
                 evaluation_service.codex = parent.codex
                 evaluation_service.core.codex_manager = parent.codex
                 evaluation_service.run_store = parent.run_store
+                evaluation_service.core.usage_store = parent.run_store
                 evaluation_service.core.mcp.task_store = parent.run_store
                 evaluation_service.current_task = task
                 # The per-case service records this case's turn_done spend into
@@ -148,6 +165,9 @@ def run_evaluation_suite(
                 timeout_timer = threading.Timer(timeout_seconds, timeout_case)
                 timeout_timer.daemon = True
                 timeout_timer.start()
+                setup_ms = max(int((time.monotonic() - started) * 1000), 0)
+                execution_started = time.monotonic()
+                queue_ms = 0
                 if target == "solo":
                     parent.run_store.start_run(
                         run_id,
@@ -161,6 +181,7 @@ def run_evaluation_suite(
                         execution_environment="worktree",
                     )
                     evaluation_service.active_run_id = run_id
+                    evaluation_core.tool_ctx.memory_run_id = run_id
                     evaluation_core.client = parent.core.client
                     evaluation_core.provider = parent.core.provider
                     evaluation_core.host = parent.core.host
@@ -175,9 +196,11 @@ def run_evaluation_suite(
                         "agent_id": "solo-evaluation",
                         "active_leases": GLOBAL_MODEL_SCHEDULER.active_count,
                     })
+                    queued_at = time.monotonic()
                     with GLOBAL_MODEL_SCHEDULER.lease(
                         run_id, evaluation_core._should_stop_stream,
                     ) as lease_id:
+                        queue_ms = max(int((time.monotonic() - queued_at) * 1000), 0)
                         parent.emit({
                             "type": "scheduler_lease_acquired", "run_id": run_id,
                             "agent_id": "solo-evaluation", "lease_id": lease_id,
@@ -207,12 +230,13 @@ def run_evaluation_suite(
                     solo_reason = str(evaluation_core.last_turn_result.get("reason") or "")
                     parent.run_store.set_state(
                         run_id,
-                        "completed" if solo_reason in {"complete", "max_iterations"} else "failed",
+                        "completed" if solo_reason == "complete" else "interrupted" if solo_reason in {"interrupted", "cancelled"} else "failed",
                     )
                     evaluation_service.active_run_id = None
                 else:
                     team_runner(evaluation_service, str(case["prompt"]), case_manifest)
                 run = parent.run_store.run(run_id) or {}
+                verification_started = time.monotonic()
                 patch_text, current_tree = task.patch()
                 changed = _evaluation_changed_paths(task, current_tree)
                 output = next((
@@ -223,7 +247,7 @@ def run_evaluation_suite(
                 grade = grade_case(case, task.execution_path, output, changed)
                 succeeded = str(run.get("state") or "") == "completed"
                 rubric_result: dict[str, Any] | None = None
-                if grade["deterministic_passed"] and str(case.get("rubric") or "").strip():
+                if succeeded and not timed_out.is_set() and grade["deterministic_passed"] and str(case.get("rubric") or "").strip():
                     judge_id = str(case.get("judge_profile_id") or "")
                     if judge_id and case_manifest.get("profiles"):
                         _, judge_team, judge_profiles, _ = parse_manifest(case_manifest)
@@ -240,9 +264,10 @@ def run_evaluation_suite(
                             run_id, judge, judge_team.budget,
                             case=case, output=output, diff_text=patch_text, evidence=grade,
                         )
-                rubric_passed = rubric_result is None or (
+                rubric_required = bool(str(case.get("rubric") or "").strip())
+                rubric_passed = (not rubric_required) or (rubric_result is not None and (
                     float(rubric_result["score"]) >= float(case.get("passing_score") or 80)
-                )
+                ))
                 passed = (
                     not timed_out.is_set()
                     and succeeded
@@ -255,14 +280,25 @@ def run_evaluation_suite(
                     or evaluation_core.last_turn_result.get("model_calls")
                     or 0
                 )
+                from .usage_ledger import UsageLedger
+                accounting = UsageLedger(parent.run_store).summary(run_id=run_id)
+                outcome = "timed_out" if timed_out.is_set() else "interrupted" if parent.core._interrupt.is_set() or run.get("state") == "interrupted" else "budget_exhausted" if evaluation_core.last_turn_result.get("reason") in {"max_iterations", "budget_exhausted", "model_call_limit"} else "completed" if succeeded else "failed"
+                state = "ungraded" if outcome == "completed" and rubric_required and rubric_result is None else "passed" if passed else "failed" if outcome == "completed" else outcome
                 value = store.finish_result(result_id, {
-                    "state": "passed" if passed else "failed",
+                    "state": state, "execution_outcome": outcome, "repetition": repetition + 1,
+                    "rubric_required": rubric_required,
+                    "setup_ms": setup_ms, "queue_ms": queue_ms,
+                    "execution_ms": max(int((verification_started - execution_started) * 1000) - queue_ms, 0),
+                    "verification_ms": max(int((time.monotonic() - verification_started) * 1000), 0),
+                    "environment": {"platform": __import__("platform").platform(), "python": __import__("sys").version.split()[0], "baseline_tree": task.baseline_tree, "runtime_protocol": 1},
+                    "accounting": accounting,
+                    "estimated_api_cost": accounting["estimated_api_cost"], "cost_coverage": accounting["cost_coverage"],
                     **grade,
                     "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
                     "model_calls": model_calls,
                     "prompt_tokens": evaluation_core.total_prompt_tokens,
                     "completion_tokens": evaluation_core.total_completion_tokens,
-                    "estimated_cost": float(usage.get("estimated_cost") or 0),
+                    "estimated_cost": accounting["estimated_api_cost"],
                     "output": output,
                     "rubric_score": rubric_result["score"] if rubric_result else None,
                     "rubric_reason": rubric_result["reason"] if rubric_result else "",
@@ -280,7 +316,9 @@ def run_evaluation_suite(
                         for attempt in run.get("attempts") or []
                     ),
                     "failure_category": "" if passed else (
+                        "missing_judgment" if state == "ungraded" else
                         "timeout" if timed_out.is_set() else
+                        "budget_exhausted" if outcome == "budget_exhausted" else
                         "provider_or_runtime" if not succeeded else
                         "deterministic_assertion" if not grade["deterministic_passed"] else
                         "subjective_rubric"
@@ -318,10 +356,10 @@ def run_evaluation_suite(
                     "run_id": run_id, "result": value,
                 })
             except (
-                EvaluationError, InterruptedError, WorktreeError, OrchestrationError, OSError,
+                EvaluationError, InterruptedError, WorktreeError, OrchestrationError, OSError, ValueError, RuntimeError,
             ) as exc:
                 value = store.finish_result(result_id, {
-                    "state": "failed", "error": str(exc),
+                    "state": "timed_out" if timed_out.is_set() else "interrupted" if isinstance(exc, InterruptedError) else "failed", "error": str(exc),
                     "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
                     "target": str(case.get("target") or "team"),
                     "team_id": str(case.get("team_id") or ""),
@@ -333,6 +371,9 @@ def run_evaluation_suite(
                     "run_id": run_id, "result": value,
                 })
             finally:
+                current_run = parent.run_store.run(run_id) or {}
+                if current_run.get("state") in {"queued", "running", "dispatching"}:
+                    parent.run_store.set_state(run_id, "interrupted" if parent.core._interrupt.is_set() else "failed")
                 if timeout_timer is not None:
                     timeout_timer.cancel()
                 parent.active_evaluation_core = None

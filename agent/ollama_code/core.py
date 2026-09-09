@@ -2213,8 +2213,9 @@ class AgentCore:
                     parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
                 ):
                     kwargs.pop("client_message_id")
-            completed = (self.goal_runtime.run_native(manager.run_turn, usage_baseline=(self._chatgpt_thread_total_input, self._chatgpt_thread_total_output), **kwargs)
-                         if self.goal_runtime is not None else manager.run_turn(**kwargs))
+            from .model_usage import tracked_native
+            call = (lambda **options: self.goal_runtime.run_native(manager.run_turn, usage_baseline=(self._chatgpt_thread_total_input, self._chatgpt_thread_total_output), **options)) if self.goal_runtime is not None else manager.run_turn
+            completed = tracked_native(self, call, **kwargs)
             if isinstance(completed, dict):
                 if completed.get("status") == "failed":
                     failure = completed.get("error") or {}
@@ -3735,7 +3736,8 @@ class AgentCore:
             if configured_timeout is not None and previous_timeout is not None:
                 self.client.timeout = configured_timeout
             try:
-                resp = self.client.chat_stream(
+                from .model_usage import tracked_chat
+                resp = tracked_chat(self, self.client, purpose=("verification" if getattr(self, "_verification_running", False) else "retry" if not allow_image_retry or not allow_overflow_retry else "planning" if getattr(self, "agent_mode", "work") == "plan" else "worker"),
                     model=self.model,
                     messages=self._request_messages() + list(extra_messages or []),
                     tools=(

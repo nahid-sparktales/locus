@@ -77,3 +77,43 @@ Do not release a package before checking its helper version, architecture, runti
 imports, isolated account login and a model call on the target host. Signed macOS
 background-helper registration must also be checked from a signed direct-download
 build; ad hoc compile checks do not establish OS registration behavior.
+
+## Invocation accounting and evaluations (stage 3)
+
+Schema 16 adds one persistent invocation ledger, immutable price provenance,
+central task limits, concurrent spend reservations and durable native usage
+cursors. Worker, planning, review, retry and compaction calls enter the ledger
+before execution. Unknown prices, interrupted usage, local execution and plan
+subscriptions remain distinct. API estimates use exclusive cache/output token
+categories; reasoning is part of output. Anthropic cache writes retain 5-minute,
+1-hour and unknown durations. Unknown durations retain only a partial known
+subtotal. Reported USD tool charges are retained with their invocation; unpriced
+server-tool activity makes coverage partial. Replayed cumulative native usage is
+deduplicated across worker recreation. Task limits cannot reset consumed usage.
+
+The dashboard's invocation totals, run records, goal/capsule detail, evaluation
+results and remote exports derive from this ledger. Historical aggregate records
+remain separately readable. Exact direct-endpoint standard prices were checked
+against OpenAI and Anthropic's official pricing pages on 2026-09-09. Unsupported
+models, routes, tiers and large requests remain unpriced. These controls are
+estimates, not a guarantee about a provider invoice. Native helpers expose their
+internal calls after execution; their token/call interruption occurs at the next
+reported boundary. No per-task subscription dollar billing is inferred.
+
+Evaluations now enter the run store before the result foreign key is created.
+The overlapping admission fix in the original checkout was inspected and
+reimplemented here without modifying or copying its unfinished recovery system.
+Immutable fingerprints include route/model, team, prompts, tools, budgets, checks
+and baseline. Repetitions replay the saved baseline. Required missing judges,
+budget exhaustion, interruption and runtime failures cannot pass. Summaries count
+incomplete results and expose completion, rubric coverage, outcome, latency and
+cost coverage. Historical configurations are never silently grouped together.
+
+Stage 3 validation: 265 backend regression checks passed; after correcting the
+new fixture's explicit concurrency budget, all 24 accounting/evaluation checks
+passed, including three real supervisor/worker/API scenarios (pass, missing judge,
+exhausted budget), identical-baseline repetitions, cache normalization, concurrent
+reservations and native cumulative replay. Native Debug build passed. All provider
+responses in these tests are deterministic fixtures. Real provider prices/charges,
+account expiration, signed installation and disposable remote hosts remain live
+release gates. No integration into the original checkout has occurred.

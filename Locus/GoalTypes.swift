@@ -24,6 +24,7 @@ enum GoalStatus: String, Codable, Hashable {
 /// The backend owns this session-scoped record. Execution contains saved route
 /// identifiers and behavior, never account credentials.
 struct PersistentGoal: Codable, Hashable, Identifiable {
+    var accounting: UsageAccounting? = nil
     var id: String
     var sessionID: String
     var objective: String
@@ -65,6 +66,7 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
         case acceptanceChecks = "acceptance_checks", evidenceIDs = "evidence_ids"
         case sessionID = "session_id", nextStep = "next_step"
         case modelCallBudget = "model_call_budget", tokenBudget = "token_budget"
+        case accounting
         case modelCalls = "model_calls", promptTokens = "prompt_tokens", completionTokens = "completion_tokens"
         case tokenUsageAvailable = "token_usage_available", modelCallUsageAvailable = "model_call_usage_available"
         case currentRunID = "current_run_id", pendingUserInput = "pending_user_input"
@@ -83,6 +85,7 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        accounting = try c.decodeIfPresent(UsageAccounting.self, forKey: .accounting)
         id = try c.decode(String.self, forKey: .id)
         sessionID = try c.decode(String.self, forKey: .sessionID)
         objective = try c.decode(String.self, forKey: .objective)

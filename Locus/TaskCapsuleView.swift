@@ -781,6 +781,7 @@ struct TaskCapsuleView: View {
                     }
                     Spacer(minLength: 0)
                 }
+                if let accounting = capsule.attempts.first?.accounting, accounting.invocations > 0 { UsageAccountingView(accounting: accounting) }
                 if let reason = capsule.attempts.first?.reason, !reason.isEmpty {
                     Text(reason).font(.caption).foregroundStyle(LocusTheme.textSecondary)
                 }

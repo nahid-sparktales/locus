@@ -425,6 +425,7 @@
 		4ECEFA778E1D5AD0A82705FA /* AppModel+WorkspaceProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF7C32F369DF7295D8B8077 /* AppModel+WorkspaceProfiles.swift */; };
 		4FBFD784FC4BA11066C9239A /* WalletConnectDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615928980C39345E4A0DE168 /* WalletConnectDriver.swift */; };
 		4FC230C8586C4286AAA377E1 /* AppModel+OrchestrationRunsFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3E3D606BE661E35AB2E9606 /* AppModel+OrchestrationRunsFacade.swift */; };
+		5016C6DABC21463130BF7E6D /* UsageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */; };
 		505AD1704AEFE3A4DF830600 /* ComposerWorkflowPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA782425EED25AF7E54297D6 /* ComposerWorkflowPopover.swift */; };
 		50B4B8A6C955F6356428F4A0 /* AppModel+IdentityVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1BFE5AA4712B9E94D6C4EC /* AppModel+IdentityVault.swift */; };
 		50C5929E50BECE89ECAE55D9 /* SlashCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78188AFFEC80498E68C2EE3A /* SlashCommands.swift */; };
@@ -486,6 +487,7 @@
 		5D9B3879DF4B0E19A96FBE73 /* WalletSuiCanonicalTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 206B1FB753D6028103FCB782 /* WalletSuiCanonicalTransaction.swift */; };
 		5DC381C1DBE41A8BB825F403 /* WalletConnectionProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87B232DBDE9D6E9C5B3189A2 /* WalletConnectionProtocol.swift */; };
 		5DDBF7DEEC0F9223CE9FEFD8 /* ChatExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52BF62D925A367764AAAEE9 /* ChatExportRenderer.swift */; };
+		5E1FA9DAF04265A51682886F /* UsageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */; };
 		5FD401B0C42C55F77F9BC370 /* AppModel+Onboarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DB7D5C3B690107D4BF13186 /* AppModel+Onboarding.swift */; };
 		5FEA8EF1B91BD968D37A3C2B /* WorkspaceBrowserModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E836C36B3D6ACC08E40F62B1 /* WorkspaceBrowserModel.swift */; };
 		5FFFA357C6439DB81AE80F97 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD24095E0EA6433F8AF94214 /* ScheduleModels.swift */; };
@@ -822,6 +824,7 @@
 		AA76D00EDD6D70C5A259F4BF /* IdentityVaultDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = B753A7B8BD43A11BD1D0D5A7 /* IdentityVaultDocuments.swift */; };
 		AAB4305047AB7D8E83D21E5A /* SoloHelperControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7EEDBAAD24F9F97D28B661 /* SoloHelperControlsView.swift */; };
 		AAC35DCD4F15CD43EB612540 /* ThirdPartyNotices.md in Resources */ = {isa = PBXBuildFile; fileRef = 0B46A04DBC2F15987A189E7A /* ThirdPartyNotices.md */; };
+		AAD081BF7FABD8D97DE1BA91 /* UsageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */; };
 		AAD0DA38D1058E2C52EE1EF2 /* AppModel+ToastFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FCAE1E8B009CE43FD465A3 /* AppModel+ToastFacade.swift */; };
 		AB19E8F8075F643088C9FE75 /* MessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA164EE10426EF2AD4E606A /* MessageContent.swift */; };
 		AB5004C25B3738398857CCEF /* ToastCenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BAF351A940527DD975AFC95 /* ToastCenterTests.swift */; };
@@ -920,6 +923,7 @@
 		BC9738553DCD959B167A18E8 /* TranscriptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED943A053F7F7F66F864BD69 /* TranscriptModels.swift */; };
 		BCA20C1A75AC22C182B318CB /* AppModel+ImageGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 633FA68C21AF424C79BEF512 /* AppModel+ImageGeneration.swift */; };
 		BD22870FF3C9CB574BD4F218 /* IdentityVaultModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFBAF4C65D6F749E231D50D /* IdentityVaultModel.swift */; };
+		BD5D6B1E635FA0B3FBB5153D /* UsageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */; };
 		BD91203025F291F9DE16135F /* TeamRunLiveModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DCAB1A0871266055F11C11 /* TeamRunLiveModelTests.swift */; };
 		BDA0A290C394093492003EB4 /* AppModel+InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D5728B8989537F3360FE252 /* AppModel+InspectorLayout.swift */; };
 		BDCBA388E8EEF890FD2B55A7 /* WalletReleaseActivation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A999C66F8CAAF92D26A8DD /* WalletReleaseActivation.swift */; };
@@ -1665,6 +1669,7 @@
 		C54FE5D2A0326696C2F35B14 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeCoordinator.swift; sourceTree = "<group>"; };
 		C71040196A923A3C90608E39 /* RemoteRuntimesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimesView.swift; sourceTree = "<group>"; };
+		C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAccounting.swift; sourceTree = "<group>"; };
 		C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimesSettingsView.swift; sourceTree = "<group>"; };
 		CA782425EED25AF7E54297D6 /* ComposerWorkflowPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerWorkflowPopover.swift; sourceTree = "<group>"; };
 		CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutputWatcher.swift; sourceTree = "<group>"; };
@@ -2237,6 +2242,7 @@
 				8C8089379A9D8E1CAC5D5D1F /* TranscriptSearchModel.swift */,
 				418F31828D4EE1F1E605A01F /* TranscriptSelectionGeometry.swift */,
 				15FBD1A1C4963CEA3D54440E /* TranscriptSelectionStore.swift */,
+				C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */,
 				A5CC6B3A08FFA65A82439731 /* UsageDashboardView.swift */,
 				252379D65C8C61E943C94FE4 /* VoiceCloudClient.swift */,
 				8FF0FF1E4DCB449530C8ACC2 /* VoiceComposerControls.swift */,
@@ -3296,6 +3302,7 @@
 				16F4C550E7CCBCF722C96E48 /* TranscriptSearchModel.swift in Sources */,
 				0560D2915AA749ECCDA3A2C0 /* TranscriptSelectionGeometry.swift in Sources */,
 				F944EB74AB7A6DDE91D0504A /* TranscriptSelectionStore.swift in Sources */,
+				5016C6DABC21463130BF7E6D /* UsageAccounting.swift in Sources */,
 				E57CA891BFB049D7F2B53872 /* UsageDashboardView.swift in Sources */,
 				A9815ADD31E61246D8AD55C0 /* VoiceCloudClient.swift in Sources */,
 				F013DC1250C99CFB6D6BA3A3 /* VoiceComposerControls.swift in Sources */,
@@ -3664,6 +3671,7 @@
 				9B809359453C0BE9E930B7D6 /* TranscriptSearchModel.swift in Sources */,
 				DA7A4D8766795F0B3E069A2E /* TranscriptSelectionGeometry.swift in Sources */,
 				6BDF0861929C613C6783F77F /* TranscriptSelectionStore.swift in Sources */,
+				BD5D6B1E635FA0B3FBB5153D /* UsageAccounting.swift in Sources */,
 				6FDB5F37C36EE733A8A7DD43 /* UsageDashboardView.swift in Sources */,
 				8AE7B8C82DF5F26403DC5A44 /* VoiceCloudClient.swift in Sources */,
 				C2C3D86073FE6CE86ED3E66D /* VoiceComposerControls.swift in Sources */,
@@ -3904,6 +3912,7 @@
 				6C73699442C809810E8C8A70 /* TranscriptSearchModel.swift in Sources */,
 				BBDE84D324F6199CD80D6E0F /* TranscriptSelectionGeometry.swift in Sources */,
 				C5ACDAE5CF08E05BD60EFDD3 /* TranscriptSelectionStore.swift in Sources */,
+				5E1FA9DAF04265A51682886F /* UsageAccounting.swift in Sources */,
 				C702DDBC94CDC2241F409353 /* UsageDashboardView.swift in Sources */,
 				6A0B3DA6370E8931310E78CA /* VoiceCloudClient.swift in Sources */,
 				93DF1D57F039E58BED2463F6 /* VoiceComposerControls.swift in Sources */,
@@ -4281,6 +4290,7 @@
 				96C67088DC7789B1C74D7E69 /* TranscriptSearchModel.swift in Sources */,
 				3BF6907C2A05F414E6B4DFDC /* TranscriptSelectionGeometry.swift in Sources */,
 				635E3CABE47AC408883F7753 /* TranscriptSelectionStore.swift in Sources */,
+				AAD081BF7FABD8D97DE1BA91 /* UsageAccounting.swift in Sources */,
 				97847072BB411D0A4971C58A /* UsageDashboardView.swift in Sources */,
 				CABE794E7D140D95CD83BE85 /* VoiceCloudClient.swift in Sources */,
 				7D9980765FBEA8A7425101F9 /* VoiceComposerControls.swift in Sources */,

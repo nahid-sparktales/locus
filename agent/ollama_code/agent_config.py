@@ -80,6 +80,9 @@ class RuntimePolicy:
     max_tool_iterations: int | None = None
     timeout_seconds: int | None = None
     max_output_tokens: int | None = None
+    max_model_calls: int | None = None
+    max_total_tokens: int | None = None
+    max_estimated_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,10 @@ class AgentConfiguration:
                 return None
             return _bounded_int(value, lower, lower, upper)
 
+        import math
+        spending = runtime_raw.get("max_estimated_usd")
+        if spending is not None and (isinstance(spending, bool) or not isinstance(spending, (int, float)) or not math.isfinite(spending) or spending <= 0):
+            raise ValueError("Estimated spending limit must be a positive finite number")
         return cls(
             version=1,
             display_name=_text(raw.get("display_name"), fallback_name, 64) or fallback_name,
@@ -188,6 +195,9 @@ class AgentConfiguration:
                 max_tool_iterations=optional_int("max_tool_iterations", 1, 100),
                 timeout_seconds=optional_int("timeout_seconds", 30, 3_600),
                 max_output_tokens=optional_int("max_output_tokens", 256, 128_000),
+                max_model_calls=optional_int("max_model_calls", 1, 100_000),
+                max_total_tokens=optional_int("max_total_tokens", 1, 1_000_000_000),
+                max_estimated_usd=spending,
             ),
         )
 

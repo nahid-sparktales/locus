@@ -50,7 +50,7 @@ from .schedules import (
     timezone,
 )
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EVENT_JSON_BYTES = 512 * 1024
@@ -743,6 +743,11 @@ class RunStore(AgentInspectorStore):
                 from .runtime_store import initialize_schema as initialize_runtime_schema
                 initialize_runtime_schema(connection)
                 connection.execute("UPDATE schema_meta SET version=15 WHERE singleton=1")
+                connection.commit()
+            if version < 16:
+                from .usage_ledger import initialize_schema as initialize_usage_schema
+                initialize_usage_schema(connection)
+                connection.execute("UPDATE schema_meta SET version=16 WHERE singleton=1")
                 connection.commit()
             if not os.environ.get("LOCUS_RUNTIME_COORDINATOR") and not os.environ.get("LOCUS_RUNTIME_CHILD"):
                 # A model turn that died with the previous app process is never
@@ -3444,9 +3449,8 @@ class RunStore(AgentInspectorStore):
             ),
         }
 
-    @staticmethod
-    def _run_row(row: sqlite3.Row) -> dict[str, Any]:
-        return {
+    def _run_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        value = {
             "id": row["id"], "session_id": row["session_id"], "team_id": row["team_id"],
             "team_name": row["team_name"], "worker_id": row["worker_id"],
             "workspace_root": row["workspace_root"], "execution_path": row["execution_path"],
@@ -3473,6 +3477,15 @@ class RunStore(AgentInspectorStore):
             "occurrence_id": row["occurrence_id"],
             "scheduled_for": row["scheduled_for"],
         }
+
+        from .usage_ledger import UsageLedger
+        accounting = UsageLedger(self).summary(run_id=row["id"])
+        value["accounting"] = accounting
+        value["usage_source"] = "ledger" if accounting["invocations"] else "historical_aggregate"
+        if accounting["invocations"]:
+            value["usage"] = {**value["usage"], "model_calls": accounting["model_calls"], "metered_tokens": accounting["total_tokens"],
+                              "estimated_cost": accounting["estimated_api_cost"], "cost_coverage": accounting["cost_coverage"]}
+        return value
 
     def queue_run(
         self, run_id: str, *, session_id: str, message_id: str = "",
@@ -3934,10 +3947,14 @@ class RunStore(AgentInspectorStore):
                    ORDER BY estimated_cost DESC, created_at DESC LIMIT 10""",
                 (since,),
             ).fetchall()]
+        from .usage_ledger import UsageLedger
+        accounting = UsageLedger(self).dashboard(since)
         by_agent = [
             {**row, "local": bool(row.get("local"))} for row in by_agent
         ]
         return {
+            "accounting": accounting,
+            "aggregate_provenance": "Historical aggregates; use accounting for invocation totals",
             "since": since,
             "generated_at": time.time(),
             "read_only": self.read_only,

@@ -129,8 +129,9 @@ def test_result_summary_reports_pass_rate_and_tail_latency() -> None:
         {"state": "failed", "duration_ms": 300, "rubric_score": 70, "model_calls": 1},
         {"state": "running", "duration_ms": 10},
     ])
-    assert summary["cases"] == 2
-    assert summary["pass_rate"] == 0.5
+    assert summary["cases"] == 3
+    assert summary["pass_rate"] == pytest.approx(1 / 3)
+    assert summary["completion_rate"] == pytest.approx(2 / 3)
     assert summary["average_rubric_score"] == 80
     assert summary["p95_latency_ms"] == 300
 
@@ -159,8 +160,8 @@ def test_only_old_successful_unpinned_fixtures_are_cleanup_candidates(tmp_path) 
 
 def test_comparison_groups_solo_and_team_metrics_and_failures() -> None:
     comparison = compare_results([
-        {"target": "solo", "state": "passed", "duration_ms": 100, "model_calls": 1},
-        {"target": "team", "team_id": "a", "state": "failed", "duration_ms": 300,
+        {"configuration_id": "solo", "target": "solo", "state": "passed", "duration_ms": 100, "model_calls": 1},
+        {"configuration_id": "team:a", "target": "team", "team_id": "a", "state": "failed", "duration_ms": 300,
          "model_calls": 3, "retries": 1, "failure_category": "deterministic_assertion"},
     ])
 
@@ -208,3 +209,24 @@ def test_git_evaluation_suite_captures_and_cleans_immutable_fixture(
     assert worktrees.TaskCheckoutStore.load(fixture_id) is None
     assert worktrees.TaskCheckoutStore.load(cloned_fixture_id) is not None
     assert store.delete_suite(cloned["id"])
+
+
+def test_configuration_identity_changes_with_model_team_and_checks(tmp_path):
+    from ollama_code.core import AgentCore
+    from ollama_code.evaluations import configuration_fingerprint
+    core = AgentCore(cwd=str(tmp_path), model='first', config={})
+    case = {'target': 'solo', 'prompt': 'work', 'assertions': []}
+    first = configuration_fingerprint(core, case, {})
+    assert first == configuration_fingerprint(core, case, {})
+    core.model = 'second'
+    assert first['configuration_id'] != configuration_fingerprint(core, case, {})['configuration_id']
+    changed = configuration_fingerprint(core, case, {'team': {'name': 'A'}, 'profiles': [{'instructions': 'new'}]})
+    assert changed['configuration_id'] != configuration_fingerprint(core, case, {'team': {'name': 'A'}})['configuration_id']
+    assert changed['configuration_id'] != configuration_fingerprint(core, {**case, 'assertions': [{'kind': 'path_exists', 'path': 'x'}]}, {'team': {'name': 'A'}, 'profiles': [{'instructions': 'new'}]})['configuration_id']
+    core.mcp.close()
+
+
+def test_historical_configurations_are_never_coalesced():
+    results = compare_results([{'target': 'solo', 'state': 'passed'}, {'target': 'solo', 'state': 'failed'}])
+    assert len(results) == 2
+    assert all(row['historical'] for row in results)

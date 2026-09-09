@@ -801,6 +801,8 @@ class RemoteClient:
     ) -> None:
         usage = chunk.get("usage") or {}
         if usage:
+            resp.provider_fields["usage"] = usage
+            resp.provider_fields["usage_family"] = "openai"
             resp.prompt_eval_count = int(usage.get("prompt_tokens") or 0)
             resp.eval_count = int(usage.get("completion_tokens") or 0)
         for choice in chunk.get("choices") or []:
@@ -858,7 +860,9 @@ def _consume_anthropic_event(
     event_type = event.get("type")
     if event_type == "message_start":
         usage = (event.get("message") or {}).get("usage") or {}
-        resp.prompt_eval_count = int(usage.get("input_tokens") or 0)
+        resp.provider_fields["usage"] = usage
+        resp.provider_fields["usage_family"] = "anthropic"
+        resp.prompt_eval_count = sum(int(usage.get(key) or 0) for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
         return
     if event_type == "content_block_start":
         block = event.get("content_block") or {}
@@ -951,6 +955,7 @@ def _consume_anthropic_event(
         return
     if event_type == "message_delta":
         usage = event.get("usage") or {}
+        resp.provider_fields["usage"] = {**resp.provider_fields.get("usage", {}), **usage}
         if usage.get("output_tokens") is not None:
             resp.eval_count = int(usage.get("output_tokens") or 0)
         stop = (event.get("delta") or {}).get("stop_reason")
