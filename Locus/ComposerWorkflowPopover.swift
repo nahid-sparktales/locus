@@ -20,6 +20,7 @@ struct ComposerWorkflowPopover: View {
 
     private var availableChoices: [Choice] {
         var choices: [Choice] = [.mode(.work), .mode(.plan), .mode(.grill)]
+        if !model.isIdentityTask { choices.insert(.mode(.duo), at: 2) }
         if model.canStartGoal { choices.append(.goal) }
         if !model.isIdentityTask { choices.append(.capsules) }
         choices.append(.teams)
@@ -31,6 +32,7 @@ struct ComposerWorkflowPopover: View {
         case .ask: "bubble.left"
         case .work: "sparkles"
         case .plan: "list.bullet.clipboard"
+        case .duo: "person.2"
         case .grill: "questionmark.bubble"
         }
     }
@@ -43,7 +45,7 @@ struct ComposerWorkflowPopover: View {
                 .padding(.top, 7)
                 .padding(.bottom, 6)
 
-            ForEach([WorkMode.work, .plan, .grill]) { mode in
+            ForEach([WorkMode.work, .plan] + (model.isIdentityTask ? [] : [.duo]) + [.grill]) { mode in
                 row(
                     mode.title,
                     choice: .mode(mode),
@@ -144,6 +146,7 @@ struct ComposerWorkflowPopover: View {
         switch mode {
         case .work: "Let Locus choose the approach and get it done."
         case .plan: "Review a plan before making changes."
+        case .duo: "Plan with one model. Accept, then build with another."
         case .grill: "Sharpen your idea with one question at a time."
         case .ask: mode.description
         }

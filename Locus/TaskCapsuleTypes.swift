@@ -228,7 +228,7 @@ struct TaskCapsuleRun: Codable, Hashable, Identifiable {
     }
 }
 
-struct TaskCapsulePlanningRequest {
+struct TaskCapsulePlanningRequest: Codable {
     var title: String
     var request: String
     var workspaceRoot: String
@@ -238,6 +238,7 @@ struct TaskCapsulePlanningRequest {
     var blocker: String?
     var originRunID: String?
     var originSessionID: String?
+    var revisionOnly: Bool? = nil
 }
 
 struct TaskCapsulesResponse: Decodable { var capsules: [TaskCapsule] }

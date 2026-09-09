@@ -1972,7 +1972,7 @@ struct ScheduleEditorView: View {
                     .foregroundStyle(LocusTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("Mode", selection: modeBinding) {
-                    ForEach(WorkMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    ForEach(WorkMode.automationCases) { mode in Text(mode.title).tag(mode) }
                 }
                 .accessibilityIdentifier("scheduleEditor.mode")
                 Picker("Runner", selection: $draft.runner) {

@@ -35,6 +35,8 @@ final class TaskCapsuleModel: ObservableObject {
     private var openConversationHandler: (String) -> Void = { _ in }
     @Published private var pendingPlanning: [String: TaskCapsulePlanningRequest] = [:]
     private var submittedPlans: [String: PlanDocument] = [:]
+    var didSavePlan: (TaskCapsule, TaskCapsulePlanningRequest) -> Void = { _, _ in }
+    var didFailToSavePlan: (TaskCapsulePlanningRequest) -> Void = { _ in }
     private var refreshGeneration = UUID()
     private var editingRevision: Int?
     private var currentWorkspacePath: String { TaskCapsuleWorkspace.canonicalPath(workspacePathProvider()) }
@@ -304,6 +306,7 @@ final class TaskCapsuleModel: ObservableObject {
     func planningStarted(_ request: TaskCapsulePlanningRequest, sessionID: String) {
         var normalized = request
         normalized.workspaceRoot = TaskCapsuleWorkspace.canonicalPath(request.workspaceRoot)
+        normalized.originSessionID = sessionID
         pendingPlanning[sessionID] = normalized
         submittedPlans[sessionID] = nil
         activeStageSessions[sessionID] = request.capsuleID == nil ? "Planning" : "Planner help"
@@ -431,8 +434,10 @@ final class TaskCapsuleModel: ObservableObject {
                 status = "Plan saved. Ready to run with \(profileLabel(id: response.capsule.recipe.executorProfileID))."
                 error = nil
             }
+            didSavePlan(response.capsule, request)
             return response.capsule
         } catch {
+            didFailToSavePlan(request)
             if workspace == currentWorkspacePath {
                 self.error = "Could not save the capsule: \(error.localizedDescription). Your plan remains in the conversation."
             }
