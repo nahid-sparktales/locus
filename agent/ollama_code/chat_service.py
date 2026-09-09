@@ -323,6 +323,10 @@ class ChatService:
     # -- core event bridge (called from the worker thread) --
     def emit(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
+        if event_type == "compaction_usage" and not event.get("included_in_turn"):
+            self._record_turn_usage({**event, "session_id": self.core.session.session_id,
+                "workspace_root": self.core.workspace_root, "provider": self.core.provider,
+                "model": self.core.model, "account_label": self.core.config.get("remote_account_label", "")})
         if self.goal_runtime is not None:
             event = {**event, "goal_id": self.goal_runtime.goal_id,
                      "goal_revision": self.goal_runtime.revision}

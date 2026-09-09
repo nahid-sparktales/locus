@@ -703,6 +703,90 @@ class SessionStore:
         return messages
 
     @staticmethod
+    def context_records(path: Path) -> list[dict[str, Any]]:
+        SessionStore.load(path)  # Enforce existing session and record limits.
+        if not path.exists():
+            return []
+        records = []
+        with path.open() as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                    if isinstance(record, dict):
+                        records.append(record)
+                except (ValueError, TypeError):
+                    continue
+        return records
+
+    @staticmethod
+    def authoritative_inputs(path: Path) -> list[dict[str, Any]]:
+        inputs, pending = [], {}
+        for record in SessionStore.context_records(path):
+            if record.get("type") == "pending_task_input" and isinstance(record.get("text"), str):
+                text = record["text"]
+                pending.setdefault(text, []).append(len(inputs))
+                inputs.append({"role": "user", "content": text, "pending": True})
+            elif record.get("type") == "message":
+                message = record.get("message", {})
+                if message.get("role") != "user" or message.get("_locus_context"):
+                    continue
+                text = message.get("content")
+                if not isinstance(text, str):
+                    continue
+                if pending.get(text):
+                    inputs[pending[text].pop(0)] = {"role": "user", "content": text}
+                else:
+                    inputs.append({"role": "user", "content": text})
+        return inputs
+
+    @staticmethod
+    def unresolved_failures(path: Path) -> list[dict[str, Any]]:
+        failures, calls = {}, {}
+        for position, record in enumerate(SessionStore.context_records(path)):
+            message = record.get("message", {}) if record.get("type") == "message" else {}
+            if record.get("type") == "native_tool_observation":
+                key = str(record.get("tool")) + ":" + str(record.get("summary"))
+                message = {"role": "tool", "name": record.get("tool"), "content": record.get("result"), "tool_call_id": key}
+                calls[key] = key
+            for call in message.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    function = call.get("function", call)
+                    calls[call.get("id", "")] = json.dumps(function, sort_keys=True)
+            if message.get("role") == "tool":
+                text = str(message.get("content") or "")
+                key = calls.get(message.get("tool_call_id"), str(message.get("tool_call_id") or position))
+                if text.startswith(("Error", "Permission denied")) or "exit code: " in text.lower() and "exit code: 0" not in text.lower():
+                    failures[key] = {"tool": message.get("name"), "detail": text[:1500], "record": position + 1,
+                                     "source": str(path)}
+                elif key in failures:
+                    del failures[key]
+        return list(failures.values())
+
+    @staticmethod
+    def load_context(path: Path) -> list[dict[str, Any]]:
+        """Restore the latest committed compaction without changing export history."""
+        SessionStore.load(path)  # Apply the same file/record safety limits first.
+        messages = []
+        with path.open() as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                if record.get("type") == "compacted_context" and isinstance(record.get("messages"), list):
+                    messages = record["messages"]
+                elif record.get("type") == "message" and isinstance(record.get("message"), dict):
+                    messages.append(record["message"])
+        pending = [m for m in SessionStore.authoritative_inputs(path) if m.get("pending")]
+        if pending:
+            messages.append({"role": "user", "_locus_context": True,
+                             "content": "User updates saved before interruption; reconcile these before continuing:\n" +
+                                        "\n\n".join(m["content"] for m in pending)})
+        return messages
+
+    @staticmethod
     def export_messages(
         path: Path, *, include_reasoning: bool = False,
         include_tool_details: bool = False, include_attachments: bool = True,

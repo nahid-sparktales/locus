@@ -99,7 +99,7 @@ def test_native_duplicates_and_replayed_totals_do_not_rebill_history(tmp_path):
     assert goal.snapshot()["prompt_tokens"] == 25
     assert goal.snapshot()["completion_tokens"] == 10
     goal.submit_report(report())
-    assert goal.finish("complete")["status"] == "completed"
+    assert goal.finish("complete")["status"] == "needs_review"
 
 
 def test_native_missing_usage_does_not_settle_unknown_tokens_as_zero(tmp_path):
@@ -148,7 +148,7 @@ def test_team_synthesis_repairs_once_uses_writer_evidence_and_returns_answer(tmp
     assert [job.id for job in calls] == ["synthesis", "synthesis-repair"]
     assert "Verified writer evidence" in calls[0].goal
     assert goal.snapshot()["status"] == "active"
-    assert goal.finish("complete")["status"] == "completed"
+    assert goal.finish("complete")["status"] == "needs_review"
 
 
 @pytest.mark.parametrize("value", [report() | {"evidence": []}, report("continue") | {"next_step": ""},
@@ -162,7 +162,7 @@ def test_unmetered_provider_without_budget_can_complete(tmp_path):
     goal = runtime(tmp_path)
     goal.run_native(lambda **_: {"status": "completed"}, thread_id="thread")
     goal.submit_report(report())
-    assert goal.finish("complete")["status"] == "completed"
+    assert goal.finish("complete")["status"] == "needs_review"
     assert goal.snapshot()["token_usage_available"] is False
 
 
@@ -243,7 +243,7 @@ def test_goal_completion_event_is_committed_before_terminal_delivery(tmp_path):
         snapshot = service.queue.get_nowait()
         terminal = service.queue.get_nowait()
         assert snapshot["type"] == "goal_snapshot"
-        assert snapshot["goal"]["status"] == "completed"
+        assert snapshot["goal"]["status"] == "needs_review"
         assert terminal["type"] == "turn_done"
         assert terminal["goal_id"] == goal.goal_id
         assert terminal["goal_revision"] == goal.revision
@@ -317,7 +317,7 @@ def test_http_claim_websocket_admission_provider_reports_and_continuation(tmp_pa
         assert created.status_code == 200, created.text
         goal = created.json()
         previous = None
-        for ordinal, expected_status in enumerate(["active", "active", "completed"], start=1):
+        for ordinal, expected_status in enumerate(["active", "active", "needs_review"], start=1):
             claimed = client.post(f"/api/goals/{goal['id']}/claim", json={"expected_revision": goal["revision"]})
             assert claimed.status_code == 200, claimed.text
             run = claimed.json()["run"]
@@ -485,7 +485,7 @@ def test_queued_user_input_invalidates_completion_without_interrupting_provider(
         assert followup["reason"] == "complete"
         assert followup["goal_id"] == goal["id"]
         assert followup["goal_revision"] == goal["revision"]
-        assert followup["goal"]["status"] == "completed"
+        assert followup["goal"]["status"] == "needs_review"
         assert followup["goal"]["model_calls"] == 6
         assert followup["goal"]["prompt_tokens"] == 60
         assert followup["goal"]["pending_user_input"] is False

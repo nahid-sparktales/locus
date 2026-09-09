@@ -12,6 +12,7 @@ final class TaskCapsuleModelTests: XCTestCase {
     private var executor = AgentProfile(name: "Kimi implementer", model: "worker", accessCeiling: .workspaceWrite)
     private var planningRequests: [TaskCapsulePlanningRequest] = []
     private var executionRequests: [TaskCapsule] = []
+    private var resumeRequests: [(String, Bool)] = []
     private var openedConversations: [String] = []
 
     override func setUp() async throws {
@@ -20,6 +21,7 @@ final class TaskCapsuleModelTests: XCTestCase {
         workspace = "/tmp/capsule-tests"
         planningRequests = []
         executionRequests = []
+        resumeRequests = []
         openedConversations = []
     }
 
@@ -58,6 +60,7 @@ final class TaskCapsuleModelTests: XCTestCase {
             startPlanning: { self.planningRequests.append($0) },
             startExecution: { self.executionRequests.append($0) },
             startReview: { _ in }, askPlanner: { _, _ in },
+            resumeExecution: { _, id, checks in self.resumeRequests.append((id, checks)) },
             openConversation: { self.openedConversations.append($0) }
         )
         return model
@@ -471,5 +474,84 @@ final class TaskCapsuleModelTests: XCTestCase {
             }
         }
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+}
+
+
+extension TaskCapsuleModelTests {
+    func testRecoveryActionsPreserveAttemptAndNeverStartAnotherExecution() async throws {
+        var saved = capsule
+        saved.attempts = [CapsuleAttempt(id: "original-attempt", state: "paused",
+                                        steps: ["edit-coat": CapsuleStepProgress(state: "verified")])]
+        let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved))
+        BackendStub.respond(toPath: "/api/capsules") { _ in ["capsules": [raw]] }
+        let model = makeModel()
+        await model.refresh()
+        model.selectedID = saved.id
+        model.resumeSelected()
+        model.resumeSelected(checksOnly: true)
+        XCTAssertEqual(resumeRequests.map { $0.0 }, ["original-attempt", "original-attempt"])
+        XCTAssertEqual(resumeRequests.map { $0.1 }, [false, true])
+        XCTAssertTrue(executionRequests.isEmpty)
+        XCTAssertEqual(model.selectedCapsule?.recipe, saved.recipe)
+    }
+
+    func testLiveCheckingAndUncertainActionRecovery() async throws {
+        try registerBackend(capsules: [capsule])
+        let model = makeModel()
+        await model.refresh()
+        model.selectedID = capsule.id
+        model.handleEvent(["type": "capsule_progress", "capsule_id": capsule.id,
+                           "attempt": ["id": "attempt", "state": "running", "steps": [:],
+                                       "verification_status": "checking"]], sessionID: "session")
+        XCTAssertEqual(model.selectedCapsule?.attempts.first?.title, "Checking")
+        XCTAssertNil(model.selectedCapsule?.resumableAttempt)
+        model.handleEvent(["type": "capsule_progress", "capsule_id": capsule.id,
+                           "attempt": ["id": "attempt", "state": "paused", "steps": [:],
+                                       "uncertain_action": ["id": "action", "tool": "bash"]]], sessionID: "session")
+        XCTAssertFalse(try XCTUnwrap(model.selectedCapsule?.resumableAttempt).canResume)
+        model.resumeSelected()
+        XCTAssertTrue(resumeRequests.isEmpty)
+    }
+
+    func testAcceptanceChecksAndLegacyCapsulesDecodeWithoutInventedEvidence() throws {
+        let legacy = try JSONDecoder().decode(TaskCapsule.self, from: JSONEncoder().encode(capsule))
+        XCTAssertTrue(legacy.attempts.isEmpty)
+        XCTAssertTrue(legacy.plan.acceptanceChecks.isEmpty)
+        var updated = capsule
+        updated.plan.acceptanceChecks = [["id": .string("file"), "requirement": .string("Result exists"),
+                                          "kind": .string("file_exists"), "path": .string("result.txt")]]
+        let decoded = try JSONDecoder().decode(TaskCapsule.self, from: JSONEncoder().encode(updated))
+        XCTAssertEqual(decoded.plan.acceptanceChecks, updated.plan.acceptanceChecks)
+    }
+
+    func testSeededRecoveryStatesRenderAtCompactSize() async throws {
+        let ready = expectation(description: "Accessibility ready")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(getpid())
+            _ = AXUIElementSetMessagingTimeout(application, 0.2)
+            var windows: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windows)
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 1)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("locus-recovery-renders", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for state in ["paused", "needs_review"] {
+            BackendStub.reset()
+            var saved = capsule
+            saved.attempts = [CapsuleAttempt(id: "attempt", state: state,
+                steps: ["edit-coat": CapsuleStepProgress(state: "verified")],
+                verificationStatus: state == "needs_review" ? "needs_review" : "pending",
+                reason: state == "needs_review" ? "Compare the character's face with the approved reference." : "Stopped after one verified step.")]
+            let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved))
+            BackendStub.respond(toPath: "/api/capsules") { _ in ["capsules": [raw]] }
+            BackendStub.respond(toPath: "/api/capsules/\(saved.id)") { _ in ["capsule": raw] }
+            let model = makeModel()
+            await model.refresh()
+            model.selectedID = saved.id
+            try await renderCapsule(model, size: NSSize(width: 680, height: 620), name: "Recovery-\(state)",
+                                    primaryAction: state == "needs_review" ? "capsules.accept" : "capsules.resume", output: output)
+        }
     }
 }

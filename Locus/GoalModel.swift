@@ -197,6 +197,11 @@ final class GoalModel: ObservableObject {
            sessionID.isEmpty || goal.sessionID == sessionID {
             ingest(goal)
         }
+        if type == "task_verification", let state = event["state"] as? String,
+           let goal = goals[sessionID], event["task_id"] as? String == "goal:" + goal.id {
+            goals[sessionID]?.verificationStatus = state
+            return true
+        }
         if type == "turn_done" || type == "error" {
             let runID = event["run_id"] as? String
             if runID == nil || handedOffRunIDs[sessionID] == runID { handedOffRunIDs[sessionID] = nil }
@@ -233,6 +238,11 @@ final class GoalModel: ObservableObject {
     }
 
     @discardableResult
+    func acceptResult(sessionID: String) async {
+        guard let goal = goals[sessionID], goal.status == .needsReview else { return }
+        _ = await update(sessionID: sessionID, action: "accept", expectedRevision: goal.revision)
+    }
+
     func resume(sessionID: String) async -> Bool {
         guard let goal = await update(sessionID: sessionID, action: "resume"), goal.status == .active else { return false }
         handedOffRunIDs[sessionID] = nil

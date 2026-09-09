@@ -48,6 +48,9 @@ the separate **LocusX** edition.
 - **Keep working toward a goal.** Save an objective with optional usage limits.
   Solo agents and teams continue across turns with verified completion,
   pause/resume controls, and recovery when you reopen Locus.
+- **Resume a saved Task Capsule.** Keep verified step progress and the original
+  usage allowance. Completion checks distinguish verified results from results
+  that need your review. See [verification and recovery](Docs/VerifiedTaskRecovery.md).
 - **Run recurring agents.** Schedule work or connect event triggers, with
   dedicated chats, bounded permissions, and visible run history.
 - **Choose your models.** Use Ollama, ChatGPT-plan access, OpenAI, Claude,

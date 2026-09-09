@@ -52,6 +52,9 @@ extension AppModel {
                     recipe: capsule.recipe, capsuleID: capsule.id, expectedRevision: capsule.revision,
                     blocker: "\(blocker)\n\nPrevious saved plan (revision \(capsule.revision)):\n\(savedPlan)"))
             },
+            resumeExecution: { [weak self] capsule, attemptID, checksOnly in
+                self?.startCapsuleStage(capsule, stage: "execute", resumeAttemptID: attemptID, checksOnly: checksOnly)
+            },
             manageProfiles: { [weak self] in
                 self?.settingsPage = .agents
                 self?.settingsPresented = true
@@ -81,7 +84,10 @@ extension AppModel {
         Create a durable task capsule plan for the request below. Inspect relevant sources first.
         Resolve design decisions so a different implementation model can follow the plan later.
         Do not implement. Call submit_plan with ordered steps and tests, plus step_details,
-        constraints and decisions. Use at most 16 steps. Each detail needs a stable id, title,
+        constraints and decisions. Include acceptance_checks for each step and for final requirements: each
+        check needs id, requirement, kind (file_exists, file_contains, json_value, command, human_review),
+        plus path/value/pointer or command/files as applicable. Use human_review for subjective requirements.
+        Use at most 16 steps. Each detail needs a stable id, title,
         specific instructions, earlier-step dependencies, workspace-relative source/destination
         files (including files to create), and concrete completion checks. Include enough
         evidence and references for the implementation model. Ask a structured question if blocked.
@@ -105,13 +111,17 @@ extension AppModel {
         return capsuleDispatch(profileID: request.recipe.plannerProfileID, context: context, mode: .plan)
     }
 
-    func startCapsuleStage(_ capsule: TaskCapsule, stage: String) {
+    func startCapsuleStage(_ capsule: TaskCapsule, stage: String, resumeAttemptID: String? = nil, checksOnly: Bool = false) {
         guard !isIdentityTask, !isBusy, !hasPendingPermission, isAgentOnline,
               TaskCapsuleModel.canonicalWorkspace(capsule.workspaceRoot) == TaskCapsuleModel.canonicalWorkspace(workspacePath) else {
             taskCapsules.error = "Open an idle regular task in this capsule's workspace and connect the agent."
             return
         }
         var context: [String: Any] = ["id": capsule.id, "revision": capsule.revision, "stage": stage]
+        if let resumeAttemptID {
+            context["resume_attempt_id"] = resumeAttemptID
+            context["checks_only"] = checksOnly
+        }
         let profileID = stage == "review" ? capsule.recipe.reviewerProfileID : capsule.recipe.executorProfileID
         guard let profileID else { taskCapsules.error = "Choose a review model first."; return }
         if stage == "execute" {

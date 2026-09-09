@@ -509,3 +509,35 @@ final class GoalModelTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 }
+
+
+extension GoalModelTests {
+    func testNeedsReviewIsSettledAndHumanAcceptanceIsSeparate() async throws {
+        let model = makeModel(canContinue: { _ in true })
+        var value = goal(.needsReview)
+        value.verificationStatus = "needs_review"
+        try snapshot(value, model: model)
+        XCTAssertEqual(model.goal(for: value.sessionID)?.status, .needsReview)
+        XCTAssertFalse(value.status.isTerminal)
+        XCTAssertTrue(value.status.canResume)
+        XCTAssertNoBackendTraffic()
+        var accepted = value
+        accepted.status = .completed
+        accepted.verificationStatus = "accepted"
+        let response = try object(accepted)
+        BackendStub.respond(toPath: "/api/goals/\(value.id)") { _ in response }
+        await model.acceptResult(sessionID: value.sessionID)
+        XCTAssertEqual(model.goal(for: value.sessionID)?.verificationStatus, "accepted")
+    }
+
+    func testLiveVerificationStateAndLegacyLabel() throws {
+        let model = makeModel()
+        let value = goal()
+        try snapshot(value, model: model)
+        XCTAssertEqual(model.goal(for: value.sessionID)?.verificationStatus, "legacy_unverified")
+        model.handleEvent(["type": "task_verification", "task_id": "goal:" + value.id, "state": "checking"],
+                          sessionID: value.sessionID)
+        XCTAssertEqual(model.goal(for: value.sessionID)?.verificationStatus, "checking")
+        XCTAssertNoBackendTraffic()
+    }
+}

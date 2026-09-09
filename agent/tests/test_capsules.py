@@ -51,7 +51,7 @@ def test_capsules_persist_versions_and_only_whitelisted_configuration(workspace,
     assert reopened.get(first["id"])["title"] == "Reviewed title"
     assert reopened.get(first["id"], revision=1)["title"] == payload["title"]
     assert second["revision"] == 2
-    assert first["schema_version"] == 1
+    assert first["schema_version"] == 2
     assert first["recipe"]["execution_call_limit"] == 60
     assert first["recipe"]["max_repair_attempts"] == 2
     assert len(first["source_fingerprints"]) == 2

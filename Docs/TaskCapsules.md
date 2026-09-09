@@ -30,7 +30,8 @@ the plan or write a final summary.
    decisions, and choose **Run plan**. **Expand steps** shows every step’s details.
    Run history keeps each stage's outcome and available usage measurements, with
    a link back to its conversation. **Review result** performs a separate read-only
-   review. A previously executed plan offers **Run again**.
+   review. An interrupted attempt offers **Resume** and **Retry checks**.
+   **Run again** explicitly starts another execution.
 
 The primary action stays visible while you review a long plan. With no agent
 profiles yet, **Set up models** takes you to settings and preserves your draft.
@@ -56,12 +57,14 @@ the selected workspace, preserving dependency order. Each step uses the
 implementation profile's instructions and existing tool permissions. Captured
 older plans without detailed steps also work, but have fewer explicit checks.
 
-Fingerprints cover only the files named in detailed steps, including files to
-create. Locus checks them against the saved baseline before execution. Changed,
+Baseline fingerprints cover named step files, declared inputs and outputs, and
+files referenced by acceptance checks, including files to create. Locus checks
+them against the actual execution checkout before execution. Changed,
 removed, or unexpectedly created files pause the handoff; **Update the plan or
 ask for help** can inspect the current workspace and save a revised plan. A legacy plan
-without named files has no file baseline. This is not a whole-repository change
-detector.
+without named files has no initial file baseline. During execution, Locus
+records local file changes and verified step evidence for recovery. Command
+checks without an explicit file scope use a bounded workspace snapshot.
 
 ## Usage and recovery
 
@@ -74,8 +77,8 @@ detector.
   quota.
 - Reviewer findings can trigger bounded repair rounds using the implementation
   model, followed by another review. An unavailable or malformed reviewer does
-  not count as an approval. Repairs and planner-help requests have total
-  allowances across the saved capsule, including subsequent runs.
+  not count as an approval. Resuming preserves the original attempt’s repair
+  count. Planner-help requests keep their existing capsule-wide allowance.
 - Asking the planner is explicit. Answers to its clarification questions remain
   in that help request's chain rather than consuming a new help allowance.
 - The optional API cost estimate limit applies to execution with configured
@@ -87,11 +90,27 @@ detector.
   the existing file baseline and run history. Increasing an allowance does not
   erase previous attempts.
 
-Stopped work keeps its existing files and run evidence. Review the changes
-before repeating execution. A fresh run rechecks the saved baseline, so partial
-implementation may require a revised plan first. This version resumes work
-through an updated capsule plan; ordinary team checkpoint recovery actions
-direct capsule runs back to Task Capsules.
+Stopped work keeps its existing files, evidence, consumed allowance, and repair
+count. **Resume** reconciles those files and continues the original attempt.
+Verified, compatible steps are skipped; changed inputs invalidate affected steps
+and their dependents. Later writes made by the capsule are included in its saved
+file state. If implementation finished, Resume continues checks or review.
+
+**Retry checks** inspects existing outputs without rerunning implementation.
+Configured review and bounded repairs still use the remaining execution
+allowance. Requirements that need human judgment show **Needs review**.
+**Accept result** records your acceptance separately from machine verification.
+
+An interrupted action with an uncertain outcome is never blindly replayed.
+Inspect its result and use **Save observed outcome** before resuming. If model
+usage is unsettled, **Save reviewed usage** records explicit totals; recorded
+spend cannot be reduced. Increasing the original allowance remains an explicit
+recipe edit. Restart restores these states without starting work.
+
+Historical completions remain historical and are labelled unverified when
+receipts are unavailable. Older plans remain runnable, but prose reports alone
+cannot create verified steps. See [Verified task recovery](VerifiedTaskRecovery.md)
+for the check format, migration, validation, and follow-up work.
 
 ## Ownership and local API
 

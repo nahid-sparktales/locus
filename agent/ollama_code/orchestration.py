@@ -2509,6 +2509,8 @@ class TeamOrchestrator:
                 and self._estimated_cost > self._maximum_estimated_cost
             ):
                 raise OrchestrationError("team estimated-cost budget exhausted")
+        if getattr(self, "strict_completion", False) and response.done_reason in {"length", "interrupted", "incomplete"}:
+            raise OrchestrationError("The model output was incomplete. Review remains unfinished.")
         return response
 
     def _emit_result(self, run_id: str, result: AgentResult, state: str) -> None:

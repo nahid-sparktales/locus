@@ -21,6 +21,7 @@ struct PlanDocument: Codable, Hashable, Identifiable {
     var stepDetails: [CapsulePlanStep]
     var constraints: [String]
     var decisions: [String]
+    var acceptanceChecks: [[String: JSONValue]] = []
 
     init(
         id: String = UUID().uuidString,
@@ -30,7 +31,8 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         tests: [String] = [],
         stepDetails: [CapsulePlanStep] = [],
         constraints: [String] = [],
-        decisions: [String] = []
+        decisions: [String] = [],
+        acceptanceChecks: [[String: JSONValue]] = []
     ) {
         self.id = id
         self.title = title
@@ -40,11 +42,13 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         self.stepDetails = stepDetails
         self.constraints = constraints
         self.decisions = decisions
+        self.acceptanceChecks = acceptanceChecks
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, steps, tests
         case stepDetails = "step_details"
+        case acceptanceChecks = "acceptance_checks"
         case constraints, decisions
     }
 
@@ -58,6 +62,7 @@ struct PlanDocument: Codable, Hashable, Identifiable {
         stepDetails = try container.decodeIfPresent([CapsulePlanStep].self, forKey: .stepDetails) ?? []
         constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
         decisions = try container.decodeIfPresent([String].self, forKey: .decisions) ?? []
+        acceptanceChecks = try container.decodeIfPresent([[String: JSONValue]].self, forKey: .acceptanceChecks) ?? []
     }
 }
 

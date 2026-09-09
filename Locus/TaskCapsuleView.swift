@@ -6,6 +6,10 @@ struct TaskCapsuleView: View {
     @Environment(\.locusAccent) private var accent
     @State private var showLimits = false
     @State private var librarySearch = ""
+    @State private var actionOutcome = ""
+    @State private var reviewedCalls = ""
+    @State private var reviewedTokens = ""
+    @State private var reviewedCost = ""
     @State private var expandedSteps: Set<String> = []
     @FocusState private var requestFocused: Bool
 
@@ -429,6 +433,38 @@ struct TaskCapsuleView: View {
                 Label(issue, systemImage: "exclamationmark.circle")
                     .font(.callout).foregroundStyle(LocusTheme.warning)
             }
+            if let attempt = capsule.resumableAttempt, attempt.pendingUsage != nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Review interrupted usage").font(.headline)
+                    Text("Recorded so far: \(attempt.usage?["model_calls"]?.string ?? "0") calls · \(attempt.usage?["metered_tokens"]?.string ?? "0") metered tokens · $\(attempt.usage?["estimated_cost"]?.string ?? "0")")
+                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Text("Check the interrupted call's usage, then enter the total for this attempt. Previously recorded usage and repair counts remain in place.")
+                        .font(.callout)
+                    HStack {
+                        TextField("Total model calls", text: $reviewedCalls)
+                        TextField("Total metered tokens", text: $reviewedTokens)
+                        TextField("Total estimated cost ($)", text: $reviewedCost)
+                    }.textFieldStyle(.roundedBorder)
+                    Button("Save reviewed usage") {
+                        if let calls = Int(reviewedCalls), let tokens = Int(reviewedTokens), let cost = Double(reviewedCost) {
+                            Task { await model.recordUsage(calls: calls, tokens: tokens, cost: cost) }
+                        }
+                    }.disabled(Int(reviewedCalls) == nil || Int(reviewedTokens) == nil || Double(reviewedCost) == nil || model.isBusy)
+                        .accessibilityIdentifier("capsules.resolveUsage")
+                }.padding(16).locusCard(radius: 10)
+            }
+            if let attempt = capsule.resumableAttempt, attempt.uncertainAction != nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Review the interrupted action").font(.headline)
+                    Text(attempt.reason ?? "Inspect whether the action took effect before continuing.")
+                        .font(.callout).textSelection(.enabled)
+                    TextField("Describe the outcome you observed", text: $actionOutcome, axis: .vertical)
+                        .textFieldStyle(.roundedBorder).accessibilityIdentifier("capsules.actionOutcome")
+                    Button("Save observed outcome") { Task { await model.recordActionOutcome(actionOutcome) } }
+                        .disabled(actionOutcome.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
+                        .accessibilityIdentifier("capsules.resolveAction")
+                }.padding(16).locusCard(radius: 10)
+            }
             planSteps(capsule.plan)
             sourceCheckSummary(capsule)
             plannerHelp(capsule)
@@ -437,10 +473,13 @@ struct TaskCapsuleView: View {
     }
 
     private func capsuleState(_ capsule: TaskCapsule) -> String {
+        if let attempt = capsule.attempts.first {
+            return "\(attempt.title) · \(attempt.verifiedCount)/\(max(capsule.plan.stepDetails.count, capsule.plan.steps.count)) steps verified"
+        }
         guard let run = capsule.runs.last(where: { $0.stage == "execute" || $0.stage == "review" }) else {
             return "Plan saved · Ready to review"
         }
-        return "Last run: \(run.stageTitle) · \(runStatus(run))"
+        return "Last run: \(run.stageTitle) · \(runStatus(run)) · Unverified"
     }
 
     private func runStatus(_ run: TaskCapsuleRun) -> String {
@@ -592,6 +631,7 @@ struct TaskCapsuleView: View {
                                     plan.stepDetails.first(where: { $0.id == dependency })?.title ?? dependency
                                 }.joined(separator: ", "))
                             }
+                            acceptanceChecks(step.acceptanceChecks)
                             ForEach(Array(step.checks.enumerated()), id: \.offset) { _, check in
                                 Label(check, systemImage: "checkmark.circle").textSelection(.enabled)
                             }
@@ -610,9 +650,23 @@ struct TaskCapsuleView: View {
                     .accessibilityIdentifier("capsules.step.\(step.id)")
                 }
             }
+            acceptanceChecks(plan.acceptanceChecks)
             planNotes("Completion checks", notes: plan.tests, icon: "checkmark.circle")
             planNotes("Keep in mind", notes: plan.constraints, icon: "pin")
             planNotes("Design decisions", notes: plan.decisions, icon: "lightbulb")
+        }
+    }
+
+    @ViewBuilder
+    private func acceptanceChecks(_ checks: [[String: JSONValue]]) -> some View {
+        if !checks.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
+                    Label(check["requirement"]?.string ?? "Completion check",
+                          systemImage: check["kind"]?.string == "human_review" ? "person.crop.circle" : "checkmark.shield")
+                    .textSelection(.enabled)
+                }
+            }.font(.callout).foregroundStyle(LocusTheme.textSecondary)
         }
     }
 
@@ -678,6 +732,19 @@ struct TaskCapsuleView: View {
                     .font(.caption).foregroundStyle(LocusTheme.textSecondary)
             } else if let capsule = model.selectedCapsule {
                 HStack(spacing: 14) {
+                    if let attempt = capsule.resumableAttempt {
+                        Button { model.resumeSelected() } label: {
+                            Label("Resume", systemImage: "play.fill")
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
+                                .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.locus(.primary)).disabled(model.isBusy || !attempt.canResume)
+                        .accessibilityIdentifier("capsules.resume")
+                        Button("Run again") { model.runSelected() }
+                            .buttonStyle(.locus()).disabled(model.isBusy)
+                            .accessibilityIdentifier("capsules.run")
+                    } else {
                     Button { model.runSelected() } label: {
                         Label(capsule.runs.contains(where: { $0.stage == "execute" }) ? "Run again" : "Run plan", systemImage: "play.fill")
                             .padding(.horizontal, 10).padding(.vertical, 7)
@@ -687,14 +754,35 @@ struct TaskCapsuleView: View {
                     .buttonStyle(.locus(.primary))
                     .disabled(model.isBusy || model.recipeError(capsule.recipe) != nil)
                     .accessibilityIdentifier("capsules.run")
+                    }
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 14) {
+                    if let attempt = capsule.resumableAttempt {
+                        Button("Retry checks") { model.resumeSelected(checksOnly: true) }
+                            .disabled(model.isBusy || !attempt.canResume)
+                            .accessibilityIdentifier("capsules.retryChecks")
+                        if attempt.state == "needs_review" {
+                            Button("Accept result") { Task { await model.acceptSelectedResult() } }
+                                .disabled(model.isBusy || !attempt.canResume)
+                                .accessibilityIdentifier("capsules.accept")
+                        }
+                    }
                     if capsule.recipe.reviewerProfileID != nil {
                         Button("Review result") { model.reviewSelected() }
                             .buttonStyle(.locus())
                             .disabled(model.isBusy || model.recipeError(capsule.recipe) != nil)
                             .help("Ask the review model to inspect the result without changing files")
                             .accessibilityIdentifier("capsules.review")
+                    } else if let sessionID = capsule.runs.last(where: { $0.sessionID != nil })?.sessionID {
+                        Button("Review result") { model.openConversation(sessionID: sessionID) }
+                            .buttonStyle(.locus()).accessibilityIdentifier("capsules.review")
+                            .help("Open the saved result and its evidence in the conversation")
                     }
                     Spacer(minLength: 0)
+                }
+                if let reason = capsule.attempts.first?.reason, !reason.isEmpty {
+                    Text(reason).font(.caption).foregroundStyle(LocusTheme.textSecondary)
                 }
                 Text(model.isBusy ? "A task is in progress. Follow its conversation to see updates."
                      : capsule.runs.contains(where: { $0.stage == "execute" })

@@ -130,6 +130,7 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
     capsule = None
     reserved = False
     completed = False
+    progress = None
     stage = str(context.get("stage") or "")
     try:
         store = CapsuleStore(svc.core.workspace_root or svc.core.cwd)
@@ -152,11 +153,15 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
             if not prior or prior.get("state") != "completed" or not session_id or prior.get("session_id") != session_id or not prior.get("workspace_root") or Path(prior["workspace_root"]).resolve() != store.root:
                 raise ValueError("The planner clarification must continue a completed run in this task.")
         if stage == "execute":
-            validation = store.validate(capsule["id"])
+            validation = store.validate(capsule["id"], execution_path=svc.core.cwd) if not context.get("resume_attempt_id") else {"valid": True}
             if not validation["valid"]:
                 paths = ", ".join(c["path"] for c in validation["changes"][:5])
                 raise ValueError(f"The plan's source files changed ({paths}). Ask the planner to update it first.")
             manifest = execution_manifest(capsule, context.get("profiles") or [], run_id)
+            from .capsule_progress import CapsuleRuntime
+            progress = CapsuleRuntime(svc, capsule, run_id, context.get("resume_attempt_id"))
+            progress.checks_only = context.get("checks_only") is True
+            svc.core.capsule_runtime = progress
         else:
             limit = context.get("call_limit", 12)
             if capsule:
@@ -180,6 +185,13 @@ def run_capsule_request(svc: Any, text: str, context: dict, attachments: Any,
         svc.emit({"type": "error", "message": str(exc), "run_id": run_id})
         svc.emit({"type": "turn_done", "reason": "error", "duration_ms": 0, "run_id": run_id})
     finally:
+        if progress is not None:
+            run = svc.run_store.run(run_id) or {}
+            try:
+                if not progress.settled:
+                    progress.settle("paused", emit=False)
+            finally:
+                svc.core.capsule_runtime = None
         if reserved:
             try:
                 run = svc.run_store.run(run_id) or {}

@@ -108,7 +108,7 @@ def test_completion_commits_only_at_outer_boundary_with_evidence(stores):
     report(goals, goal, run, "complete")
     assert goals.get(goal["id"])["status"] == "active"
     completed = goals.reconcile_run(goal["id"], run["id"])
-    assert completed["status"] == "completed"
+    assert completed["status"] == "needs_review"
     assert goals.reconcile_run(goal["id"], run["id"]) == completed
     assert goals.claim(goal["id"], goal["revision"])["run"] is None
 
@@ -220,6 +220,7 @@ def test_restore_all_goals_and_usage_survive_run_retention(stores):
     report(goals, goal, run, "complete")
     runs.set_state(run["id"], "completed")
     goals.reconcile_run(goal["id"], run["id"])
+    goals.update(goal["id"], "accept", expected_revision=goal["revision"])
     with runs._connect() as connection:
         connection.execute("UPDATE runs SET updated_at=?", (time.time() - 100 * 86400,))
     runs.prune(retention_days=1)
@@ -382,7 +383,7 @@ def test_unmeasured_tokens_allow_unbudgeted_goals_only(stores, budget):
     report(goals, goal, run, "complete")
     result = goals.reconcile_run(goal["id"], run["id"])
     assert result["token_usage_available"] is False
-    assert result["status"] == ("completed" if budget is None else "blocked")
+    assert result["status"] == ("needs_review" if budget is None else "blocked")
 
 
 @pytest.mark.parametrize("allowance", [{"token_budget": 100}, {"model_call_budget": 10}])

@@ -23,7 +23,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_FILES = 256
 MAX_FILE_BYTES = 64 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
@@ -84,7 +84,9 @@ def _relative_file(value: Any) -> str:
 def normalize_plan(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise CapsuleError("plan must be an object")
+    from .task_state import normalize_checks
     result: dict[str, Any] = {
+        "acceptance_checks": normalize_checks(value.get("acceptance_checks", [])),
         "id": _identifier(value.get("id") or str(uuid.uuid4()), "plan.id"),
         "title": _text(value.get("title", ""), "plan.title", limit=500),
         "summary": _text(value.get("summary", ""), "plan.summary"),
@@ -106,7 +108,10 @@ def normalize_plan(value: Any) -> dict[str, Any]:
             "instructions": _text(item.get("instructions", ""), "step.instructions"),
             "dependencies": _texts(item.get("dependencies", []), "step.dependencies", limit=128),
             "files": list(dict.fromkeys(_relative_file(path) for path in _texts(item.get("files", []), "step.files"))),
+            "inputs": list(dict.fromkeys(_relative_file(path) for path in _texts(item.get("inputs", []), "step.inputs"))),
+            "outputs": list(dict.fromkeys(_relative_file(path) for path in _texts(item.get("outputs", []), "step.outputs"))),
             "checks": _texts(item.get("checks", []), "step.checks"),
+            "acceptance_checks": normalize_checks(item.get("acceptance_checks", [])),
         })
     by_id = {item["id"]: item for item in details}
     if len(by_id) != len(details):
@@ -298,7 +303,10 @@ class CapsuleStore:
         }
 
     def _sources(self, plan: dict[str, Any]) -> list[dict[str, Any]]:
-        files = sorted({file for step in plan["step_details"] for file in step["files"]})
+        from .capsule_progress import declared_files
+        files = sorted({file for step in [*plan["step_details"], plan] for file in declared_files(step)})
+        if len(files) > MAX_FILES:
+            raise CapsuleError(f"a capsule can fingerprint at most {MAX_FILES} files")
         return [_fingerprint(self.root, file) for file in files]
 
     def create(self, payload: dict[str, Any], *, origin_run: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -341,12 +349,12 @@ class CapsuleStore:
             connection.execute("UPDATE capsules SET revision=?, updated_at=? WHERE id=?", (result["revision"], result["updated_at"], capsule_id))
             return {**result, "runs": latest["runs"]}
 
-    def validate(self, capsule_id: str, revision: int | None = None) -> dict[str, Any]:
+    def validate(self, capsule_id: str, revision: int | None = None, *, execution_path: str | None = None) -> dict[str, Any]:
         capsule = self.get(capsule_id, revision)
         changes = []
         for previous in capsule["source_fingerprints"]:
             try:
-                current = _fingerprint(self.root, previous["path"])
+                current = _fingerprint(Path(execution_path).resolve() if execution_path else self.root, previous["path"])
                 if previous != current:
                     reason = "created" if previous["status"] == "missing" else "deleted" if current["status"] == "missing" else "changed"
                     changes.append({"path": previous["path"], "reason": reason})
@@ -354,12 +362,14 @@ class CapsuleStore:
                 changes.append({"path": previous["path"], "reason": "unsafe", "detail": str(exc)})
         return {"valid": not changes, "capsule_id": capsule_id, "revision": capsule["revision"], "changes": changes, "checked_files": len(capsule["source_fingerprints"])}
 
-    def record_run(self, capsule_id: str, run_id: str, stage: str, state: str, expected_revision: int | None = None, *, continuation_of_run_id: str | None = None, reserve: bool = False) -> dict[str, Any]:
+    def record_run(self, capsule_id: str, run_id: str, stage: str, state: str, expected_revision: int | None = None, *, continuation_of_run_id: str | None = None, reserve: bool = False, attempt_id: str | None = None) -> dict[str, Any]:
         run_id = _identifier(run_id, "run_id")
         stage = _identifier(stage, "stage")
         state = _identifier(state, "state")
         if expected_revision is not None:
             _integer(expected_revision, "expected_revision", high=2**31 - 1)
+        if attempt_id is not None:
+            attempt_id = _identifier(attempt_id, "attempt_id")
         if continuation_of_run_id is not None:
             continuation_of_run_id = _identifier(continuation_of_run_id, "continuation_of_run_id")
             if stage != "escalate" or continuation_of_run_id == run_id:
@@ -385,15 +395,18 @@ class CapsuleStore:
                 raise CapsuleError("a planner continuation cannot change its parent run")
             limit_key = {"escalate": "max_planner_escalations", "repair": "max_repair_attempts"}.get(stage)
             if not previous and limit_key and parent is None:
-                attempts = sum(item["stage"] == stage and not item.get("continuation_of_run_id") for item in capsule["runs"])
+                attempts = sum(item["stage"] == stage and not item.get("continuation_of_run_id")
+                               and (attempt_id is None or item.get("attempt_id") == attempt_id) for item in capsule["runs"])
                 if attempts >= capsule["recipe"][limit_key]:
                     raise CapsuleError(f"capsule {stage} limit has been reached", 409)
             link = {"run_id": run_id, "stage": stage, "state": state, "revision": previous["revision"] if previous else capsule["revision"], "updated_at": _now()}
+            if attempt_id is not None:
+                link["attempt_id"] = attempt_id
             if parent is not None:
                 link["continuation_of_run_id"] = parent["run_id"]
                 link["escalation_root_run_id"] = parent.get("escalation_root_run_id", parent["run_id"])
             elif previous:
-                for field in ("continuation_of_run_id", "escalation_root_run_id"):
+                for field in ("continuation_of_run_id", "escalation_root_run_id", "attempt_id"):
                     if field in previous:
                         link[field] = previous[field]
             connection.execute("INSERT INTO capsule_runs VALUES(?,?,?) ON CONFLICT(capsule_id,run_id) DO UPDATE SET payload=excluded.payload", (capsule_id, run_id, json.dumps(link)))

@@ -3,11 +3,13 @@ import Foundation
 enum GoalStatus: String, Codable, Hashable {
     case active, paused, blocked, completed, cancelled
     case limitReached = "limit_reached"
+    case needsReview = "needs_review"
 
     var title: String {
         switch self {
         case .active: "Working toward goal"
         case .paused: "Goal paused"
+        case .needsReview: "Needs review"
         case .blocked: "Goal needs attention"
         case .limitReached: "Goal allowance reached"
         case .completed: "Goal completed"
@@ -16,7 +18,7 @@ enum GoalStatus: String, Codable, Hashable {
     }
 
     var isTerminal: Bool { self == .completed || self == .cancelled }
-    var canResume: Bool { self == .paused || self == .blocked || self == .limitReached }
+    var canResume: Bool { self == .paused || self == .blocked || self == .limitReached || self == .needsReview }
 }
 
 /// The backend owns this session-scoped record. Execution contains saved route
@@ -30,6 +32,9 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
     var reason: String?
     var summary: String?
     var evidence: [String] = []
+    var verificationStatus: String = "legacy_unverified"
+    var acceptanceChecks: [[String: JSONValue]] = []
+    var evidenceIDs: [String] = []
     var nextStep: String?
     var modelCallBudget: Int?
     var tokenBudget: Int?
@@ -56,6 +61,8 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, objective, revision, status, reason, summary, evidence, execution
+        case verificationStatus = "verification_status"
+        case acceptanceChecks = "acceptance_checks", evidenceIDs = "evidence_ids"
         case sessionID = "session_id", nextStep = "next_step"
         case modelCallBudget = "model_call_budget", tokenBudget = "token_budget"
         case modelCalls = "model_calls", promptTokens = "prompt_tokens", completionTokens = "completion_tokens"
@@ -81,6 +88,9 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
         objective = try c.decode(String.self, forKey: .objective)
         revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 1
         status = try c.decode(GoalStatus.self, forKey: .status)
+        verificationStatus = try c.decodeIfPresent(String.self, forKey: .verificationStatus) ?? "legacy_unverified"
+        acceptanceChecks = try c.decodeIfPresent([[String: JSONValue]].self, forKey: .acceptanceChecks) ?? []
+        evidenceIDs = try c.decodeIfPresent([String].self, forKey: .evidenceIDs) ?? []
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         summary = try c.decodeIfPresent(String.self, forKey: .summary)
         if let items = try? c.decode([String].self, forKey: .evidence) { evidence = items }

@@ -84,6 +84,25 @@ final class GoalUITests: XCTestCase {
         XCTAssertFalse(element("goal.card").exists)
     }
 
+    func testNeedsReviewRequiresExplicitAcceptanceAndLabelsItHonestly() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_GOAL"] = "needs_review"
+        app.launch()
+        XCTAssertTrue(element("goal.card").waitForExistence(timeout: 10))
+        XCTAssertTrue(text("goal.status").contains("Needs review"))
+        XCTAssertTrue(element("goal.resume").exists)
+        XCTAssertTrue(element("goal.accept").exists)
+        XCTAssertFalse(element("goal.pause").exists)
+        element("goal.accept").click()
+        waitForText("goal.status", containing: "completed")
+        XCTAssertTrue(element("goal.verificationLabel").waitForExistence(timeout: 5))
+        XCTAssertTrue(text("goal.verificationLabel").contains("Accepted by you"))
+        let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        capture.name = "Explicit acceptance after Needs review"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any)[id].firstMatch
     }

@@ -28,6 +28,7 @@ final class TaskCapsuleModel: ObservableObject {
     private var isBusyProvider: () -> Bool = { false }
     private var startPlanning: (TaskCapsulePlanningRequest) -> Void = { _ in }
     private var startExecution: (TaskCapsule) -> Void = { _ in }
+    private var resumeExecution: (TaskCapsule, String, Bool) -> Void = { _, _, _ in }
     private var startReview: (TaskCapsule) -> Void = { _ in }
     private var askPlanner: (TaskCapsule, String) -> Void = { _, _ in }
     private var manageProfilesHandler: () -> Void = {}
@@ -71,6 +72,7 @@ final class TaskCapsuleModel: ObservableObject {
         startExecution: @escaping (TaskCapsule) -> Void,
         startReview: @escaping (TaskCapsule) -> Void,
         askPlanner: @escaping (TaskCapsule, String) -> Void,
+        resumeExecution: @escaping (TaskCapsule, String, Bool) -> Void = { _, _, _ in },
         manageProfiles: @escaping () -> Void = {},
         openConversation: @escaping (String) -> Void = { _ in }
     ) {
@@ -82,6 +84,7 @@ final class TaskCapsuleModel: ObservableObject {
         self.isBusyProvider = isBusyProvider
         self.startPlanning = startPlanning
         self.startExecution = startExecution
+        self.resumeExecution = resumeExecution
         self.startReview = startReview
         self.askPlanner = askPlanner
         manageProfilesHandler = manageProfiles
@@ -322,6 +325,23 @@ final class TaskCapsuleModel: ObservableObject {
     func handleEvent(_ event: [String: Any], sessionID: String) -> Bool {
         let ownsPlanning = pendingPlanning[sessionID] != nil
         switch event["type"] as? String {
+        case "task_verification":
+            if let taskID = event["task_id"] as? String, let state = event["state"] as? String,
+               let index = capsules.firstIndex(where: {
+                   $0.workspaceRoot == currentWorkspacePath && $0.attempts.first.map { taskID.hasPrefix("capsule:" + $0.id + ":") } == true
+               }), !capsules[index].attempts.isEmpty {
+                capsules[index].attempts[0].verificationStatus = state == "checking" ? "checking" : "pending"
+            }
+        case "capsule_progress":
+            if let id = event["capsule_id"] as? String,
+               let index = capsules.firstIndex(where: { $0.id == id && $0.workspaceRoot == currentWorkspacePath }),
+               let raw = event["attempt"] as? [String: Any],
+               let data = try? JSONSerialization.data(withJSONObject: raw),
+               let attempt = try? JSONDecoder().decode(CapsuleAttempt.self, from: data) {
+                capsules[index].attempts.removeAll { $0.id == attempt.id }
+                capsules[index].attempts.insert(attempt, at: 0)
+                status = attempt.title
+            }
         case "run_started" where ownsPlanning:
             if let runID = event["run_id"] as? String, !runID.isEmpty {
                 pendingPlanning[sessionID]?.originRunID = runID
@@ -423,6 +443,47 @@ final class TaskCapsuleModel: ObservableObject {
     func runSelected() {
         guard let capsule = selectedCapsule, validateAction(capsule) else { return }
         startExecution(capsule)
+    }
+
+    func resumeSelected(checksOnly: Bool = false) {
+        guard let capsule = selectedCapsule, let attempt = capsule.resumableAttempt, attempt.canResume, validateAction(capsule) else { return }
+        resumeExecution(capsule, attempt.id, checksOnly)
+    }
+
+    func acceptSelectedResult() async {
+        guard let backend, let capsule = selectedCapsule, let attempt = capsule.resumableAttempt,
+              attempt.state == "needs_review", validateAction(capsule) else { return }
+        do {
+            let _: TaskCapsuleResponse = try await backend.patch("/api/capsules/\(capsule.id)", body: [
+                "workspace_root": capsule.workspaceRoot, "expected_revision": capsule.revision,
+                "action": "accept", "attempt_id": attempt.id], as: TaskCapsuleResponse.self)
+            await refresh()
+        } catch { self.error = "Could not accept result: \(error.localizedDescription)" }
+    }
+
+    func recordActionOutcome(_ note: String) async {
+        guard let backend, let capsule = selectedCapsule, let attempt = capsule.resumableAttempt,
+              let actionID = attempt.uncertainAction?["id"]?.string, validateAction(capsule) else { return }
+        do {
+            let _: TaskCapsuleResponse = try await backend.patch("/api/capsules/\(capsule.id)", body: [
+                "workspace_root": capsule.workspaceRoot, "expected_revision": capsule.revision,
+                "action": "resolve_action", "attempt_id": attempt.id, "action_id": actionID, "note": note],
+                as: TaskCapsuleResponse.self)
+            await refresh()
+        } catch { self.error = "Could not record the outcome: \(error.localizedDescription)" }
+    }
+
+    func recordUsage(calls: Int, tokens: Int, cost: Double) async {
+        guard let backend, let capsule = selectedCapsule, let attempt = capsule.resumableAttempt,
+              attempt.pendingUsage != nil, validateAction(capsule) else { return }
+        do {
+            let _: TaskCapsuleResponse = try await backend.patch("/api/capsules/\(capsule.id)", body: [
+                "workspace_root": capsule.workspaceRoot, "expected_revision": capsule.revision,
+                "action": "resolve_usage", "attempt_id": attempt.id,
+                "usage": ["model_calls": calls, "metered_tokens": tokens, "estimated_cost": cost]],
+                as: TaskCapsuleResponse.self)
+            await refresh()
+        } catch { self.error = "Could not save reviewed usage: \(error.localizedDescription)" }
     }
 
     func reviewSelected() {
