@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The Image generation section of Settings › Models & Providers: which
-/// account's Images API draws pictures, with what model and defaults, and
+/// account draws pictures, with what model and defaults, and
 /// whether interactive answers render. Every control is an immediate
 /// preference — the accounts page has no Save bar — and the status row shows
 /// what the agent accepted after each push.
@@ -18,8 +18,13 @@ struct ImageGenerationSettingsView: View {
     /// every keystroke.
     @State private var customModelText = ""
     @FocusState private var customModelFocused: Bool
+    @State private var customSizeSelected = false
+    @State private var customSizeText = ""
+    @State private var customSizeError: String?
+    @FocusState private var customSizeFocused: Bool
 
     private static let otherModelTag = "__other__"
+    private static let customSizeTag = "__custom_size__"
 
     var body: some View {
         Section("Image generation") {
@@ -42,7 +47,7 @@ struct ImageGenerationSettingsView: View {
 
                 if eligibleAccounts.isEmpty {
                     HStack {
-                        Text("Add an OpenAI API account to generate images.")
+                        Text("Add a ChatGPT or OpenAI API account to generate images.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.warning)
                             .accessibilityIdentifier("settings.imageGeneration.empty")
@@ -52,44 +57,90 @@ struct ImageGenerationSettingsView: View {
                     }
                 }
 
-                Picker("Model", selection: modelSelection) {
-                    ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                    Text("Other…").tag(Self.otherModelTag)
-                }
-                .accessibilityIdentifier("settings.imageGeneration.model")
-
-                if customModelSelected {
-                    TextField("Model name", text: $customModelText)
-                        .focused($customModelFocused)
-                        .onSubmit(commitCustomModel)
-                        .onChange(of: customModelFocused) { _, focused in
-                            if !focused { commitCustomModel() }
+                if isChatGPTSelected {
+                    LabeledContent("Model", value: "GPT Image 2")
+                        .accessibilityIdentifier("settings.imageGeneration.chatGPTModel")
+                    Text("Uses your ChatGPT plan through OpenAI’s managed runtime. Size and quality are chosen automatically; describe preferences in your request. Account availability and plan limits apply.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Picker("Model", selection: modelSelection) {
+                        ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
+                            Text(ProviderKind.imageModelTitle(name)).tag(name)
                         }
-                        .onAppear { customModelText = draft.imageGenerationModel }
-                        .onDisappear {
-                            // Picking a curated name hides this field after the
-                            // picker has already written the draft; only a
-                            // field that leaves while still "Other…" commits.
-                            if customModelSelected { commitCustomModel() }
+                        Text("Other…").tag(Self.otherModelTag)
+                    }
+                    .accessibilityIdentifier("settings.imageGeneration.model")
+
+                    if ImageGenerationOptions.hasExtendedQuality(draft.imageGenerationModel) {
+                        Text("Sunburst is best for precise edits. Flare is designed for fast everyday image generation.")
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if customModelSelected {
+                        TextField("Model name", text: $customModelText)
+                            .focused($customModelFocused)
+                            .onSubmit(commitCustomModel)
+                            .onChange(of: customModelFocused) { _, focused in
+                                if !focused { commitCustomModel() }
+                            }
+                            .onAppear { customModelText = draft.imageGenerationModel }
+                            .onDisappear {
+                                // Picking a curated name hides this field after the
+                                // picker has already written the draft; only a
+                                // field that leaves while still "Other…" commits.
+                                if customModelSelected { commitCustomModel() }
+                            }
+                            .accessibilityIdentifier("settings.imageGeneration.customModel")
+                    }
+
+                    Picker("Default size", selection: sizeSelection) {
+                        ForEach(ImageGenerationOptions.sizes(for: draft.imageGenerationModel)) { size in
+                            Text(size.title).tag(size.rawValue)
                         }
-                        .accessibilityIdentifier("settings.imageGeneration.customModel")
-                }
-
-                Picker("Default size", selection: $draft.imageGenerationSize) {
-                    ForEach(ImageGenerationSize.allCases) { size in
-                        Text(size.title).tag(size.rawValue)
+                        if ImageGenerationOptions.hasCustomSizes(draft.imageGenerationModel) {
+                            Text("Custom…").tag(Self.customSizeTag)
+                        }
                     }
-                }
-                .accessibilityIdentifier("settings.imageGeneration.size")
+                    .accessibilityIdentifier("settings.imageGeneration.size")
 
-                Picker("Default quality", selection: $draft.imageGenerationQuality) {
-                    ForEach(ImageGenerationQuality.allCases) { quality in
-                        Text(quality.title).tag(quality.rawValue)
+                    if customSizeSelected && ImageGenerationOptions.hasCustomSizes(draft.imageGenerationModel) {
+                        TextField("Custom dimensions", text: $customSizeText, prompt: Text("1536x864"))
+                            .focused($customSizeFocused)
+                            .onSubmit(commitCustomSize)
+                            .onChange(of: customSizeFocused) { _, focused in
+                                if !focused { commitCustomSize() }
+                            }
+                            .onDisappear {
+                                if customSizeSelected && ImageGenerationOptions.hasCustomSizes(draft.imageGenerationModel) {
+                                    commitCustomSize()
+                                }
+                            }
+                            .accessibilityIdentifier("settings.imageGeneration.customSize")
+                        if let customSizeError {
+                            Text(customSizeError)
+                                .font(.locus(size: 9))
+                                .foregroundStyle(LocusTheme.warning)
+                                .accessibilityIdentifier("settings.imageGeneration.customSizeError")
+                        }
                     }
+                    if ImageGenerationOptions.hasCustomSizes(draft.imageGenerationModel) {
+                        Text(ImageGenerationOptions.sizeHelp)
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Picker("Default quality", selection: $draft.imageGenerationQuality) {
+                        ForEach(ImageGenerationOptions.qualities(for: draft.imageGenerationModel)) { quality in
+                            Text(quality.title).tag(quality.rawValue)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.imageGeneration.quality")
                 }
-                .accessibilityIdentifier("settings.imageGeneration.quality")
             }
             .disabled(imageControlsDisabled)
 
@@ -110,7 +161,7 @@ struct ImageGenerationSettingsView: View {
             statusRow
                 .disabled(imageControlsDisabled)
 
-            Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. The API key is handed to the local agent in memory and never written to its config.")
+            Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. ChatGPT sign-in stays inside OpenAI’s managed runtime. API accounts use their own key and billing.")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -121,6 +172,7 @@ struct ImageGenerationSettingsView: View {
             customModelSelected = !ProviderKind.curatedImageModels
                 .contains(draft.imageGenerationModel)
             customModelText = draft.imageGenerationModel
+            resetCustomSizeEditor()
         }
     }
 
@@ -145,6 +197,7 @@ struct ImageGenerationSettingsView: View {
 
     private func commitCustomModel() {
         Self.commitCustomModel(customModelText, into: &draft)
+        resetCustomSizeEditor()
     }
 
     /// Writes a typed model name into the draft once: trimmed, never empty,
@@ -154,8 +207,52 @@ struct ImageGenerationSettingsView: View {
     static func commitCustomModel(_ text: String, into draft: inout AppSettings) -> Bool {
         let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != draft.imageGenerationModel else { return false }
-        draft.imageGenerationModel = name
+        selectModel(name, into: &draft)
         return true
+    }
+
+    static func selectModel(_ name: String, into draft: inout AppSettings) {
+        // Commit one consistent preference update when changing families.
+        if !ImageGenerationOptions.qualities(for: name).contains(where: { $0.rawValue == draft.imageGenerationQuality }) {
+            draft.imageGenerationQuality = "auto"
+        }
+        if !ImageGenerationOptions.isValidSize(draft.imageGenerationSize, model: name) {
+            draft.imageGenerationSize = "auto"
+        }
+        draft.imageGenerationModel = name
+    }
+
+    @discardableResult
+    static func commitCustomSize(_ text: String, into draft: inout AppSettings) -> Bool {
+        let size = text.lowercased().replacingOccurrences(of: "×", with: "x")
+            .components(separatedBy: .whitespacesAndNewlines).joined()
+        guard ImageGenerationOptions.isValidSize(size, model: draft.imageGenerationModel) else { return false }
+        draft.imageGenerationSize = size
+        return true
+    }
+
+    private func commitCustomSize() {
+        customSizeError = Self.commitCustomSize(customSizeText, into: &draft)
+            ? nil : "Enter valid image dimensions, such as 1536x864. Your previous size is still selected."
+    }
+
+    private func resetCustomSizeEditor() {
+        customSizeSelected = !ImageGenerationOptions.sizes(for: draft.imageGenerationModel)
+            .contains(where: { $0.rawValue == draft.imageGenerationSize })
+        customSizeText = draft.imageGenerationSize == "auto" ? "" : draft.imageGenerationSize
+        customSizeError = nil
+    }
+
+    private var sizeSelection: Binding<String> {
+        Binding(get: { customSizeSelected ? Self.customSizeTag : draft.imageGenerationSize }, set: { value in
+            customSizeError = nil
+            customSizeSelected = value == Self.customSizeTag
+            if customSizeSelected {
+                customSizeText = draft.imageGenerationSize == "auto" ? "" : draft.imageGenerationSize
+            } else {
+                draft.imageGenerationSize = value
+            }
+        })
     }
 
     private var eligibleAccounts: [ProviderAccount] {
@@ -164,8 +261,13 @@ struct ImageGenerationSettingsView: View {
         providerAccounts.providerAccounts.filter { account in
             account.kind.supportsImageGeneration
                 && account.isCredentialReady(in: model.credentialStore)
-                && !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (account.kind == .chatGPT
+                    || !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+    }
+
+    private var isChatGPTSelected: Bool {
+        eligibleAccounts.first { $0.id.uuidString == draft.imageGenerationAccountID }?.kind == .chatGPT
     }
 
     /// Curated names select directly; "Other…" reveals the free-text field
@@ -183,7 +285,8 @@ struct ImageGenerationSettingsView: View {
                     customModelSelected = true
                 } else {
                     customModelSelected = false
-                    draft.imageGenerationModel = newValue
+                    Self.selectModel(newValue, into: &draft)
+                    resetCustomSizeEditor()
                 }
             }
         )

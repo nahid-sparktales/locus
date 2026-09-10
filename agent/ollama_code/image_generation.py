@@ -42,8 +42,11 @@ IMAGES_FOLDER = "Locus Images"
 MAX_IMAGES_PER_TURN = 4
 MAX_IMAGES_PER_SESSION = 24
 IMAGE_SIZES = ("auto", "1024x1024", "1536x1024", "1024x1536")
-IMAGE_QUALITIES = ("auto", "low", "medium", "high")
-DEFAULT_MODEL = "gpt-image-1"
+LEGACY_IMAGE_QUALITIES = ("auto", "low", "medium", "high")
+IMAGE_QUALITIES = (*LEGACY_IMAGE_QUALITIES, "xhigh", "max")
+DEFAULT_MODEL = "gpt-image-2.5-sunburst"
+_IMAGE_25_MODEL = re.compile(r"gpt-image-2\.5-(?:sunburst|flare)(?:-\d{4}-\d{2}-\d{2})?")
+_IMAGE_2_MODEL = re.compile(r"gpt-image-2(?:-\d{4}-\d{2}-\d{2})?")
 MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MAX_API_KEY_CHARS = 4096
 MAX_LABEL_CHARS = 200
@@ -60,7 +63,7 @@ MAX_COLLISION_SUFFIX = 999
 REQUEST_TIMEOUT = (10, 180)
 #: Only an ``error.code`` token this short and this plain reaches the model.
 _ERROR_CODE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
-SETUP_HINT = "add an OpenAI API account under Settings › Models & Providers › Image generation"
+SETUP_HINT = "choose a ChatGPT or OpenAI API account under Manage Accounts › Image generation"
 INTERRUPTED = "Error: image generation interrupted."
 #: Dispatch refusals keyed by ``ToolRegistry.image_tool_refusal``; each names
 #: its real cause so the model never relays "add an account" for a policy gate.
@@ -88,6 +91,32 @@ class ImageToolError(Exception):
     """A tool-argument or workspace problem; text is safe for the model."""
 
 
+def image_qualities(model: str) -> tuple[str, ...]:
+    return IMAGE_QUALITIES if _IMAGE_25_MODEL.fullmatch(model.lower()) else LEGACY_IMAGE_QUALITIES
+
+
+def validate_image_size(size: str, model: str) -> None:
+    if size in IMAGE_SIZES:
+        return
+    if not (_IMAGE_25_MODEL.fullmatch(model.lower()) or _IMAGE_2_MODEL.fullmatch(model.lower())):
+        raise ValueError("'size' must be one of " + ", ".join(IMAGE_SIZES) + " for this model")
+    if re.fullmatch(r"[1-9][0-9]{0,3}x[1-9][0-9]{0,3}", size):
+        width, height = (int(edge) for edge in size.split("x"))
+        if (width % 16 == height % 16 == 0 and max(width, height) <= 3840
+                and max(width, height) <= 3 * min(width, height)
+                and 655_360 <= width * height <= 8_294_400):
+            return
+    raise ValueError(
+        "'size' must be WIDTHxHEIGHT with edges divisible by 16, at most 3840 pixels, "
+        "an aspect ratio from 1:3 to 3:1, and 655360–8294400 total pixels"
+    )
+
+
+def validate_image_quality(quality: str, model: str) -> None:
+    if quality not in image_qualities(model):
+        raise ValueError("'quality' must be one of " + ", ".join(image_qualities(model)) + " for this model")
+
+
 @dataclass(frozen=True)
 class ImageProviderConfig:
     base_url: str
@@ -97,9 +126,14 @@ class ImageProviderConfig:
     quality: str = "auto"
     account_id: str = ""
     account_label: str = ""
+    provider: str = "api"
+    codex_home_id: str = ""
+    chat_model: str = ""
 
     @property
     def host(self) -> str:
+        if self.provider == "chatgpt":
+            return "chatgpt.com"
         return urlsplit(self.base_url).hostname or ""
 
     def public(self) -> dict[str, Any]:
@@ -113,11 +147,33 @@ class ImageProviderConfig:
             "account_id": self.account_id,
             "account_label": self.account_label,
             "has_api_key": bool(self.api_key),
+            "provider": self.provider,
         }
 
     @classmethod
     def parse(cls, body: dict[str, Any]) -> ImageProviderConfig:
         """Validate a ``POST /api/images/provider`` body. Raises ``ValueError``."""
+        provider = body.get("provider", "api")
+        if provider == "chatgpt":
+            from .codex_app_server import codex_home_for_account
+            home_id = body.get("codex_home_id", "")
+            if not isinstance(home_id, str):
+                raise ValueError("codex_home_id must be a string")
+            codex_home_for_account(home_id)
+            if body.get("api_key") or body.get("base_url"):
+                raise ValueError("ChatGPT image generation uses managed sign-in, not API credentials")
+            if body.get("model", "gpt-image-2") != "gpt-image-2":
+                raise ValueError("ChatGPT image generation supports gpt-image-2")
+            chat_model = str(body.get("chat_model") or "").strip()
+            if not MODEL_PATTERN.fullmatch(chat_model):
+                raise ValueError("a ChatGPT orchestration model is required")
+            return cls(
+                base_url="", model="gpt-image-2", provider="chatgpt", codex_home_id=home_id,
+                chat_model=chat_model, account_id=str(body.get("account_id") or "")[:MAX_LABEL_CHARS],
+                account_label=str(body.get("account_label") or "")[:MAX_LABEL_CHARS],
+            )
+        if provider != "api":
+            raise ValueError("unknown image provider")
         base_url = normalize_base_url(str(body.get("base_url") or ""))
         if not base_url:
             raise ValueError("base_url is required")
@@ -147,11 +203,9 @@ class ImageProviderConfig:
         if not MODEL_PATTERN.match(model):
             raise ValueError("model must be 1–128 letters, digits, dots, dashes, colons or underscores")
         size = str(body.get("size") or "auto").strip().lower()
-        if size not in IMAGE_SIZES:
-            raise ValueError("size must be one of " + ", ".join(IMAGE_SIZES))
+        validate_image_size(size, model)
         quality = str(body.get("quality") or "auto").strip().lower()
-        if quality not in IMAGE_QUALITIES:
-            raise ValueError("quality must be one of " + ", ".join(IMAGE_QUALITIES))
+        validate_image_quality(quality, model)
         account_id = str(body.get("account_id") or "").strip()[:MAX_LABEL_CHARS]
         account_label = str(body.get("account_label") or "").strip()[:MAX_LABEL_CHARS]
         return cls(
@@ -594,13 +648,18 @@ def _size_label(size: int) -> str:
     return f"{size} bytes"
 
 
-def _choice(args: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]) -> str:
+def _image_option(args: dict[str, Any], key: str, default: str, model: str) -> str:
     value = args.get(key)
     if value is None or (isinstance(value, str) and not value.strip()):
-        return default
+        value = default
     text = str(value).strip().lower()
-    if text not in allowed:
-        raise ImageToolError(f"'{key}' must be one of " + ", ".join(allowed) + ".")
+    try:
+        if key == "size":
+            validate_image_size(text, model)
+        else:
+            validate_image_quality(text, model)
+    except ValueError as exc:
+        raise ImageToolError(str(exc)) from None
     return text
 
 
@@ -633,11 +692,11 @@ def build_image_preview(name: str, args: dict[str, Any], ctx: ToolContext) -> tu
     summary = f'edit image {source}: "{short}"' if edit else f'generate image: "{short}"'
     provider = ctx.image_provider if isinstance(ctx.image_provider, dict) else {}
     try:
-        size = _choice(args, "size", str(provider.get("size") or "auto"), IMAGE_SIZES)
+        size = _image_option(args, "size", str(provider.get("size") or "auto"), str(provider.get("model") or ""))
     except ImageToolError:
         size = str(args.get("size"))
     try:
-        quality = _choice(args, "quality", str(provider.get("quality") or "auto"), IMAGE_QUALITIES)
+        quality = _image_option(args, "quality", str(provider.get("quality") or "auto"), str(provider.get("model") or ""))
     except ImageToolError:
         quality = str(args.get("quality"))
     host = str(provider.get("host") or "") or "not configured"
@@ -658,6 +717,8 @@ def build_image_preview(name: str, args: dict[str, Any], ctx: ToolContext) -> tu
         f"{ctx.image_generations_this_session} of {MAX_IMAGES_PER_SESSION} this session.",
         "The prompt is sent to the provider.",
     ]
+    if provider.get("provider") == "chatgpt":
+        lines.append("Uses the selected ChatGPT plan through OpenAI's runtime; no API key or paid API fallback.")
     if edit:
         sends = _describe_source(ctx, source)
         if args.get("mask"):
@@ -669,9 +730,10 @@ def build_image_preview(name: str, args: dict[str, Any], ctx: ToolContext) -> tu
 class ImageGenerationService:
     """Holds the configured provider in memory and runs the two image tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, codex_for: Callable[[str], Any] | None = None) -> None:
         self._lock = threading.RLock()
         self._config: ImageProviderConfig | None = None
+        self._codex_for = codex_for
 
     def configure(self, config: ImageProviderConfig | None) -> None:
         with self._lock:
@@ -725,8 +787,8 @@ class ImageGenerationService:
         if len(prompt) > MAX_PROMPT_CHARS:
             raise ImageToolError(f"'prompt' must be at most {MAX_PROMPT_CHARS} characters.")
         title = " ".join(str(args.get("title") or "").split())[:MAX_TITLE_CHARS]
-        size = _choice(args, "size", config.size, IMAGE_SIZES)
-        quality = _choice(args, "quality", config.quality, IMAGE_QUALITIES)
+        size = _image_option(args, "size", config.size, config.model)
+        quality = _image_option(args, "quality", config.quality, config.model)
         edit = name == "edit_image"
         source = mask = None
         if edit:
@@ -741,7 +803,13 @@ class ImageGenerationService:
             raise ImageToolError(str(exc)) from None
         if ctx.stopped():
             raise ImageProviderError("interrupted")
-        client = ImageProviderClient(config)
+        if config.provider == "chatgpt":
+            from .chatgpt_images import ChatGPTImageClient
+            if self._codex_for is None:
+                raise ImageProviderError("ChatGPT image generation is unavailable in this runtime")
+            client = ChatGPTImageClient(config, self._codex_for(config.codex_home_id))
+        else:
+            client = ImageProviderClient(config)
         if edit:
             assert source is not None
             data = client.edit(prompt, size, quality, source, mask, ctx)
@@ -814,8 +882,8 @@ class ImageGenerationService:
 _SHARED_PROPERTIES: dict[str, Any] = {
     "prompt": {"type": "string", "description": "What the image should show."},
     "title": {"type": "string", "description": "Short caption shown with the image."},
-    "size": {"type": "string", "enum": list(IMAGE_SIZES)},
-    "quality": {"type": "string", "enum": list(IMAGE_QUALITIES)},
+    "size": {"type": "string", "description": "auto, 1024x1024, 1536x1024, or 1024x1536. GPT Image 2 and 2.5 also accept WIDTHxHEIGHT: edges divisible by 16, at most 3840, ratio from 1:3 to 3:1, and 655360–8294400 pixels. Above 2560x1440 is experimental."},
+    "quality": {"type": "string", "enum": list(IMAGE_QUALITIES), "description": "xhigh and max require GPT Image 2.5 Sunburst or Flare. Other models support up to high. Omit to use the saved default."},
     "filename": {"type": "string", "description": "Optional relative path; .png is forced and an existing file is never overwritten."},
 }
 

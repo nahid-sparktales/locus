@@ -784,7 +784,7 @@ struct SessionSidebarView: View {
         VStack(spacing: 8) {
             SidebarDestinationControl(destination: model.sidebarDestination) { destination in
                 withAnimation(LocusMotion.spatial) {
-                    model.sidebarDestination = destination
+                    model.switchSidebarDestination(destination)
                 }
             }
 
@@ -800,17 +800,27 @@ struct SessionSidebarView: View {
 
             primaryCreationButton
 
-            // The configuration host is mounted before any optional editor is
-            // presented, so global shortcuts always have a live sheet anchor.
             HStack(spacing: 7) {
-                secondaryButton(
-                    symbol: "gearshape.2",
-                    title: "Manage Agents",
-                    help: "Create agents, manage their triggers and access, and inspect activity",
-                    accessibilityLabel: "Manage Agents",
-                    identifier: "sidebar.configureAgent"
-                ) {
-                    model.presentConfigureAgent(draftText: model.draftText)
+                if model.sidebarDestination == .agents {
+                    secondaryButton(
+                        symbol: "gearshape.2",
+                        title: "Manage Agents",
+                        help: "Create agents, manage their triggers and access, and inspect activity",
+                        accessibilityLabel: "Manage Agents",
+                        identifier: "sidebar.configureAgent"
+                    ) {
+                        model.presentConfigureAgent(draftText: model.draftText)
+                    }
+                } else {
+                    secondaryButton(
+                        symbol: "book.closed",
+                        title: "Notebook",
+                        help: "Open your notebook",
+                        accessibilityLabel: "Notebook",
+                        identifier: "sidebar.openNotebook"
+                    ) {
+                        model.notebookPresented = true
+                    }
                 }
 
                 activityButton

@@ -19,8 +19,35 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            contentArea
+            if let destination = model.emptySidebarDestination {
+                if !sidebarVisible {
+                    HStack {
+                        HeaderIconButton(symbol: "sidebar.left", label: "Show sidebar",
+                                         identifier: "workspace.showSidebar", action: showSidebar)
+                        Spacer()
+                    }
+                    .padding(16)
+                }
+                ContentUnavailableView {
+                    Label(destination == .agents ? "Choose an agent chat" : "Start a work chat",
+                          systemImage: destination == .agents ? "person.2" : "bubble.left")
+                } description: {
+                    Text(destination == .agents
+                         ? "Select an agent in the sidebar or manage your agents to get started."
+                         : "Create a chat to start working in this workspace.")
+                } actions: {
+                    Button(destination == .agents ? "Manage Agents" : "New chat") {
+                        if destination == .agents { model.presentConfigureAgent(draftText: "") }
+                        else { model.newSession() }
+                    }
+                    .accessibilityIdentifier("workspace.emptyDestination.action")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("workspace.emptyDestination")
+            } else {
+                header
+                contentArea
+            }
         }
         .background(LocusTheme.panel)
     }
@@ -192,10 +219,8 @@ struct WorkspaceView: View {
                     .accessibilityIdentifier("workspace.reviewAndLand")
             }
 
-            if !model.reasoningEffortOptions.isEmpty {
-                WorkspaceEffortPicker()
-                    .environmentObject(model)
-            }
+            WorkspaceEffortPicker()
+                .environmentObject(model)
 
             Button {
                 modelPickerPresented.toggle()
@@ -359,9 +384,18 @@ private struct WorkspaceSessionTitle: View {
 private struct WorkspaceEffortPicker: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @State private var isPresented = false
 
     var body: some View {
+        // Observe the catalog owner even when this control is initially empty.
+        if !model.reasoningEffortOptions.isEmpty {
+            picker
+        }
+    }
+
+    @ViewBuilder
+    private var picker: some View {
         let effort = resolvedEffort
         let label = effort.isEmpty ? "Auto" : effort.capitalized
         Button {
@@ -434,6 +468,7 @@ private struct WorkspaceEffortPicker: View {
         .padding(10)
         .frame(width: 240)
         .background(LocusTheme.white)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.effortPicker.popover")
     }
 

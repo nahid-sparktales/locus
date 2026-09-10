@@ -320,6 +320,8 @@ final class AppModel: ObservableObject {
             syncInspectorWithSidebarDestination()
         }
     }
+    var lastSidebarSessionIDs: [String: String] = [:]
+    @Published var emptySidebarDestination: SidebarDestination?
     /// The agent selected as a whole in the sidebar. This is deliberately
     /// independent of the open chat: selecting an agent changes its inspector
     /// and New Chat target without replacing the conversation in the centre.
@@ -808,6 +810,9 @@ final class AppModel: ObservableObject {
         self.lifecycleJournal = persistenceEnabled ? launchJournal : nil
         pendingLifecycleRecovery = persistenceEnabled ? launchJournal.beginLaunch() : nil
         let defaults = UserDefaults.standard
+        if persistenceEnabled {
+            lastSidebarSessionIDs = defaults.dictionary(forKey: "Locus.lastSidebarSessionIDs") as? [String: String] ?? [:]
+        }
         let existingInstallation = defaults.data(forKey: "Locus.settings") != nil
             || defaults.data(forKey: "Locus.sessionOverviewStates.v1") != nil
         activity.restore(persistenceEnabled: !isUITesting && persistenceEnabled)
@@ -1223,6 +1228,7 @@ final class AppModel: ObservableObject {
             },
             onWarningResolved: { [weak self] runID in
                 self?.clearRunWarningPresentation(runID: runID)
+                Task { await self?.activity.refreshActivityRuns(announceFailure: false) }
             },
             supportsWorkflows: { [weak self] in
                 self?.automationWorkflowsEnabled ?? false

@@ -1775,9 +1775,13 @@ struct SettingsView: View {
             .id(model.settingsPage)
             .accessibilityIdentifier("settings.content.\(model.settingsPage.accessibilityKey)")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: pendingSearchAnchor) { _, anchor in
-                guard let anchor else { return }
+            .task(id: pendingSearchAnchor) {
+                guard let anchor = pendingSearchAnchor else { return }
                 guard model.settingsPage != .browser else { return }
+                // A destination page can replace this view in the same update
+                // as its anchor. Wait for its form to lay out before scrolling.
+                await Task.yield()
+                guard !Task.isCancelled, pendingSearchAnchor == anchor else { return }
                 withAnimation(LocusMotion.scroll) {
                     proxy.scrollTo(anchor, anchor: .top)
                 }
@@ -2280,42 +2284,11 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.voice.enabled")
 
                     if draft.voiceControlsEnabled {
-                        Picker("Speech engine", selection: $draft.voiceSpeechEngineRaw) {
-                            ForEach(VoiceSpeechEngine.allCases) { engine in
-                                Text(engine.title).tag(engine.rawValue)
-                            }
+                        Button("Manage audio accounts…") {
+                            model.settingsPage = .accounts
+                            pendingSearchAnchor = "settings.audioAccounts"
                         }
-                        .accessibilityIdentifier("settings.voice.engine")
-
-                        if draft.resolvedVoiceSpeechEngine == .openAICompatible {
-                            Picker("Speech account", selection: $draft.voiceCloudAccountID) {
-                                Text("Choose an account").tag(String?.none)
-                                ForEach(model.eligibleVoiceAccounts) { account in
-                                    Text(account.displayName).tag(Optional(account.id.uuidString))
-                                }
-                            }
-                            .accessibilityIdentifier("settings.voice.account")
-
-                            if model.eligibleVoiceAccounts.isEmpty {
-                                HStack {
-                                    Text("Add an OpenAI API or compatible custom account first.")
-                                        .font(.locus(size: 9))
-                                        .foregroundStyle(LocusTheme.warning)
-                                    Spacer()
-                                    Button("Open Providers") { model.settingsPage = .accounts }
-                                }
-                            }
-
-                            TextField(
-                                "Transcription model",
-                                text: $draft.voiceCloudTranscriptionModel
-                            )
-                            .accessibilityIdentifier("settings.voice.transcriptionModel")
-                            TextField("Speech model", text: $draft.voiceCloudSpeechModel)
-                                .accessibilityIdentifier("settings.voice.speechModel")
-                            TextField("Voice identifier", text: $draft.voiceCloudVoiceIdentifier)
-                                .accessibilityIdentifier("settings.voice.voiceIdentifier")
-                        }
+                        .accessibilityIdentifier("settings.voice.manageAccounts")
 
                         Picker("Recognition language", selection: $draft.voiceLanguageIdentifier) {
                             Text("System language").tag("")
@@ -2992,8 +2965,55 @@ struct SettingsView: View {
         }
     }
 
-    /// Remote provider accounts. Edits here write the credential file as they
-    /// happen, so this page has no Cancel/Save bar of its own.
+    private var audioAccountSettings: some View {
+        Section("Audio accounts") {
+            Picker("Speech engine", selection: $draft.voiceSpeechEngineRaw) {
+                ForEach(VoiceSpeechEngine.allCases) { engine in
+                    Text(engine.title).tag(engine.rawValue)
+                }
+            }
+            .accessibilityIdentifier("settings.voice.engine")
+
+            if draft.resolvedVoiceSpeechEngine == .openAICompatible {
+                Picker("Speech account", selection: $draft.voiceCloudAccountID) {
+                    Text("Choose an account").tag(String?.none)
+                    ForEach(model.eligibleVoiceAccounts) { account in
+                        Text(account.displayName).tag(Optional(account.id.uuidString))
+                    }
+                }
+                .accessibilityIdentifier("settings.voice.account")
+
+                if model.eligibleVoiceAccounts.isEmpty {
+                    HStack {
+                        Text("Add an OpenAI API or compatible custom account first.")
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.warning)
+                        Spacer()
+                        Button("Add Account…") { addingAccount = ProviderAccount(kind: .codex) }
+                    }
+                }
+
+                TextField(
+                    "Transcription model",
+                    text: $draft.voiceCloudTranscriptionModel
+                )
+                .accessibilityIdentifier("settings.voice.transcriptionModel")
+                TextField("Speech model", text: $draft.voiceCloudSpeechModel)
+                    .accessibilityIdentifier("settings.voice.speechModel")
+                TextField("Voice identifier", text: $draft.voiceCloudVoiceIdentifier)
+                    .accessibilityIdentifier("settings.voice.voiceIdentifier")
+            }
+
+            Text("Choose the account used for dictation and spoken replies. Voice behavior and microphone controls are in Chat settings.")
+                .font(.locus(size: 9))
+                .foregroundStyle(LocusTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .id("settings.audioAccounts")
+    }
+
+    /// Account and media preferences apply immediately; staged runtime
+    /// settings keep their existing Apply controls on their own pages.
     private var accountsPage: some View {
         Form {
             Section("Provider accounts") {
@@ -3100,6 +3120,8 @@ struct SettingsView: View {
                 }
 
             }
+
+            audioAccountSettings
 
             ImageGenerationSettingsView(
                 imageGeneration: model.imageGeneration,

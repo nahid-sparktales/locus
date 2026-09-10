@@ -224,6 +224,7 @@ final class ScheduleModel: ObservableObject {
                 toastHandler(updated.enabled
                     ? "Agent warning cleared"
                     : "Agent warning cleared; the agent remains paused")
+                await refreshActivity()
             } catch {
                 toastHandler("Could not clear this warning: \(error.localizedDescription)")
             }

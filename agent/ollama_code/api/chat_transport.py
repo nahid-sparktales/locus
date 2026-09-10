@@ -14,6 +14,7 @@ from ..codex_app_server import (
     CodexAppServerError,
     CodexBrokerClient,
     CodexProtocolMismatch,
+    CodexThreadOptions,
     codex_home_for_account,
 )
 from .dependencies import service_from_app
@@ -101,6 +102,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
                 base_instructions=str(request.get("base_instructions") or ""),
                 tools=request.get("tools") if isinstance(request.get("tools"), list) else [],
                 ephemeral=bool(request.get("ephemeral")),
+                options=CodexThreadOptions(image_generation=request.get("image_generation") is True),
             )
             await ws.send_json({"type": "result", "result": result})
         elif operation == "thread_resume":

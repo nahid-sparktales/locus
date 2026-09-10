@@ -968,7 +968,8 @@ extension AppModel {
             }
             return
         }
-        if let runID = item.runID,
+        if ["allow_once", "always_allow", "deny", "resume", "retry", "clear", "open_chat"].contains(action),
+           let runID = item.runID,
            let run = activity.activityRuns.first(where: { $0.id == runID }) {
             switch action {
             case "allow_once": answerActivityPermission(run, decision: "once")
@@ -995,12 +996,17 @@ extension AppModel {
                     configureAgentFocusConfigurationID = "schedule:\(id)"
                 } else if let trigger = eventAutomations.triggers.first(where: { $0.id == id }) {
                     configureAgentFocusConfigurationID = "\(trigger.triggerKind == .price ? "price" : "event"):\(id)"
+                } else {
+                    configureAgentFocusConfigurationID = "event:\(id)"
                 }
             }
         } else if action == "open_chat", let sessionID = item.sessionID,
                   let session = sessions.first(where: { $0.id == sessionID }) {
             activity.activityCenterPresented = false
             resume(session)
+        } else {
+            showToast("That item is no longer available. Refreshing Activity Center…")
+            Task { await activity.refreshActivityRuns(announceFailure: false) }
         }
     }
 

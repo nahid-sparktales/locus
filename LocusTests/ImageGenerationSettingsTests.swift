@@ -205,7 +205,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
 
     // MARK: - Request body
 
-    func testRequestBodyIsBuiltOnlyForImageCapableAccountsAndNeverForChatGPT() throws {
+    func testRequestBodyKeepsChatGPTManagedAndAPIAccountsSeparate() throws {
         let store = InMemoryCredentialStore()
         let model = makeModel(credentialStore: store)
         defer { model.eventAutomations.stop() }
@@ -221,8 +221,8 @@ final class ImageGenerationSettingsTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            Set(model.eligibleImageAccounts.map(\.id)), [openAI.id, custom.id],
-            "only OpenAI API and compatible custom endpoints can serve the Images API"
+            Set(model.eligibleImageAccounts.map(\.id)), [openAI.id, custom.id, chatGPT.id],
+            "ChatGPT plans and compatible API accounts can generate images"
         )
 
         model.settings.imageGenerationAccountID = openAI.id.uuidString
@@ -245,7 +245,16 @@ final class ImageGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(customBody["base_url"] as? String, "https://gateway.example/v1")
         XCTAssertEqual(customBody["api_key"] as? String, "gw-key")
 
-        for ineligible in [chatGPT, claude, kimi] {
+        model.settings.imageGenerationAccountID = chatGPT.id.uuidString
+        let planBody = model.imageProviderRequestBody()
+        XCTAssertEqual(planBody["provider"] as? String, "chatgpt")
+        XCTAssertEqual(planBody["codex_home_id"] as? String, chatGPT.codexHomeIdentifier)
+        XCTAssertEqual(planBody["model"] as? String, "gpt-image-2")
+        XCTAssertEqual(planBody["chat_model"] as? String, chatGPT.preferredModel)
+        XCTAssertNil(planBody["api_key"])
+        XCTAssertNil(planBody["base_url"])
+
+        for ineligible in [claude, kimi] {
             model.settings.imageGenerationAccountID = ineligible.id.uuidString
             XCTAssertEqual(
                 model.imageProviderRequestBody() as NSDictionary, ["enabled": false],
@@ -273,7 +282,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         let body = model.imageProviderRequestBody()
         XCTAssertEqual(body["enabled"] as? Bool, true)
         XCTAssertNil(body["api_key"], "an absent key is omitted, not sent as an empty string")
-        XCTAssertEqual(body["model"] as? String, "gpt-image-1")
+        XCTAssertEqual(body["model"] as? String, "gpt-image-2.5-sunburst")
     }
 
     // MARK: - Settings persistence
@@ -281,7 +290,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
     func testSettingsDecodeAnEmptyPayloadWithDefaultsAndRoundTripTheImageFields() throws {
         let decoded = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
         XCTAssertNil(decoded.imageGenerationAccountID)
-        XCTAssertEqual(decoded.imageGenerationModel, "gpt-image-1")
+        XCTAssertEqual(decoded.imageGenerationModel, "gpt-image-2.5-sunburst")
         XCTAssertEqual(decoded.imageGenerationSize, "auto")
         XCTAssertEqual(decoded.imageGenerationQuality, "auto")
         XCTAssertTrue(decoded.interactiveAnswersEnabled)
@@ -822,7 +831,10 @@ final class ImageGenerationSettingsTests: XCTestCase {
             ["gpt-5", "o3"],
             "the chat picker keeps hiding image models"
         )
-        XCTAssertEqual(ProviderKind.curatedImageModels, ["gpt-image-1", "gpt-image-1-mini"])
+        XCTAssertEqual(ProviderKind.curatedImageModels, [
+            "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2",
+            "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+        ])
         for name in ProviderKind.curatedImageModels {
             XCTAssertFalse(
                 ProviderModelFilter.matches(kind: .codex, name: name),
@@ -831,12 +843,62 @@ final class ImageGenerationSettingsTests: XCTestCase {
         }
         XCTAssertTrue(ProviderKind.codex.supportsImageGeneration)
         XCTAssertTrue(ProviderKind.custom.supportsImageGeneration)
-        for kind in [ProviderKind.chatGPT, .claude, .kimi, .kimiCode] {
+        XCTAssertTrue(ProviderKind.chatGPT.supportsImageGeneration)
+        for kind in [ProviderKind.claude, .kimi, .kimiCode] {
             XCTAssertFalse(kind.supportsImageGeneration, "\(kind) has no Images API")
         }
-        XCTAssertEqual(ImageGenerationSize.allCases.map(\.rawValue),
+        XCTAssertEqual(ImageGenerationOptions.sizes(for: "gpt-image-1").map(\.rawValue),
                        ["auto", "1024x1024", "1536x1024", "1024x1536"])
-        XCTAssertEqual(ImageGenerationQuality.allCases.map(\.rawValue),
+        XCTAssertEqual(ImageGenerationOptions.qualities(for: "gpt-image-2").map(\.rawValue),
                        ["auto", "low", "medium", "high"])
+    }
+
+    func testNewImageModelsPreserveOptionsThroughSettingsAndProviderHandoff() throws {
+        let model = makeModel()
+        let account = insertAccount(model, kind: .codex, name: "Images")
+        for name in ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08"] {
+            var settings = AppSettings()
+            settings.imageGenerationAccountID = account.id.uuidString
+            ImageGenerationSettingsView.selectModel(name, into: &settings)
+            XCTAssertTrue(ImageGenerationSettingsView.commitCustomSize("1536 × 864", into: &settings))
+            settings.imageGenerationQuality = "max"
+            model.settings = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+            let body = model.imageProviderRequestBody()
+            XCTAssertEqual(body["model"] as? String, name)
+            XCTAssertEqual(body["size"] as? String, "1536x864")
+            XCTAssertEqual(body["quality"] as? String, "max")
+            XCTAssertEqual(body["base_url"] as? String, account.resolvedBaseURL)
+            XCTAssertEqual(ImageGenerationOptions.qualities(for: name).map(\.rawValue),
+                           ["auto", "low", "medium", "high", "xhigh", "max"])
+        }
+    }
+
+    func testChangingImageModelsResetsOnlyUnsupportedOptions() {
+        var draft = AppSettings()
+        draft.imageGenerationSize = "3840x2160"
+        draft.imageGenerationQuality = "max"
+        ImageGenerationSettingsView.selectModel("gpt-image-2.5-flare", into: &draft)
+        XCTAssertEqual(draft.imageGenerationSize, "3840x2160")
+        XCTAssertEqual(draft.imageGenerationQuality, "max")
+        ImageGenerationSettingsView.selectModel("gpt-image-2", into: &draft)
+        XCTAssertEqual(draft.imageGenerationSize, "3840x2160")
+        XCTAssertEqual(draft.imageGenerationQuality, "auto")
+        draft.imageGenerationQuality = "high"
+        ImageGenerationSettingsView.selectModel("gpt-image-1.5", into: &draft)
+        XCTAssertEqual(draft.imageGenerationSize, "auto")
+        XCTAssertEqual(draft.imageGenerationQuality, "high")
+        XCTAssertFalse(ImageGenerationOptions.hasExtendedQuality("gpt-image-2.5-flare-preview"))
+    }
+
+    func testImageDimensionsRejectInvalidEditsWithoutReplacingSavedSize() {
+        var draft = AppSettings()
+        for size in ["1024x640", "1536x864", "3840x2160", "2160x3840", "3840x1280"] {
+            XCTAssertTrue(ImageGenerationSettingsView.commitCustomSize(size, into: &draft), size)
+        }
+        let previous = draft.imageGenerationSize
+        for size in ["16x16", "1024x624", "1537x864", "4096x2048", "3840x3840", "3840x1264", "0x1024", "999999999999x1024"] {
+            XCTAssertFalse(ImageGenerationSettingsView.commitCustomSize(size, into: &draft), size)
+            XCTAssertEqual(draft.imageGenerationSize, previous)
+        }
     }
 }
