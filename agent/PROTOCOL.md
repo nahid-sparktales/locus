@@ -408,7 +408,7 @@ disabled).
 `GET` returns the public state and never the key:
 
 ```json
-{ "configured": true, "host": "api.openai.com", "model": "gpt-image-1",
+{ "configured": true, "host": "api.openai.com", "model": "gpt-image-2.5-sunburst",
   "size": "auto", "quality": "auto", "account_id": "acct-1",
   "account_label": "OpenAI — Work", "has_api_key": true }
 ```
@@ -416,7 +416,23 @@ disabled).
 `POST` accepts `{"enabled": false}` to clear the provider, or `enabled: true`
 with `account_id`, `account_label`, `base_url`, `api_key`, `model`, `size`
 (`auto`, `1024x1024`, `1536x1024`, `1024x1536`) and `quality` (`auto`, `low`,
-`medium`, `high`). The base URL is normalised like a remote chat endpoint and
+`medium`, `high`). GPT Image 2.5 Sunburst and Flare (including dated snapshots)
+also accept quality `xhigh` and `max`. GPT Image 2 and both 2.5 models accept
+custom `WIDTHxHEIGHT` sizes: positive edges divisible by 16, no edge above
+3840 pixels, aspect ratio between 1:3 and 3:1, and total area between 655360
+and 8294400 pixels inclusive. Resolutions above 2560×1440 are experimental.
+Unknown compatible models retain the baseline sizes and quality choices.
+These rules apply both to provider defaults and per-tool overrides; invalid
+options are refused before an outbound request or file write. An invalid
+provider update leaves the previous configuration intact.
+
+The default API model is `gpt-image-2.5-sunburst`; explicit saved model choices
+are preserved. The Mac picker also includes `gpt-image-2.5-flare`,
+`gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`, with
+custom model names available. Changing model families resets unsupported
+saved size or quality to `auto` in the same preference update.
+
+The base URL is normalised like a remote chat endpoint and
 must be HTTPS unless it is on this Mac; `model` is 1–128 characters of letters,
 digits, `.`, `_`, `:` and `-`; the key is at most 4096 characters and must not
 contain whitespace or control characters (422, without echoing the key). The key is

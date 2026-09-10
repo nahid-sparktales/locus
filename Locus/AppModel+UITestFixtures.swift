@@ -180,6 +180,16 @@ extension AppModel {
                 )]
             }
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_IMAGE_MODELS"] == "1" {
+            let account = ProviderAccount(kind: .codex, name: "Image API fixture",
+                                          baseURLOverride: "https://images.example.invalid/v1")
+            providerAccounts = [account]
+            credentialStore.set("fixture-image-key", account: account.credentialAccount)
+            settings.imageGenerationAccountID = account.id.uuidString
+            settings.imageGenerationModel = "gpt-image-2.5-sunburst"
+            settings.imageGenerationSize = "auto"
+            settings.imageGenerationQuality = "auto"
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LONG_MODEL"] == "1" {
             let account = ProviderAccount(
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000401")!,

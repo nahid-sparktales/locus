@@ -183,6 +183,101 @@ def test_unconfigured_core_and_missing_executor_refuse_without_network(tmp_path,
 # ------------------------------------------------------------------- route
 
 
+@pytest.mark.parametrize("model", [
+    "gpt-image-2.5-sunburst", "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.5-flare-2026-09-08",
+])
+@pytest.mark.parametrize("tool,quality", [("generate_image", "max"), ("edit_image", "xhigh")])
+def test_new_image_models_reach_generation_and_editing_from_provider_route(client, tmp_path, monkeypatch, model, tool, quality):
+    stub = ProviderStub(monkeypatch)
+    configured = client.post("/api/images/provider", json={
+        "base_url": "https://images.example.com/v1", "api_key": KEY,
+        "model": model, "size": "1536x864", "quality": quality,
+    })
+    assert configured.status_code == 200
+    core = client.app.state.service.core
+    args = {"prompt": "A harbour at dusk"}
+    if tool == "edit_image":
+        (tmp_path / "photo.png").write_bytes(PNG)
+        (tmp_path / "mask.png").write_bytes(PNG)
+        args.update(source="photo.png", mask="mask.png")
+    permissions = []
+
+    def approve(name, summary, detail, request_id):
+        permissions.append(detail)
+        return "once"
+
+    result = core._run_tool_call(ToolCall(tool, args), approve)
+    assert not result.startswith("Error:"), result
+    assert len(stub.calls) == 1
+    url, request = stub.calls[0]
+    assert url.endswith("/images/generations" if tool == "generate_image" else "/images/edits")
+    payload = request["json"] if tool == "generate_image" else request["data"]
+    assert {key: payload[key] for key in ("model", "size", "quality")} == {
+        "model": model, "size": "1536x864", "quality": quality,
+    }
+    assert any(f"{model} · 1536x864 · {quality}" in detail for detail in permissions)
+    if tool == "edit_image":
+        assert request["files"] == {
+            "image": ("photo.png", PNG, "image/png"),
+            "mask": ("mask.png", PNG, "image/png"),
+        }
+        assert (tmp_path / "photo.png").read_bytes() == PNG
+        assert (tmp_path / "photo-edited.png").read_bytes() == PNG
+    else:
+        assert (tmp_path / "Locus Images" / "a-harbour-at-dusk.png").read_bytes() == PNG
+
+
+@pytest.mark.parametrize("size", ["1024x640", "1536x864", "3840x2160", "2160x3840", "3840x1280"])
+def test_image_provider_accepts_supported_custom_dimension_boundaries(client, size):
+    for model in ("gpt-image-2", "gpt-image-2-2026-04-21", "gpt-image-2.5-flare"):
+        response = client.post("/api/images/provider", json={
+            "base_url": "https://images.example.com/v1", "model": model, "size": size,
+        })
+        assert response.status_code == 200, response.text
+        assert response.json()["size"] == size
+
+
+def test_image_provider_and_tools_reject_unsupported_options_without_dispatch(client, tmp_path, monkeypatch):
+    stub = ProviderStub(monkeypatch)
+    base = {"base_url": "https://images.example.com/v1", "model": "gpt-image-2.5-sunburst"}
+    configured = client.post("/api/images/provider", json={**base, "size": "1536x864", "quality": "max"})
+    assert configured.status_code == 200
+    core = client.app.state.service.core
+    invalid_sizes = ("16x16", "1024x624", "1537x864", "4096x2048", "3840x3840", "3840x1264", "0x1024", "9" * 100 + "x1024")
+    invalid = [{"size": size} for size in invalid_sizes] + [
+        {"quality": "ultra"}, {"model": "gpt-image-1.5", "size": "1536x864"},
+        {"model": "gpt-image-1.5", "quality": "max"},
+        {"model": "gpt-image-2", "quality": "xhigh"},
+        {"model": "gpt-image-2.5-flare-preview", "quality": "max"},
+    ]
+    for options in invalid:
+        rejected = client.post("/api/images/provider", json={**base, **options})
+        assert rejected.status_code == 422, (options, rejected.text)
+        assert client.get("/api/images/provider").json() == configured.json()
+    # Tool arguments have their own admission check; a valid saved provider
+    # does not let a model override it with unsupported request options.
+    (tmp_path / "photo.png").write_bytes(PNG)
+    for tool in ("generate_image", "edit_image"):
+        for options in [{"size": size} for size in invalid_sizes] + [{"quality": "ultra"}]:
+            result = core._run_tool_call(ToolCall(tool, {"prompt": "Harbour", "source": "photo.png", **options}), _once)
+            assert result.startswith(f"Error: '{next(iter(options))}'"), (options, result)
+    assert stub.calls == []
+    assert core.tool_ctx.image_generations_this_turn == 0
+    assert core.tool_ctx.image_generations_this_session == 0
+    assert _images(tmp_path) == []
+    assert not (tmp_path / "photo-edited.png").exists()
+
+
+def test_image_provider_default_is_sunburst_and_explicit_legacy_choice_is_preserved(client):
+    base = {"base_url": "https://images.example.com/v1"}
+    assert client.post("/api/images/provider", json=base).json()["model"] == "gpt-image-2.5-sunburst"
+    for model in ("gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2"):
+        response = client.post("/api/images/provider", json={**base, "model": model, "quality": "high"})
+        assert response.status_code == 200
+        assert response.json()["model"] == model
+
+
 def test_provider_route_never_persists_logs_or_echoes_the_key(client, tmp_path, monkeypatch):
     from ollama_code import config as config_mod
 

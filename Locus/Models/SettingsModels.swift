@@ -209,9 +209,9 @@ struct AppSettings: Codable, Hashable {
     var imageGenerationAccountID: String?
     /// Curated names plus free text: the Images API has no catalog worth
     /// fetching, and the chat model filter deliberately drops image models.
-    var imageGenerationModel = "gpt-image-1"
-    /// `auto` lets the provider choose; the other values are fixed enums the
-    /// agent validates, so a typo cannot reach the provider.
+    var imageGenerationModel = "gpt-image-2.5-sunburst"
+    /// `auto` lets the provider choose; presets and custom dimensions are
+    /// validated against the selected image model before dispatch.
     var imageGenerationSize = "auto"
     var imageGenerationQuality = "auto"
     /// The kill switch for the sealed web view: off renders an interactive

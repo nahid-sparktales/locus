@@ -1,13 +1,16 @@
 import Foundation
 
-/// The image sizes the agent's `/api/images/provider` route accepts. Fixed
-/// enums rather than free text: a typo here would otherwise travel all the
-/// way to the provider before anyone noticed.
+/// Common Image API sizes. Model-aware validation also admits custom sizes
+/// before a request can reach the provider.
 enum ImageGenerationSize: String, CaseIterable, Identifiable {
     case auto
     case square = "1024x1024"
     case landscape = "1536x1024"
     case portrait = "1024x1536"
+    case square2K = "2048x2048"
+    case landscape2K = "2048x1152"
+    case landscape4K = "3840x2160"
+    case portrait4K = "2160x3840"
 
     var id: String { rawValue }
 
@@ -17,12 +20,16 @@ enum ImageGenerationSize: String, CaseIterable, Identifiable {
         case .square: "Square (1024 × 1024)"
         case .landscape: "Landscape (1536 × 1024)"
         case .portrait: "Portrait (1024 × 1536)"
+        case .square2K: "2K square (2048 × 2048)"
+        case .landscape2K: "2K landscape (2048 × 1152)"
+        case .landscape4K: "4K landscape (3840 × 2160)"
+        case .portrait4K: "4K portrait (2160 × 3840)"
         }
     }
 }
 
 enum ImageGenerationQuality: String, CaseIterable, Identifiable {
-    case auto, low, medium, high
+    case auto, low, medium, high, xhigh, max
 
     var id: String { rawValue }
 
@@ -32,8 +39,47 @@ enum ImageGenerationQuality: String, CaseIterable, Identifiable {
         case .low: "Low"
         case .medium: "Medium"
         case .high: "High"
+        case .xhigh: "Extra High"
+        case .max: "Max"
         }
     }
+}
+
+/// Image API options vary by model. Snapshots retain their family's contract;
+/// unknown compatible models keep the established baseline options.
+enum ImageGenerationOptions {
+    static func hasExtendedQuality(_ model: String) -> Bool {
+        model.lowercased().range(of: "^gpt-image-2\\.5-(sunburst|flare)(-\\d{4}-\\d{2}-\\d{2})?$",
+                                 options: .regularExpression) != nil
+    }
+
+    static func hasCustomSizes(_ model: String) -> Bool {
+        hasExtendedQuality(model) || model.lowercased().range(
+            of: "^gpt-image-2(-\\d{4}-\\d{2}-\\d{2})?$", options: .regularExpression
+        ) != nil
+    }
+
+    static func qualities(for model: String) -> [ImageGenerationQuality] {
+        hasExtendedQuality(model) ? ImageGenerationQuality.allCases : [.auto, .low, .medium, .high]
+    }
+
+    static func sizes(for model: String) -> [ImageGenerationSize] {
+        hasCustomSizes(model) ? ImageGenerationSize.allCases : [.auto, .square, .landscape, .portrait]
+    }
+
+    static func isValidSize(_ size: String, model: String) -> Bool {
+        if sizes(for: model).contains(where: { $0.rawValue == size }) { return true }
+        guard hasCustomSizes(model),
+              size.range(of: "^[1-9][0-9]{0,3}x[1-9][0-9]{0,3}$", options: .regularExpression) != nil else { return false }
+        let edges = size.split(separator: "x").compactMap { Int($0) }
+        guard edges.count == 2 else { return false }
+        let width = edges[0], height = edges[1]
+        return width % 16 == 0 && height % 16 == 0 && max(width, height) <= 3840
+            && max(width, height) <= 3 * min(width, height)
+            && (655_360...8_294_400).contains(width * height)
+    }
+
+    static let sizeHelp = "Use width × height, with edges divisible by 16 and no larger than 3840 pixels. The aspect ratio must be between 1:3 and 3:1, with 655,360–8,294,400 total pixels. Resolutions above 2560 × 1440 are experimental."
 }
 
 /// Owns what the agent reports about its image provider: the public state

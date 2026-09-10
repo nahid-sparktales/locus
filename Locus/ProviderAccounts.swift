@@ -133,7 +133,18 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     /// The image models offered by name. There is no catalog fetch: `/models`
     /// lists these too, but the chat picker filter drops every image model on
     /// purpose, and a free-text field covers anything newer.
-    static let curatedImageModels = ["gpt-image-2", "gpt-image-1", "gpt-image-1-mini"]
+    static let curatedImageModels = [
+        "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2",
+        "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
+    ]
+
+    static func imageModelTitle(_ model: String) -> String {
+        switch model {
+        case "gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst"
+        case "gpt-image-2.5-flare": "GPT Image 2.5 Flare"
+        default: model
+        }
+    }
 
     /// Shown when the provider's model list cannot be fetched, and merged ahead
     /// of a fetched list so the newest models are easy to find.

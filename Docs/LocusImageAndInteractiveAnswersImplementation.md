@@ -20,6 +20,34 @@ Both kinds are additive under the existing limits (40 parts, 1 MB document) and 
 
 ## Image generation lifecycle and limits
 
+### OpenAI Image API models (September 2026)
+
+Manage Accounts › Image generation offers **GPT Image 2.5 Sunburst** and
+**GPT Image 2.5 Flare**, plus GPT Image 2, 1.5, 1, and 1 mini. New settings
+default to Sunburst; existing saved choices remain intact. The 2.5 models
+offer Automatic, Low, Medium, High, Extra High (`xhigh`), and Max quality.
+The picker and backend validate dated snapshots using the same model-family
+rules. Custom model names remain available with the baseline options.
+
+GPT Image 2 and 2.5 offer common 2K/4K presets and custom dimensions. Edges
+must be divisible by 16 and no larger than 3840 pixels, with an aspect ratio
+from 1:3 to 3:1 and an area of 655,360–8,294,400 pixels. OpenAI marks
+resolutions above 2560×1440 as experimental. Custom dimensions commit on
+Return or focus loss; invalid text leaves the last valid saved size intact.
+Changing models retains supported options and resets unsupported ones to
+Automatic before pushing settings. Both generation and multipart editing
+send the exact selected model, size, and quality. Existing image byte limits,
+permission checks, cancellation, and output handling still apply.
+
+These options follow OpenAI's [Sunburst model documentation](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst),
+[Flare model documentation](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare),
+and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation),
+checked September 10, 2026. The managed ChatGPT account continues to use
+the bundled runtime's GPT Image 2; selecting an API model does not change
+the subscription route.
+
+### Provider lifecycle
+
 The app pushes the chosen account to the agent with `POST /api/images/provider`, exactly as the chat provider key is pushed: in memory only, on launch, on Settings changes, after a key rotation, and as `enabled: false` when the account is removed. Every agent process holds its own copy, so the push fans out the way the chat provider does: the main agent on launch and after each restart, every live chat worker on each change (`applyImageProvider` iterates `taskWorkers`), and each new chat worker right after its chat provider is restored and before it resumes its conversation (`pushImageProvider(to:)` in `ensureChatWorker`, and again when a worker reconnects to a fresh process). A worker that cannot take the push keeps running without the image tools, and the app says so once. A push the agent refuses because a turn is running (HTTP 409) is remembered and re-sent when that turn ends (`applyPendingImageProviderIfNeeded` beside the pending chat-provider switch). In Settings, the custom model name is committed on Return, on focus loss, or when the field leaves the screen, so one push happens per committed value. The key lives only in the agent’s `ImageGenerationService`, never in its config file, provider state, events, or error text. `GET /api/images/provider` reports the configuration without the key.
 
 The tools are advertised only while a provider is configured, on both the classic and ChatGPT-native routes, and hidden in Plan mode on both routes; they appear only when the agent’s capability policy allows network and workspace write access, and a guessed call is refused at dispatch under the same rules. The refusal names its real cause — Plan mode, a read-only ceiling, the capability policy (network plus workspace write), or the `image_generation_v1` capability being off — and only the unconfigured case points at Settings, so the model never relays “add an account” for a policy gate. They are unavailable to Just Chat, private Identity tasks, role-contracted specialists, Solo helpers, and read-only agents. The “Render interactive answers” switch in the same Settings section follows the `interactive_answers_v1` capability alone; switching image generation off does not lock it.
@@ -49,7 +77,7 @@ The exported `.html` keeps the same policy so it stays offline in a browser. The
 
 ## Verification status
 
-The following counts describe the original 2.7 implementation. The ChatGPT GPT Image 2 addition and current deterministic results are recorded in [Account controls and navigation verification](Verification/AccountNavigation-2026-09-09.md). Live provider validation remains deferred.
+The following counts describe the original 2.7 implementation. The ChatGPT GPT Image 2 addition is recorded in [Account controls and navigation verification](Verification/AccountNavigation-2026-09-09.md); the newer API models and their deterministic checks are recorded in [OpenAI image models verification](Verification/OpenAIImageModels-2026-09-10.md). Live provider validation remains deferred.
 
 - **Backend:** **2,078 backend tests passed** (full pytest suite), including the new `test_image_files.py` and `test_image_generation.py` suites and the extended response-part, capability, answer-contract, native-route, and route-contract tests. Lint (`ruff`) passes.
 - **Native:** **1,403 native tests passed** across all 92 `LocusTests` classes through the injected-host runner, including the new `InteractiveAnswerSandboxTests` (real `WKWebView` proofs that inline scripts run while fetch, XMLHttpRequest, WebSocket, beacons, dynamic import, remote images, scripts, styles, fonts, and frames are blocked, navigation and `window.open` are inert, the watchdog and host budget tear pages down, the sealed web view empties its context menu and keeps the inspector off, a main-thread stall longer than the watchdog deadline does not tear down a healthy page, a card that disappears before its page mounts releases its host, and the saved document keeps its policy), `ChatExportPartsTests`, `ImageGenerationSettingsTests`, and the extended response output/event tests. The design-system audit and generated-project check pass.
