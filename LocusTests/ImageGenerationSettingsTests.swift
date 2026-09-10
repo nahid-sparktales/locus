@@ -37,10 +37,11 @@ final class ImageGenerationSettingsTests: XCTestCase {
         )
     }
 
-    /// Adds an account through the real save path so the key lands in the
-    /// model's private in-memory credential store.
-    @discardableResult
-    private func seedAccount(
+    /// Places an account and its key without starting catalog refreshes. The
+    /// real save path runs asynchronous provider pushes that can outlive a test
+    /// and contaminate the next test's shared BackendStub receipts. Tests of
+    /// saving explicitly call saveProviderAccount after this inert setup.
+    private func insertAccount(
         _ model: AppModel,
         kind: ProviderKind,
         name: String,
@@ -48,19 +49,10 @@ final class ImageGenerationSettingsTests: XCTestCase {
         key: String? = "sk-test"
     ) -> ProviderAccount {
         let account = ProviderAccount(kind: kind, name: name, baseURLOverride: baseURLOverride)
-        XCTAssertTrue(model.saveProviderAccount(account, apiKey: key))
-        return model.providerAccounts.first { $0.id == account.id } ?? account
-    }
-
-    /// Places an account and its key without the save path, whose background
-    /// catalog refresh re-pushes the image provider on its own schedule and
-    /// would blur a test that counts pushes.
-    private func insertAccount(
-        _ model: AppModel, kind: ProviderKind, name: String, key: String = "sk-test"
-    ) -> ProviderAccount {
-        let account = ProviderAccount(kind: kind, name: name)
         model.providerAccounts.append(account)
-        model.credentialStore.set(key, account: account.credentialAccount)
+        if let key {
+            model.credentialStore.set(key, account: account.credentialAccount)
+        }
         return account
     }
 
@@ -219,11 +211,11 @@ final class ImageGenerationSettingsTests: XCTestCase {
         defer { model.eventAutomations.stop() }
         XCTAssertEqual(model.imageProviderRequestBody() as NSDictionary, ["enabled": false])
 
-        let openAI = seedAccount(model, kind: .codex, name: "Work", key: "sk-openai")
-        let chatGPT = seedAccount(model, kind: .chatGPT, name: "Plan", key: nil)
-        let claude = seedAccount(model, kind: .claude, name: "Claude", key: "sk-ant")
-        let kimi = seedAccount(model, kind: .kimiCode, name: "Kimi", key: "kimi-key")
-        let custom = seedAccount(
+        let openAI = insertAccount(model, kind: .codex, name: "Work", key: "sk-openai")
+        let chatGPT = insertAccount(model, kind: .chatGPT, name: "Plan", key: nil)
+        let claude = insertAccount(model, kind: .claude, name: "Claude", key: "sk-ant")
+        let kimi = insertAccount(model, kind: .kimiCode, name: "Kimi", key: "kimi-key")
+        let custom = insertAccount(
             model, kind: .custom, name: "Gateway",
             baseURLOverride: "https://gateway.example/v1", key: "gw-key"
         )
@@ -272,7 +264,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         let model = makeModel()
         defer { model.eventAutomations.stop() }
         // A local OpenAI-compatible server needs no key at all.
-        let local = seedAccount(
+        let local = insertAccount(
             model, kind: .custom, name: "LM Studio",
             baseURLOverride: "http://127.0.0.1:1234/v1", key: nil
         )
@@ -337,7 +329,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         BackendStub.respond(toPath: "/api/images/provider") { _ in
             ["configured": false, "has_api_key": false]
         }
-        let account = seedAccount(model, kind: .codex, name: "Work")
+        let account = insertAccount(model, kind: .codex, name: "Work")
         model.settings.imageGenerationAccountID = account.id.uuidString
         XCTAssertEqual(model.imageProviderRequestBody()["enabled"] as? Bool, true)
 
@@ -359,8 +351,8 @@ final class ImageGenerationSettingsTests: XCTestCase {
         let model = makeModel()
         defer { model.eventAutomations.stop() }
         BackendStub.respond(toPath: "/api/images/provider") { _ in ["configured": false] }
-        let imageAccount = seedAccount(model, kind: .codex, name: "Images")
-        let other = seedAccount(model, kind: .codex, name: "Other")
+        let imageAccount = insertAccount(model, kind: .codex, name: "Images")
+        let other = insertAccount(model, kind: .codex, name: "Other")
         model.removeProviderAccount(other)
         model.settings.imageGenerationAccountID = imageAccount.id.uuidString
         model.removeProviderAccount(ProviderAccount(kind: .codex, name: "Never saved"))
@@ -382,7 +374,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
                 "account_id": "a", "account_label": "OpenAI API", "has_api_key": true,
             ]
         }
-        let account = seedAccount(model, kind: .codex, name: "Work")
+        let account = insertAccount(model, kind: .codex, name: "Work")
 
         var unrelated = model.settings
         unrelated.notifyOnCompletion.toggle()
@@ -454,7 +446,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         BackendStub.respond(toPath: "/api/images/provider", status: 500) { _ in
             ["detail": "images service exploded"]
         }
-        let account = seedAccount(model, kind: .codex, name: "Work")
+        let account = insertAccount(model, kind: .codex, name: "Work")
         model.settings.imageGenerationAccountID = account.id.uuidString
 
         let outcome = await model.pushImageProvider(to: stubbedService(host: "chat-worker.test"))
@@ -481,7 +473,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         model.currentSessionID = "current"
         addWorker(model, sessionID: "current", host: "worker-current.test")
         addWorker(model, sessionID: "background", host: "worker-background.test")
-        let account = seedAccount(model, kind: .codex, name: "Work")
+        let account = insertAccount(model, kind: .codex, name: "Work")
         model.settings.imageGenerationAccountID = account.id.uuidString
 
         model.removeProviderAccount(account)
@@ -551,7 +543,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
         defer { model.eventAutomations.stop() }
         BackendStub.respond(toPath: "/api/images/provider", with: Self.configuredState)
         addWorker(model, sessionID: "busy", host: "worker-busy.test")
-        let account = seedAccount(model, kind: .codex, name: "Work")
+        let account = insertAccount(model, kind: .codex, name: "Work")
         model.settings.imageGenerationAccountID = account.id.uuidString
         // The main agent answers 200 and the worker 409: BackendStub matches
         // the first route, so the worker refusal is expressed by a busy
@@ -606,7 +598,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
             ["configured": true, "has_api_key": true]
         }
         BackendStub.respond(whenPathHasPrefix: "/") { _ in [:] }
-        let account = seedAccount(model, kind: .codex, name: "Work", key: "sk-old")
+        let account = insertAccount(model, kind: .codex, name: "Work", key: "sk-old")
         model.settings.imageGenerationAccountID = account.id.uuidString
 
         XCTAssertTrue(model.saveProviderAccount(account, apiKey: "sk-new"))
