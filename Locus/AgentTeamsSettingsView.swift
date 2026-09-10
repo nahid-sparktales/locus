@@ -1104,75 +1104,108 @@ private struct EvaluationReportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(report.suite.name).font(.locus(size: 16, weight: .bold))
-                    Text("Evaluation results")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                }
-                Spacer()
-                Button("Done") { dismiss() }
-            }
-            HStack(spacing: 18) {
-                metric("Pass rate", "\(Int(report.summary.passRate * 100))%")
-                metric("Completed", report.summary.completionRate.map { "\(Int($0 * 100))%" } ?? "Unavailable")
-                metric("Rubric coverage", report.summary.rubricCoverage.map { "\(Int($0 * 100))%" } ?? "No rubric")
-                metric("Median", "\(report.summary.medianLatencyMilliseconds) ms")
-                metric("p95", "\(report.summary.p95LatencyMilliseconds) ms")
-                metric("Calls", report.summary.modelCalls.formatted())
-                metric("Tokens", (report.summary.promptTokens + report.summary.completionTokens).formatted())
-            }
-            Text((report.summary.estimatedAPICost.map { $0.formatted(.currency(code: "USD")) + " estimated" } ?? "API estimate unavailable") + " · " + (report.summary.costCoverage ?? "Historical pricing unavailable")).font(.caption)
-            if let outcomes = report.summary.outcomes { Text(outcomes.keys.sorted().map { "\($0): \(outcomes[$0] ?? 0)" }.joined(separator: " · ")).font(.caption) }
-            if !report.comparison.isEmpty {
-                Text("COMPARISON")
-                    .font(.locus(size: 8, weight: .bold))
-                    .tracking(0.7)
+            reportHeader
+            reportMetrics
+            Text(costSummary).font(.caption)
+            if let outcomesSummary { Text(outcomesSummary).font(.caption) }
+            comparisons
+            results
+        }
+        .padding(18)
+        .frame(width: 720, height: 620)
+    }
+
+    private var reportHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(report.suite.name).font(.locus(size: 16, weight: .bold))
+                Text("Evaluation results")
+                    .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
-                ForEach(report.comparison) { comparison in
-                    HStack {
-                        Text((comparison.label ?? "Historical configuration unavailable") + " · " + comparison.configuration.prefix(8)).font(.locus(size: 9, weight: .semibold))
-                        Spacer()
-                        Text("\(Int(comparison.passRate * 100))% pass")
-                        Text("p95 \(comparison.p95LatencyMilliseconds) ms")
-                        Text("\(comparison.modelCalls) calls")
-                        Text("\(comparison.retries) retries")
+            }
+            Spacer()
+            Button("Done") { dismiss() }
+        }
+    }
+
+    private var reportMetrics: some View {
+        HStack(spacing: 18) {
+            metric("Pass rate", "\(Int(report.summary.passRate * 100))%")
+            metric("Completed", report.summary.completionRate.map { "\(Int($0 * 100))%" } ?? "Unavailable")
+            metric("Rubric coverage", report.summary.rubricCoverage.map { "\(Int($0 * 100))%" } ?? "No rubric")
+            metric("Median", "\(report.summary.medianLatencyMilliseconds) ms")
+            metric("p95", "\(report.summary.p95LatencyMilliseconds) ms")
+            metric("Calls", report.summary.modelCalls.formatted())
+            metric("Tokens", (report.summary.promptTokens + report.summary.completionTokens).formatted())
+        }
+    }
+
+    private var costSummary: String {
+        let estimate = report.summary.estimatedAPICost.map {
+            $0.formatted(.currency(code: "USD")) + " estimated"
+        } ?? "API estimate unavailable"
+        return estimate + " · " + (report.summary.costCoverage ?? "Historical pricing unavailable")
+    }
+
+    private var outcomesSummary: String? {
+        guard let outcomes = report.summary.outcomes else { return nil }
+        return outcomes.keys.sorted().map { "\($0): \(outcomes[$0] ?? 0)" }.joined(separator: " · ")
+    }
+
+    @ViewBuilder private var comparisons: some View {
+        if !report.comparison.isEmpty {
+            Text("COMPARISON")
+                .font(.locus(size: 8, weight: .bold))
+                .tracking(0.7)
+                .foregroundStyle(LocusTheme.muted)
+            ForEach(report.comparison) { comparison in
+                HStack {
+                    Text(comparisonTitle(comparison)).font(.locus(size: 9, weight: .semibold))
+                    Spacer()
+                    Text("\(Int(comparison.passRate * 100))% pass")
+                    Text("p95 \(comparison.p95LatencyMilliseconds) ms")
+                    Text("\(comparison.modelCalls) calls")
+                    Text("\(comparison.retries) retries")
+                }
+                .font(.locus(size: 8, design: .monospaced))
+                .padding(9)
+                .locusCard()
+            }
+        }
+    }
+
+    private func comparisonTitle(_ comparison: EvaluationComparison) -> String {
+        let label = comparison.label ?? "Historical configuration unavailable"
+        return label + " · " + String(comparison.configuration.prefix(8))
+    }
+
+    private var results: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 7) {
+                ForEach(report.results) { result in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Image(systemName: result.state == "passed" ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundStyle(result.state == "passed" ? LocusTheme.success : LocusTheme.coral)
+                            Text(result.caseID).font(.locus(size: 9, weight: .semibold))
+                            Spacer()
+                            Text("\(result.durationMilliseconds ?? 0) ms")
+                                .font(.locus(size: 7, design: .monospaced))
+                        }
+                        if let score = result.rubricScore {
+                            Text("Subjective judge · \(Int(score))/100")
+                                .font(.locus(size: 8))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                        if let error = result.error, !error.isEmpty {
+                            Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
+                        }
                     }
-                    .font(.locus(size: 8, design: .monospaced))
                     .padding(9)
                     .locusCard()
                 }
             }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 7) {
-                    ForEach(report.results) { result in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Image(systemName: result.state == "passed" ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(result.state == "passed" ? LocusTheme.success : LocusTheme.coral)
-                                Text(result.caseID).font(.locus(size: 9, weight: .semibold))
-                                Spacer()
-                                Text("\(result.durationMilliseconds ?? 0) ms")
-                                    .font(.locus(size: 7, design: .monospaced))
-                            }
-                            if let score = result.rubricScore {
-                                Text("Subjective judge · \(Int(score))/100")
-                                    .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.muted)
-                            }
-                            if let error = result.error, !error.isEmpty {
-                                Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
-                            }
-                        }
-                        .padding(9)
-                        .locusCard()
-                    }
-                }
-            }
         }
-        .padding(18)
-        .frame(width: 720, height: 620)
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
