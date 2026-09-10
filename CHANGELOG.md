@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+## 2.8.0 — 2026-09-09
+
 ### Added
 
+- One task detail view for the request, approved plan, verified progress,
+  outputs, review findings, and recovery history, reachable from Goals,
+  Capsules, saved plans, and run history.
+- Selective file restoration with previews, conflict detection, preservation
+  of unrelated later edits, and explicit undo and interrupted-restoration recovery.
+- Duo offers a quick way to pair a planner and an implementer for a task.
 - Opt-in independent agents in direct-download, wallet-free Locus, with a
   background runtime, durable approvals and reconnectable execution. Agents can
   keep running when Locus closes; native desktop work waits for Locus.
@@ -19,6 +27,11 @@
 
 ### Fixed
 
+- Goals detect progress from verified execution evidence, keep recovery
+  allowances across restart, and pause repeated inactivity.
+- Team and Capsule repairs rerun affected checks and require a current review.
+  Approved plans and invocation receipts remain linked to their task.
+- The team report screen compiles reliably on the supported CI toolchain.
 - Restoring an expanded right panel no longer stalls beside a large Markdown
   answer. Long histories retain lazy rendering, and populated chats avoid
   repeated animated text reflow during panel changes.
