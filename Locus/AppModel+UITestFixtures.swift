@@ -161,6 +161,25 @@ extension AppModel {
         // fill in.
         installedLocalModels = models
         localModels = models
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_CHATGPT_EFFORT"] == "1" {
+            var account = ProviderAccount(kind: .chatGPT, name: "ChatGPT fixture")
+            account.preferredModel = "gpt-5.6-sol"
+            account.codexNativeMode = true
+            providerAccounts = [account]
+            accountModels[account.id] = [account.preferredModel]
+            accountStatus[account.id] = .signedIn(email: "fixture@example.invalid", plan: "pro")
+            settings.activeAccountID = account.id.uuidString
+            // Simulate the catalog arriving after the toolbar first renders.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                self?.accountModelCatalogs[account.id] = [.init(
+                    id: account.preferredModel, displayName: "GPT-5.6-Sol", description: "Fixture",
+                    isDefault: true, supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map {
+                        .init(effort: $0, description: nil)
+                    }, defaultReasoningEffort: "medium"
+                )]
+            }
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LONG_MODEL"] == "1" {
             let account = ProviderAccount(
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000401")!,

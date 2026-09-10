@@ -214,7 +214,7 @@ class ChatService:
         # (which `save_config` writes), not in any event. The executor is
         # installed on the visible chat's core only, so helpers, evaluation
         # cores and the CLI keep answering "unavailable".
-        self.image_generation = ImageGenerationService()
+        self.image_generation = ImageGenerationService(codex_for=self.codex_for)
         self.core.tool_ctx.image_generation = self._execute_image_tool
 
     @property

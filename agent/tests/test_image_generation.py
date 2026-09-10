@@ -105,6 +105,41 @@ def client(tmp_path, monkeypatch):
 # ------------------------------------------------------------- availability
 
 
+def test_chatgpt_model_catalog_exposes_astra_and_current_helper_efforts(client, monkeypatch):
+    from types import SimpleNamespace
+
+    homes = []
+    helper = SimpleNamespace(
+        available=True,
+        account=lambda **_: {"account": {"type": "chatgpt", "planType": "pro"}},
+        models=lambda: [{
+            "id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6-Astra",
+            "supportedReasoningEfforts": [{"reasoningEffort": "high"}, {"reasoningEffort": "ultra"}],
+            "defaultReasoningEffort": "high",
+        }],
+    )
+    monkeypatch.setattr(client.app.state.service, "codex_for", lambda home: (homes.append(home), helper)[1])
+    response = client.get("/api/chatgpt/models", params={"account_id": "selected-account"})
+    assert response.status_code == 200
+    row = response.json()["models"][0]
+    assert row["id"] == "gpt-6-astra"
+    assert [option["effort"] for option in row["supported_reasoning_efforts"]] == ["high", "ultra"]
+    assert set(homes) == {"selected-account"}
+
+
+def test_chatgpt_image_provider_endpoint_preserves_managed_account_without_keys(client):
+    response = client.post("/api/images/provider", json={
+        "provider": "chatgpt", "model": "gpt-image-2", "codex_home_id": "selected-account",
+        "chat_model": "gpt-5.6-sol", "account_id": "display-account",
+    })
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-image-2"
+    assert response.json()["has_api_key"] is False
+    assert response.json()["host"] == "chatgpt.com"
+    assert client.app.state.service.image_generation.configured
+    assert IMAGE_TOOL_NAMES <= _names(client.app.state.service.core)
+
+
 def test_image_tools_are_absent_until_configured_and_gone_when_cleared(tmp_path):
     core = _core(tmp_path, [])
     assert not IMAGE_TOOL_NAMES & _names(core)
@@ -134,7 +169,7 @@ def test_unconfigured_core_and_missing_executor_refuse_without_network(tmp_path,
     stub = ProviderStub(monkeypatch)
     core = _core(tmp_path, [])
     result = core._run_tool_call(ToolCall("generate_image", {"prompt": "a cat"}), _once)
-    assert result.startswith("Error:") and "Settings › Models & Providers › Image generation" in result
+    assert result.startswith("Error:") and "Manage Accounts › Image generation" in result
     # Even with the executor wired, an unconfigured service says how to set it up.
     ctx = ToolContext(cwd=str(tmp_path))
     ctx.image_generation = lambda name, args: ImageGenerationService().execute(name, args, ctx)
@@ -161,6 +196,7 @@ def test_provider_route_never_persists_logs_or_echoes_the_key(client, tmp_path, 
         "configured": True, "host": "images.example.com", "model": "gpt-image-1",
         "size": "auto", "quality": "high", "account_id": "acct-1",
         "account_label": "OpenAI — Work", "has_api_key": True,
+        "provider": "api",
     }
     assert client.get("/api/images/provider").json() == response.json()
     for text in (response.text, client.get("/api/config").text, client.get("/api/provider").text,
@@ -815,7 +851,7 @@ def test_capability_policy_off_removes_image_tools_and_refuses_at_dispatch_namin
     assert unconfigured == f"Error: generate_image is not available in this session; {SETUP_HINT}."
     core.tool_registry.image_generation_enabled = True
     for text in (policy_refusal, unconfigured):
-        assert ("add an OpenAI API account" in text) == (text is unconfigured)
+        assert (SETUP_HINT in text) == (text is unconfigured)
     assert stub.calls == [] and _images(tmp_path) == []
     assert not core._run_tool_call(call, None).startswith("Error:")
 

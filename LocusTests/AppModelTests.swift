@@ -6261,6 +6261,59 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSidebarTabsRestoreTheirOwnLastChatAndDraft() async throws {
+        let model = transcriptLoadModel()
+        defer { stopTranscriptLoadModel(model) }
+        let work = transcriptSession("work-chat")
+        let agent = SessionSummary(id: "agent-chat", name: "agent-chat", preview: "", mtime: 1, size: 1,
+                                   agentTriggerID: "inbox", agentKind: "event")
+        let newerWork = SessionSummary(id: "newer-work", name: "newer", preview: "", mtime: 10, size: 1)
+        model.sessions = [work, agent, newerWork]
+        model.currentSessionID = work.id
+        model.draftText = "Unsent work draft"
+        let agentResponse = TranscriptLoadURLProtocol.hold("/api/sessions/agent-chat/resume")
+        model.switchSidebarDestination(.agents)
+        let agentLoad = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [agentResponse.requested], timeout: 2)
+        try agentResponse.respond(body: transcriptResumeBody(id: agent.id, text: "Agent answer", worker: ""))
+        await agentLoad.value
+        XCTAssertEqual(model.currentSessionID, agent.id)
+        XCTAssertEqual(model.sidebarDestination, .agents)
+        model.draftText = "Unsent agent draft"
+
+        let workResponse = TranscriptLoadURLProtocol.hold("/api/sessions/work-chat/resume")
+        model.switchSidebarDestination(.ask)
+        let workLoad = try XCTUnwrap(model.activeTranscriptLoad?.task)
+        await fulfillment(of: [workResponse.requested], timeout: 2)
+        try workResponse.respond(body: transcriptResumeBody(id: work.id, text: "Work answer", worker: ""))
+        await workLoad.value
+        XCTAssertEqual(model.currentSessionID, work.id, "Restore the visited chat, not the newest chat")
+        XCTAssertEqual(model.draftText, "Unsent work draft")
+        XCTAssertEqual(model.splitPaneDrafts[agent.id], "Unsent agent draft")
+        XCTAssertEqual(model.lastSidebarSessionIDs["agents"], agent.id)
+        XCTAssertFalse(model.isBusy, "Switching tabs loads history without starting work")
+    }
+
+    @MainActor
+    func testEmptyAgentTabPreservesWorkSelectionAndIgnoresArchivedChats() {
+        let model = AppModel(startImmediately: false)
+        let work = transcriptSession("work-chat")
+        model.sessions = [work, SessionSummary(id: "archived-agent", name: "old", preview: "", mtime: 10, size: 1,
+                                             archived: true, agentTriggerID: "inbox")]
+        model.currentSessionID = work.id
+        model.draftText = "Keep this draft"
+        model.lastSidebarSessionIDs["agents"] = "deleted-agent"
+        model.switchSidebarDestination(.agents)
+        XCTAssertEqual(model.emptySidebarDestination, .agents)
+        XCTAssertEqual(model.currentSessionID, work.id)
+        model.switchSidebarDestination(.ask)
+        XCTAssertNil(model.emptySidebarDestination)
+        XCTAssertEqual(model.currentSessionID, work.id)
+        XCTAssertEqual(model.draftText, "Keep this draft")
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
     func testAttentionConfigurationOpensTheMatchingSchedule() {
         let model = AppModel(startImmediately: false)
         let item = AttentionItem(id: "schedule-warning", kind: "configuration", group: .configuration,

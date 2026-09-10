@@ -122,19 +122,18 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     ///
     /// The API key kinds that speak OpenAI's protocol: the OpenAI API itself
     /// and any compatible custom endpoint. Claude and Kimi have no images
-    /// route, and a ChatGPT plan runs inside the credential-free Codex helper,
-    /// which cannot make the call at all.
+    /// route. ChatGPT plans use GPT Image 2 inside the managed Codex helper.
     var supportsImageGeneration: Bool {
         switch self {
-        case .codex, .custom: true
-        case .claude, .chatGPT, .kimi, .kimiCode: false
+        case .codex, .custom, .chatGPT: true
+        case .claude, .kimi, .kimiCode: false
         }
     }
 
     /// The image models offered by name. There is no catalog fetch: `/models`
     /// lists these too, but the chat picker filter drops every image model on
     /// purpose, and a free-text field covers anything newer.
-    static let curatedImageModels = ["gpt-image-1", "gpt-image-1-mini"]
+    static let curatedImageModels = ["gpt-image-2", "gpt-image-1", "gpt-image-1-mini"]
 
     /// Shown when the provider's model list cannot be fetched, and merged ahead
     /// of a fetched list so the newest models are easy to find.

@@ -25,6 +25,45 @@ private actor EventDispatchGate {
 
 final class EventAutomationTests: XCTestCase {
     @MainActor
+    func testAttentionWarningActionsWithRunIDReachConfigurationAndAcknowledge() async throws {
+        BackendStub.reset()
+        let cleared = triggerPayload(id: "trigger-a", enabled: false, lastError: nil)
+        BackendStub.respond(toPath: "/api/event-triggers/trigger-a/acknowledge") { _ in cleared }
+        BackendStub.respond(toPath: "/api/attention") { _ in ["items": []] }
+        BackendStub.respond(toPath: "/api/runs") { _ in ["runs": [], "read_only": false] }
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer { model.eventAutomations.stop(); model.schedule.cancelAll() }
+        let trigger = try XCTUnwrap(decode(EventTrigger.self, from:
+            triggerPayload(id: "trigger-a", enabled: false, lastError: "Missing account")))
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [trigger], deliveries: [])
+        let run = try XCTUnwrap(decode(OrchestrationRun.self, from: [
+            "id": "warning-run", "session_id": "chat-a", "team_id": "team", "team_name": "Agent",
+            "worker_id": "worker", "workspace_root": "/tmp", "execution_path": "/tmp",
+            "state": "failed", "request": "Request", "created_at": 1.0, "updated_at": 2.0,
+            "last_seq": 1, "pinned": false, "legacy": false, "recoverable": false,
+        ]))
+        model.activity.activityRuns = [run]
+        let warning = AttentionItem(id: "warning", kind: "event_warning", group: .configuration,
+                                    runID: run.id, automationKind: "event", automationID: trigger.id,
+                                    title: "Needs configuration", detail: "Missing account",
+                                    actions: ["clear_warning", "open_configuration"])
+        model.activity.activityCenterPresented = true
+        model.performAttentionAction(warning, action: "open_configuration")
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertFalse(model.activity.activityCenterPresented)
+        XCTAssertEqual(model.configureAgentFocusConfigurationID, "event:trigger-a")
+        model.performAttentionAction(warning, action: "clear_warning")
+        for _ in 0..<100 {
+            if BackendStub.requestPaths.contains("/api/attention") { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(BackendStub.requestPaths.contains("/api/event-triggers/trigger-a/acknowledge"))
+        XCTAssertTrue(BackendStub.requestPaths.contains("/api/attention"), "Refresh the durable warning projection")
+        XCTAssertNil(model.eventAutomations.triggers.first?.lastError)
+        XCTAssertEqual(model.eventAutomations.triggers.first?.enabled, false)
+    }
+
+    @MainActor
     func testConnectorCapabilityReadsOnlyTheInjectedStoreAndExposesNoSecrets() throws {
         let firstStore = InMemoryConnectorCredentialStore()
         let secondStore = InMemoryConnectorCredentialStore()

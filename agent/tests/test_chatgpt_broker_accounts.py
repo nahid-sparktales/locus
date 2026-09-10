@@ -10,7 +10,7 @@ import pytest
 from ollama_code import orchestration
 from ollama_code.api.chat_transport import ws_codex_broker
 from ollama_code.chat_service import ChatService
-from ollama_code.codex_app_server import CodexBrokerClient
+from ollama_code.codex_app_server import CodexBrokerClient, CodexThreadOptions
 from ollama_code.core import AgentCore
 
 
@@ -166,7 +166,8 @@ def test_worker_clones_put_identity_on_every_wire_request(monkeypatch):
     work.account()
     work.models()
     work.usage()
-    work.start_thread(model="exact-model", cwd="/workspace", tools=[])
+    work.start_thread(model="exact-model", cwd="/workspace", tools=[],
+                      options=CodexThreadOptions(image_generation=True))
     work.resume_thread("thread", model="exact-model", cwd="/workspace")
     work.complete(model="exact-model", cwd="/workspace", base_instructions="", prompt="plan")
     work.run_turn(thread_id="thread", text="implement", model="exact-model")
@@ -174,6 +175,7 @@ def test_worker_clones_put_identity_on_every_wire_request(monkeypatch):
     legacy.account()
     legacy.for_account("").account()
     assert [item["codex_home_id"] for item in requests[:7]] == ["work"] * 7
+    assert requests[3]["image_generation"] is True
     assert requests[7]["codex_home_id"] == "personal"
     assert "codex_home_id" not in requests[8]
     assert requests[9]["codex_home_id"] == ""

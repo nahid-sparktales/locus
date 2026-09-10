@@ -105,6 +105,7 @@ struct ConfigureAgentView: View {
                 agentFilter = "all"
                 app.configureAgentTab = .agents
             } else { normalizeSelection() }
+            applyRequestedFocus()
         }
         .task(id: app.configureAgentTab) {
             if app.configureAgentTab == .runHistory { await refreshActivity() }
@@ -762,7 +763,14 @@ struct ConfigureAgentView: View {
         if !historyAgentID.isEmpty && !references.contains(where: { $0.id == historyAgentID }) { historyAgentID = "" }
     }
     private func applyRequestedFocus() {
-        guard let id = app.configureAgentFocusConfigurationID, references.contains(where: { $0.id == id }) else { return }
+        guard let requestedID = app.configureAgentFocusConfigurationID else { return }
+        // Attention identifies price alerts as event automations. If the
+        // trigger was not loaded when opened, resolve its specific kind now.
+        guard let reference = references.first(where: { $0.id == requestedID })
+            ?? references.first(where: {
+                $0.kind == .price && requestedID == "event:\($0.configurationID)"
+            }) else { return }
+        let id = reference.id
         selectionID = id
         historyAgentID = id
         historyFilter = .all

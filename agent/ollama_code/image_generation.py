@@ -60,7 +60,7 @@ MAX_COLLISION_SUFFIX = 999
 REQUEST_TIMEOUT = (10, 180)
 #: Only an ``error.code`` token this short and this plain reaches the model.
 _ERROR_CODE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
-SETUP_HINT = "add an OpenAI API account under Settings › Models & Providers › Image generation"
+SETUP_HINT = "choose a ChatGPT or OpenAI API account under Manage Accounts › Image generation"
 INTERRUPTED = "Error: image generation interrupted."
 #: Dispatch refusals keyed by ``ToolRegistry.image_tool_refusal``; each names
 #: its real cause so the model never relays "add an account" for a policy gate.
@@ -97,9 +97,14 @@ class ImageProviderConfig:
     quality: str = "auto"
     account_id: str = ""
     account_label: str = ""
+    provider: str = "api"
+    codex_home_id: str = ""
+    chat_model: str = ""
 
     @property
     def host(self) -> str:
+        if self.provider == "chatgpt":
+            return "chatgpt.com"
         return urlsplit(self.base_url).hostname or ""
 
     def public(self) -> dict[str, Any]:
@@ -113,11 +118,33 @@ class ImageProviderConfig:
             "account_id": self.account_id,
             "account_label": self.account_label,
             "has_api_key": bool(self.api_key),
+            "provider": self.provider,
         }
 
     @classmethod
     def parse(cls, body: dict[str, Any]) -> ImageProviderConfig:
         """Validate a ``POST /api/images/provider`` body. Raises ``ValueError``."""
+        provider = body.get("provider", "api")
+        if provider == "chatgpt":
+            from .codex_app_server import codex_home_for_account
+            home_id = body.get("codex_home_id", "")
+            if not isinstance(home_id, str):
+                raise ValueError("codex_home_id must be a string")
+            codex_home_for_account(home_id)
+            if body.get("api_key") or body.get("base_url"):
+                raise ValueError("ChatGPT image generation uses managed sign-in, not API credentials")
+            if body.get("model", "gpt-image-2") != "gpt-image-2":
+                raise ValueError("ChatGPT image generation supports gpt-image-2")
+            chat_model = str(body.get("chat_model") or "").strip()
+            if not MODEL_PATTERN.fullmatch(chat_model):
+                raise ValueError("a ChatGPT orchestration model is required")
+            return cls(
+                base_url="", model="gpt-image-2", provider="chatgpt", codex_home_id=home_id,
+                chat_model=chat_model, account_id=str(body.get("account_id") or "")[:MAX_LABEL_CHARS],
+                account_label=str(body.get("account_label") or "")[:MAX_LABEL_CHARS],
+            )
+        if provider != "api":
+            raise ValueError("unknown image provider")
         base_url = normalize_base_url(str(body.get("base_url") or ""))
         if not base_url:
             raise ValueError("base_url is required")
@@ -658,6 +685,8 @@ def build_image_preview(name: str, args: dict[str, Any], ctx: ToolContext) -> tu
         f"{ctx.image_generations_this_session} of {MAX_IMAGES_PER_SESSION} this session.",
         "The prompt is sent to the provider.",
     ]
+    if provider.get("provider") == "chatgpt":
+        lines.append("Uses the selected ChatGPT plan through OpenAI's runtime; no API key or paid API fallback.")
     if edit:
         sends = _describe_source(ctx, source)
         if args.get("mask"):
@@ -669,9 +698,10 @@ def build_image_preview(name: str, args: dict[str, Any], ctx: ToolContext) -> tu
 class ImageGenerationService:
     """Holds the configured provider in memory and runs the two image tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, codex_for: Callable[[str], Any] | None = None) -> None:
         self._lock = threading.RLock()
         self._config: ImageProviderConfig | None = None
+        self._codex_for = codex_for
 
     def configure(self, config: ImageProviderConfig | None) -> None:
         with self._lock:
@@ -741,7 +771,13 @@ class ImageGenerationService:
             raise ImageToolError(str(exc)) from None
         if ctx.stopped():
             raise ImageProviderError("interrupted")
-        client = ImageProviderClient(config)
+        if config.provider == "chatgpt":
+            from .chatgpt_images import ChatGPTImageClient
+            if self._codex_for is None:
+                raise ImageProviderError("ChatGPT image generation is unavailable in this runtime")
+            client = ChatGPTImageClient(config, self._codex_for(config.codex_home_id))
+        else:
+            client = ImageProviderClient(config)
         if edit:
             assert source is not None
             data = client.edit(prompt, size, quality, source, mask, ctx)

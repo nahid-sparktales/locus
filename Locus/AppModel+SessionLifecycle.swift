@@ -8,6 +8,44 @@ import UserNotifications
 /// Session lifecycle: clear-chat flows, new local and worktree sessions,
 /// resume with its transcript load, and foreground worker switching.
 extension AppModel {
+    /// A tab switch restores selection only; `resume` owns draft capture,
+    /// background workers, and cancellation of superseded transcript loads.
+    func switchSidebarDestination(_ destination: SidebarDestination) {
+        guard destination != sidebarDestination else { return }
+        guard !pendingSessionReset,
+              (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
+            showToast("Finish or stop the active run before switching chats")
+            return
+        }
+        rememberSidebarSession(sessions.first { $0.id == currentSessionID })
+        let candidates = sessions.filter {
+            $0.archived != true && ($0.isAgentChat ? SidebarDestination.agents : .ask) == destination
+        }
+        let rememberedID = lastSidebarSessionIDs[destination.rawValue]
+        let target = candidates.first { $0.id == rememberedID }
+            ?? candidates.max { $0.mtime < $1.mtime }
+        if let target {
+            if target.id == currentSessionID {
+                emptySidebarDestination = nil
+                sidebarDestination = destination
+            } else {
+                resume(target)
+            }
+        } else {
+            sidebarDestination = destination
+            emptySidebarDestination = destination
+        }
+    }
+
+    func rememberSidebarSession(_ session: SessionSummary?) {
+        guard let session, session.archived != true else { return }
+        let destination: SidebarDestination = session.isAgentChat ? .agents : .ask
+        lastSidebarSessionIDs[destination.rawValue] = session.id
+        if persistenceEnabled {
+            UserDefaults.standard.set(lastSidebarSessionIDs, forKey: "Locus.lastSidebarSessionIDs")
+        }
+    }
+
     /// Socket events have no operation ID on the existing backend wire. Bind
     /// them to the requesting source and current selection lease; HTTP-backed
     /// mutations wait for their exact response instead of racing that event.
@@ -166,6 +204,9 @@ extension AppModel {
             showToast("Choose that workspace again to restore access")
             return
         }
+        rememberSidebarSession(sessions.first { $0.id == currentSessionID })
+        emptySidebarDestination = nil
+        sidebarDestination = .ask
         persistCurrentWorkspaceProfile()
         pendingWorkspacePath = path
         initialWorkspacePath = path
@@ -252,12 +293,6 @@ extension AppModel {
     }
 
     func resume(_ session: SessionSummary) {
-        inspectAgentChat(session)
-        activity.activityCenterPresented = false
-        if let agentID = session.agentTriggerID?.nilIfEmpty {
-            selectedAgentID = agentID
-        }
-        sidebarDestination = session.isAgentChat ? .agents : .ask
         if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
         if let path = session.workspacePath {
@@ -274,6 +309,15 @@ extension AppModel {
             expandedWorkspaceIDs.insert(path)
             persistExpandedWorkspaces()
         }
+        rememberSidebarSession(sessions.first { $0.id == currentSessionID })
+        rememberSidebarSession(session)
+        emptySidebarDestination = nil
+        inspectAgentChat(session)
+        activity.activityCenterPresented = false
+        if let agentID = session.agentTriggerID?.nilIfEmpty {
+            selectedAgentID = agentID
+        }
+        sidebarDestination = session.isAgentChat ? .agents : .ask
         prepareSplitSelection(session.id)
         if let runtime = taskWorkers[session.id] {
             activateWorkerSession(session, runtime: runtime)

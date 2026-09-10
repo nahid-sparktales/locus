@@ -1992,6 +1992,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("settings.content.developer").exists)
     }
 
+    func testChatGPTEffortPickerAppearsAfterCatalogArrives() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_CHATGPT_EFFORT"] = "1"
+        app.launch()
+        let picker = anyElement("workspace.effortPicker")
+        XCTAssertTrue(picker.waitForExistence(timeout: Self.launchContentTimeout))
+        picker.click()
+        let high = anyElement("workspace.effortPicker.high")
+        XCTAssertTrue(high.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("workspace.effortPicker.ultra").exists)
+        high.click()
+        XCTAssertTrue(picker.label.contains("High"))
+    }
+
     func testVoiceControlsAndSettingsAreDiscoverableWithoutMicrophoneAccess() {
         let dictation = anyElement("composer.voice.dictation")
         let voiceMode = anyElement("composer.voice.mode")
@@ -2018,10 +2032,39 @@ final class LocusUITests: XCTestCase {
         result.click()
 
         XCTAssertTrue(anyElement("settings.voice.enabled").waitForExistence(timeout: 3))
-        XCTAssertTrue(anyElement("settings.voice.engine").exists)
+        XCTAssertTrue(anyElement("settings.voice.manageAccounts").exists)
         XCTAssertTrue(anyElement("settings.voice.language").exists)
         XCTAssertTrue(anyElement("settings.voice.sendBehavior").exists)
         XCTAssertTrue(anyElement("settings.voice.test").exists)
+        let manageAccounts = anyElement("settings.voice.manageAccounts")
+        revealSettingsControl(manageAccounts, in: anyElement("settings.content.chat"))
+        manageAccounts.click()
+        let engine = anyElement("settings.voice.engine")
+        XCTAssertTrue(engine.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("settings.content.accounts").exists)
+        XCTAssertTrue(waitUntilHittable(engine))
+    }
+
+    func testChatGPTImageAccountOffersGPTImage2WithoutAPISettings() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_CHATGPT_EFFORT"] = "1"
+        app.launch()
+        revealSidebarForNavigation()
+        anyElement("sidebar.accounts").click()
+        let search = anyElement("settings.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("image generation")
+        let result = anyElement("settings.search.result.settings.imageGeneration")
+        XCTAssertTrue(result.waitForExistence(timeout: 3))
+        result.click()
+        let account = anyElement("settings.imageGeneration.account")
+        revealSettingsControl(account, in: anyElement("settings.content.accounts"))
+        account.click()
+        app.menuItems["ChatGPT plan — ChatGPT fixture"].click()
+        XCTAssertTrue(anyElement("settings.imageGeneration.chatGPTModel").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("settings.imageGeneration.model").exists)
+        XCTAssertFalse(anyElement("settings.imageGeneration.customModel").exists)
     }
 
     func testVoiceAttentionFixtureRequiresVisibleControls() {
@@ -2369,6 +2412,7 @@ final class LocusUITests: XCTestCase {
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
         let newChat = anyElement("sidebar.newSession")
+        let notebook = anyElement("sidebar.openNotebook")
         let configureAgent = anyElement("sidebar.configureAgent")
 
         XCTAssertTrue(brand.waitForExistence(timeout: 3))
@@ -2382,7 +2426,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(agents.label, "Agent")
         XCTAssertTrue(ask.isSelected)
         XCTAssertTrue(newChat.exists)
-        XCTAssertTrue(configureAgent.exists)
+        XCTAssertTrue(notebook.exists)
+        XCTAssertFalse(configureAgent.exists)
         XCTAssertLessThan(brand.frame.maxY, destination.frame.minY)
 
         // Manage Accounts sits between the destination switch and the primary
@@ -2391,7 +2436,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(accounts.exists)
         XCTAssertLessThan(destination.frame.maxY, accounts.frame.minY)
         XCTAssertLessThan(accounts.frame.maxY, newChat.frame.minY)
-        XCTAssertLessThan(newChat.frame.maxY, configureAgent.frame.minY)
+        XCTAssertLessThan(newChat.frame.maxY, notebook.frame.minY)
         XCTAssertFalse(anyElement("sidebar.extensions").exists)
 
         agents.click()
@@ -2403,7 +2448,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(newChat.label, "New chat")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
-        // One name for the sheet, in both destinations.
+        XCTAssertFalse(notebook.exists)
         XCTAssertEqual(configureAgent.label, "Manage Agents")
 
         configureAgent.click()
@@ -2523,11 +2568,15 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("files.search").waitForExistence(timeout: 3))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.rail.agent")))
         XCTAssertTrue(waitForDisappearance(anyElement("inspector.tab.agent")))
-        // The sheet has one name in both destinations now.
-        XCTAssertEqual(anyElement("sidebar.configureAgent").label, "Manage Agents")
+        XCTAssertEqual(anyElement("sidebar.openNotebook").label, "Notebook")
+        XCTAssertFalse(anyElement("sidebar.configureAgent").exists)
         XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
 
         anyElement("sidebar.mode.agents").click()
+        let chatTitle = anyElement("agentInspector.title")
+        XCTAssertTrue(chatTitle.waitForExistence(timeout: 3))
+        XCTAssertTrue((chatTitle.label + " " + (chatTitle.value as? String ?? "")).contains("Chat 2"))
+        anyElement("agentInspector.back").click()
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.identity").exists)
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
@@ -2633,7 +2682,7 @@ final class LocusUITests: XCTestCase {
         )
     }
 
-    func testAgentAndWorkDestinationsKeepConversationWorkControlsAvailable() {
+    func testEmptyAgentDestinationKeepsWorkChatForTheReturnTrip() {
         revealSidebarForNavigation()
         let ask = app.buttons["sidebar.mode.ask"]
         let agents = app.buttons["sidebar.mode.agents"]
@@ -2668,9 +2717,13 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
-        XCTAssertTrue(app.textViews["composer.input"].exists)
-        XCTAssertTrue(anyElement("composer.addChatAttachment").exists)
-        XCTAssertTrue(planMode.exists)
+        XCTAssertTrue(anyElement("workspace.emptyDestination").waitForExistence(timeout: 3))
+        XCTAssertFalse(app.textViews["composer.input"].exists)
+
+        anyElement("sidebar.collapse").click()
+        let showSidebar = anyElement("workspace.showSidebar")
+        XCTAssertTrue(showSidebar.waitForExistence(timeout: 3))
+        showSidebar.click()
 
         ask.click()
         XCTAssertTrue(waitUntil { ask.isSelected })
@@ -3436,6 +3489,23 @@ final class LocusUITests: XCTestCase {
         )
     }
 
+    func testWorkNotebookButtonOpensTheNotebookSheetAndRailKeepsTheNotesTab() {
+        revealSidebarForNavigation()
+        let notebook = anyElement("sidebar.openNotebook")
+        XCTAssertTrue(notebook.waitForExistence(timeout: 3))
+        XCTAssertEqual(notebook.label, "Notebook")
+        XCTAssertFalse(anyElement("sidebar.configureAgent").exists)
+        notebook.click()
+        XCTAssertTrue(anyElement("notebook.search").waitForExistence(timeout: 3))
+        anyElement("notebook.close").click()
+        XCTAssertTrue(waitForDisappearance(anyElement("notebook.search")))
+
+        anyElement("sidebar.collapse").click()
+        anyElement("inspector.rail.notes").click()
+        XCTAssertTrue(anyElement("inspector.tab.notes").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("notebook.search").exists)
+    }
+
     func testNotebookOpensAStoredNoteInTheEditor() throws {
         relaunchForAccessibilitySurface("notebook", anchor: "notebook.search")
         let row = app.descendants(matching: .any)
@@ -4088,14 +4158,14 @@ final class LocusUITests: XCTestCase {
 
         let destination = anyElement("sidebar.activity")
         let newChat = anyElement("sidebar.newSession")
-        let configureAgent = anyElement("sidebar.configureAgent")
+        let notebook = anyElement("sidebar.openNotebook")
         XCTAssertTrue(destination.waitForExistence(timeout: 3))
         XCTAssertTrue(newChat.exists)
-        XCTAssertTrue(configureAgent.exists)
-        // The bell shares the Configure Agent line, under the full-width
+        XCTAssertTrue(notebook.exists)
+        // The bell shares the Notebook line, under the full-width
         // New chat button.
-        XCTAssertLessThanOrEqual(abs(destination.frame.midY - configureAgent.frame.midY), 2)
-        XCTAssertGreaterThan(destination.frame.minX, configureAgent.frame.maxX)
+        XCTAssertLessThanOrEqual(abs(destination.frame.midY - notebook.frame.midY), 2)
+        XCTAssertGreaterThan(destination.frame.minX, notebook.frame.maxX)
         XCTAssertGreaterThan(destination.frame.minY, newChat.frame.maxY)
         XCTAssertTrue(waitUntil {
             "\(destination.value ?? "")".contains("1 needs attention")
@@ -4157,6 +4227,7 @@ final class LocusUITests: XCTestCase {
 
     func testConfigureAgentSeparatesAgentListSourcesAndSharedHistory() {
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("activity.center").exists)
@@ -4189,6 +4260,7 @@ final class LocusUITests: XCTestCase {
     func testSavedConfigurationsLiveOnTheAgentsTab() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         XCTAssertTrue(anyElement("configureAgent.agents").exists)
@@ -4210,6 +4282,7 @@ final class LocusUITests: XCTestCase {
     func testAgentEventQueueFanOutAndSharedLimitAreVisible() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
         anyElement("configureAgent.tab.configurations").click()
@@ -4233,6 +4306,7 @@ final class LocusUITests: XCTestCase {
         composer.click()
         composer.typeText("When bitcoin hits 100k run the safety plan")
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.draftSuggestion").waitForExistence(timeout: 3))
         anyElement("configureAgent.newAgent").click()
@@ -4245,11 +4319,13 @@ final class LocusUITests: XCTestCase {
         app.buttons["Cancel"].firstMatch.click()
         XCTAssertTrue(anyElement("configureAgent.close").waitForExistence(timeout: 3))
         anyElement("configureAgent.close").click()
+        anyElement("sidebar.mode.ask").click()
         XCTAssertEqual(composer.value as? String, "When bitcoin hits 100k run the safety plan")
     }
 
     func testConfigureAgentCreationCardsOpenChildSheetsAndReturnToHub() {
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.sheet").waitForExistence(timeout: 3))
 
@@ -4281,6 +4357,7 @@ final class LocusUITests: XCTestCase {
     func testScheduleEditorValidatesTimezoneAndProtectsUnsavedChanges() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
         anyElement("sidebar.configureAgent").click()
         XCTAssertTrue(anyElement("configureAgent.newAgent").waitForExistence(timeout: 3))
         anyElement("configureAgent.newAgent").click()

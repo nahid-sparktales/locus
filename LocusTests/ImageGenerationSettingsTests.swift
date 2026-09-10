@@ -205,7 +205,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
 
     // MARK: - Request body
 
-    func testRequestBodyIsBuiltOnlyForImageCapableAccountsAndNeverForChatGPT() throws {
+    func testRequestBodyKeepsChatGPTManagedAndAPIAccountsSeparate() throws {
         let store = InMemoryCredentialStore()
         let model = makeModel(credentialStore: store)
         defer { model.eventAutomations.stop() }
@@ -221,8 +221,8 @@ final class ImageGenerationSettingsTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            Set(model.eligibleImageAccounts.map(\.id)), [openAI.id, custom.id],
-            "only OpenAI API and compatible custom endpoints can serve the Images API"
+            Set(model.eligibleImageAccounts.map(\.id)), [openAI.id, custom.id, chatGPT.id],
+            "ChatGPT plans and compatible API accounts can generate images"
         )
 
         model.settings.imageGenerationAccountID = openAI.id.uuidString
@@ -245,7 +245,16 @@ final class ImageGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(customBody["base_url"] as? String, "https://gateway.example/v1")
         XCTAssertEqual(customBody["api_key"] as? String, "gw-key")
 
-        for ineligible in [chatGPT, claude, kimi] {
+        model.settings.imageGenerationAccountID = chatGPT.id.uuidString
+        let planBody = model.imageProviderRequestBody()
+        XCTAssertEqual(planBody["provider"] as? String, "chatgpt")
+        XCTAssertEqual(planBody["codex_home_id"] as? String, chatGPT.codexHomeIdentifier)
+        XCTAssertEqual(planBody["model"] as? String, "gpt-image-2")
+        XCTAssertEqual(planBody["chat_model"] as? String, chatGPT.preferredModel)
+        XCTAssertNil(planBody["api_key"])
+        XCTAssertNil(planBody["base_url"])
+
+        for ineligible in [claude, kimi] {
             model.settings.imageGenerationAccountID = ineligible.id.uuidString
             XCTAssertEqual(
                 model.imageProviderRequestBody() as NSDictionary, ["enabled": false],
@@ -822,7 +831,7 @@ final class ImageGenerationSettingsTests: XCTestCase {
             ["gpt-5", "o3"],
             "the chat picker keeps hiding image models"
         )
-        XCTAssertEqual(ProviderKind.curatedImageModels, ["gpt-image-1", "gpt-image-1-mini"])
+        XCTAssertEqual(ProviderKind.curatedImageModels, ["gpt-image-2", "gpt-image-1", "gpt-image-1-mini"])
         for name in ProviderKind.curatedImageModels {
             XCTAssertFalse(
                 ProviderModelFilter.matches(kind: .codex, name: name),
@@ -831,7 +840,8 @@ final class ImageGenerationSettingsTests: XCTestCase {
         }
         XCTAssertTrue(ProviderKind.codex.supportsImageGeneration)
         XCTAssertTrue(ProviderKind.custom.supportsImageGeneration)
-        for kind in [ProviderKind.chatGPT, .claude, .kimi, .kimiCode] {
+        XCTAssertTrue(ProviderKind.chatGPT.supportsImageGeneration)
+        for kind in [ProviderKind.claude, .kimi, .kimiCode] {
             XCTAssertFalse(kind.supportsImageGeneration, "\(kind) has no Images API")
         }
         XCTAssertEqual(ImageGenerationSize.allCases.map(\.rawValue),

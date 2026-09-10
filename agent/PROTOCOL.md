@@ -425,6 +425,15 @@ by any route, never part of `provider_state` or any event. Configuring or
 clearing changes the advertised tool set, which restarts a live Codex-native
 thread once. Returns the `GET` payload. Errors: 409 busy, 422 invalid body.
 
+`provider` is additive and defaults to `api`. For a managed ChatGPT image account,
+POST `provider: "chatgpt"`, `model: "gpt-image-2"`, `codex_home_id`, `chat_model`
+(the selected account's orchestration model), and optional account ID/label.
+Nonempty `api_key` and `base_url` are rejected for this route. The response adds
+`provider`, reports host `chatgpt.com`, automatic size/quality, and
+`has_api_key: false`. The credential-owning helper handles generation and edits;
+there is no API fallback. Mask edits are unsupported. Existing image permissions,
+role restrictions, cancellation, file validation, and restoration capture apply.
+
 Every agent process holds its own copy, so the app pushes this route to each
 one it runs: the main agent on launch and after every restart, and each chat
 worker when it is spawned, when it reconnects to a fresh process, and on every

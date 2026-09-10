@@ -217,17 +217,22 @@ def chatgpt_models(
 
 
 def _chatgpt_efforts(row: dict[str, Any]) -> list[dict[str, str]]:
-    """Return supported effort choices while withholding unsupported ultra."""
+    """Preserve the account catalog's choices across helper protocol versions."""
     raw = row.get("supportedReasoningEfforts")
     if not isinstance(raw, list):
         return []
     efforts: list[dict[str, str]] = []
+    seen: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
             continue
-        effort = str(item.get("effort") or "").strip()
-        if not effort or effort == "ultra":
+        value = item.get("reasoningEffort") or item.get("effort")
+        if not isinstance(value, str):
             continue
+        effort = value.strip()
+        if not effort or effort in seen:
+            continue
+        seen.add(effort)
         efforts.append({"effort": effort, "description": str(item.get("description") or "")})
     return efforts
 

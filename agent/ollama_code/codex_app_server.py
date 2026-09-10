@@ -44,6 +44,7 @@ class CodexThreadOptions:
     approval_policy: str = "never"
     web_search: bool = False
     include_environment_context: bool = False
+    image_generation: bool = False
 
 
 _DEFAULT_THREAD_OPTIONS = CodexThreadOptions()
@@ -249,6 +250,7 @@ class CodexAppServerManager:
             '[features]\n'
             'shell_tool = false\n'
             'view_image = false\n'
+            'image_generation = false\n'
             'unified_exec = false\n'
             'tool_suggest = false\n'
             'plugins = false\n'
@@ -556,6 +558,7 @@ class CodexAppServerManager:
             "features": {
                 "shell_tool": False,
                 "view_image": False,
+                "image_generation": options.image_generation,
                 "unified_exec": False,
                 "tool_suggest": False,
                 "plugins": False,
@@ -985,15 +988,13 @@ class CodexBrokerClient:
         ephemeral: bool = False,
         options: CodexThreadOptions | None = None,
     ) -> str:
-        # Workers never start native-prompt threads; options exist only for
-        # signature compatibility with the in-process manager.
-        del options
         result = self._call("thread_start", {
             "model": model,
             "cwd": cwd,
             "base_instructions": base_instructions,
             "tools": list(tools),
             "ephemeral": ephemeral,
+            "image_generation": bool(options and options.image_generation),
         })
         if not isinstance(result, str) or not result:
             raise CodexProtocolMismatch("The ChatGPT broker returned no thread id")

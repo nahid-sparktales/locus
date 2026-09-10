@@ -283,7 +283,11 @@ struct SettingsSearchDescriptor: Identifiable, Hashable {
             "settings.voice",
             page: .chat,
             title: "Voice and dictation",
-            keywords: ["microphone", "speech", "push to talk", "transcription", "spoken replies", "OpenAI audio"]
+            keywords: ["microphone", "push to talk", "spoken replies"]
+        ),
+        .init(
+            "settings.audioAccounts", page: .accounts, title: "Audio accounts",
+            keywords: ["speech engine", "transcription", "voice provider", "OpenAI audio", "TTS"]
         ),
         .init("settings.accounts.add", page: .accounts, title: "Provider accounts", keywords: ["API", "model", "Ollama"]),
         .init("settings.localContextWindow", page: .accounts, title: "Local context window", keywords: ["tokens", "Ollama"], isAdvanced: true),

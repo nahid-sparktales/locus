@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The Image generation section of Settings › Models & Providers: which
-/// account's Images API draws pictures, with what model and defaults, and
+/// account draws pictures, with what model and defaults, and
 /// whether interactive answers render. Every control is an immediate
 /// preference — the accounts page has no Save bar — and the status row shows
 /// what the agent accepted after each push.
@@ -42,7 +42,7 @@ struct ImageGenerationSettingsView: View {
 
                 if eligibleAccounts.isEmpty {
                     HStack {
-                        Text("Add an OpenAI API account to generate images.")
+                        Text("Add a ChatGPT or OpenAI API account to generate images.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.warning)
                             .accessibilityIdentifier("settings.imageGeneration.empty")
@@ -52,44 +52,53 @@ struct ImageGenerationSettingsView: View {
                     }
                 }
 
-                Picker("Model", selection: modelSelection) {
-                    ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                    Text("Other…").tag(Self.otherModelTag)
-                }
-                .accessibilityIdentifier("settings.imageGeneration.model")
-
-                if customModelSelected {
-                    TextField("Model name", text: $customModelText)
-                        .focused($customModelFocused)
-                        .onSubmit(commitCustomModel)
-                        .onChange(of: customModelFocused) { _, focused in
-                            if !focused { commitCustomModel() }
+                if isChatGPTSelected {
+                    LabeledContent("Model", value: "GPT Image 2")
+                        .accessibilityIdentifier("settings.imageGeneration.chatGPTModel")
+                    Text("Uses your ChatGPT plan through OpenAI’s managed runtime. Size and quality are chosen automatically; describe preferences in your request. Account availability and plan limits apply.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Picker("Model", selection: modelSelection) {
+                        ForEach(ProviderKind.curatedImageModels, id: \.self) { name in
+                            Text(name).tag(name)
                         }
-                        .onAppear { customModelText = draft.imageGenerationModel }
-                        .onDisappear {
-                            // Picking a curated name hides this field after the
-                            // picker has already written the draft; only a
-                            // field that leaves while still "Other…" commits.
-                            if customModelSelected { commitCustomModel() }
+                        Text("Other…").tag(Self.otherModelTag)
+                    }
+                    .accessibilityIdentifier("settings.imageGeneration.model")
+
+                    if customModelSelected {
+                        TextField("Model name", text: $customModelText)
+                            .focused($customModelFocused)
+                            .onSubmit(commitCustomModel)
+                            .onChange(of: customModelFocused) { _, focused in
+                                if !focused { commitCustomModel() }
+                            }
+                            .onAppear { customModelText = draft.imageGenerationModel }
+                            .onDisappear {
+                                // Picking a curated name hides this field after the
+                                // picker has already written the draft; only a
+                                // field that leaves while still "Other…" commits.
+                                if customModelSelected { commitCustomModel() }
+                            }
+                            .accessibilityIdentifier("settings.imageGeneration.customModel")
+                    }
+
+                    Picker("Default size", selection: $draft.imageGenerationSize) {
+                        ForEach(ImageGenerationSize.allCases) { size in
+                            Text(size.title).tag(size.rawValue)
                         }
-                        .accessibilityIdentifier("settings.imageGeneration.customModel")
-                }
-
-                Picker("Default size", selection: $draft.imageGenerationSize) {
-                    ForEach(ImageGenerationSize.allCases) { size in
-                        Text(size.title).tag(size.rawValue)
                     }
-                }
-                .accessibilityIdentifier("settings.imageGeneration.size")
+                    .accessibilityIdentifier("settings.imageGeneration.size")
 
-                Picker("Default quality", selection: $draft.imageGenerationQuality) {
-                    ForEach(ImageGenerationQuality.allCases) { quality in
-                        Text(quality.title).tag(quality.rawValue)
+                    Picker("Default quality", selection: $draft.imageGenerationQuality) {
+                        ForEach(ImageGenerationQuality.allCases) { quality in
+                            Text(quality.title).tag(quality.rawValue)
+                        }
                     }
+                    .accessibilityIdentifier("settings.imageGeneration.quality")
                 }
-                .accessibilityIdentifier("settings.imageGeneration.quality")
             }
             .disabled(imageControlsDisabled)
 
@@ -110,7 +119,7 @@ struct ImageGenerationSettingsView: View {
             statusRow
                 .disabled(imageControlsDisabled)
 
-            Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. The API key is handed to the local agent in memory and never written to its config.")
+            Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. ChatGPT sign-in stays inside OpenAI’s managed runtime. API accounts use their own key and billing.")
                 .font(.locus(size: 9))
                 .foregroundStyle(LocusTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -164,8 +173,13 @@ struct ImageGenerationSettingsView: View {
         providerAccounts.providerAccounts.filter { account in
             account.kind.supportsImageGeneration
                 && account.isCredentialReady(in: model.credentialStore)
-                && !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (account.kind == .chatGPT
+                    || !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+    }
+
+    private var isChatGPTSelected: Bool {
+        eligibleAccounts.first { $0.id.uuidString == draft.imageGenerationAccountID }?.kind == .chatGPT
     }
 
     /// Curated names select directly; "Other…" reveals the free-text field

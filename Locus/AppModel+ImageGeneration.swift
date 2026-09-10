@@ -11,7 +11,8 @@ extension AppModel {
         providerAccounts.filter { account in
             account.kind.supportsImageGeneration
                 && account.isCredentialReady(in: credentialStore)
-                && !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (account.kind == .chatGPT
+                    || !account.resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
@@ -32,6 +33,13 @@ extension AppModel {
     func imageProviderRequestBody() -> [String: Any] {
         guard let account = selectedImageAccount else {
             return ["enabled": false]
+        }
+        if account.kind == .chatGPT {
+            return [
+                "enabled": true, "provider": "chatgpt", "account_id": account.id.uuidString,
+                "account_label": account.displayName, "codex_home_id": account.codexHomeIdentifier,
+                "model": "gpt-image-2", "chat_model": account.preferredModel,
+            ]
         }
         let model = settings.imageGenerationModel.trimmingCharacters(in: .whitespacesAndNewlines)
         var body: [String: Any] = [
