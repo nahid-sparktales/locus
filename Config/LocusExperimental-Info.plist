@@ -108,6 +108,22 @@
 		<string>wallet.slush.app</string>
 		<string>my.slush.app</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Locus talks to model servers the user runs themselves: Ollama,
+		     llama.cpp, LM Studio and friends serve plain HTTP on a LAN
+		     address and cannot present a certificate any CA would sign.
+		     NSAllowsLocalNetworking does not cover RFC1918 literals such as
+		     192.168.1.50, and NSExceptionDomains does not accept IP
+		     addresses, so this blanket opt-out is the only key that reaches
+		     them. It must stay ALONE: adding NSAllowsLocalNetworking or
+		     NSAllowsArbitraryLoadsInWebContent alongside it makes current
+		     macOS ignore it entirely. Tools/AuditTransportSecurity.py
+		     enforces both that rule and the https-only rule for every
+		     endpoint the user did not type, which ATS no longer backstops. -->
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>
@@ -119,7 +135,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SparkTales Inc.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
+	<string>Locus uses your private network to reach model servers you run yourself, such as Ollama on another machine, and when you enable Mobile Access and pair a phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Locus uses the microphone for dictation, voice conversations, and websites you explicitly allow.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
