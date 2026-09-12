@@ -1,28 +1,46 @@
 #!/usr/bin/env python3
 """Transport-security audit.
 
-Locus ships ``NSAllowsArbitraryLoads`` because the model servers it exists to
-talk to — Ollama, llama.cpp, LM Studio — serve plain HTTP on LAN addresses that
-no certificate authority will vouch for, and Apple offers no narrower key that
-reaches them: ``NSAllowsLocalNetworking`` does not cover RFC1918 literals, and
-``NSExceptionDomains`` does not accept IP addresses at all.
+Locus talks to model servers the user runs themselves — Ollama, llama.cpp,
+LM Studio — which serve plain HTTP on LAN addresses that no certificate
+authority will vouch for. The obvious way to reach them is to disable App
+Transport Security with ``NSAllowsArbitraryLoads``, because Apple documents no
+narrower key that covers RFC1918 literals: ``NSAllowsLocalNetworking`` is
+specified as reaching only ``.local``, unqualified names, and the loopback and
+link-local ranges, and ``NSExceptionDomains`` does not accept IP addresses.
 
-The cost of the blanket key is that the OS stops enforcing HTTPS for *every*
-connection the process makes, including ones no user configured. Nothing fails
-when that enforcement disappears; a cleartext endpoint simply starts working,
-silently, which is why it needs a check that is not the operating system.
+**That opt-out is not needed, and this audit exists to keep it out.** Measured
+on macOS 26.4.1 against a server on a *different* machine at 192.168.50.134,
+with no ATS keys of any kind in the bundle:
 
-This audit is that check. It enforces three things:
+    http://192.168.50.134:18434  ->  200        (private LAN, cleartext)
+    http://neverssl.com          ->  -1022      (public, cleartext: BLOCKED)
+    https://expired.badssl.com   ->  -1200      (cert rejected, not ATS)
+    https://example.com          ->  200
 
-1. every shipping app bundle declares the opt-out, and declares it ALONE —
-   pairing it with ``NSAllowsLocalNetworking`` or
-   ``NSAllowsArbitraryLoadsInWebContent`` makes current macOS ignore it, so the
-   app would lose LAN model servers again with nothing to show why;
-2. every shipping app bundle still explains its private-network use, because a
+ATS is plainly still enforcing — public cleartext is refused — yet the private
+range goes through unaided. So the app gets LAN model servers *and* keeps HTTPS
+enforcement on every other connection. Adding the blanket key would buy nothing
+and would switch that -1022 off for the whole process, silently: nothing fails
+when ATS enforcement disappears, a cleartext endpoint simply starts working.
+
+Re-run that experiment before trusting this on an OS older than the one above;
+the private-range behaviour is undocumented, so it cannot be reasoned about
+from Apple's specification, only measured. ``project.yml`` currently targets
+macOS 14.0, which has not been tested.
+
+The four rules below follow from that:
+
+1. no shipping app bundle declares ``NSAllowsArbitraryLoads``. It is
+   unnecessary, and it would disable HTTPS enforcement for every dependency in
+   the process as well as for our own code;
+2. every shipping app bundle explains its private-network use, because a
    missing ``NSLocalNetworkUsageDescription`` fails identically to an ATS block
    and costs an afternoon to tell apart;
-3. no Swift source gains a cleartext URL literal pointing anywhere but this
-   machine or this network — the rule ATS used to enforce for free.
+3. no endpoint the app declares for itself — an update feed, a component
+   manifest — is cleartext;
+4. no Swift source gains a cleartext URL literal pointing anywhere but this
+   machine or this network.
 """
 
 from __future__ import annotations
@@ -34,9 +52,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Every bundle that ships as a running app. Helper executables keep full ATS
-# enforcement and are deliberately absent: only the process that talks to a
-# user's model server needs the opt-out.
+# Every bundle that ships as a running app. Helper executables are absent
+# because they inherit nothing from these and declare no ATS keys of their own.
 APP_PLISTS = [
     Path("Locus/Info.plist"),
     Path("Config/LocusRelease-Info.plist"),
@@ -45,13 +62,15 @@ APP_PLISTS = [
     Path("Config/LocusMAS-Info.plist"),
 ]
 
-# Keys whose mere presence makes macOS 10.15+/iOS 13+ disregard
-# NSAllowsArbitraryLoads. They are not additive with it; they replace it.
-CONFLICTING_ATS_KEYS = [
-    "NSAllowsArbitraryLoadsInWebContent",
-    "NSAllowsArbitraryLoadsForMedia",
-    "NSAllowsLocalNetworking",
-]
+# Blanket opt-outs. Each one disables HTTPS enforcement for a whole class of
+# traffic across the entire process — our code and every dependency alike — and
+# the measurement in the module docstring shows none of them are needed to
+# reach a LAN model server.
+FORBIDDEN_ATS_KEYS = {
+    "NSAllowsArbitraryLoads": "disables HTTPS enforcement for every connection the app makes",
+    "NSAllowsArbitraryLoadsInWebContent": "disables it for all WebKit content",
+    "NSAllowsArbitraryLoadsForMedia": "disables it for all AV Foundation media loads",
+}
 
 SWIFT_ROOTS = [
     "Locus",
@@ -138,24 +157,14 @@ def audit_plists() -> int:
             plist = plistlib.load(handle)
 
         ats = plist.get("NSAppTransportSecurity")
-        if not isinstance(ats, dict):
-            fail(
-                f"{relative}: no NSAppTransportSecurity dictionary. Without it the app "
-                "cannot reach a self-hosted model server on a LAN address."
-            )
-            failures += 1
-            continue
-
-        if ats.get("NSAllowsArbitraryLoads") is not True:
-            fail(f"{relative}: NSAllowsArbitraryLoads must be present and true")
-            failures += 1
-
-        for key in CONFLICTING_ATS_KEYS:
-            if key in ats:
+        if isinstance(ats, dict):
+            for key, cost in FORBIDDEN_ATS_KEYS.items():
+                if ats.get(key) is not True:
+                    continue
                 fail(
-                    f"{relative}: {key} is set alongside NSAllowsArbitraryLoads. Current "
-                    "macOS honours the narrower key and ignores the blanket one, so LAN "
-                    "model servers stop resolving. Remove it."
+                    f"{relative}: {key} is set, which {cost}. A LAN model server is "
+                    "reachable without it — see the measurement in this script's header, "
+                    "and re-run that experiment before concluding otherwise."
                 )
                 failures += 1
 
@@ -167,7 +176,7 @@ def audit_plists() -> int:
                 continue
             fail(
                 f"{relative}: {key} is a cleartext URL ({value}). Endpoints the app "
-                "declares for itself must be https — ATS no longer requires it."
+                "declares for itself must be https."
             )
             failures += 1
 
