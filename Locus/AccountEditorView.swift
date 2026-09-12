@@ -82,6 +82,48 @@ struct AccountEditorView: View {
         return typed.isEmpty ? kind.defaultBaseURL : typed
     }
 
+    /// Tells the user when their endpoint is unencrypted, and how much that
+    /// costs them.
+    ///
+    /// The app disables App Transport Security so a self-hosted model server on
+    /// the LAN can be reached at all, which means the OS no longer refuses a
+    /// cleartext endpoint on the user's behalf — this row is what replaces that
+    /// refusal with something they can act on. Loopback and LAN addresses get a
+    /// quiet note; an `http://` endpoint that routes off the network is the
+    /// case that actually leaks prompts, so it is called out as a warning.
+    @ViewBuilder
+    private var cleartextNotice: some View {
+        // Half-typed input is not a finding. Classify only once the string
+        // parses into a URL that actually names a scheme and a host, so the row
+        // does not flash a warning at someone mid-keystroke.
+        let normalized = RemoteEndpointTester.normalizeBaseURL(resolvedBaseURL)
+        let exposure = URL(string: normalized)
+            .flatMap { $0.scheme != nil && !($0.host ?? "").isEmpty ? $0 : nil }
+            .map(TransportSecurity.exposure(of:))
+        switch exposure {
+        case .cleartextRoutable:
+            Label(
+                "Not encrypted. This endpoint is outside your network, so prompts and replies travel as plain text and anyone on the path can read them.",
+                systemImage: "lock.open"
+            )
+            .font(.locus(size: 9))
+            .foregroundStyle(LocusTheme.warningForeground)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("accountEditor.cleartextRoutable")
+        case .cleartextPrivate:
+            Label(
+                "Not encrypted, but this address stays on your own network.",
+                systemImage: "lock.open"
+            )
+            .font(.locus(size: 9))
+            .foregroundStyle(LocusTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("accountEditor.cleartextPrivate")
+        case .encrypted, .none:
+            EmptyView()
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -136,6 +178,7 @@ struct AccountEditorView: View {
                                 field: .baseURL,
                                 identifier: "accountEditor.baseURL"
                             )
+                            cleartextNotice
                         }
 
                     inputRow(
