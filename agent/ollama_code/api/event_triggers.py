@@ -62,7 +62,7 @@ def _agent_route(
     provider = str(
         body.get("provider") or metadata.get("provider") or header.get("provider") or "ollama"
     ).strip()
-    if provider not in {"ollama", "remote", "chatgpt"}:
+    if provider not in {"ollama", "remote", "chatgpt", "claude_plan"}:
         raise HTTPException(422, "the agent provider is not supported")
     model = str(body.get("model") or metadata.get("model") or header.get("model") or "").strip()
     if not model:

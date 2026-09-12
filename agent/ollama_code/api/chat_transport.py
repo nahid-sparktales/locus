@@ -55,7 +55,9 @@ async def ws_codex_broker(ws: WebSocket) -> None:
         operation = str(request.get("op") or "")
         # Resolve once per connection so an active-account switch cannot move
         # a worker's thread or tool replies to another account mid-turn.
-        if "codex_home_id" in request:
+        if request.get("provider") == "claude_plan":
+            manager = svc.claude_for(request.get("claude_account_id"))
+        elif "codex_home_id" in request:
             home_id = request["codex_home_id"]
             if not isinstance(home_id, str):
                 raise ValueError("ChatGPT account home id must be a string")
@@ -186,6 +188,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
                     event_handler=forward_event,
                     should_interrupt=interrupted.is_set,
                     timeout=float(request.get("timeout") or 1_800),
+                    **({"max_turns": int(request.get("max_turns") or 40)} if request.get("provider") == "claude_plan" else {}),
                     **({"client_message_id": str(request["client_message_id"])}
                        if request.get("client_message_id") else {}),
                 )

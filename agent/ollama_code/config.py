@@ -49,6 +49,10 @@ DEFAULTS: dict[str, Any] = {
     "remote_api_key": "",
     # Managed ChatGPT-plan routing. Only identifiers and display metadata are
     # persisted; OAuth credentials remain in the isolated App Server home.
+    "claude_plan_account_id": "",
+    "claude_plan_account_label": "",
+    "claude_plan_model": "default",
+    "claude_plan_reasoning_effort": "",
     "chatgpt_account_id": "",
     "chatgpt_account_label": "",
     "chatgpt_model": "",
@@ -99,7 +103,7 @@ DEFAULTS: dict[str, Any] = {
 
 PERMISSION_MODES = ("ask", "accept_edits", "bypass")
 
-PROVIDERS = ("ollama", "remote", "chatgpt")
+PROVIDERS = ("ollama", "remote", "chatgpt", "claude_plan")
 
 #: Environment variables searched for the remote API key, in order.
 REMOTE_API_KEY_ENV = (
@@ -230,6 +234,8 @@ def load_config() -> dict[str, Any]:
     for key in (
         "remote_auth_style", "remote_account_label", "remote_account_id",
         "remote_reasoning_effort",
+        "claude_plan_account_id", "claude_plan_account_label", "claude_plan_model",
+        "claude_plan_reasoning_effort",
         "chatgpt_account_id", "chatgpt_account_label", "chatgpt_model",
         "chatgpt_reasoning_effort",
     ):

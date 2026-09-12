@@ -276,7 +276,7 @@ struct UsageDashboardView: View {
 
     private func chatGPTPlanUsage(_ usage: ChatGPTUsageResponse) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("CHATGPT PLAN USAGE")
+            sectionLabel("SUBSCRIPTION PLAN USAGE")
             HStack(spacing: 10) {
                 let primary = usage.rateLimits.rateLimits?.primary
                 totalTile(
@@ -303,11 +303,16 @@ struct UsageDashboardView: View {
                     "Plan",
                     usage.planType?
                         .replacingOccurrences(of: "_", with: " ")
-                        .capitalized ?? "ChatGPT",
+                        .capitalized ?? "Subscription",
                     id: "usage.chatgpt.plan"
                 )
             }
-            Text("Subscription limits are reported by OpenAI and are kept separate from API and local cost estimates below.")
+            if let observedAt = usage.observedAt {
+                Text("Updated " + Date(timeIntervalSince1970: observedAt).formatted(.relative(presentation: .named)))
+                    .font(.locus(size: 8))
+                    .foregroundStyle(LocusTheme.muted)
+            }
+            Text("Subscription limits are reported by the provider and are kept separate from API and local cost estimates below.")
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
         }

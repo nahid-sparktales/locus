@@ -424,9 +424,9 @@ extension AppModel {
             accounts: providerAccounts
         )
         guard let account else { return nil }
-        if provider == "chatgpt", account.kind == .chatGPT {
+        if provider == account.kind.backendProvider, account.kind.isManagedPlan {
             return [
-                "provider": "chatgpt",
+                "provider": account.kind.backendProvider,
                 "account_id": account.id.uuidString,
                 "codex_home_id": account.codexHomeIdentifier,
                 "account_label": account.displayName,
@@ -438,7 +438,7 @@ extension AppModel {
                 "reasoning_effort": account.codexReasoningEffortValue,
             ]
         }
-        guard provider == "remote", account.kind != .chatGPT else { return nil }
+        guard provider == "remote", !account.kind.isManagedPlan else { return nil }
         return [
             "provider": "remote",
             "account_id": account.id.uuidString,
@@ -464,7 +464,7 @@ extension AppModel {
         accounts: [ProviderAccount]
     ) -> ProviderAccount? {
         let compatible = accounts.filter {
-            provider == "chatgpt" ? $0.kind == .chatGPT : $0.kind != .chatGPT
+            $0.kind.backendProvider == provider
         }
         if let exact = reference.flatMap({ value in
             if let id = UUID(uuidString: value),

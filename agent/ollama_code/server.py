@@ -602,7 +602,7 @@ def _run_user_turn(
 
         try:
             swarm = SoloSwarmExecutor(
-                snapshot_route(svc.core, svc.codex),
+                snapshot_route(svc.core, svc.core.codex_manager if svc.core.provider == "claude_plan" else svc.codex),
                 emit=svc.emit,
                 should_stop=svc.core._should_stop_stream,
                 knowledge_search=knowledge_search,
@@ -1620,7 +1620,7 @@ def _parallel_writer_core(
     core.execution_path = checkout.execution_path
     core.task_metadata = checkout.as_dict()
     core.tool_ctx.memory_workspace = checkout.workspace_root
-    core.codex_manager = svc.codex
+    core.codex_manager = svc.claude_for(core.account_id) if core.provider == "claude_plan" else svc.codex
     core.mcp.task_store = svc.run_store
     from .model_usage import context_for
     core.usage_owner_task_id = context_for(svc.core)["task_id"]
@@ -2188,7 +2188,11 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
     core.model = writer.model
     core.config["usage_rates"] = getattr(writer, "usage_rates", None) or {"input_tokens": getattr(writer, "input_cost_per_million", None) or None,
         "output_tokens": getattr(writer, "output_cost_per_million", None) or None}
-    if writer.route.get("provider") == "chatgpt":
+    if writer.route.get("provider") == "claude_plan":
+        core.use_claude_plan(account_id=str(writer.route.get("account_id") or ""),
+            model=writer.model, account_label=str(writer.route.get("account_label") or "Claude plan"),
+            manager=writer_client.broker, reasoning_effort=str(writer.route.get("reasoning_effort") or ""))
+    elif writer.route.get("provider") == "chatgpt":
         core.codex_manager = writer_client.broker
         core.provider = "chatgpt"
         core.host = "chatgpt://managed"

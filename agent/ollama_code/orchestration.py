@@ -236,7 +236,7 @@ class AgentProfile:
             raise OrchestrationError(f"unknown metering class for {profile.name}")
         _validate_route(profile.route, profile.name)
         account_kind = str(profile.route.get("account_kind") or "").lower().replace("_", "")
-        if profile.route.get("provider") == "chatgpt" or account_kind == "kimicode":
+        if profile.route.get("provider") in {"chatgpt", "claude_plan"} or account_kind == "kimicode":
             # Subscription quota is not per-token API spending. Older/custom
             # manifests may carry metered rates; never charge those estimates
             # against the API-dollar budget for a known subscription route.
@@ -3026,6 +3026,13 @@ _TEAM_CODEX_BROKER = (
     if _TEAM_CODEX_BROKER_URL and _TEAM_CODEX_BROKER_TOKEN else None
 )
 _TEAM_CODEX_ACCOUNT_RESOLVER: Any = None
+_TEAM_CLAUDE_RESOLVER: Any = None
+
+
+def configure_claude_manager(resolver: Any) -> None:
+    global _TEAM_CLAUDE_RESOLVER
+    _TEAM_CLAUDE_RESOLVER = resolver
+
 
 
 def configure_chatgpt_manager(manager: Any, *, account_resolver: Any = None) -> None:
@@ -3055,6 +3062,12 @@ def _client(profile: AgentProfile):
     route = profile.route
     if route.get("provider") == "ollama":
         return OllamaClient(str(route.get("host") or "http://localhost:11434"), profile.timeout_seconds)
+    if route.get("provider") == "claude_plan":
+        if _TEAM_CLAUDE_RESOLVER is None:
+            raise OrchestrationError("The Claude runtime is unavailable.")
+        client = ChatGPTTeamClient(_TEAM_CLAUDE_RESOLVER(str(route.get("account_id") or "")), profile.timeout_seconds)
+        client.host = "claude_plan://managed"
+        return client
     if route.get("provider") == "chatgpt":
         # The module captures this before ChatService removes the environment
         # values, so tools and child processes never inherit the broker token.
@@ -3136,7 +3149,7 @@ def _validate_route(route: dict[str, Any], name: str) -> None:
         if not host:
             raise OrchestrationError(f"local route for {name} has no Ollama host")
         return
-    if provider == "chatgpt":
+    if provider in {"chatgpt", "claude_plan"}:
         if not str(route.get("account_id") or ""):
             raise OrchestrationError(f"ChatGPT route for {name} has no account id")
         forbidden = {"api_key", "base_url", "authorization", "token"}.intersection(route)

@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from . import __version__
+from .claude_runtime import ClaudeBrokerClient, ClaudeManagerRegistry
 from .codex_app_server import CodexBrokerClient, CodexManagerRegistry, codex_home_for_account
 from .core import AgentCore
 from .devserver import DevServerError, DevServerManager
@@ -128,12 +129,20 @@ class ChatService:
             None if broker_url else CodexManagerRegistry(client_version=__version__)
         )
         self._codex_home_id = ""
+        self._claude_registry = ClaudeManagerRegistry() if not broker_url else None
+        self._claude_broker = ClaudeBrokerClient(broker_url, broker_token) if broker_url else None
         if self._codex_registry is not None:
             self._codex_registry.add_listener(self._on_codex_event)
         else:
             self._codex_pinned.add_listener(self._on_codex_event)
         configure_chatgpt_manager(self.codex, account_resolver=self.codex_for)
         self.core.codex_manager = self.codex
+        if self._claude_registry is not None:
+            self._claude_registry.add_listener(self._on_claude_event)
+        from .orchestration import configure_claude_manager
+        configure_claude_manager(self.claude_for)
+        if core.provider == "claude_plan" and core.account_id:
+            core.codex_manager = self.claude_for(core.account_id)
         self.worker_id = uuid.uuid4().hex
         self.loop: asyncio.AbstractEventLoop | None = None
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -269,8 +278,19 @@ class ChatService:
         set_chatgpt_manager(manager, account_resolver=self.codex_for)
         return manager
 
+    def claude_for(self, account_id: str) -> Any:
+        if self._claude_broker is not None:
+            return self._claude_broker.for_account(account_id)
+        return self._claude_registry.manager(account_id)
+
+    def _on_claude_event(self, event: dict[str, Any]) -> None:
+        kind = "claude_usage_updated" if event.get("method") == "account/rateLimits/updated" else "claude_account_updated"
+        self.emit({"type": kind, "account_id": event.get("params", {}).get("account_id")})
+
     def close_codex(self) -> None:
         """Shut down every helper this service started."""
+        if self._claude_registry is not None:
+            self._claude_registry.close_all()
         if self._codex_registry is not None:
             self._codex_registry.close_all()
         elif self._codex_pinned is not None:
@@ -1020,7 +1040,7 @@ class ChatService:
         return str(result.get("text") or "Identity Vault action completed.")[:32_000]
 
     def resolve_identity_context(self, references: list[str]) -> list[dict[str, str]]:
-        if not self.core.identity_mode or not self.core.tool_registry.identity_enabled or self.core.provider == "chatgpt":
+        if not self.core.identity_mode or not self.core.tool_registry.identity_enabled or self.core.provider in {"chatgpt", "claude_plan"}:
             raise ValueError("Identity Vault context is unavailable.")
         references = source_references(references)
         request_id = uuid.uuid4().hex

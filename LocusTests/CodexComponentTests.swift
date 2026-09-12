@@ -285,3 +285,15 @@ final class CodexComponentManifestSafetyTests: XCTestCase {
         )
     }
 }
+
+extension CodexComponentTests {
+    func testClaudeAndChatGPTComponentsCannotBeSubstituted() throws {
+        let both = feed([release(), release(id: "claude-plan")])
+        let selected = try ClaudeComponentInstaller.selectRelease(from: both, arch: "arm64", appVersion: "2.0.0")
+        XCTAssertEqual(selected.id, "claude-plan")
+        XCTAssertThrowsError(try ClaudeComponentInstaller.selectRelease(from: feed([release()]), arch: "arm64", appVersion: "2.0.0"))
+        XCTAssertEqual(ClaudeComponentInstaller.permittedEntries, ["claude", "LICENSE", "NOTICE", "PROVENANCE"])
+        XCTAssertFalse(ClaudeComponentInstaller.permittedEntries.contains("codex"))
+        XCTAssertNotEqual(ClaudeComponent.helperIdentifier, CodexComponent.helperIdentifier)
+    }
+}

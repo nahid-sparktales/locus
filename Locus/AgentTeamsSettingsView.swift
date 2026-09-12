@@ -1581,7 +1581,7 @@ private struct AgentBehaviorEditor: View {
                         throw NSError(domain: "LocusPromptPreview", code: 2,
                             userInfo: [NSLocalizedDescriptionKey: "This agent's provider account is unavailable. Choose an available account first."])
                     }
-                    body["provider"] = account.kind == .chatGPT ? "chatgpt" : "remote"
+                    body["provider"] = account.kind.backendProvider
                     if account.kind == .chatGPT { body["native_mode"] = account.codexNativeModeEnabled }
                 }
             }

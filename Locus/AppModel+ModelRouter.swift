@@ -184,7 +184,7 @@ extension AppModel {
                 else { return nil }
                 return profile.id.uuidString
             }
-            let subscription = account.kind == .chatGPT || account.kind == .kimiCode
+            let subscription = account.kind.isManagedPlan || account.kind == .kimiCode
             routes.append(AutomaticModelRouteCandidate(
                 id: id,
                 name: "\(model) · \(account.shortName)",

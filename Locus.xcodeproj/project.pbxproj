@@ -525,6 +525,7 @@
 		646013AB15E7DD4264876516 /* WalletSignerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530DCDEFEDCBE87B25169CB8 /* WalletSignerProtocol.swift */; };
 		646676617FD3ACF8AE67BE80 /* ComputerControlService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 731F4ECD2268E698A675A53D /* ComputerControlService.swift */; };
 		647CCF1ABDC75CDB8654F08D /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */; };
+		649F42C3A5847A8CC37D99A8 /* ClaudeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */; };
 		65A21C675D227DCACC7EF276 /* WalletUniswapQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07FDE02F2575E8D2A5670594 /* WalletUniswapQuoteProvider.swift */; };
 		65CD7FEF67F63779B1FCA0B8 /* CompanionSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E940CB9835CFDD6B6864DD28 /* CompanionSecurity.swift */; };
 		65D026E9D53A83820582C55E /* ResponseOutputUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA805481CE7B40D4AD652B4 /* ResponseOutputUITests.swift */; };
@@ -584,6 +585,7 @@
 		7432692999A8039E364E8475 /* TranscriptPresentationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0E76969AEB69AC1D510292 /* TranscriptPresentationModel.swift */; };
 		74582ED4C110C64A06281F61 /* SoloCollaborationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F816B97F26DAEED686C5B701 /* SoloCollaborationModelTests.swift */; };
 		746E5E2920FB4AF9BBECA561 /* WalletEVMReceiptReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF1406DC05BAA4C8D1B1A4D7 /* WalletEVMReceiptReconciliationTests.swift */; };
+		7487B9924206B0237545D245 /* ClaudeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */; };
 		74972C7F7BD5133E996B2BEA /* AgentTeamsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 246491EFA199B2B975050307 /* AgentTeamsModelTests.swift */; };
 		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
 		74B231AD518C57E7E352BF79 /* AppFeatureEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A14E63C34A77899861E73ED /* AppFeatureEnvironment.swift */; };
@@ -1111,6 +1113,7 @@
 		DEE086E72E88A3A7C12DCE35 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D427058C21A8F1993C532E8 /* CredentialStore.swift */; };
 		DF4EED0CBE018E930BAB2E88 /* OptionalQuestionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273C7C6585F49C796917D50B /* OptionalQuestionPanel.swift */; };
 		DFAC8FDDD0DF98523ACD7947 /* OutputsLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8744B144B8FFDE5CAF58BF58 /* OutputsLibraryStore.swift */; };
+		E020DAE3F1488137787AF6CE /* ClaudeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */; };
 		E03543D17D87ECC965E105DE /* AppModel+Workspaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDA1C6E1EB6781CFC36FD21F /* AppModel+Workspaces.swift */; };
 		E039954C2DC920F44707447F /* ActivityCenterModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A6B77A929CA91E6E421529 /* ActivityCenterModelTests.swift */; };
 		E04ACEAAC03B3C0B240E94D4 /* WalletConnectionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC23CF37CC5F34F35DB69529 /* WalletConnectionsClient.swift */; };
@@ -1193,6 +1196,7 @@
 		EEE17F6B244C086F9BA3BB32 /* DiffHunks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE116E00D831A9EE4433A893 /* DiffHunks.swift */; };
 		EF472274DEBBB5140487ABA3 /* ReusableChecksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 309B133C05176D82F1560EE8 /* ReusableChecksView.swift */; };
 		EF68A885B0E376D82798E702 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5118157AFFA0FF82EDCA5BED /* AppModel.swift */; };
+		EF80E3A90E3DEEE42FEBCEEE /* ClaudeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */; };
 		EFBB3E9696BE5AE00766ADD0 /* NotebookModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7233FFED68A0709BF2F83B9A /* NotebookModel.swift */; };
 		EFD1168F955FCA878E3A30E3 /* BackendStubSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBABE255234EFEAAAE40D72 /* BackendStubSupport.swift */; };
 		F013DC1250C99CFB6D6BA3A3 /* VoiceComposerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF0FF1E4DCB449530C8ACC2 /* VoiceComposerControls.swift */; };
@@ -1668,6 +1672,7 @@
 		AEFB9A10F8784355D5344D95 /* Locus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Locus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B082AFE6729F96D2D8606AC9 /* WorkspaceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceIndex.swift; sourceTree = "<group>"; };
 		B0913B533492F79EF861D382 /* IdentityVaultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityVaultView.swift; sourceTree = "<group>"; };
+		B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeComponent.swift; sourceTree = "<group>"; };
 		B0E25B0D308D2D499E48D903 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
 		B1189B5E3EF964EF442DEE6C /* OptionalQuestionModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionalQuestionModelTests.swift; sourceTree = "<group>"; };
 		B22E256CDFD049DF0A9986A2 /* AppModel+WorkspaceBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+WorkspaceBrowser.swift"; sourceTree = "<group>"; };
@@ -2150,6 +2155,7 @@
 				AB6C801D489BBF80BE16EBD6 /* ChatAttachmentLoader.swift */,
 				C52BF62D925A367764AAAEE9 /* ChatExportRenderer.swift */,
 				863D25BB6163522EFF5A58B4 /* ChatTranscriptBuilder.swift */,
+				B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */,
 				12CD78F68FC2B3B1CBAFD1AD /* CodexComponent.swift */,
 				07B62C798D0E60793ED30FF0 /* CodexComponentInstaller.swift */,
 				ADFF6B3CE2F946B371F8A9EA /* CommandAction.swift */,
@@ -3204,6 +3210,7 @@
 				86185D36B619CE053008FCA2 /* ChatAttachmentLoader.swift in Sources */,
 				C4135EC752C1A960DAB678E2 /* ChatExportRenderer.swift in Sources */,
 				43F24DA32CE5546306517014 /* ChatTranscriptBuilder.swift in Sources */,
+				649F42C3A5847A8CC37D99A8 /* ClaudeComponent.swift in Sources */,
 				82C4C1954ED61F7FB19DFF7E /* CodexComponent.swift in Sources */,
 				D8F0A3DBE019F9F74B6B8EEF /* CodexComponentInstaller.swift in Sources */,
 				10064D1B949A901C5A6A431A /* CommandAction.swift in Sources */,
@@ -3583,6 +3590,7 @@
 				FB861DE1EB0815DC7FF9BF53 /* ChatAttachmentLoader.swift in Sources */,
 				22661FD9BEDF20356C62C180 /* ChatExportRenderer.swift in Sources */,
 				E8DC03D0AF0457F76ADD775A /* ChatTranscriptBuilder.swift in Sources */,
+				E020DAE3F1488137787AF6CE /* ClaudeComponent.swift in Sources */,
 				9D28E8C16F052407AB02A468 /* CodexComponent.swift in Sources */,
 				B1CE4F1F020F1C9A6504EDFC /* CodexComponentInstaller.swift in Sources */,
 				9BA74BC9037E134CFD57420B /* CommandAction.swift in Sources */,
@@ -3829,6 +3837,7 @@
 				F4310898A6BA981AF86E4CBA /* ChatAttachmentLoader.swift in Sources */,
 				5DDBF7DEEC0F9223CE9FEFD8 /* ChatExportRenderer.swift in Sources */,
 				E4930B28156D2C4C857845EB /* ChatTranscriptBuilder.swift in Sources */,
+				7487B9924206B0237545D245 /* ClaudeComponent.swift in Sources */,
 				BB2C80B74A981FA65EB2C6BB /* CodexComponent.swift in Sources */,
 				E55FCA315272FBDF464F81FE /* CodexComponentInstaller.swift in Sources */,
 				ED01D2FB6F84F4B82660CD05 /* CommandAction.swift in Sources */,
@@ -4213,6 +4222,7 @@
 				78906BCDDF9828D92CB98657 /* ChatAttachmentLoader.swift in Sources */,
 				B18287A7CD575B76EAF2868C /* ChatExportRenderer.swift in Sources */,
 				3BF76BE8EBB84134EC8F01E5 /* ChatTranscriptBuilder.swift in Sources */,
+				EF80E3A90E3DEEE42FEBCEEE /* ClaudeComponent.swift in Sources */,
 				1D25B484AB9C03ED45546A6C /* CodexComponent.swift in Sources */,
 				FFE9529F4CEFED40FC82788E /* CodexComponentInstaller.swift in Sources */,
 				13E80FD09E216DD3DC917149 /* CommandAction.swift in Sources */,

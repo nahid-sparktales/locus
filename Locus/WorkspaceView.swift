@@ -2320,7 +2320,7 @@ struct ScheduleEditorView: View {
             draft.provider = "ollama"
             draft.providerAccountID = nil
         } else if let account = providerAccounts.providerAccounts.first(where: { $0.id.uuidString == value }) {
-            draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
+            draft.provider = account.kind.backendProvider
             draft.providerAccountID = value
         }
         if !catalogModels.contains(draft.model) { draft.model = catalogModels.first ?? "" }

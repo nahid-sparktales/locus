@@ -125,6 +125,9 @@ final class BackendProcess {
         if let helperPath = CodexComponent.helperPathForBackend() {
             environment["LOCUS_CODEX_APP_SERVER_PATH"] = helperPath
         }
+        if let path = ClaudeComponent.helperPathForBackend() {
+            environment["LOCUS_CLAUDE_RUNTIME_PATH"] = path
+        }
         if let packages = launch.packages {
             environment["PYTHONPATH"] = [
                 launch.source.path,

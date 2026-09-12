@@ -14,7 +14,7 @@ MAX_FILE = 32 * 1024 * 1024
 MAX_SNAPSHOT = 512 * 1024 * 1024
 SECRET_NAME = re.compile(r"(^|/)(\.env(?:\..*)?|credentials(?:\..*)?|auth\.json|id_(?:rsa|ed25519)|.*\.(?:pem|p12|pfx|key))$", re.I)
 SECRET_CONTENT = re.compile(rb"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|(?:sk-(?:proj-)?[A-Za-z0-9_-]{24,})|(?:AKIA[0-9A-Z]{16})|(?:gh[pousr]_[A-Za-z0-9]{30,})")
-OMIT = {".git", ".venv", "node_modules", "__pycache__", ".DS_Store", ".codex-app-server", "build", ".build", ".cache"}
+OMIT = {".git", ".venv", "node_modules", "__pycache__", ".DS_Store", ".codex-app-server", ".claude-runtime", "build", ".build", ".cache"}
 
 
 def digest(data: bytes) -> str:

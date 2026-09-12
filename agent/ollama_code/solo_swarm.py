@@ -99,7 +99,7 @@ def snapshot_route(core: Any, manager: Any) -> SoloSwarmRoute:
             normalized_model == "gpt-5.6" or normalized_model.startswith("gpt-5.6-")
         )
         label = str(core.account_label or source.base_url or "Hosted provider")
-    elif provider == "chatgpt":
+    elif provider in {"chatgpt", "claude_plan"}:
         if manager is None:
             raise SoloSwarmError("The ChatGPT runtime is unavailable.")
         client = manager
@@ -375,7 +375,7 @@ class SoloSwarmExecutor:
 
     def _run_one(self, task: dict[str, Any]) -> dict[str, Any]:
         self._raise_if_worker_stopped()
-        if self.route.provider == "chatgpt":
+        if self.route.provider in {"chatgpt", "claude_plan"}:
             result = self._run_chatgpt(task)
         else:
             result = self._run_chat_completion(task)
@@ -508,7 +508,7 @@ class SoloSwarmExecutor:
         run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
         task_call = self._reserve_task_usage()
         from .model_usage import tracked_native
-        tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": "chatgpt", "model": self.route.model},
+        tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model},
             thread_id=thread_id,
             text=self._worker_prompt(task),
             model=self.route.model,

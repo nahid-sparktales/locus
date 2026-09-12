@@ -7,6 +7,7 @@ from . import (
     automation_workflows,
     capsules,
     chat_transport,
+    claude,
     continuity,
     evaluations,
     event_triggers,
@@ -46,6 +47,7 @@ _ROUTE_MODULES = (
     workspace,
     extensions,
     chat_transport,
+    claude,
 )
 
 

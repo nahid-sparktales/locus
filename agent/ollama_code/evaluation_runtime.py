@@ -126,7 +126,10 @@ def run_evaluation_suite(
                 # authenticated proxy; they never launch another App Server.
                 evaluation_service.close_codex()
                 evaluation_service.codex = parent.codex
-                evaluation_service.core.codex_manager = parent.codex
+                evaluation_service.core.codex_manager = parent.core.codex_manager if parent.core.provider == "claude_plan" else parent.codex
+                evaluation_service.claude_for = parent.claude_for
+                from .orchestration import configure_claude_manager
+                configure_claude_manager(parent.claude_for)
                 evaluation_service.run_store = parent.run_store
                 evaluation_service.core.usage_store = parent.run_store
                 evaluation_service.core.mcp.task_store = parent.run_store
