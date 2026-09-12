@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "python_version": "3.14.6",
+  "python_release": "20260728",
+  "codex_version": "0.147.0",
+  "codex_source": {
+    "url": "https://github.com/openai/codex/archive/refs/tags/rust-v0.147.0.tar.gz",
+    "sha256": "355bde4b40d5ba6deea2e469d36f91708315729f3e84c9c69cce6b041a5ba593"
+  },
+  "targets": {
+    "macos-arm64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260728/cpython-3.14.6%2B20260728-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "f4b47659e2da4b97f38cefdf5ad19f0042946099d843cde60de308708e5b1ac5",
+        "size": 26022203
+      },
+      "codex": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-aarch64-apple-darwin.tar.gz",
+        "sha256": "75984b81f92a71b0c0f4b3b5cad80e5c57177e4d8c8b4b1e13db703b20dc4358",
+        "size": 87984231
+      },
+      "code_mode_host": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+        "sha256": "56cdbf6187bf914108d3b7feeea5a34ffba15e5c162bedce69e062ee92ddfb5e",
+        "size": 17556525
+      }
+    },
+    "linux-arm64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260728/cpython-3.14.6%2B20260728-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "sha256": "44f86d58f3bbc1aa6c95ee90f03226e0fdbd22475a98c4410e5a20042b7f40d3",
+        "size": 30211232
+      },
+      "codex": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "eb677c80f666b1ab8b4b1d083b66e8d614b1281d960bb6f9fd8ca98f58b38b90",
+        "size": 91607658
+      },
+      "code_mode_host": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "dfd4ff98ea4db30ed078af9c31b6f86e3da4836d0573aa87e225e5a5b54d3c7c",
+        "size": 17260137
+      }
+    },
+    "linux-x86_64": {
+      "python": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260728/cpython-3.14.6%2B20260728-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "sha256": "d6254462d5fe066810a472d286861f6a18f66400008bfa9688e202a5672e88cb",
+        "size": 35891118
+      },
+      "codex": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "0246e2e773834e07f0fb5249ed6ebad12e4591e608f8c7bb97dd6a9690544c36",
+        "size": 98970270
+      },
+      "code_mode_host": {
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.147.0/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "0146adfaac8363ec9fcdb5895f7624db5b2e8617a283887938b7fb97a1dd4356",
+        "size": 18267855
+      }
+    }
+  }
+}

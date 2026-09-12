@@ -62,11 +62,15 @@ class RuntimeSupervisor:
         self.automation = None
         from .runtime_providers import RuntimeProviders
         self.providers = RuntimeProviders(self)
-        self.paused = bool(self.private.read().get("paused", False))
+        self.paused = self.maintenance or bool(self.private.read().get("paused", False))
         identity = self.private.read().get("runtime_id") or secrets.token_hex(16)
         self.private.set("runtime_id", identity)
         self.runtime_id = identity
         self.package_id = os.environ.get("LOCUS_RUNTIME_PACKAGE_ID", str(Path(__file__).resolve().parents[1]))
+
+    @property
+    def maintenance(self) -> bool:
+        return (self.root / "installation.json").exists()
 
     async def start(self) -> None:
         from .usage_ledger import UsageLedger
@@ -107,13 +111,15 @@ class RuntimeSupervisor:
 
     def status(self) -> dict:
         return {"id": self.runtime_id, "version": 1, "protocol_version": 1,
-                "independent": True, "connected": True, "paused": self.paused, "package_id": self.package_id, "workers": self.store.workers(),
+                "independent": True, "connected": True, "paused": self.paused, "maintenance": self.maintenance, "package_id": self.package_id, "workers": self.store.workers(),
                 "pending_approvals": self.store.decisions(), "max_active_chats": self.limit,
                 "active_work": sum(bool(worker.active_command) for worker in self.workers.values()),
                 "capabilities": {"durable_events": True, "background_schedules": True,
                                  "desktop_requires_controller": True, "remote_chatgpt": True}}
 
     async def ensure_worker(self, session_id: str, workspace: str, *, keep_running: bool | None = None) -> Worker:
+        if self.maintenance:
+            raise RuntimeError("Runtime installation is in progress; retry when it is ready")
         identifier(session_id)
         async with self.launch_lock:
             record = self.store.save_worker(session_id, workspace, keep_running=keep_running)
@@ -197,6 +203,8 @@ class RuntimeSupervisor:
             await worker.ws.send(json.dumps(message))
 
     async def command(self, session_id: str, message: dict) -> dict:
+        if self.maintenance:
+            raise RuntimeError("Runtime installation is in progress; retry when it is ready")
         worker = self.workers.get(session_id)
         if not worker:
             row = self.store.worker(session_id)
@@ -403,7 +411,7 @@ class RuntimeSupervisor:
                 if self.controller_seen and time.monotonic() - self.controller_seen > 35:
                     await self.detach()
                 self.relay_controller_presence()
-                if self.paused:
+                if self.paused or self.maintenance:
                     await asyncio.sleep(1)
                     continue
                 await automation.tick()

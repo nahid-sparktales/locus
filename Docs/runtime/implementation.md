@@ -81,6 +81,11 @@ remote live-provider/login/reboot tests remain release gates.
 
 ## Build and install a remote package
 
+The next phase adds a complete pinned builder and service recovery gates. See
+[Runtime package release readiness](release-readiness.md) for the current build,
+validation and rollback procedures. The stage logs below describe earlier checks;
+the new report records the additional package and service validation separately.
+
 Run `Tools/PackageRemoteRuntime.py` with `--runtime` pointing to a portable runtime
 layout (`python/bin/python3`, `site-packages`, and `source/ollama_code`), the pinned
 0.147.0 helper and its `codex-code-mode-host` sibling, `--target` (`linux-x86_64`,

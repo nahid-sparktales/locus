@@ -17,6 +17,13 @@ def supervisor(app):
     return runtime
 
 
+async def block_runtime_maintenance(request: Request, call_next):
+    runtime = getattr(request.app.state, "runtime", None)
+    if runtime is not None and runtime.maintenance and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse({"detail": "Runtime installation is in progress; retry when it is ready"}, status_code=409)
+    return await call_next(request)
+
+
 async def status(request: Request):
     runtime = supervisor(request.app)
     value = runtime.status()
@@ -314,6 +321,8 @@ async def providers_ollama(request: Request, body: dict = Body()):
 
 def resume_runtime(request: Request):
     runtime = supervisor(request.app)
+    if runtime.maintenance:
+        raise HTTPException(409, "Finish runtime installation before resuming work")
     runtime.paused = False
     runtime.private.set("paused", False)
     return {"ok": True}

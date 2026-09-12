@@ -2852,6 +2852,8 @@ def create_app(
         max_bytes=MAX_HTTP_BODY_BYTES,
         route_limits={("POST", "/api/document-jobs/upload"): MAX_SOURCE_BYTES},
     )
+    from .api.runtime import block_runtime_maintenance
+    application.middleware("http")(block_runtime_maintenance)
     application.middleware("http")(block_browser_origins)
     application.include_router(api)
     return application

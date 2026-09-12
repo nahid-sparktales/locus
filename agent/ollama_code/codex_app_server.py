@@ -287,7 +287,10 @@ class CodexAppServerManager:
             raise CodexAppServerError("The bundled ChatGPT helper is unavailable")
         name = Path(path).name
         args = [path]
-        if name == "codex" or (name.startswith("codex-") and "app-server" not in name):
+        kind = os.environ.get("LOCUS_CODEX_HELPER_KIND", "")
+        if kind not in {"", "cli", "app-server"}:
+            raise CodexAppServerError("Unknown bundled ChatGPT helper entry point")
+        if kind == "cli" or (not kind and (name == "codex" or (name.startswith("codex-") and "app-server" not in name))):
             args.append("app-server")
         args.extend(["--listen", "stdio://"])
         return args
