@@ -1,0 +1,83 @@
+name: Runtime package candidates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/runtime-packages.yml'
+      - 'Tools/*RemoteRuntime*'
+      - 'agent/requirements-runtime.lock'
+      - 'agent/ollama_code/**'
+      - 'agent/tests/test_runtime_release.py'
+      - 'Locus/Resources/ThirdPartyLicenses/**'
+      - 'Locus/Resources/ThirdPartyNotices.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-packages-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    name: Build and exercise ${{ matrix.target }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Prepare the disposable Linux user service manager
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          runtime_uid="$(id -u)"
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl start "user@${runtime_uid}.service"
+          echo "XDG_RUNTIME_DIR=/run/user/${runtime_uid}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtime_uid}/bus" >> "$GITHUB_ENV"
+      - name: Build from pinned artifacts and hashed dependencies
+        env:
+          RUNTIME_TARGET: ${{ matrix.target }}
+        run: >-
+          python3 Tools/PrepareRemoteRuntime.py
+          --target "$RUNTIME_TARGET"
+          --require-clean
+          --output "build/runtime-packages/locus-runtime-$RUNTIME_TARGET.tar.gz"
+      - name: Exercise detached work, restart, helper initialization and failed-update recovery
+        env:
+          RUNTIME_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          runtime_package="build/runtime-packages/locus-runtime-$RUNTIME_TARGET.tar.gz"
+          runtime_sha="$(cat "$runtime_package.sha256")"
+          python3 Tools/SmokeRemoteRuntime.py \
+            --package "$runtime_package" --sha256 "$runtime_sha" \
+            --service-manager --exercise-rollback \
+            --output "build/runtime-packages/$RUNTIME_TARGET.smoke.json"
+      - name: Retain fixture validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-evidence-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            build/runtime-packages/*.json
+            build/runtime-packages/*.sha256
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Retain validated candidate package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-candidate-${{ matrix.target }}-${{ github.sha }}
+          path: build/runtime-packages/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
