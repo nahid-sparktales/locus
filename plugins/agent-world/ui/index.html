@@ -11,7 +11,7 @@
   </head>
   <body>
     <main id="world-shell" aria-label="Agent World">
-      <canvas id="world" tabindex="0" aria-label="3D outpost. Move with W A S D or arrow keys, drag to orbit, and press E near an agent. Use the Residents list for an accessible alternative."></canvas>
+      <canvas id="world" tabindex="0" aria-label="3D outpost overview. Click an agent to interact, drag to rotate the view, and scroll to zoom. Use the Residents list to select agents with the keyboard."></canvas>
       <div class="vignette" aria-hidden="true"></div>
       <header class="world-header">
         <div class="brand"><span class="brand-icon" aria-hidden="true">⌘</span><div><span class="eyebrow">LOCUS / AGENT WORLD</span><h1>Orbital Outpost<span class="demo-badge" id="demo-badge" hidden>DEMO</span></h1></div></div>
@@ -30,13 +30,12 @@
       </aside>
       <div id="agent-labels" aria-hidden="true"></div>
       <div class="coordinate-label" aria-hidden="true"><span class="coordinate-line"></span><span>LYRA SYSTEM<br>SECTOR <b id="coordinate-sector">01</b> · 04.28 N / 78.16 E</span></div>
-      <div id="interaction" class="interaction" hidden><kbd>E</kbd><span>Talk to <strong id="nearby-name"></strong></span><button id="nearby-talk" aria-label="Talk to nearby resident">↗</button></div>
       <div id="selection-note" class="selection-note" role="status" hidden></div>
       <div id="graphics-fallback" class="graphics-fallback" hidden><span class="fallback-icon" aria-hidden="true">◎</span><h2>Your agents are still here.</h2><p id="fallback-reason">3D graphics are unavailable on this device. Select a resident to open their conversation.</p></div>
       <div id="loading-indicator" class="loading-indicator" role="status"><span class="loading-orbit"></span><span>Arriving at your outpost</span></div>
       <div id="asset-loading" class="asset-loading" role="status" hidden>Preparing world artwork…</div>
       <div id="asset-notice" class="asset-notice" role="status" hidden>Some artwork is unavailable. The outpost is using built-in models.</div>
-      <footer class="world-footer"><div class="controls"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span><span class="control-separator"></span><span>Drag to look</span><span>Scroll to zoom</span></div><div class="world-status"><span class="live-dot" aria-hidden="true"></span><span id="working-count">All systems calm</span><span class="version">OUTPOST 01</span></div></footer>
+      <footer class="world-footer"><div class="controls"><span class="select-hint">Click an agent to interact</span><span class="control-separator"></span><span>Drag to rotate</span><span>Scroll to zoom</span></div><div class="world-status"><span class="live-dot" aria-hidden="true"></span><span id="working-count">All systems calm</span><span class="version">OUTPOST 01</span></div></footer>
       <div id="screen-reader-status" class="sr-only" role="status" aria-live="polite"></div>
     </main>
   </body>

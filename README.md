@@ -196,7 +196,7 @@ and interface checks are defined in the [CI workflow](.github/workflows/ci.yml).
 
 - [Architecture and ownership](Docs/Architecture.md)
 - [Agent teams](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
-- [Agent World plugin](Docs/AgentWorld.md) — meet saved agents in a walkable 3D outpost
+- [Agent World plugin](Docs/AgentWorld.md) — interact with saved agents in a 3D outpost
 - [Library and Getting Started](Docs/LibraryAndGettingStarted.md)
 - [Task Capsules](Docs/TaskCapsules.md)
 - [Image generation and interactive answers](Docs/LocusImageAndInteractiveAnswersImplementation.md)

@@ -6,7 +6,7 @@ export type Visibility = { version: 1; type: 'visibility'; visible: boolean };
 export type HostMessage = Snapshot | Visibility;
 export type WorldMessage = { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } };
 export type Point = { x: number; z: number };
-export type Obstacle = Point & { radius: number };
+export type ScreenPoint = { x: number; y: number };
 export type ScreenRect = { left: number; top: number; right: number; bottom: number };
 export const SECTOR_SIZE = 12;
 export const STATUS_META: Record<AgentStatus, { label: string; color: string }> = {
@@ -51,27 +51,8 @@ export function residentPosition(slot: number, count: number): Point {
   const angle = count === 1 ? 0 : -2.32 + (Math.max(0, Math.min(slot, count - 1)) / (count - 1)) * 4.64;
   return { x: Math.sin(angle) * 9.8, z: -Math.cos(angle) * 9.8 };
 }
-export function findNearby<T extends Point & { id: string }>(player: Point, residents: readonly T[], range = 2.6): T | undefined {
-  let best: T | undefined;
-  let bestDistance = range * range;
-  for (const resident of residents) {
-    const distance = (resident.x - player.x) ** 2 + (resident.z - player.z) ** 2;
-    if (distance < bestDistance) { bestDistance = distance; best = resident; }
-  }
-  return best;
-}
-/** Axis sliding gives consistent, camera-independent collisions without a physics runtime. */
-export function moveWithCollisions(start: Point, delta: Point, obstacles: readonly Obstacle[], boundary = 14.1, radius = 0.38): Point {
-  const valid = (point: Point) => Math.hypot(point.x, point.z) <= boundary - radius && obstacles.every(obstacle => Math.hypot(point.x - obstacle.x, point.z - obstacle.z) >= obstacle.radius + radius);
-  const full = { x: start.x + delta.x, z: start.z + delta.z };
-  if (valid(full)) return full;
-  const xOnly = { x: full.x, z: start.z };
-  if (valid(xOnly)) return xOnly;
-  const zOnly = { x: start.x, z: full.z };
-  return valid(zOnly) ? zOnly : start;
-}
-export function isTypingTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (!!target.closest('input, textarea, select, button, [contenteditable="true"], [role="textbox"]'));
+export function isClickGesture(start: ScreenPoint, end: ScreenPoint): boolean {
+  return Math.hypot(end.x - start.x, end.y - start.y) <= 6;
 }
 
 /** Test the whole label, not only its projected anchor, against HUD and viewport edges. */

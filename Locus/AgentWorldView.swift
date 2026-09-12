@@ -156,7 +156,7 @@ struct AgentWorldView: View {
                     Text("Approvals and detailed task controls open in Locus.").font(.caption2).foregroundStyle(.secondary)
                 }.padding(16)
             } else {
-                ContentUnavailableView("Meet an agent", systemImage: "bubble.left.and.bubble.right", description: Text("Approach a resident and press E, click their character, or choose one from the list."))
+                ContentUnavailableView("Meet an agent", systemImage: "bubble.left.and.bubble.right", description: Text("Click an agent or choose one from the Residents list to start a conversation."))
             }
         }
     }

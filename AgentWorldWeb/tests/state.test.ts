@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHostMessage, agentSector, clampSector, sectorAgents, searchAgents, findNearby, moveWithCollisions, labelIsUnobscured, STATUS_META } from '../src/state.ts';
+import { parseHostMessage, agentSector, clampSector, sectorAgents, searchAgents, isClickGesture, labelIsUnobscured, STATUS_META } from '../src/state.ts';
 import { safeAssetPath, parseTheme, parseCatalog, DEFAULT_THEME } from '../src/theme.ts';
 
 const agents = Array.from({ length: 27 }, (_, index) => ({ id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, name: `Agent ${index}`, role: index === 24 ? 'Design researcher' : 'Engineer', status: 'idle' as const }));
@@ -19,15 +19,10 @@ test('the resident list can find and navigate to agents beyond the first sector'
   assert.equal(clampSector(2, 3), 0);
   assert.equal(clampSector(1, 0), 0);
 });
-test('nearby selection uses the nearest resident inside interaction range', () => {
-  const residents = [{ id: 'far', x: 4, z: 0 }, { id: 'near', x: 1, z: 0 }, { id: 'nearest', x: 0.4, z: 0.4 }];
-  assert.equal(findNearby({ x: 0, z: 0 }, residents)?.id, 'nearest');
-  assert.equal(findNearby({ x: 10, z: 10 }, residents), undefined);
-});
-test('movement respects the map edge and slides around obstacles', () => {
-  assert.deepEqual(moveWithCollisions({ x: 13.5, z: 0 }, { x: 1, z: 0 }, []), { x: 13.5, z: 0 });
-  assert.deepEqual(moveWithCollisions({ x: 0, z: 0 }, { x: 1, z: 0 }, [{ x: 1, z: 0, radius: 0.5 }]), { x: 0, z: 0 });
-  assert.deepEqual(moveWithCollisions({ x: 0, z: 0 }, { x: 0.6, z: 0.6 }, [{ x: 1, z: 1, radius: 0.3 }]), { x: 0.6, z: 0 });
+test('small pointer movement still selects while an orbit drag does not count as a click', () => {
+  assert.equal(isClickGesture({ x: 400, y: 300 }, { x: 403, y: 303 }), true);
+  assert.equal(isClickGesture({ x: 400, y: 300 }, { x: 445, y: 300 }), false);
+  assert.equal(isClickGesture({ x: 400, y: 300 }, { x: 400, y: 315 }), false);
 });
 test('all real execution states have visible labels', () => {
   assert.equal(STATUS_META.working.label, 'Working');
@@ -47,21 +42,20 @@ test('floating labels hide over the roster and when any part clips the viewport'
 test('themes cannot introduce remote URLs or traversal and invalid settings retain safe defaults', () => {
   assert.ok(safeAssetPath('assets/resident.glb'));
   for (const bad of ['https://host/a.glb', 'assets/../secret.glb', 'assets//x.glb', 'assets/./x.glb', '/etc/file.glb', 'assets/foo.glb?remote=true']) assert.equal(safeAssetPath(bad), false);
-  const theme = parseTheme({ version: 1, id: 'outpost', assets: { resident: 'assets/resident.glb', player: 'https://host/p.glb' }, heights: { resident: 1.9, player: Infinity }, palette: { sky: 'url(evil)' } });
+  const theme = parseTheme({ version: 1, id: 'outpost', assets: { resident: 'assets/resident.glb', station: 'https://host/s.glb', player: 'assets/player.glb' }, heights: { resident: 1.9, station: Infinity }, palette: { sky: 'url(evil)' } });
   assert.deepEqual(theme.assets, { resident: 'assets/resident.glb' });
   assert.equal(theme.heights.resident, 1.9);
-  assert.equal(theme.heights.player, DEFAULT_THEME.heights.player);
+  assert.equal(theme.heights.station, DEFAULT_THEME.heights.station);
   assert.equal(theme.palette.sky, DEFAULT_THEME.palette.sky);
 });
 test('a catalog can add another packaged theme without accepting unsafe IDs or duplicate entries', () => {
   const catalog = parseCatalog({ version: 1, themes: [{ id: 'outpost', name: 'Outpost' }, { id: 'forest-retreat', name: 'Forest Retreat' }, { id: '../remote', name: 'Remote' }, { id: 'outpost', name: 'Duplicate' }] });
   assert.deepEqual(catalog.map(item => item.id), ['outpost', 'forest-retreat']);
-  const forest = parseTheme({ version: 1, id: 'forest-retreat', name: 'Forest Retreat', layout: { radius: 18, playerSpawn: { x: 2, z: 3 }, stations: [{ x: 1, z: 4, rotation: 1 }], props: [{ asset: 'habitat', x: 10, z: 10, collisionRadius: 2 }] } });
+  const forest = parseTheme({ version: 1, id: 'forest-retreat', name: 'Forest Retreat', layout: { radius: 18, stations: [{ x: 1, z: 4, rotation: 1 }], props: [{ asset: 'habitat', x: 10, z: 10 }] } });
   assert.equal(forest.id, 'forest-retreat');
   assert.equal(forest.layout.radius, 18);
-  assert.deepEqual(forest.layout.playerSpawn, { x: 2, z: 3 });
   assert.deepEqual(forest.layout.stations, [{ x: 1, z: 4, rotation: 1 }]);
-  assert.equal(forest.layout.props[0].collisionRadius, 2);
-  const invalid = parseTheme({ version: 1, id: 'outpost', layout: { radius: NaN, playerSpawn: { x: 300, z: 0 }, stations: [{ x: 0, z: Infinity }], props: [{ asset: 'untrusted', x: 0, z: 0 }] } });
+  assert.deepEqual(forest.layout.props[0], { asset: 'habitat', x: 10, z: 10 });
+  const invalid = parseTheme({ version: 1, id: 'outpost', layout: { radius: NaN, stations: [{ x: 0, z: Infinity }], props: [{ asset: 'untrusted', x: 0, z: 0 }] } });
   assert.deepEqual(invalid.layout, DEFAULT_THEME.layout);
 });
