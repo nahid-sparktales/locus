@@ -81,7 +81,7 @@ extension AppModel {
             draft.runner = .solo
         }
         if let account = activeAccount {
-            draft.provider = account.kind == .chatGPT ? "chatgpt" : "remote"
+            draft.provider = account.kind.backendProvider
             draft.providerAccountID = account.id.uuidString
             draft.model = routedModel(for: account)
         } else {
@@ -175,7 +175,7 @@ extension AppModel {
             guard let id = draft.providerAccountID.flatMap(UUID.init(uuidString:)),
                   let account = providerAccounts.first(where: { $0.id == id })
             else { return "Choose an available model account" }
-            let expected = account.kind == .chatGPT ? "chatgpt" : "remote"
+            let expected = account.kind.backendProvider
             guard draft.provider == expected else { return "The selected model account changed" }
         }
         return nil
@@ -203,7 +203,7 @@ extension AppModel {
             guard let id = task.providerAccountID.flatMap(UUID.init(uuidString:)),
                   let account = providerAccounts.first(where: { $0.id == id })
             else { return "The configured model account no longer exists" }
-            let expected = account.kind == .chatGPT ? "chatgpt" : "remote"
+            let expected = account.kind.backendProvider
             guard task.provider == expected else { return "The configured model account changed" }
             if let catalog = accountModels[id], !catalog.isEmpty, !catalog.contains(task.model) {
                 return "The configured model is no longer offered by this account"
@@ -1236,7 +1236,7 @@ extension AppModel {
     /// "keep the saved one".
     @discardableResult
     func saveProviderAccount(_ account: ProviderAccount, apiKey: String?) -> Bool {
-        if account.kind != .chatGPT {
+        if !account.kind.isManagedPlan {
             let effectiveKey = apiKey ?? credentialStore.get(account: account.credentialAccount) ?? ""
             if let error = RemoteEndpointTester.securityError(
                 baseURL: account.resolvedBaseURL,

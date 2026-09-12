@@ -3,14 +3,17 @@ import Foundation
 
 #if !LOCUS_APP_STORE
 
-/// Fetches, verifies, and installs the ChatGPT-plan component.
+typealias CodexComponentInstaller = PlanComponentInstaller<CodexComponent>
+typealias ClaudeComponentInstaller = PlanComponentInstaller<ClaudeComponent>
+
+/// Fetches, verifies, and installs a managed subscription runtime component.
 ///
 /// Order matters and is not negotiable: hash the payload, expand it, verify
-/// *both* binaries against SparkTales' code-signing identity, clear quarantine,
+/// the declared binaries against SparkTales' code-signing identity, clear quarantine,
 /// and only then publish the `current` symlink. A failure at any step leaves
 /// the previous install — or the absence of one — exactly as it was.
 @MainActor
-final class CodexComponentInstaller: ObservableObject {
+final class PlanComponentInstaller<Component: PlanComponentDescriptor>: ObservableObject {
     enum State: Equatable {
         case idle
         case checking
@@ -44,7 +47,7 @@ final class CodexComponentInstaller: ObservableObject {
         // A 100 MB payload on a slow link must not trip the resource timeout.
         configuration.timeoutIntervalForResource = 6 * 60 * 60
         session = ProxyAwareSession(scope: .downloads, configuration: { configuration })
-        if let version = CodexComponent.installedVersion(), CodexComponent.isInstalled {
+        if let version = Component.installedVersion(), Component.isInstalled {
             state = .installed(version: version)
         }
     }
@@ -85,9 +88,9 @@ final class CodexComponentInstaller: ObservableObject {
                 "unsupported schemaVersion \(feed.schemaVersion)"
             )
         }
-        let forComponent = feed.components.filter { $0.id == CodexComponent.componentID }
+        let forComponent = feed.components.filter { $0.id == Component.componentID }
         guard !forComponent.isEmpty else {
-            throw CodexComponentError.manifestInvalid("no \(CodexComponent.componentID) entry")
+            throw CodexComponentError.manifestInvalid("no \(Component.componentID) entry")
         }
         guard let match = forComponent.first(where: { $0.arch == arch }) else {
             throw CodexComponentError.unsupportedArchitecture(arch)
@@ -259,8 +262,8 @@ final class CodexComponentInstaller: ObservableObject {
         archive: URL,
         release: CodexComponentRelease
     ) async throws {
-        guard let supportRoot = CodexComponent.supportRoot,
-              let currentRoot = CodexComponent.currentRoot
+        guard let supportRoot = Component.supportRoot,
+              let currentRoot = Component.currentRoot
         else { throw CodexComponentError.installFailed("no Application Support directory") }
 
         let fileManager = FileManager.default
@@ -280,21 +283,13 @@ final class CodexComponentInstaller: ObservableObject {
         // component is not supposed to contain.
         try Self.validateExpandedTree(at: staging)
 
-        let helper = staging.appending(path: "codex")
-        let codeModeHost = staging.appending(path: "codex-code-mode-host")
-        for binary in [helper, codeModeHost] {
+        for (name, identifier) in Component.binaries {
+            let binary = staging.appending(path: name)
             guard fileManager.fileExists(atPath: binary.path) else {
-                throw CodexComponentError.extractionFailed(
-                    "archive is missing \(binary.lastPathComponent)"
-                )
+                throw CodexComponentError.extractionFailed("archive is missing \(name)")
             }
+            try CodexComponent.verifySignature(at: binary, identifier: identifier)
         }
-        // Nothing has been exec'd yet and nothing is in place — this is the
-        // gate that decides whether the payload is ours.
-        try CodexComponent.verifySignature(at: helper, identifier: CodexComponent.helperIdentifier)
-        try CodexComponent.verifySignature(
-            at: codeModeHost, identifier: CodexComponent.codeModeHostIdentifier
-        )
         // A quarantined binary refuses to launch even with a valid signature.
         try? Self.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", staging.path]) {
             CodexComponentError.installFailed($0)
@@ -302,9 +297,13 @@ final class CodexComponentInstaller: ObservableObject {
 
         let versioned = supportRoot.appending(path: release.version, directoryHint: .isDirectory)
         if fileManager.fileExists(atPath: versioned.path) {
-            try fileManager.removeItem(at: versioned)
+            try Self.validateExpandedTree(at: versioned)
+            for (name, identifier) in Component.binaries {
+                try CodexComponent.verifySignature(at: versioned.appending(path: name), identifier: identifier)
+            }
+        } else {
+            try fileManager.moveItem(at: staging, to: versioned)
         }
-        try fileManager.moveItem(at: staging, to: versioned)
 
         // Publish atomically: build the new link beside the old one and rename
         // over it, so a crash here can never leave `current` dangling.
@@ -321,9 +320,9 @@ final class CodexComponentInstaller: ObservableObject {
 
     /// Entries a published component may contain. Anything else means the
     /// archive is not what PackageComponents.sh produces.
-    static let permittedEntries: Set<String> = [
-        "codex", "codex-code-mode-host", "LICENSE", "NOTICE", "PROVENANCE",
-    ]
+    nonisolated static var permittedEntries: Set<String> {
+        Set(Component.binaries.map { $0.0 }).union(["LICENSE", "NOTICE", "PROVENANCE"])
+    }
 
     nonisolated static func validateExpandedTree(at staging: URL) throws {
         let fileManager = FileManager.default
@@ -355,10 +354,10 @@ final class CodexComponentInstaller: ObservableObject {
     }
 
     /// Deleting ~268 MB is not instant either, and the settings row reads
-    /// `CodexComponent.isInstalled` — so the state only changes once the tree
+    /// `Component.isInstalled` — so the state only changes once the tree
     /// is actually gone.
     func remove() async {
-        guard let supportRoot = CodexComponent.supportRoot else { return }
+        guard let supportRoot = Component.supportRoot else { return }
         await Self.deleteTree(at: supportRoot)
         state = .idle
     }

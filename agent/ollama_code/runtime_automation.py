@@ -111,7 +111,7 @@ class RuntimeAutomation:
             from .sessions import SessionMeta
             SessionMeta.update(session_id, agent_profile_id=str(automation_configuration["agent_id"]))
         account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}") or saved.get(f"worker:{session_id}", {}).get("/api/provider")
-        if not account and manifest.get("provider") in {"remote", "chatgpt"}:
+        if not account and manifest.get("provider") in {"remote", "chatgpt", "claude_plan"}:
             runtime.store.state(session_id, "waiting_for_account", "Provision the selected model account on this runtime to continue.")
             return
         command = {"type": "user_message", "text": run["request"], "mode": manifest.get("mode", "work"),

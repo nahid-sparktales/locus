@@ -338,6 +338,8 @@ struct ChatGPTUsageResponse: Codable, Hashable {
     let status: String
     let planType: String?
     let rateLimits: RateLimits
+    var observedAt: Double? = nil
+    var limitStatus: String? = nil
     let activity: Activity
     let message: String?
 
@@ -345,5 +347,7 @@ struct ChatGPTUsageResponse: Codable, Hashable {
         case status, activity, message
         case planType = "plan_type"
         case rateLimits = "rate_limits"
+        case observedAt = "observed_at"
+        case limitStatus = "limit_status"
     }
 }

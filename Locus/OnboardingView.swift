@@ -170,7 +170,7 @@ struct OnboardingView: View {
                             }
                         }.disabled(providers.providerAccounts.isEmpty)
                         Menu("Add account…") {
-                            ForEach(ProviderKind.allCases) { kind in
+                            ForEach(ProviderKind.allCases.filter { $0 != .claudePlan || model.claudePlanEnabled }) { kind in
                                 Button(kind.marketingName) { editingAccount = ProviderAccount(kind: kind) }
                             }
                         }

@@ -267,3 +267,9 @@ POST /api/runtime/workers/{session_id}/commands
 POST /api/usage/invocations/{invocation_id}/reconcile
 PUT /api/usage/tasks/{task_id}/limits
 WEBSOCKET /ws/runtime/{session_id}
+GET /api/claude/account
+GET /api/claude/models
+GET /api/claude/usage
+POST /api/claude/login/start
+POST /api/claude/login/cancel
+POST /api/claude/logout

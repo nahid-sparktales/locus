@@ -90,7 +90,7 @@ class UsageLedger:
     def reserve(self, *, provider: str, model: str, stage: str, rates: dict | None = None,
                 upper_bound=None, metering: str | None = None, identifier: str = "",
                 max_calls_per_run: int | None = None, deadline: float | None = None):
-        category = metering or ("subscription" if provider == "chatgpt" else "local" if provider == "ollama" else "metered")
+        category = "subscription" if provider in {"chatgpt", "claude_plan"} else metering or ("local" if provider == "ollama" else "metered")
         if category not in {"subscription", "local", "metered"}:
             raise UsageLimitError("The operation's metering class is unavailable.")
         if rates is not None and not isinstance(rates, dict):

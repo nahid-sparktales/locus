@@ -117,11 +117,19 @@ def install(header, data):
     helper = subprocess.run([str(package / "codex-app-server"), "--version"], capture_output=True, text=True, timeout=20)
     if helper.returncode or not helper.stdout.strip().endswith(" 0.147.0"):
         raise ValueError("The packaged ChatGPT helper does not match pinned version 0.147.0")
+    if (package / "claude-runtime").exists():
+        claude = subprocess.run([str(package / "claude-runtime"), "--version"], capture_output=True, text=True, timeout=20)
+        if claude.returncode or not claude.stdout.startswith("2.1.259 "):
+            raise ValueError("The packaged Claude runtime does not match pinned version 2.1.259")
     python = str(package / "python/bin/python3")
     environment = {"PYTHONPATH": str(package / "source") + ":" + str(package / "site-packages"),
                    "OLLAMA_CODE_HOME": str(root / "profile"), "LOCUS_CODEX_HOME": str(root / "accounts"),
                    "LOCUS_CODEX_APP_SERVER_PATH": str(package / "codex-app-server"),
                    "LOCUS_RUNTIME_PACKAGE_ID": header["sha256"], "LOCUS_DOCUMENT_COORDINATOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+    if (package / "claude-runtime").exists():
+        environment["LOCUS_CLAUDE_RUNTIME_PATH"] = str(package / "claude-runtime")
+        # Including the optional runtime is the release builder's explicit opt-in.
+        environment["LOCUS_CAPABILITY_CLAUDE_PLAN_V1"] = "1"
     check = subprocess.run([python, '-c', 'import sys; assert sys.version_info >= (3,10); import ollama_code.runtime'],
                            env={**os.environ, **environment}, capture_output=True, timeout=30)
     if check.returncode:

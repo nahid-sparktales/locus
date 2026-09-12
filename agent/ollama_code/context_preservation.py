@@ -15,7 +15,7 @@ def protected_context(core: Any) -> str:
             text = message.get("content")
             if isinstance(text, str) and text and text not in inputs:
                 inputs.append(text)
-    if core.provider == "chatgpt" and core.chatgpt_parity_active(core._turn_allows_tools):
+    if core.provider in {"chatgpt", "claude_plan"} and core.chatgpt_parity_active(core._turn_allows_tools):
         from .sessions import strip_prompt_decoration
         inputs = [strip_prompt_decoration(text) for text in inputs]
     sections = ["Current task context. Preserve the user's constraints; later corrections supersede earlier instructions."]
@@ -112,7 +112,7 @@ def runtime_context(core: Any) -> str:
         return ""
     runtime, capsule = getattr(core, "goal_runtime", None), getattr(core, "capsule_runtime", None)
     if runtime is None and capsule is None:
-        return protected_context(core) if core.provider == "chatgpt" and core._turn_allows_tools else ""
+        return protected_context(core) if core.provider in {"chatgpt", "claude_plan"} and core._turn_allows_tools else ""
     from .sessions import SessionStore
     inputs = SessionStore.authoritative_inputs(core.session.path)
     state = {"requests_and_corrections": [m["content"] for m in inputs],
@@ -131,7 +131,7 @@ def runtime_context(core: Any) -> str:
 
 def summarize_section(core: Any, messages: list[dict]) -> Any:
     """Use the selected route, including the native route, with ordinary metering."""
-    if core.provider != "chatgpt":
+    if core.provider not in {"chatgpt", "claude_plan"}:
         from .task_usage_ledger import reserve_core, settle_core
         task_call = reserve_core(core, stage="compaction", messages=messages)
         reservation = core.goal_runtime.reserve() if core.goal_runtime is not None else None

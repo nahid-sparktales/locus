@@ -134,7 +134,7 @@ extension AppModel {
     var capsuleProfiles: [AgentProfile] { agentProfiles + duo.saved.profiles }
 
     func selectDuoModel(account: ProviderAccount?, model: String, planner: Bool) {
-        let subscription = account == nil || account?.kind == .chatGPT || account?.kind == .kimiCode
+        let subscription = account == nil || account?.kind.isManagedPlan == true || account?.kind == .kimiCode
         let profile = AgentProfile(name: planner ? "Duo planner" : "Duo builder",
             route: account.map { .providerAccount($0.id) } ?? .localOllama, model: model,
             role: planner ? .planner : .implementer,

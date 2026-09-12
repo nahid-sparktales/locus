@@ -26,7 +26,11 @@ async def status(request: Request):
         provider = configuration.get("provider", "remote")
         readiness = "configured; credentials not yet verified"
         try:
-            if provider == "chatgpt":
+            if provider == "claude_plan":
+                from .claude import account_payload
+                account = await asyncio.to_thread(account_payload, runtime.service, str(configuration.get("account_id") or ""))
+                readiness = account["status"]
+            elif provider == "chatgpt":
                 from .providers import chatgpt_account_payload
                 account = await asyncio.to_thread(chatgpt_account_payload, runtime.service, home_id=str(configuration.get("codex_home_id") or ""))
                 readiness = account["status"]

@@ -227,7 +227,7 @@ struct DeployAgentView: View {
                         Text("Allow file edits").tag("accept_edits")
                         Text("Allow all tools").tag("bypass")
                     }
-                    Text("Only this account is provisioned. Remote tools ask for permission. ChatGPT accounts sign in independently on this host.").font(.caption).foregroundStyle(.secondary)
+                    Text("Only this account is provisioned. Remote tools ask for permission. Subscription accounts sign in independently on this host.").font(.caption).foregroundStyle(.secondary)
                     if selectedAccountIsChatGPT {
                         Button("Sign in on remote runtime") { perform { await startLogin() } }
                         Button("Use browser login through SSH") { perform { await startLogin(method: "browser") } }
@@ -268,17 +268,18 @@ struct DeployAgentView: View {
             }
         }
     }
-    private var selectedAccountIsChatGPT: Bool { providerAccounts.providerAccounts.first(where: { $0.id.uuidString == accountID })?.kind == .chatGPT }
+    private var selectedAccountIsChatGPT: Bool { providerAccounts.providerAccounts.first(where: { $0.id.uuidString == accountID })?.kind.isManagedPlan == true }
     private var provider: [String: Any] {
         if let account = providerAccounts.providerAccounts.first(where: { $0.id.uuidString == accountID }) {
-            return model.scheduledProviderRequestBody(provider: account.kind == .chatGPT ? "chatgpt" : "remote", accountID: accountID, model: modelName) ?? [:]
+            return model.scheduledProviderRequestBody(provider: account.kind.backendProvider, accountID: accountID, model: modelName) ?? [:]
         }
         return ["provider": "ollama", "model": modelName]
     }
     private func startLogin(method: String = "device_code") async {
         do {
-            let home = provider["codex_home_id"] as? String ?? accountID
-            let value: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(target.id)/login", body: ["account_id": home, "method": method], timeout: 60, as: [String: JSONValue].self)
+            let isClaude = provider["provider"] as? String == "claude_plan"
+            let home = isClaude ? accountID : (provider["codex_home_id"] as? String ?? accountID)
+            let value: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(target.id)/login", body: ["account_id": home, "method": method, "provider": provider["provider"] ?? "chatgpt"], timeout: 60, as: [String: JSONValue].self)
             loginCode = value["user_code"]?.string ?? ""
             loginURL = URL(string: value["auth_url"]?.string ?? "")
         } catch { message = error.localizedDescription }

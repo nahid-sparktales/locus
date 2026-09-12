@@ -179,7 +179,7 @@ class AgentWorkerRuntime:
         core.perms.allowed = set(permission_state["allowed"])
         if spec.mode == "edit":
             core.helper_parent_checkout = parent.cwd
-        core.codex_manager = _HelperNativeTransport(svc.codex, self)
+        core.codex_manager = _HelperNativeTransport(svc.core.codex_manager if parent.provider == "claude_plan" else svc.codex, self)
         core.session.session_id = spec.agent_id
         core._suppress_turn_done = True
         core.configure_agent(

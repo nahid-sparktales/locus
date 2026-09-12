@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     /// download. Owned here so the account editor and the settings row observe
     /// the same install rather than racing two of them.
     let codexComponent = CodexComponentInstaller()
+    let claudeComponent = ClaudeComponentInstaller()
     #endif
 
     #if !LOCUS_APP_STORE
@@ -83,6 +84,9 @@ final class AppModel: ObservableObject {
         CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
         #endif
     }
+    var claudePlanEnabled: Bool { backendCapabilities["claude_plan_v1"] == true }
+    var claudeComponentMissing: Bool { ClaudeComponent.bundledHelper == nil && !ClaudeComponent.isInstalled }
+
     let agentTeamsModel: AgentTeamsModel
     @Published var orchestrationRunID: String?  // internal(for: AppModel+UITestFixtures)
     @Published var orchestrationState: TeamRunState?  // internal(for: AppModel+UITestFixtures)
@@ -1207,7 +1211,7 @@ final class AppModel: ObservableObject {
                 guard let self else { return [:] }
                 if let account = self.activeAccount {
                     return [
-                        "provider": account.kind == .chatGPT ? "chatgpt" : "remote",
+                        "provider": account.kind.backendProvider,
                         "provider_account_id": account.id.uuidString,
                         "account_label": account.displayName,
                         "model": self.routedModel(for: account),
@@ -1577,7 +1581,7 @@ final class AppModel: ObservableObject {
     var reasoningEffortOptions: [String] {
         guard let account = activeAccount else { return [] }
         let model = routedModel(for: account)
-        if account.kind == .chatGPT {
+        if account.kind.isManagedPlan {
             var efforts = accountModelCatalogs[account.id]?
                 .first(where: { $0.id == model })?
                 .supportedReasoningEfforts?

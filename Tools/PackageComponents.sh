@@ -157,6 +157,11 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write("\n")
 PYEOF
 
+if [[ "${LOCUS_BUNDLE_CLAUDE:-component}" != "skip" ]]; then
+    LOCUS_SIGN_IDENTITY="${identity}" LOCUS_COMPONENT_ARCH="${arch}" \
+        "${script_dir}/PackageClaudeComponent.sh" "${out_dir}"
+fi
+
 echo
 echo "Component:     ${archive}"
 echo "Feed:          ${out_dir}/components.json"
@@ -165,4 +170,4 @@ echo "Download:      $(( download_bytes / 1000000 )) MB"
 echo "Installed:     $(( installed_bytes / 1000000 )) MB"
 echo "SHA-256:       ${sha}"
 echo
-echo "Upload ${archive_name} and components.json to the same GitHub release as Locus-macOS.zip."
+echo "Upload all component archives and components.json to the same GitHub release as Locus-macOS.zip."

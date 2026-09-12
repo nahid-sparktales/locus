@@ -185,8 +185,8 @@ extension AppModel {
             taskCapsules.error = "\(account.displayName) does not report \(profile.model). Choose an available model."
             return nil
         }
-        if account.kind == .chatGPT {
-            return ("chatgpt", account.id.uuidString, ["provider": "chatgpt", "account_id": account.id.uuidString,
+        if account.kind.isManagedPlan {
+            return (account.kind.backendProvider, account.id.uuidString, ["provider": account.kind.backendProvider, "account_id": account.id.uuidString,
                 "codex_home_id": account.codexHomeIdentifier, "account_label": account.displayName,
                 "model": profile.model, "native_mode": account.codexNativeModeEnabled,
                 "web_search": account.codexWebSearchEnabled, "reasoning_effort": account.codexReasoningEffortValue])
@@ -205,7 +205,7 @@ extension AppModel {
         var route = resolved.body
         if resolved.provider == "ollama" { route["host"] = lastOllamaHost }
         let kind = route["account_kind"] as? String
-        let subscription = resolved.provider == "chatgpt" || kind == ProviderKind.kimiCode.rawValue
+        let subscription = ["chatgpt", "claude_plan"].contains(resolved.provider) || kind == ProviderKind.kimiCode.rawValue
         var payload: [String: Any] = ["id": profile.id.uuidString, "name": profile.name, "model": profile.model,
             "role": profile.role.rawValue, "instructions": profile.instructions, "capabilities": profile.capabilityTags,
             "access_ceiling": profile.accessCeiling.rawValue, "timeout_seconds": profile.timeoutSeconds,

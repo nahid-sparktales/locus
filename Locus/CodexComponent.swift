@@ -17,7 +17,10 @@ import Security
 /// availability check — so pointing the variable at `current/codex` lets an
 /// install or upgrade take effect without restarting the agent and dropping
 /// live sessions.
-enum CodexComponent {
+enum CodexComponent: PlanComponentDescriptor {
+    static var binaries: [(String, String)] {
+        [("codex", helperIdentifier), ("codex-code-mode-host", codeModeHostIdentifier)]
+    }
     /// Matches the `identifier` BundleBackend.sh and PackageComponents.sh seal
     /// the helpers with. Pinned in the requirement below so a validly signed
     /// SparkTales binary that is not *this* binary cannot be substituted.

@@ -6,6 +6,7 @@ import Foundation
 /// protocol. The agent adapter hides that difference from the rest of the app.
 enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     case claude
+    case claudePlan = "claude_plan"
     /// OpenAI-managed ChatGPT subscription access. Authentication and model
     /// traffic stay inside the bundled Codex App Server helper; this is never
     /// interchangeable with an API key account.
@@ -26,7 +27,8 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     /// What the user calls it.
     var marketingName: String {
         switch self {
-        case .claude: "Claude"
+        case .claude: "Claude API"
+        case .claudePlan: "Claude plan"
         case .chatGPT: "ChatGPT plan"
         case .codex: "OpenAI API"
         case .kimi: "Kimi"
@@ -38,7 +40,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     /// Who runs it — shown next to the marketing name so "Codex" is not a riddle.
     var vendorName: String {
         switch self {
-        case .claude: "Anthropic"
+        case .claude, .claudePlan: "Anthropic"
         case .chatGPT, .codex: "OpenAI"
         case .kimi, .kimiCode: "Moonshot AI"
         case .custom: ""
@@ -52,6 +54,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var defaultBaseURL: String {
         switch self {
         case .claude: "https://api.anthropic.com/v1"
+        case .claudePlan: "https://claude.ai"
         // A display/documentation origin only. Managed ChatGPT traffic never
         // uses this as an inference endpoint.
         case .chatGPT: "https://chatgpt.com"
@@ -66,6 +69,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var keyDocsURL: String {
         switch self {
         case .claude: "https://console.anthropic.com/settings/keys"
+        case .claudePlan: "https://code.claude.com/docs/en/agent-sdk/overview"
         case .chatGPT: "https://learn.chatgpt.com/docs/auth#openai-authentication"
         case .codex: "https://platform.openai.com/api-keys"
         case .kimi: "https://platform.moonshot.ai/console/api-keys"
@@ -77,7 +81,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var keyPlaceholder: String {
         switch self {
         case .claude: "sk-ant-…"
-        case .chatGPT: ""
+        case .chatGPT, .claudePlan: ""
         case .codex, .kimi: "sk-…"
         // Moonshot documents no prefix for these; guessing one would contradict
         // what the user is about to paste.
@@ -91,12 +95,15 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var authStyle: String {
         switch self {
         case .claude: "anthropic"
-        case .chatGPT: "managed"
+        case .chatGPT, .claudePlan: "managed"
         case .codex, .kimi, .kimiCode, .custom: "bearer"
         }
     }
 
-    var requiresAPIKey: Bool { self != .chatGPT }
+    var isManagedPlan: Bool { self == .chatGPT || self == .claudePlan }
+    var backendProvider: String { self == .claudePlan ? "claude_plan" : self == .chatGPT ? "chatgpt" : "remote" }
+    var managedAPIPath: String { self == .claudePlan ? "/api/claude" : "/api/chatgpt" }
+    var requiresAPIKey: Bool { !isManagedPlan }
 
     /// Whether the account works with no key at all. Local OpenAI-compatible
     /// servers (llama.cpp, LM Studio, vLLM, Ollama) usually run without
@@ -126,7 +133,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var supportsImageGeneration: Bool {
         switch self {
         case .codex, .custom, .chatGPT: true
-        case .claude, .kimi, .kimiCode: false
+        case .claude, .claudePlan, .kimi, .kimiCode: false
         }
     }
 
@@ -150,6 +157,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     /// of a fetched list so the newest models are easy to find.
     var curatedModels: [String] {
         switch self {
+        case .claudePlan: ["default"]
         case .claude:
             ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-haiku-4-5"]
         case .chatGPT:
@@ -183,6 +191,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     func publishedContextWindow(for model: String) -> Int? {
         let name = model.lowercased()
         switch self {
+        case .claudePlan: return nil
         case .claude:
             if name.contains("opus-5")
                 || name.contains("sonnet-5")
@@ -229,6 +238,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     func publishedReasoningEfforts(for model: String) -> [String] {
         let name = model.lowercased()
         switch self {
+        case .claudePlan: return []
         case .claude:
             // Effort is generally available on the Claude 5 family and takes
             // the place of the retired token budget. Haiku 4.5 rejects the
@@ -267,10 +277,8 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         case .claude:
             ProviderNote(
                 text: """
-                Claude accounts use an API key from console.anthropic.com. \
-                Anthropic does not permit third-party apps to sign in with a \
-                Claude.ai account or to route requests through Pro or Max plan \
-                credentials, so a Claude subscription cannot be used here.
+                Claude API accounts use a key from console.anthropic.com and are billed separately. \
+                To use a supported subscription, add a Claude plan account when available.
                 """,
                 linkTitle: "Anthropic's terms for third-party tools",
                 linkURL: "https://code.claude.com/docs/en/legal-and-compliance"
@@ -296,7 +304,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
                 linkTitle: "",
                 linkURL: ""
             )
-        case .chatGPT, .codex, .custom:
+        case .chatGPT, .claudePlan, .codex, .custom:
             nil
         }
     }
@@ -337,6 +345,8 @@ enum ProviderModelFilter {
         let lowered = name.lowercased()
         guard !excludedFragments.contains(where: lowered.contains) else { return false }
         switch kind {
+        case .claudePlan:
+            return true // The managed runtime owns this account's catalog and aliases.
         case .claude:
             return lowered.hasPrefix("claude")
         case .chatGPT, .codex:
@@ -485,6 +495,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     /// The value the agent uses to pick this account's credential home. Empty
     /// is the pre-multi-account home, which is exactly what nil should mean.
     var codexHomeIdentifier: String { codexHomeID ?? "" }
+    var managedHomeIdentifier: String { kind == .claudePlan ? id.uuidString : codexHomeIdentifier }
 
     /// Whether this account answers like Codex rather than under the Locus
     /// contract. New accounts are created with parity off, so they arrive with
@@ -504,7 +515,7 @@ struct ProviderAccount: Identifiable, Codable, Hashable {
     }
 
     func hasKey(in credentialStore: any CredentialStoring) -> Bool {
-        kind.usesManagedChatGPTAuthentication
+        kind.isManagedPlan
             || credentialStore.has(account: credentialAccount)
     }
 
@@ -647,7 +658,7 @@ enum ProviderAccountStatus: Equatable {
 
     var summary: String {
         switch self {
-        case .signingIn: "Waiting for ChatGPT sign-in"
+        case .signingIn: "Waiting for sign-in"
         case let .signedIn(email, plan):
             {
                 let details = [email, plan?.capitalized]
@@ -660,7 +671,7 @@ enum ProviderAccountStatus: Equatable {
         case let .runtimeUnavailable(message): message
         case let .rateLimited(resetAt):
             resetAt.map { "Limit reached · resets \($0.formatted(.relative(presentation: .named)))" }
-                ?? "ChatGPT plan limit reached"
+                ?? "Subscription limit reached"
         case .keySaved: "Key saved"
         case let .connected(models):
             models == 1 ? "Connected · 1 model" : "Connected · \(models) models"
