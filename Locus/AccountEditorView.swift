@@ -85,12 +85,12 @@ struct AccountEditorView: View {
     /// Tells the user when their endpoint is unencrypted, and how much that
     /// costs them.
     ///
-    /// The app disables App Transport Security so a self-hosted model server on
-    /// the LAN can be reached at all, which means the OS no longer refuses a
-    /// cleartext endpoint on the user's behalf — this row is what replaces that
-    /// refusal with something they can act on. Loopback and LAN addresses get a
-    /// quiet note; an `http://` endpoint that routes off the network is the
-    /// case that actually leaks prompts, so it is called out as a warning.
+    /// App Transport Security permits cleartext to a private address, which is
+    /// what makes a self-hosted model server reachable — and also means the OS
+    /// says nothing about it. This row is what says it instead. Loopback and
+    /// LAN addresses get a quiet note; an `http://` endpoint that routes off
+    /// the network is the case that actually leaks prompts, so it is called out
+    /// as a warning even though ATS would refuse it anyway.
     @ViewBuilder
     private var cleartextNotice: some View {
         // Half-typed input is not a finding. Classify only once the string

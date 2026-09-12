@@ -160,6 +160,28 @@ enum RemoteEndpointTester {
         return isLoopback ? nil : "API keys require HTTPS unless the endpoint is on this Mac."
     }
 
+    /// Turns a URLSession failure into something the user can act on.
+    ///
+    /// One code is worth naming. App Transport Security refuses cleartext to a
+    /// host it considers public with `NSURLErrorAppTransportSecurityRequires-
+    /// SecureConnection`, whose `localizedDescription` mentions a policy rather
+    /// than the endpoint, and reads as if Locus were broken. It should not fire
+    /// for a LAN model server — the private ranges go through unaided — so if
+    /// it does, either the address is not as local as the user believes or this
+    /// OS draws that line somewhere Tools/AuditTransportSecurity.py has not
+    /// measured. Both are worth saying out loud rather than swallowing.
+    static func connectionFailureMessage(_ error: Error) -> String {
+        let error = error as NSError
+        guard error.domain == NSURLErrorDomain,
+              error.code == NSURLErrorAppTransportSecurityRequiresSecureConnection
+        else { return error.localizedDescription }
+        return """
+            macOS blocked this connection because it is not encrypted. Use an \
+            https:// endpoint, or — if this is a model server on your own \
+            network — check the address really is a private one.
+            """
+    }
+
     private static func isIPv4Loopback(_ host: String) -> Bool {
         let octets = host.split(separator: ".", omittingEmptySubsequences: false)
         guard octets.count == 4,
@@ -227,7 +249,7 @@ enum RemoteEndpointTester {
                 message: failureMessage(status: status, data: data, apiKey: apiKey)
             )
         } catch {
-            return Outcome(ok: false, message: error.localizedDescription)
+            return Outcome(ok: false, message: connectionFailureMessage(error))
         }
     }
 
@@ -266,7 +288,7 @@ enum RemoteEndpointTester {
             }
             return Outcome(ok: true, message: "Connected — \(base) answered a chat probe.")
         } catch {
-            return Outcome(ok: false, message: error.localizedDescription)
+            return Outcome(ok: false, message: connectionFailureMessage(error))
         }
     }
 

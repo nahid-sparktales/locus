@@ -9,8 +9,9 @@ import Foundation
 /// self-hosted model servers; `cleartextRoutable` is the case worth warning a
 /// user about.
 enum EndpointExposure: Equatable {
-    /// TLS applies. App Transport Security no longer enforces this for us, but
-    /// certificate trust evaluation — chain, hostname, expiry — still does.
+    /// TLS applies. App Transport Security requires this of any public host,
+    /// and certificate trust evaluation — chain, hostname, expiry — is a
+    /// separate layer that applies regardless.
     case encrypted
     /// Unencrypted, but addressed to this machine or this network segment.
     case cleartextPrivate
@@ -18,18 +19,19 @@ enum EndpointExposure: Equatable {
     case cleartextRoutable
 }
 
-/// The checks that replace App Transport Security for the traffic Locus
-/// controls.
+/// What Locus knows about a connection's exposure, on top of what App
+/// Transport Security enforces.
 ///
-/// The app ships `NSAllowsArbitraryLoads` because model servers the user runs
-/// themselves — Ollama, llama.cpp, LM Studio — serve plain HTTP on LAN
-/// addresses that no certificate authority will vouch for, and Apple offers no
-/// narrower key that reaches them: `NSAllowsLocalNetworking` does not cover
-/// RFC1918 literals, and `NSExceptionDomains` does not accept IP addresses at
-/// all. The cost of the blanket key is that the OS stops enforcing HTTPS for
-/// *every* connection the process makes, including ones the user never
-/// configured. This type is what enforces it instead, and
-/// `Tools/AuditTransportSecurity.sh` keeps new cleartext literals from landing.
+/// ATS stays enabled: measured on macOS 26.4.1, it refuses cleartext to a
+/// public host (-1022) while letting cleartext through to a private LAN
+/// address, so a self-hosted Ollama is reachable without any opt-out key and
+/// every other connection keeps its HTTPS guarantee. That behaviour is
+/// undocumented, so `Tools/AuditTransportSecurity.py` records the experiment
+/// and keeps the blanket keys out of the bundle.
+///
+/// This type covers what ATS does not say anything about: which endpoints the
+/// app itself is allowed to choose (`requireEncrypted`), and how exposed a
+/// user-configured endpoint is, so the account editor can say so plainly.
 enum TransportSecurity {
     /// Schemes that carry their own transport encryption.
     private static let encryptedSchemes: Set<String> = ["https", "wss"]
@@ -126,9 +128,10 @@ enum TransportSecurity {
     /// manifest, a telemetry collector — and refuses it unless it is encrypted.
     ///
     /// Endpoints the *user* typed are not routed through here: pointing Locus
-    /// at a local model server is the entire reason the ATS opt-out exists.
-    /// Everything else has no business speaking cleartext, and with ATS off
-    /// this is the only thing that still says so.
+    /// at a local model server is the whole point of the private-address
+    /// allowance. Everything else has no business speaking cleartext, and ATS
+    /// only refuses it for hosts it considers public — a feed moved onto a LAN
+    /// address would sail straight through.
     static func requireEncrypted(_ string: String?) -> URL? {
         guard let string, let url = URL(string: string), isEncrypted(url) else { return nil }
         return url
