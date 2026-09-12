@@ -193,7 +193,7 @@ class AgentProfile:
     usage_rates: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def parse(cls, value: Any) -> AgentProfile:
+    def parse(cls, value: Any, *, require_route: bool = True) -> AgentProfile:
         if not isinstance(value, dict):
             raise OrchestrationError("agent profiles must be objects")
         profile = cls(
@@ -234,7 +234,8 @@ class AgentProfile:
             raise OrchestrationError(f"token limit for {profile.name} is outside bounds")
         if profile.metering not in {"self_hosted", "metered"}:
             raise OrchestrationError(f"unknown metering class for {profile.name}")
-        _validate_route(profile.route, profile.name)
+        if require_route:
+            _validate_route(profile.route, profile.name)
         account_kind = str(profile.route.get("account_kind") or "").lower().replace("_", "")
         if profile.route.get("provider") == "chatgpt" or account_kind == "kimicode":
             # Subscription quota is not per-token API spending. Older/custom
