@@ -13,15 +13,16 @@ import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetContainer';
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import '@babylonjs/core/Animations/animatable';
+import '@babylonjs/core/Culling/ray';
 import '@babylonjs/loaders/glTF';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
-import { STATUS_META, findNearby, isTypingTarget, labelIsUnobscured, moveWithCollisions, residentPosition } from './state';
-import type { Agent, Obstacle } from './state';
+import { STATUS_META, isClickGesture, labelIsUnobscured, residentPosition } from './state';
+import type { Agent, ScreenPoint } from './state';
 import type { Theme, AssetType } from './theme';
 
-type Actor = { root: TransformNode; fallback: TransformNode; model?: InstantiatedEntries; idle?: AnimationGroup; walk?: AnimationGroup; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode; moving: boolean };
+type Actor = { root: TransformNode; fallback: TransformNode; model?: InstantiatedEntries; idle?: AnimationGroup; body?: TransformNode };
 type Resident = { agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; x: number; z: number; id: string; phase: number };
-type Callbacks = { onSelect: (id: string) => void; onNearby: (agent?: Agent) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
+type Callbacks = { onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
 export class OutpostWorld {
   private engine: Engine;
@@ -29,19 +30,15 @@ export class OutpostWorld {
   private camera: ArcRotateCamera;
   private shadow: ShadowGenerator;
   private residents: Resident[] = [];
-  private player: Actor;
   private stations: TransformNode[] = [];
   private containers = new Map<AssetType, AssetContainer>();
   private materials = new Map<string, StandardMaterial>();
-  private obstacles: Obstacle[] = [];
-  private propObstacles: Obstacle[] = [];
-  private keys = new Set<string>();
   private visible = true;
   private disposed = false;
   private lastFrame = 0;
   private elapsed = 0;
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  private nearbyID?: string;
+  private hoveredID?: string;
   private selectedID?: string;
   private cleanups: (() => void)[] = [];
   private mapRoot: TransformNode;
@@ -61,14 +58,14 @@ export class OutpostWorld {
     this.scene.skipPointerMovePicking = true;
     this.scene.autoClear = true;
     this.labels = document.getElementById('agent-labels')!;
-    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, #theme-popover, #interaction, #selection-note, #asset-loading, #asset-notice, #graphics-fallback'));
+    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback'));
     this.mapRoot = new TransformNode('outpost', this.scene);
 
-    this.camera = new ArcRotateCamera('explorer-camera', Math.PI / 2 - 0.18, 1.07, 20, new Vector3(0, 0.85, 4), this.scene);
-    this.camera.lowerRadiusLimit = 8;
-    this.camera.upperRadiusLimit = 43;
-    this.camera.lowerBetaLimit = 0.42;
-    this.camera.upperBetaLimit = 1.31;
+    this.camera = new ArcRotateCamera('overview-camera', Math.PI / 2 - 0.38, 0.86, 30, new Vector3(0, 0.6, 0), this.scene);
+    this.camera.lowerRadiusLimit = 14;
+    this.camera.upperRadiusLimit = 46;
+    this.camera.lowerBetaLimit = 0.35;
+    this.camera.upperBetaLimit = 1.16;
     this.camera.minZ = 0.2;
     this.camera.maxZ = 250;
     this.camera.wheelPrecision = 22;
@@ -95,9 +92,6 @@ export class OutpostWorld {
     this.shadow.setDarkness(0.28);
 
     this.buildMap();
-    this.player = this.createActor('explorer', '#e49c59', true);
-    this.player.root.position.set(theme.layout.playerSpawn.x, 0, theme.layout.playerSpawn.z);
-    this.player.root.rotation.y = Math.PI;
     this.buildInput();
     this.engine.runRenderLoop(this.render);
     void this.loadAssets();
@@ -189,7 +183,6 @@ export class OutpostWorld {
       panel.rotation.y = angle;
     }
     for (const prop of this.theme.layout.props) {
-      if (prop.collisionRadius) this.propObstacles.push({ x: prop.x, z: prop.z, radius: prop.collisionRadius });
       this.createPropFallback(prop.asset, prop.x, prop.z, prop.rotation || 0);
     }
     this.buildBackground();
@@ -263,11 +256,11 @@ export class OutpostWorld {
     return root;
   }
 
-  private createActor(name: string, accent: string, player = false): Actor {
+  private createActor(name: string, accent: string): Actor {
     const root = new TransformNode(name, this.scene);
     const fallback = new TransformNode(`${name}-fallback`, this.scene);
     fallback.parent = root;
-    const pearl = this.material('actor-shell', player ? '#d8ae79' : '#ccd4c6');
+    const pearl = this.material('actor-shell', '#ccd4c6');
     const navy = this.material('actor-joints', '#25414c');
     const color = this.material('actor-accent', accent, 0.2);
     const visor = this.material('actor-visor', '#76d8cd', 0.42);
@@ -287,17 +280,16 @@ export class OutpostWorld {
       this.box(`${name}-arm-${sign}`, [0.17, 0.51, 0.19], [sign * 0.39, 0.89, 0], pearl, body);
       this.box(`${name}-hand-${sign}`, [0.16, 0.15, 0.18], [sign * 0.39, 0.59, 0.025], navy, body);
     }
-    const legs = [-1, 1].map(sign => {
+    for (const sign of [-1, 1]) {
       const leg = new TransformNode(`${name}-leg-${sign}`, this.scene);
       leg.parent = fallback;
       leg.position.set(sign * 0.16, 0.6, 0);
       this.box(`${name}-leg-shell-${sign}`, [0.22, 0.4, 0.23], [0, -0.23, 0], pearl, leg);
       this.box(`${name}-boot-${sign}`, [0.25, 0.15, 0.34], [0, -0.52, 0.05], navy, leg);
-      return leg;
-    });
+    }
     this.shadow.addShadowCaster(torso, true);
-    for (const mesh of fallback.getChildMeshes()) { this.shadow.addShadowCaster(mesh); mesh.isPickable = !player; mesh.metadata = { actorID: player ? undefined : name }; }
-    return { root, fallback, body, leftLeg: legs[0], rightLeg: legs[1], moving: false };
+    for (const mesh of fallback.getChildMeshes()) { this.shadow.addShadowCaster(mesh); mesh.isPickable = true; mesh.metadata = { actorID: name }; }
+    return { root, fallback, body };
   }
 
   private createStation(x: number, z: number, rotation: number): TransformNode {
@@ -328,7 +320,7 @@ export class OutpostWorld {
 
   private attachModel(type: AssetType, parent: TransformNode, container: AssetContainer): InstantiatedEntries {
     for (const mesh of container.meshes) if (mesh instanceof Mesh) mesh.receiveShadows = true;
-    const instance = container.instantiateModelsToScene(name => `${parent.name}-${name}`, false, { doNotInstantiate: type === 'resident' || type === 'player' });
+    const instance = container.instantiateModelsToScene(name => `${parent.name}-${name}`, false, { doNotInstantiate: type === 'resident' });
     const pivot = new TransformNode(`${parent.name}-model`, this.scene);
     const normalized = new TransformNode(`${parent.name}-normalized`, this.scene);
     for (const root of instance.rootNodes) root.parent = normalized;
@@ -353,14 +345,13 @@ export class OutpostWorld {
     return instance;
   }
 
-  private upgradeActor(actor: Actor, type: 'resident' | 'player'): void {
-    const container = this.containers.get(type);
+  private upgradeActor(actor: Actor): void {
+    const container = this.containers.get('resident');
     if (!container) return;
     try {
-      actor.model = this.attachModel(type, actor.root, container);
+      actor.model = this.attachModel('resident', actor.root, container);
       actor.fallback.setEnabled(false);
       actor.idle = actor.model.animationGroups.find(group => /idle|standing|breath/i.test(group.name));
-      actor.walk = actor.model.animationGroups.find(group => /walk|running|run/i.test(group.name));
       if (!this.reducedMotion) actor.idle?.start(true);
     } catch { this.callbacks.onAssetFailure(); }
   }
@@ -377,8 +368,7 @@ export class OutpostWorld {
           const container = await LoadAssetContainerAsync(url, this.scene, { pluginExtension: '.glb' });
           if (this.disposed) { container.dispose(); return; }
           this.containers.set(type, container);
-          if (type === 'player') this.upgradeActor(this.player, type);
-          if (type === 'resident') for (const resident of this.residents) this.upgradeActor(resident.actor, type);
+          if (type === 'resident') for (const resident of this.residents) this.upgradeActor(resident.actor);
           if (type === 'station') this.rebuildStations();
           if (type === 'habitat' || type === 'beacon' || type === 'crates') {
             for (const node of [...this.scene.transformNodes]) {
@@ -403,24 +393,20 @@ export class OutpostWorld {
   private rebuildStations(): void {
     for (const station of this.stations) station.dispose();
     this.stations = [];
-    this.obstacles = [...this.propObstacles];
     for (const resident of this.residents) {
       const radius = Math.hypot(resident.x, resident.z) || 1;
       const x = resident.x + resident.x / radius * 1.15;
       const z = resident.z + resident.z / radius * 1.15;
       const station = this.createStation(x, z, Math.atan2(-resident.x, -resident.z));
       this.stations.push(station);
-      this.obstacles.push({ x, z, radius: 0.8 }, { x: resident.x, z: resident.z, radius: 0.38 });
     }
   }
 
-  setAgents(agents: Agent[], selectedID?: string, resetPlayer = false): void {
+  setAgents(agents: Agent[], selectedID?: string): void {
     this.selectedID = selectedID;
-    if (resetPlayer) { this.player.root.position.set(this.theme.layout.playerSpawn.x, 0, this.theme.layout.playerSpawn.z); this.keys.clear(); }
     const sameResidents = agents.length === this.residents.length && agents.every((agent, index) => agent.id === this.residents[index].id);
     if (sameResidents) {
       for (let index = 0; index < agents.length; index++) { this.residents[index].agent = agents[index]; this.updateLabel(this.residents[index]); }
-      if (this.nearbyID) this.callbacks.onNearby(this.residents.find(resident => resident.id === this.nearbyID)?.agent);
       return;
     }
     for (const resident of this.residents) { resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.label.remove(); }
@@ -429,10 +415,14 @@ export class OutpostWorld {
       const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][index % 4]);
       actor.root.position.set(placement.x, 0, placement.z);
       actor.root.rotation.y = placement.rotation ?? Math.atan2(-placement.x, -placement.z);
-      this.upgradeActor(actor, 'resident');
+      this.upgradeActor(actor);
       const label = document.createElement('div');
       label.className = 'agent-label';
       label.dataset.agentId = agent.id;
+      label.title = `Interact with ${agent.name}`;
+      label.addEventListener('click', () => this.callbacks.onSelect(agent.id));
+      label.addEventListener('pointerenter', () => this.setHovered(agent.id));
+      label.addEventListener('pointerleave', () => this.setHovered(undefined));
       const ring = this.ring(`resident-pad-${agent.id}`, 1.65, 0.035, 0.04, this.material('resident-pad', '#829c96', 0.1));
       ring.position.x = placement.x; ring.position.z = placement.z;
       const resident = { agent, actor, label, ring, x: placement.x, z: placement.z, id: agent.id, phase: index * 1.5 };
@@ -441,8 +431,7 @@ export class OutpostWorld {
       return resident;
     });
     this.rebuildStations();
-    this.nearbyID = undefined;
-    this.callbacks.onNearby(undefined);
+    this.setHovered(undefined);
   }
 
   private updateLabel(resident: Resident): void {
@@ -453,46 +442,56 @@ export class OutpostWorld {
     const state = document.createElement('span'); state.className = 'agent-label-state'; state.textContent = meta.label;
     inner.append(name, state); resident.label.append(inner);
     resident.label.classList.toggle('selected', resident.id === this.selectedID);
+    resident.label.classList.toggle('hovered', resident.id === this.hoveredID);
+    resident.label.title = `Interact with ${resident.agent.name}`;
     resident.label.style.setProperty('--status', meta.color);
-    resident.ring.material = this.material('resident-pad', resident.id === this.selectedID ? '#a6f1dc' : '#829c96', resident.id === this.selectedID ? 0.8 : 0.1);
+    const selected = resident.id === this.selectedID, hovered = resident.id === this.hoveredID;
+    resident.ring.material = this.material('resident-pad', selected ? '#a6f1dc' : hovered ? '#9ed7c5' : '#829c96', selected ? 0.8 : hovered ? 0.45 : 0.1);
   }
 
   private buildInput(): void {
     const listen = <K extends keyof WindowEventMap>(type: K, listener: (event: WindowEventMap[K]) => void) => { window.addEventListener(type, listener); this.cleanups.push(() => window.removeEventListener(type, listener)); };
-    listen('keydown', event => {
-      if (isTypingTarget(event.target) || !this.visible) return;
-      const key = event.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'e'].includes(key)) {
-        event.preventDefault();
-        if (key === 'e' && !event.repeat && this.nearbyID) this.callbacks.onSelect(this.nearbyID);
-        else this.keys.add(key);
-      }
-    });
-    listen('keyup', event => this.keys.delete(event.key.toLowerCase()));
-    listen('blur', () => this.keys.clear());
     listen('resize', () => this.engine.resize());
-    const focusListener = () => { if (isTypingTarget(document.activeElement)) this.keys.clear(); };
-    document.addEventListener('focusin', focusListener);
-    this.cleanups.push(() => document.removeEventListener('focusin', focusListener));
-    let pointerStart: { x: number; y: number } | undefined;
-    const down = (event: PointerEvent) => { pointerStart = { x: event.clientX, y: event.clientY }; this.canvas.focus({ preventScroll: true }); };
-    const up = (event: PointerEvent) => {
-      if (!pointerStart || Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 6) { pointerStart = undefined; return; }
-      pointerStart = undefined;
+    let pointerStart: ScreenPoint | undefined;
+    let dragged = false;
+    const pickResident = (event: PointerEvent): string | undefined => {
       const rect = this.canvas.getBoundingClientRect();
-      const pick = this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => typeof mesh.metadata?.actorID === 'string');
-      if (pick?.pickedMesh?.metadata?.actorID) this.callbacks.onSelect(pick.pickedMesh.metadata.actorID);
+      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => typeof mesh.metadata?.actorID === 'string')?.pickedMesh?.metadata?.actorID;
     };
-    this.canvas.addEventListener('pointerdown', down); this.canvas.addEventListener('pointerup', up);
-    this.cleanups.push(() => { this.canvas.removeEventListener('pointerdown', down); this.canvas.removeEventListener('pointerup', up); });
-    this.engine.onContextLostObservable.add(() => { this.keys.clear(); this.callbacks.onGraphicsFailure(); });
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      pointerStart = { x: event.clientX, y: event.clientY }; dragged = false;
+      this.canvas.focus({ preventScroll: true });
+    };
+    const move = (event: PointerEvent) => {
+      if (pointerStart) {
+        dragged ||= !isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
+        if (dragged) { this.setHovered(undefined); this.canvas.style.cursor = 'grabbing'; }
+        return;
+      }
+      this.setHovered(pickResident(event));
+    };
+    const up = (event: PointerEvent) => {
+      const click = pointerStart && !dragged && isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
+      pointerStart = undefined;
+      dragged = false;
+      const id = pickResident(event);
+      this.setHovered(id);
+      if (click && id) this.callbacks.onSelect(id);
+    };
+    const cancel = () => { pointerStart = undefined; dragged = false; this.setHovered(undefined); };
+    this.canvas.addEventListener('pointerdown', down); this.canvas.addEventListener('pointermove', move); this.canvas.addEventListener('pointerup', up);
+    this.canvas.addEventListener('pointerleave', cancel); this.canvas.addEventListener('pointercancel', cancel);
+    listen('blur', cancel);
+    this.cleanups.push(() => { this.canvas.removeEventListener('pointerdown', down); this.canvas.removeEventListener('pointermove', move); this.canvas.removeEventListener('pointerup', up); this.canvas.removeEventListener('pointerleave', cancel); this.canvas.removeEventListener('pointercancel', cancel); });
+    this.engine.onContextLostObservable.add(() => this.callbacks.onGraphicsFailure());
   }
 
-  private setWalking(actor: Actor, moving: boolean): void {
-    if (actor.moving === moving) return;
-    actor.moving = moving;
-    if (moving && actor.walk) { actor.idle?.stop(); actor.walk.start(true); }
-    else { actor.walk?.stop(); if (!this.reducedMotion) actor.idle?.start(true); }
+  private setHovered(id?: string): void {
+    this.canvas.style.cursor = id ? 'pointer' : 'grab';
+    if (id === this.hoveredID) return;
+    this.hoveredID = id;
+    for (const resident of this.residents) this.updateLabel(resident);
   }
 
   private render = (): void => {
@@ -502,7 +501,6 @@ export class OutpostWorld {
     const dt = Math.min((now - (this.lastFrame || now)) / 1000, 0.05);
     this.lastFrame = now;
     this.elapsed += dt;
-    this.updateMovement(dt);
     for (const resident of this.residents) {
       if (!this.reducedMotion && !resident.actor.model && resident.actor.body) {
         resident.actor.body.position.y = Math.sin(this.elapsed * 1.4 + resident.phase) * 0.017;
@@ -513,38 +511,6 @@ export class OutpostWorld {
     this.scene.render();
     this.updateLabels();
   };
-
-  private updateMovement(dt: number): void {
-    const forward = Number(this.keys.has('w') || this.keys.has('arrowup')) - Number(this.keys.has('s') || this.keys.has('arrowdown'));
-    const side = Number(this.keys.has('d') || this.keys.has('arrowright')) - Number(this.keys.has('a') || this.keys.has('arrowleft'));
-    const moving = !isTypingTarget(document.activeElement) && !!(forward || side);
-    this.setWalking(this.player, moving);
-    if (moving) {
-      const direction = this.camera.getTarget().subtract(this.camera.position); direction.y = 0; direction.normalize();
-      const right = new Vector3(-direction.z, 0, direction.x);
-      const desired = direction.scale(forward).add(right.scale(side)).normalize();
-      const previous = this.player.root.position;
-      const next = moveWithCollisions({ x: previous.x, z: previous.z }, { x: desired.x * dt * 3.7, z: desired.z * dt * 3.7 }, this.obstacles, this.theme.layout.radius);
-      this.player.root.position.set(next.x, 0, next.z);
-      const angle = Math.atan2(desired.x, desired.z);
-      let difference = angle - this.player.root.rotation.y;
-      difference = Math.atan2(Math.sin(difference), Math.cos(difference));
-      this.player.root.rotation.y += difference * Math.min(1, dt * 13);
-      if (!this.player.model) {
-        if (this.player.leftLeg) this.player.leftLeg.rotation.x = Math.sin(this.elapsed * 11) * 0.5;
-        if (this.player.rightLeg) this.player.rightLeg.rotation.x = -Math.sin(this.elapsed * 11) * 0.5;
-        if (this.player.body) this.player.body.position.y = Math.abs(Math.sin(this.elapsed * 11)) * 0.035;
-      }
-    } else if (!this.player.model) {
-      if (this.player.leftLeg) this.player.leftLeg.rotation.x = 0;
-      if (this.player.rightLeg) this.player.rightLeg.rotation.x = 0;
-      if (this.player.body) this.player.body.position.y = 0;
-    }
-    const target = this.player.root.position.add(new Vector3(0, 0.85, -1.5));
-    this.camera.setTarget(Vector3.Lerp(this.camera.getTarget(), target, this.reducedMotion ? 1 : Math.min(1, dt * 4)));
-    const nearby = findNearby(this.player.root.position, this.residents);
-    if (nearby?.id !== this.nearbyID) { this.nearbyID = nearby?.id; this.callbacks.onNearby(nearby?.agent); }
-  }
 
   private updateLabels(): void {
     const viewport = this.camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
@@ -578,7 +544,7 @@ export class OutpostWorld {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
-    this.keys.clear();
+    this.setHovered(undefined);
     this.lastFrame = 0;
     if (visible) { this.engine.resize(); this.engine.runRenderLoop(this.render); }
     else { this.engine.stopRenderLoop(this.render); }

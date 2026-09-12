@@ -1,7 +1,7 @@
 # Agent World
 
 Agent World is an optional Locus plugin. It opens a separate window containing
-Orbital Outpost, a walkable 3D setting populated by the user's saved agent
+Orbital Outpost, a 3D overview populated by the user's saved agent
 profiles. Conversations and work run through Locus's existing providers and
 permissions. Exploring the world makes no model calls.
 
@@ -22,9 +22,9 @@ screen extension.
 
 ## Meet your agents
 
-- Move with WASD or the arrow keys. Drag to orbit the camera; scroll to zoom.
-- Approach a resident and press E, or click its character. The searchable
-  resident list also provides direct access without walking.
+- Drag to orbit the overview camera; scroll to zoom.
+- Click an agent or its label to interact. The searchable resident list also
+  provides direct access to every agent.
 - Use **Chat** for a conversation or **Assign work** to start agentic work.
   The native conversation panel shows replies, progress, and any attention
   required. Existing Locus permission controls continue to apply.
@@ -36,8 +36,8 @@ screen extension.
 - Closing the world releases its rendering resources. It does not stop work.
   Use the conversation's Stop action to interrupt a task.
 
-The initial world uses a robot resident with role colors and a distinct explorer
-avatar. Additional residents appear in sectors of up to twelve. A missing
+The initial world uses robot residents with role colors. Additional residents
+appear in sectors of up to twelve. A missing
 profile, unavailable account, disconnected worker, or failed 3D renderer is
 shown explicitly; the world never substitutes a different model account.
 
@@ -61,13 +61,13 @@ Locus bridge is absent. Demonstration residents cannot start real agent tasks.
 A theme directory contains `theme.json` and self-contained GLB files. The
 version-1 manifest describes the theme ID, name, description, palette, asset
 paths, target model heights, orientation corrections, and optional map layout.
-The layout can set the walkable radius, player spawn, resident workstation
-positions, and decorative props with collision radii. All paths stay within
+The layout can set the map radius, resident workstation positions, and
+decorative props. All paths stay within
 the installed plugin. Use embedded textures and geometry without external
 Draco, Basis, or meshopt decoders.
 
-Characters can carry idle and walking animation clips, selected by their clip
-names. Missing artwork uses simple geometry so agents remain reachable.
+Characters can carry idle animation clips, selected by their clip names.
+Missing artwork uses simple geometry so agents remain reachable.
 Changing artwork or a map does not change profile IDs, conversations, provider
 routes, or permissions. The initial release includes only the outpost theme.
 
@@ -78,11 +78,12 @@ task IDs, hashes, and credit totals are recorded in the theme's
 `provenance.json`. Babylon.js retains its Apache-2.0 license; packaged notices
 are included with the plugin.
 
-The six shipped models consumed **112 Meshy credits** across sixteen completed
-tasks, including idle and casual-walk animations for both characters. The
-ledger reserves the same 112 credits. The packaged hashes identify these exact
-files; submitting the same prompts again is not guaranteed to reproduce
-identical models.
+The original generation campaign consumed **112 Meshy credits** across sixteen
+completed tasks. Five models are included in the overview; the unused explorer
+model remains available in repository history. The provenance retains all six
+generated models and their costs. No additional generation was needed for the
+overview. The packaged hashes identify the shipped files; submitting the same
+prompts again is not guaranteed to reproduce identical models.
 
 `Tools/GenerateAgentWorldAssets.py` is a developer-only generation utility. It
 reads the Meshy key from a hidden prompt or `MESHY_API_KEY`, keeps the key in

@@ -29,10 +29,12 @@ and validates the contract. Agent IDs are profile UUIDs; status values describe
 actual host activity. Roster buttons expose `data-agent-id` and `data-status`
 attributes for UI verification.
 
-Keyboard movement is camera-relative, collision handling uses a bounded flat
-map, and each sector contains at most 12 residents. The searchable roster reaches
-every resident across sectors. Rendering stops while hidden; closing the page
-disposes the scene independently of any native tasks.
+The map opens in a stable elevated overview. Click a resident or its name to
+interact, drag the map to orbit, and scroll to zoom. Hover and selection highlight
+the resident's name and floor marker. The searchable roster supports keyboard
+selection and reaches every resident across sectors, with at most 12 in each.
+Rendering stops while hidden; closing the page disposes the scene independently
+of any native tasks.
 
 ## Adding a packaged theme
 
@@ -42,12 +44,13 @@ renderer changes are needed to select additional catalog themes.
 
 `src/theme.ts` defines the version 1 manifest. A theme supplies its palette,
 asset paths, target model heights, optional orientation corrections in radians,
-map radius, player spawn, resident station locations, and decorative prop
-placements/collision radii. Optional station locations fall back to the outpost
+map radius, resident station locations, and decorative prop placements.
+Optional station locations fall back to the outpost
 ring. Workstation consoles sit 1.15 world units outward from each resident.
-GLB models are normalized by their bounding boxes before placement. Idle and
-walking animation groups are detected from their names; the supplied Meshy
-characters use `Idle` and `Casual_Walk`.
+Five model types are loaded: resident, station, beacon, habitat, and crates.
+GLB models are normalized by their bounding boxes before placement. Resident idle
+animation groups are detected from their names; the supplied Meshy character
+uses `Idle`. The earlier controllable-player asset is not used or loaded.
 
 Package GLBs with embedded uncompressed textures and geometry: external URLs,
 Draco/Basis decoders, and worker scripts are blocked by the page policy. Failed

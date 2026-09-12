@@ -40,11 +40,10 @@ def main() -> None:
         assert all(not item.get("uri") for item in gltf.get("buffers", [])), "GLB must embed buffers"
         assert all(not item.get("uri") for item in gltf.get("images", [])), "GLB must embed textures"
         assert hashlib.sha256(data).hexdigest() == provenance["assets"][name]["sha256"]
-        if name in ("player", "resident"):
+        if name == "resident":
             assert gltf.get("skins"), f"Missing rig: {name}"
             clips = [a.get("name", "").lower() for a in gltf.get("animations", [])]
             assert any("idle" in clip for clip in clips), f"Missing idle animation: {name}"
-            assert any("walk" in clip for clip in clips), f"Missing walk animation: {name}"
         print(f"{name}: {len(data) / 1_000_000:.2f} MB, {len(gltf['meshes'])} meshes")
     html = (root / "ui/index.html").read_text()
     assert "<script" in html and "https://" not in html

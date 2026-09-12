@@ -18,7 +18,6 @@ const rosterButtons = new Map<string, HTMLButtonElement>();
 let snapshot: Snapshot = { version: 1, type: 'snapshot', agents: [], theme: 'outpost', projectName: '' };
 let world: OutpostWorld | undefined;
 let sector = 0;
-let nearby: Agent | undefined;
 let nativeVisible = true;
 let themeChoices: ThemeChoice[] = [{ id: 'outpost', name: 'Orbital Outpost' }];
 let loadedTheme: string | undefined;
@@ -39,10 +38,9 @@ function selectAgent(id: string): void {
   const agent = snapshot.agents.find(item => item.id === id);
   if (!agent) return;
   const nextSector = agentSector(snapshot.agents, id);
-  const changedSector = nextSector !== sector;
   sector = nextSector;
   snapshot = { ...snapshot, selectedAgentID: id };
-  world?.setAgents(sectorAgents(snapshot.agents, sector), id, changedSector);
+  world?.setAgents(sectorAgents(snapshot.agents, sector), id);
   world?.focusResident(id);
   renderRoster();
   send({ version: 1, type: 'selectAgent', agentID: id });
@@ -93,15 +91,6 @@ function renderRoster(): void {
   el('empty-state').hidden = snapshot.agents.length > 0;
 }
 
-function setNearby(agent?: Agent): void {
-  const changed = nearby?.id !== agent?.id || nearby?.name !== agent?.name;
-  nearby = agent;
-  el('interaction').hidden = !agent;
-  el('nearby-name').textContent = agent?.name || '';
-  el('nearby-talk').setAttribute('aria-label', agent ? `Talk to ${agent.name}` : 'Talk to nearby resident');
-  if (agent && changed) announce(`${agent.name} is nearby. Press E to talk.`);
-}
-
 function assetProgress(completed: number, total: number): void {
   el('asset-loading').hidden = completed >= total;
   el('asset-loading').textContent = `Preparing world artwork · ${completed} / ${total}`;
@@ -112,7 +101,6 @@ function fallback(reason?: string): void {
   el('asset-loading').hidden = true;
   el('graphics-fallback').hidden = false;
   if (reason) el('fallback-reason').textContent = reason;
-  el('interaction').hidden = true;
   document.querySelector('.controls')?.setAttribute('hidden', '');
   document.querySelector('.coordinate-label')?.setAttribute('hidden', '');
   el('agent-labels').hidden = true;
@@ -137,7 +125,7 @@ async function loadTheme(id: string): Promise<void> {
     const heading = document.querySelector('.brand h1')!;
     heading.firstChild!.textContent = theme.name;
     el('theme-button').children[1].textContent = allowed.name.replace(/^Orbital /, '');
-    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onNearby: setNearby, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select a resident to keep talking.') });
+    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select a resident to keep talking.') });
     world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
     world.setVisible(nativeVisible && !document.hidden);
     el('loading-indicator').hidden = true;
@@ -147,7 +135,7 @@ async function loadTheme(id: string): Promise<void> {
     // Missing manifest can still show a functional built-in outpost without network access.
     if (!world && id === 'outpost') {
       try {
-        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onNearby: setNearby, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() });
+        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() });
         world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
         world.setVisible(nativeVisible && !document.hidden);
         loadedTheme = id;
@@ -168,10 +156,9 @@ function receive(message: unknown): void {
   const projectChanged = parsed.projectName !== snapshot.projectName;
   const selectionChanged = parsed.selectedAgentID !== snapshot.selectedAgentID;
   snapshot = parsed;
-  const previousSector = sector;
   sector = selectionChanged && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
   renderRoster();
-  world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID, projectChanged || sector !== previousSector);
+  world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
   void loadTheme(snapshot.theme);
 }
 window.locusAgentWorld = { receive };
@@ -184,7 +171,6 @@ el('roster-toggle').addEventListener('click', () => {
   button.setAttribute('aria-label', body.hidden ? 'Expand residents' : 'Collapse residents');
   document.querySelector('.roster-panel')!.classList.toggle('collapsed', body.hidden);
 });
-el('nearby-talk').addEventListener('click', () => { if (nearby) selectAgent(nearby.id); });
 const themePopover = el('theme-popover');
 el('theme-button').addEventListener('click', () => { themePopover.hidden = !themePopover.hidden; el('theme-button').setAttribute('aria-expanded', String(!themePopover.hidden)); });
 document.addEventListener('pointerdown', event => { if (!(event.target instanceof Element) || event.target.closest('#theme-button, #theme-popover')) return; themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); });

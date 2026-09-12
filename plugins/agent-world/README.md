@@ -5,12 +5,12 @@ assign work through a native Locus conversation panel.
 
 Requires a Locus build supporting version-1 plugin screens. Install this
 package through Locus Extensions, then choose Open or use the Work menu.
-The first theme, the Babylon.js runtime, and six prepared Meshy models are
+The first theme, the Babylon.js runtime, and five prepared Meshy models are
 included. No generation service or API key is needed to use the plugin.
 
-Move with WASD or arrow keys, drag to orbit, and scroll to zoom. Press E near
-a resident or click it to interact. The resident list provides keyboard and
-search access to every agent. Closing the window does not stop agent tasks.
+Click an agent or its label to interact. Drag to orbit the overview camera and
+scroll to zoom. The resident list provides keyboard and search access to every
+agent. Closing the window does not stop agent tasks.
 
 The plugin requests:
 
