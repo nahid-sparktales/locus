@@ -114,9 +114,13 @@ It does not publish a production release or configure a user's SSH host.
 
 ## Validation and remaining release gates
 
-Validation results for this branch are recorded below after running the checks.
-Deterministic provider fixtures and signed-out helper initialization do not
-establish real provider billing, refresh or account expiration behavior.
+Regression coverage includes archive traversal, pinned-download and installed-file
+tampering, authentication before maintenance responses, concurrent installer
+locking, successful and failed updates, interrupted recovery, and database cleanup
+under a 64-file-handle limit. Each package run records its exact SHA-256, platform,
+process/service mode and scenario outcomes in JSON evidence. Deterministic provider
+fixtures and signed-out helper initialization do not establish real provider
+billing, refresh or account expiration behavior.
 
 Production release still requires signed direct-download SMAppService
 registration, SSH deployment to disposable owned Linux and Mac hosts, host-key
