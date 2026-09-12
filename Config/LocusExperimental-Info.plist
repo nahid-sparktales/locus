@@ -108,22 +108,6 @@
 		<string>wallet.slush.app</string>
 		<string>my.slush.app</string>
 	</array>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<!-- Locus talks to model servers the user runs themselves: Ollama,
-		     llama.cpp, LM Studio and friends serve plain HTTP on a LAN
-		     address and cannot present a certificate any CA would sign.
-		     NSAllowsLocalNetworking does not cover RFC1918 literals such as
-		     192.168.1.50, and NSExceptionDomains does not accept IP
-		     addresses, so this blanket opt-out is the only key that reaches
-		     them. It must stay ALONE: adding NSAllowsLocalNetworking or
-		     NSAllowsArbitraryLoadsInWebContent alongside it makes current
-		     macOS ignore it entirely. Tools/AuditTransportSecurity.py
-		     enforces both that rule and the https-only rule for every
-		     endpoint the user did not type, which ATS no longer backstops. -->
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_locus-remote._tcp</string>

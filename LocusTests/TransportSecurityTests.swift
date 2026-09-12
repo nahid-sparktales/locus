@@ -1,11 +1,12 @@
 import XCTest
 @testable import Locus
 
-/// The app ships `NSAllowsArbitraryLoads`, so the operating system no longer
-/// refuses a cleartext endpoint on anyone's behalf. These assertions are what
-/// took over that job: the classification below is the only thing standing
-/// between "a LAN model server works" and "an app-owned endpoint quietly stops
-/// being encrypted".
+/// App Transport Security permits cleartext to a private address and refuses
+/// it to a public one, which is exactly what lets a self-hosted model server
+/// work while the rest of the app keeps its HTTPS guarantee. The OS draws that
+/// line for the network; these assertions draw it for everything the OS does
+/// not speak to — which endpoints the app may choose for itself, and what the
+/// account editor tells the user about the one they typed.
 final class TransportSecurityTests: XCTestCase {
     private func exposure(_ string: String) -> EndpointExposure? {
         URL(string: string).map(TransportSecurity.exposure(of:))
@@ -29,8 +30,9 @@ final class TransportSecurityTests: XCTestCase {
         }
     }
 
-    /// The whole reason the ATS opt-out exists. `NSAllowsLocalNetworking` does
-    /// not cover any of these, which is why the narrow key was not an option.
+    /// The addresses a self-hosted model server actually lives on. Apple's
+    /// `NSAllowsLocalNetworking` is documented as covering none of these, yet
+    /// ATS lets them through unaided — see Tools/AuditTransportSecurity.py.
     func testPrivateLANAddressesArePrivate() {
         for host in [
             "http://192.168.1.50:11434",
@@ -106,8 +108,36 @@ final class TransportSecurityTests: XCTestCase {
         XCTAssertNil(TransportSecurity.requireEncrypted(""))
     }
 
-    /// The component feed installs an executable. If its URL ever resolves over
-    /// cleartext, the ATS opt-out has cost something real.
+    /// An ATS refusal describes a policy, not an endpoint, and reads as if
+    /// Locus were broken. It should never fire for a genuinely private address,
+    /// so when it does the message has to point at the two things that could
+    /// actually be wrong.
+    func testATSRefusalIsTranslated() {
+        let ats = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorAppTransportSecurityRequiresSecureConnection
+        )
+        let message = RemoteEndpointTester.connectionFailureMessage(ats)
+        XCTAssertTrue(message.contains("not encrypted"), message)
+        XCTAssertTrue(message.contains("https://"), message)
+        XCTAssertTrue(message.contains("private"), message)
+    }
+
+    /// Every other failure keeps the system's own wording — a refused
+    /// connection and a DNS miss say more than any rewrite of ours would.
+    func testOtherFailuresKeepTheirOwnDescription() {
+        for code in [NSURLErrorCannotConnectToHost, NSURLErrorTimedOut, NSURLErrorSecureConnectionFailed] {
+            let error = NSError(domain: NSURLErrorDomain, code: code)
+            XCTAssertEqual(
+                RemoteEndpointTester.connectionFailureMessage(error),
+                error.localizedDescription,
+                "code \(code)"
+            )
+        }
+    }
+
+    /// The component feed installs an executable, and ATS would not stop a
+    /// cleartext one pointed at a LAN address. This is the check that does.
     #if !LOCUS_APP_STORE
     @MainActor
     func testComponentFeedURLIsEncryptedOrAbsent() {
