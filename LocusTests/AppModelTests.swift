@@ -2684,7 +2684,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["model"] as? String, "claude-sonnet-4-5")
         XCTAssertEqual(body["api_key"] as? String, "sk-ant-secret")
         XCTAssertEqual(body["auth_style"] as? String, "anthropic")
-        XCTAssertEqual(body["account_label"] as? String, "Claude — Work")
+        XCTAssertEqual(body["account_label"] as? String, "Claude API — Work")
     }
 
     @MainActor
@@ -3221,7 +3221,7 @@ final class AppModelTests: XCTestCase {
 
         let account = seedAccount(model, kind: .claude, name: "Work")
         model.settings.activeAccountID = account.id.uuidString
-        XCTAssertEqual(model.providerLabel, "Claude ready")
+        XCTAssertEqual(model.providerLabel, "Claude API ready")
     }
 
     @MainActor
