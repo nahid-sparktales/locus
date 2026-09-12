@@ -51,9 +51,9 @@ final class CodexComponentInstaller: ObservableObject {
 
     /// The feed hands back an executable component this installer unpacks and
     /// runs, so it is the last place that should ever speak cleartext. App
-    /// Transport Security used to guarantee that for free; the app now ships
-    /// `NSAllowsArbitraryLoads` so it can reach self-hosted model servers, and
-    /// `TransportSecurity` is what enforces it in its place.
+    /// Transport Security refuses cleartext to a public host but permits it to
+    /// a private one, so a feed URL pointed at a LAN address would not be
+    /// stopped by the OS. This is what stops it.
     static var feedURL: URL? {
         TransportSecurity.requireEncrypted(
             Bundle.main.object(forInfoDictionaryKey: "LocusComponentFeedURL") as? String
