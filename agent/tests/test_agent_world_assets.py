@@ -103,3 +103,43 @@ def test_api_redirect_cannot_forward_authorization():
     request = module.urllib.request.Request(module.API + "/openapi/v1/balance", headers={"Authorization": "Bearer fixture"})
     with pytest.raises(module.urllib.error.HTTPError):
         module.NoAPIRedirects().redirect_request(request, None, 302, "Redirect", {}, "https://other.example/")
+
+
+def test_prior_campaign_cannot_be_excluded_from_aggregate_ceiling(generator, monkeypatch):
+    module, state, _, calls = generator
+    prior = state.parent / "prior.json"
+    module.save(prior, {"tasks": [{"reserved_credits": 112, "consumed_credits": 112, "status": "SUCCEEDED"}]})
+    monkeypatch.setattr("sys.argv", [*sys.argv, "--prior-ledger", str(prior), "--max-credits", "200",
+                                    "--total-credit-ceiling", "300"])
+    with pytest.raises(SystemExit):
+        module.main()
+    assert not calls
+    assert not (state / "ledger.json").exists()
+
+
+def test_changed_prior_accounting_cannot_resume_campaign(generator, monkeypatch):
+    module, state, _, calls = generator
+    prior = state.parent / "prior.json"
+    ledger = {"tasks": [{"reserved_credits": 112, "consumed_credits": 112, "status": "SUCCEEDED"}]}
+    module.save(prior, ledger)
+    monkeypatch.setattr("sys.argv", [*sys.argv, "--prior-ledger", str(prior), "--max-credits", "200",
+                                    "--total-credit-ceiling", "312"])
+    with pytest.raises(RuntimeError, match="did not complete"):
+        module.main()
+    ledger["tasks"][0]["reserved_credits"] = 100
+    ledger["tasks"][0]["consumed_credits"] = 100
+    module.save(prior, ledger)
+    calls.clear()
+    with pytest.raises(SystemExit, match="Campaign or prior ledger changed"):
+        module.main()
+    assert all(method == "GET" for method, _ in calls)
+
+
+def test_unresolved_prior_campaign_must_be_reconciled_before_new_spending(generator, monkeypatch):
+    module, state, _, calls = generator
+    prior = state.parent / "prior.json"
+    module.save(prior, {"tasks": [{"reserved_credits": 5, "status": "SUBMITTING"}]})
+    monkeypatch.setattr("sys.argv", [*sys.argv, "--prior-ledger", str(prior), "--max-credits", "200"])
+    with pytest.raises(SystemExit):
+        module.main()
+    assert not calls

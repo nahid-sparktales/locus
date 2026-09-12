@@ -29,12 +29,18 @@ and validates the contract. Agent IDs are profile UUIDs; status values describe
 actual host activity. Roster buttons expose `data-agent-id` and `data-status`
 attributes for UI verification.
 
-The map opens in a stable elevated overview. Click a resident or its name to
+The landscaped campus opens in a stable elevated overview. Click a resident or its name to
 interact, drag the map to orbit, and scroll to zoom. Hover and selection highlight
 the resident's name and floor marker. The searchable roster supports keyboard
 selection and reaches every resident across sectors, with at most 12 in each.
+Available and completed residents stroll along the commons promenade and pause
+between destinations. Working, queued, and attention states return residents to
+their assigned workstations. Selecting or hovering an available resident pauses
+its stroll for easy interaction; assigning work resumes its return to the desk.
+This ambient movement never starts a model call or invents task activity.
 Rendering stops while hidden; closing the page disposes the scene independently
-of any native tasks.
+of any native tasks. Labels expose `data-status`, `data-behavior`, `data-appearance`,
+`data-world-x`, and `data-world-z` for read-only integration verification.
 
 ## Adding a packaged theme
 
@@ -44,13 +50,17 @@ renderer changes are needed to select additional catalog themes.
 
 `src/theme.ts` defines the version 1 manifest. A theme supplies its palette,
 asset paths, target model heights, optional orientation corrections in radians,
-map radius, resident station locations, and decorative prop placements.
+map radius, resident station locations, decorative prop placements, obstacles,
+and shared wandering destinations.
 Optional station locations fall back to the outpost
-ring. Workstation consoles sit 1.15 world units outward from each resident.
-Five model types are loaded: resident, station, beacon, habitat, and crates.
-GLB models are normalized by their bounding boxes before placement. Resident idle
-animation groups are detected from their names; the supplied Meshy character
-uses `Idle`. The earlier controllable-player asset is not used or loaded.
+campus layout. Workstation consoles sit 1.6 world units along each station's
+facing direction. Navigation and rendered consoles use the same shared geometry.
+Four resident appearances are balanced across the initial roster and cached by
+profile UUID, so status updates and roster reordering keep each agent's look. Supported
+props include station, beacon, habitat, crates, planter, lounge, and server models.
+GLBs are normalized by their bounding boxes before placement. Idle and walking
+animation groups are detected from their names; the supplied Meshy characters use
+`Idle` and `Casual_Walk`. The explorer is an autonomous resident appearance.
 
 Package GLBs with embedded uncompressed textures and geometry: external URLs,
 Draco/Basis decoders, and worker scripts are blocked by the page policy. Failed

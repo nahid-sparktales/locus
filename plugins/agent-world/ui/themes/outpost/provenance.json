@@ -1,9 +1,24 @@
 {
   "generator": "Meshy",
   "model": "meshy-t2",
-  "credit_ceiling": 999,
-  "reserved_credits": 112,
-  "reported_credits": 112,
+  "credit_ceiling": 312,
+  "reserved_credits": 209,
+  "reported_credits": 209,
+  "campaigns": [
+    {
+      "id": "original",
+      "reserved_credits": 112,
+      "reported_credits": 112
+    },
+    {
+      "id": "commons",
+      "credit_ceiling": 200,
+      "reserved_credits": 97,
+      "reported_credits": 97
+    }
+  ],
+  "pricing_verified_on": "2026-09-12",
+  "pricing_source": "https://docs.meshy.ai/en/api/pricing",
   "tasks": [
     {
       "asset": "resident",
@@ -11,7 +26,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09716-afef-70e6-9d7e-a59f73e3604c",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "player",
@@ -19,7 +35,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09716-bc8b-7598-94a2-5e61d89da4c0",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "station",
@@ -27,7 +44,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09716-c68c-7147-aa81-eaa35e699ded",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "resident",
@@ -35,7 +53,8 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a09717-0ebd-76af-aa92-4ffc78303b6a",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
     },
     {
       "asset": "player",
@@ -43,7 +62,8 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a09717-10bd-7058-8336-1d802774094e",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
     },
     {
       "asset": "station",
@@ -51,7 +71,8 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a09717-12ea-7496-92bd-36efe8631e1b",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
     },
     {
       "asset": "player",
@@ -59,7 +80,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09718-0e88-7005-bb20-2e8724654805",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "resident",
@@ -67,7 +89,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09718-5c94-72b0-8b18-88ae150d756d",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "beacon",
@@ -75,7 +98,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09718-6888-76d9-b3c2-bf50d97e4408",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "player",
@@ -83,7 +107,8 @@
       "reserved_credits": 6,
       "status": "SUCCEEDED",
       "id": "01a09718-b0c9-7769-bf76-d5ad72c68c08",
-      "consumed_credits": 6
+      "consumed_credits": 6,
+      "campaign": "original"
     },
     {
       "asset": "beacon",
@@ -91,7 +116,8 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a09718-b2db-72de-a57b-7f5d321ef3c7",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
     },
     {
       "asset": "resident",
@@ -99,7 +125,8 @@
       "reserved_credits": 6,
       "status": "SUCCEEDED",
       "id": "01a09718-f261-7053-b636-efe973f43785",
-      "consumed_credits": 6
+      "consumed_credits": 6,
+      "campaign": "original"
     },
     {
       "asset": "habitat",
@@ -107,7 +134,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a09719-eda0-7650-8fc4-64fdda3c3bef",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "habitat",
@@ -115,7 +143,8 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a0971a-3543-7279-be75-35237c1b6c77",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
     },
     {
       "asset": "crates",
@@ -123,7 +152,8 @@
       "reserved_credits": 5,
       "status": "SUCCEEDED",
       "id": "01a0971b-abb8-7686-b062-f57f864a944e",
-      "consumed_credits": 5
+      "consumed_credits": 5,
+      "campaign": "original"
     },
     {
       "asset": "crates",
@@ -131,33 +161,209 @@
       "reserved_credits": 10,
       "status": "SUCCEEDED",
       "id": "01a0971c-33d9-776a-9cfe-ee80dfd4bba4",
-      "consumed_credits": 10
+      "consumed_credits": 10,
+      "campaign": "original"
+    },
+    {
+      "asset": "resident_botanist",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-5ae6-7758-a8c4-c6990d728636",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_engineer",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-67ed-7047-8b28-35dd87660dc8",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "planter",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-747b-748e-814c-922e14480cda",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_botanist",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-be6e-715c-8e7a-ef2f79ef71b1",
+      "consumed_credits": 10,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_engineer",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-c15c-7050-a6e4-3f0cfd05da41",
+      "consumed_credits": 10,
+      "campaign": "commons"
+    },
+    {
+      "asset": "planter",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0977a-c48c-76fb-acd0-165e6df37b89",
+      "consumed_credits": 10,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_botanist",
+      "stage": "rig",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977c-7a7d-70d8-9057-a6e050758867",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_engineer",
+      "stage": "rig",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977c-c75b-773f-99ba-cf1f4a059229",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_botanist",
+      "stage": "animate",
+      "reserved_credits": 6,
+      "status": "SUCCEEDED",
+      "id": "01a0977d-14c6-735f-b02f-35984aba52b0",
+      "consumed_credits": 6,
+      "campaign": "commons"
+    },
+    {
+      "asset": "lounge",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977d-17c1-74a8-bb12-25bfa716d79a",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "lounge",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0977d-6555-76fe-9fc4-9f5c5e8cb9b0",
+      "consumed_credits": 10,
+      "campaign": "commons"
+    },
+    {
+      "asset": "resident_engineer",
+      "stage": "animate",
+      "reserved_credits": 6,
+      "status": "SUCCEEDED",
+      "id": "01a0977d-a663-7290-9557-880082d87be8",
+      "consumed_credits": 6,
+      "campaign": "commons"
+    },
+    {
+      "asset": "server",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0977e-63f2-7681-98c3-1cedc7b394ce",
+      "consumed_credits": 5,
+      "campaign": "commons"
+    },
+    {
+      "asset": "server",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0977e-aeae-7068-95f1-6e30f3999e0a",
+      "consumed_credits": 10,
+      "campaign": "commons"
     }
   ],
   "assets": {
     "resident": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly bipedal humanoid service robot, full body, two clearly separated arms and legs, hands with simple fingers, articulated elbows and knees, A pose. Pearl ceramic armor, dark navy flexible joints, oval black glass face with two cyan glowing eyes, small orange chest accent. Warm approachable proportions, elegant compact silhouette, practical space station assistant. No weapons, no accessories held in hands.",
-      "sha256": "091b1adb142626715f47fe1556f8078b5c8df6227ad6e708aef901f7ccd8667c"
-    },
-    "player": {
-      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Full body humanoid astronaut explorer in A pose, clearly separated arms and legs, hands with simple fingers. Compact rounded helmet with dark blue glass visor, warm orange and ivory space suit, navy flexible joints, small backpack, sturdy boots. Friendly stylized game character, clean readable silhouette, no weapons, no objects in hands.",
-      "sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd"
+      "sha256": "091b1adb142626715f47fe1556f8078b5c8df6227ad6e708aef901f7ccd8667c",
+      "source_campaign": "original",
+      "animations": [
+        "Idle",
+        "Casual_Walk"
+      ]
     },
     "station": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Freestanding futuristic workstation console for one standing humanoid, waist height, compact wide desk with angled inset cyan display, ivory ceramic panels, navy metal frame, orange corner accents, thick single central pedestal and stable base. Screen is part of the desk, no chair, no wires, no person. Designed for a peaceful orbital research outpost.",
-      "sha256": "fb858cab7b3b9c1bab81704b94ded8b84960f630504ba88afd2dfe83db469fa3"
+      "sha256": "fb858cab7b3b9c1bab81704b94ded8b84960f630504ba88afd2dfe83db469fa3",
+      "source_campaign": "original"
     },
     "beacon": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Elegant space outpost navigation beacon tower, tapered dark navy base, stacked ivory ceramic rings, luminous turquoise central energy core, small orange bands. Freestanding compact sci-fi monument with clean strong silhouette, no cables, no people. Solarpunk optimistic futuristic industrial design.",
-      "sha256": "18091f3bf61a53b6706e8a8fcc88ec801be6dd2a8a819dde04b2b124b902b803"
+      "sha256": "18091f3bf61a53b6706e8a8fcc88ec801be6dd2a8a819dde04b2b124b902b803",
+      "source_campaign": "original"
     },
     "habitat": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Small single modular science fiction habitat building, rounded rectangular ivory pod on short dark navy legs, one closed sliding door in front with orange frame, blue panoramic side windows, dark navy roof with small antenna. Peaceful lunar research station, compact one story architectural prop, no terrain, no people, no separate objects.",
-      "sha256": "2ab1f2176c38ce232555d0097e95263c1110b2ff8e1d1ba1ccab5843df1e16ed"
+      "sha256": "2ab1f2176c38ce232555d0097e95263c1110b2ff8e1d1ba1ccab5843df1e16ed",
+      "source_campaign": "original"
     },
     "crates": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single compact futuristic cargo container, rounded rectangular dark navy storage box, ivory reinforcement corners, orange locking bands, recessed cyan small indicator, bevelled edges, sturdy feet. Peaceful space outpost supply crate, no text, closed lid, no other objects.",
-      "sha256": "1b6b229432efc355011e3d4a5eeb21c1da7dc46f9e97ed970500b941d66851f6"
+      "sha256": "1b6b229432efc355011e3d4a5eeb21c1da7dc46f9e97ed970500b941d66851f6",
+      "source_campaign": "original"
+    },
+    "resident_explorer": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Full body humanoid astronaut explorer in A pose, clearly separated arms and legs, hands with simple fingers. Compact rounded helmet with dark blue glass visor, warm orange and ivory space suit, navy flexible joints, small backpack, sturdy boots. Friendly stylized game character, clean readable silhouette, no weapons, no objects in hands.",
+      "sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd",
+      "source_asset": "player",
+      "source_campaign": "original",
+      "source_commit": "46fc5bc2",
+      "animations": [
+        "Idle",
+        "Casual_Walk"
+      ]
+    },
+    "resident_botanist": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly bipedal humanoid botanical research specialist robot, full body in A pose, two clearly separated arms and legs, simple fingers, visible articulated elbows and knees. Slender graceful proportions, rounded pearl cream ceramic body, sage green shoulders and boots, dark navy flexible joints, oval turquoise glass face with two warm cyan eyes, tiny coral chest accent. Compact leaf shaped chest panel, practical fitted botanical work suit silhouette. Optimistic retro science fiction, peaceful garden caretaker. No leaves protruding from body, no weapons, no tools or objects in hands.",
+      "sha256": "d30cf76b0afbfba933aa7e3d7cb493e54d66871e68fbd077001f9a1732a8a107",
+      "source_campaign": "commons",
+      "animations": [
+        "Idle",
+        "Casual_Walk"
+      ]
+    },
+    "resident_engineer": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly stocky bipedal humanoid engineer service robot, full body in A pose, two clearly separated arms and legs, simple fingers, visible articulated elbows and knees. Broad rounded chest and sturdy short boots, warm coral orange and ivory ceramic armor, dark navy flexible joints, small round helmet with black glass face and two luminous turquoise eyes. Helpful approachable workshop mechanic, substantial but agile proportions, clean readable silhouette, peaceful retro futuristic research station. No weapons, no tools or objects in hands.",
+      "sha256": "ad13fc0816073de5c632c9718edbc90d0d5e34454e23045e056202fd79c164ba",
+      "source_campaign": "commons",
+      "animations": [
+        "Idle",
+        "Casual_Walk"
+      ]
+    },
+    "planter": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single lush hydroponic garden planter for a peaceful orbital research station. Wide low rounded rectangular pearl ivory ceramic trough on a dark navy base, turquoise inset light strip and small warm coral corner accents. Dense attractive broad sage and emerald green leaves growing upright from a recessed soil bed, several small pale yellow flowers, compact well-contained foliage. Polished optimistic solarpunk indoor furniture prop, no people, no pipes outside the planter, no scattered objects.",
+      "sha256": "ab79504525a180f82e990c985b616421e31131bc976bd65138d59c92d6e176f0",
+      "source_campaign": "commons"
+    },
+    "lounge": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single cohesive futuristic lounge seating furniture assembly: a curved crescent shaped low upholstered bench with a small low round coffee table nested within the curve, both connected by one compact rounded dark navy platform base. Pearl ivory bench shell, muted sage teal upholstered cushions, warm coral end accents, ivory tabletop. Peaceful orbital research station lounge, comfortable rounded shapes, clean readable game prop, no people, no objects on table, no room or floor.",
+      "sha256": "2747e55a8e74b63ce9b2b2a461c53401bdc06266deaf71dc131f534db6a964a4",
+      "source_campaign": "commons"
+    },
+    "server": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single compact freestanding research computation rack workstation, tall rounded rectangular ivory cabinet with dark navy inset equipment panels, rows of soft turquoise indicator lights, integrated small angled touchscreen at waist height, warm coral side trim. Closed solid back, stable small dark pedestal feet, orderly polished retro science fiction laboratory equipment. Optimistic peaceful orbital research station, no exposed cables, no people, no text, no separate objects.",
+      "sha256": "adc18322c8f5a6cdec27732f874b738698465b4cbf4a13727f2b9c50bc5f9c8b",
+      "source_campaign": "commons"
     }
   }
 }

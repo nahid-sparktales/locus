@@ -16,12 +16,15 @@ import '@babylonjs/core/Animations/animatable';
 import '@babylonjs/core/Culling/ray';
 import '@babylonjs/loaders/glTF';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
-import { STATUS_META, isClickGesture, labelIsUnobscured, residentPosition } from './state';
+import { STATUS_META, isClickGesture, labelIsUnobscured } from './state';
 import type { Agent, ScreenPoint } from './state';
-import type { Theme, AssetType } from './theme';
+import { RESIDENT_ASSET_TYPES, DEFAULT_STATIONS } from './theme';
+import type { Theme, AssetType, ResidentAssetType, PropAssetType, Placement } from './theme';
+import { createResidentMotion, residentAssetForID, residentSeed, resolveResidentSpacing, stationObstacle, statusCanWander, stepResidentMotion, themeNavigation } from './residentMotion';
+import type { NavigationMap, ResidentMotion } from './residentMotion';
 
-type Actor = { root: TransformNode; fallback: TransformNode; model?: InstantiatedEntries; idle?: AnimationGroup; body?: TransformNode };
-type Resident = { agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; x: number; z: number; id: string; phase: number };
+type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
+type Resident = { agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; home: Placement; motion: ResidentMotion; id: string; phase: number };
 type Callbacks = { onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
 export class OutpostWorld {
@@ -33,6 +36,8 @@ export class OutpostWorld {
   private stations: TransformNode[] = [];
   private containers = new Map<AssetType, AssetContainer>();
   private materials = new Map<string, StandardMaterial>();
+  private appearanceAssignments = new Map<string, ResidentAssetType>();
+  private navigation: NavigationMap;
   private visible = true;
   private disposed = false;
   private lastFrame = 0;
@@ -60,8 +65,9 @@ export class OutpostWorld {
     this.labels = document.getElementById('agent-labels')!;
     this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback'));
     this.mapRoot = new TransformNode('outpost', this.scene);
+    this.navigation = themeNavigation(theme, []);
 
-    this.camera = new ArcRotateCamera('overview-camera', Math.PI / 2 - 0.38, 0.86, 30, new Vector3(0, 0.6, 0), this.scene);
+    this.camera = new ArcRotateCamera('overview-camera', Math.PI / 2 - 0.3, 1.01, 33, new Vector3(0, 0.9, -0.4), this.scene);
     this.camera.lowerRadiusLimit = 14;
     this.camera.upperRadiusLimit = 46;
     this.camera.lowerBetaLimit = 0.35;
@@ -141,59 +147,140 @@ export class OutpostWorld {
 
   private buildMap(): void {
     const radius = this.theme.layout.radius;
-    const floorColor = Color3.Lerp(Color3.FromHexString(this.theme.palette.ground), new Color3(0.6, 0.7, 0.66), 0.16).toHexString();
-    const deck = this.material('deck', floorColor);
-    const inner = this.material('inner-deck', '#263e47');
+    const moss = this.material('campus-lawn', '#526f60');
+    const grass = this.material('commons-grass', '#6f936a');
     const dark = this.material('navy-alloy', '#233d48');
-    const trim = this.material('deck-trim', '#a5b8b2');
-    const light = this.material('guide-light', this.theme.palette.accent, 0.9);
-    const orange = this.material('safety-orange', '#e8a267', 0.12);
-    const rock = this.material('bedrock', '#213b48');
-    const base = MeshBuilder.CreateCylinder('floating-bedrock', { diameterTop: radius * 2 + 1, diameterBottom: radius * 1.5, height: 4.8, tessellation: 11, subdivisions: 2 }, this.scene);
-    base.position.y = -3;
+    const trim = this.material('warm-ceramic', '#c3bca0');
+    const path = this.material('promenade-stone', '#9da99a');
+    const wood = this.material('warm-timber', '#8f7054');
+    const woodLight = this.material('warm-timber-light', '#a18461');
+    const light = this.material('guide-light', this.theme.palette.accent, 0.65);
+    const copper = this.material('brushed-copper', '#bd8c65');
+    const rock = this.material('bedrock', '#263d43');
+    const base = MeshBuilder.CreateCylinder('floating-campus-foundation', { diameterTop: radius * 2 + 1, diameterBottom: radius * 1.65, height: 3.8, tessellation: 13, subdivisions: 2 }, this.scene);
+    base.position.y = -2.5;
     base.material = rock;
     base.convertToFlatShadedMesh();
     base.parent = this.mapRoot;
     base.isPickable = false;
-    this.cylinder('foundation', radius * 2 + 0.7, 0.8, -0.48, dark, 64);
-    this.cylinder('upper-deck', radius * 2, 0.14, -0.1, deck, 64);
-    this.ring('outer-rail-glow', radius * 2 - 0.45, 0.055, 0.035, light);
-    this.ring('lower-rim', radius * 2 + 0.3, 0.11, -0.63, light);
-    this.ring('orbit-lane-outer', 17, 0.065, 0.002, trim);
-    this.ring('orbit-lane-inner', 14.8, 0.042, 0.005, trim);
-    this.cylinder('arrival-pad', 6.2, 0.045, 0.002, dark);
-    this.cylinder('arrival-inset', 5.3, 0.035, 0.03, inner);
-    this.ring('arrival-guide', 5.7, 0.06, 0.045, light);
-    this.ring('arrival-center', 3.9, 0.025, 0.055, trim);
-    // The geometric L on the arrival platform reads from the overhead camera.
-    this.box('arrival-logo-long', [0.3, 0.045, 1.35], [-0.39, 0.063, 0], trim);
-    this.box('arrival-logo-foot', [1.0, 0.045, 0.3], [0, 0.063, 0.53], trim);
-    for (let index = 0; index < 32; index++) {
-      const angle = index * Math.PI * 2 / 32;
-      const marking = this.box(`deck-marking-${index}`, [0.075, 0.018, index % 4 === 0 ? 0.45 : 0.2], [Math.sin(angle) * 6.9, 0.015, Math.cos(angle) * 6.9], trim);
-      marking.rotation.y = angle;
+    this.cylinder('foundation-rim', radius * 2 + 0.65, 0.65, -0.39, dark, 80);
+    this.cylinder('campus-ground', radius * 2, 0.14, -0.08, moss, 80);
+    this.ring('outer-copper-trim', radius * 2 - 0.24, 0.09, 0.03, copper);
+    this.ring('lower-rim-light', radius * 2 + 0.2, 0.065, -0.57, light);
+
+    // A broad promenade joins three work districts around a planted commons.
+    this.cylinder('commons-promenade', 16.4, 0.075, -0.005, path);
+    this.cylinder('commons-curb', 10.75, 0.17, 0.055, trim);
+    this.cylinder('commons-lawn', 10.4, 0.16, 0.085, grass);
+    this.ring('commons-guide-light', 10.65, 0.035, 0.17, light);
+    this.ring('promenade-outer-border', 16.1, 0.035, 0.038, trim);
+    const districts = [
+      { name: 'research', x: 0, z: -10.75, width: 11.9, depth: 3.85 },
+      { name: 'design', x: -10.15, z: -0.7, width: 3.9, depth: 13.25 },
+      { name: 'engineering', x: 10.15, z: -0.7, width: 3.9, depth: 13.25 },
+    ];
+    for (const district of districts) {
+      this.box(`${district.name}-deck-frame`, [district.width + 0.18, 0.15, district.depth + 0.18], [district.x, -0.025, district.z], copper);
+      this.box(`${district.name}-deck`, [district.width, 0.15, district.depth], [district.x, 0, district.z], wood);
+      const strips = Math.floor(district.depth / 0.27);
+      for (let strip = 0; strip < strips; strip++) this.box(`${district.name}-plank-${strip}`, [district.width - 0.12, 0.012, 0.018], [district.x, 0.081, district.z - district.depth / 2 + 0.16 + strip * 0.27], strip % 4 === 0 ? woodLight : dark);
     }
-    for (let index = 0; index < 16; index++) {
-      const angle = index * Math.PI * 2 / 16;
-      const x = Math.sin(angle) * (radius - 0.13), z = Math.cos(angle) * (radius - 0.13);
-      const bollard = this.box(`rim-bollard-${index}`, [0.18, 0.37, 0.18], [x, 0.2, z], dark);
+    // Short radial connections keep the real navigation routes visually clear.
+    for (const [x, z, width, depth] of [[0, -8.5, 5.4, 3.2], [-8.6, 0, 3.2, 6.8], [8.6, 0, 3.2, 6.8]] as number[][]) {
+      this.box('district-connection', [width, 0.055, depth], [x, 0.005, z], path);
+    }
+    for (const x of [-4.9, 4.9]) {
+      this.box('lounge-deck-border', [5.0, 0.12, 3.9], [x, -0.015, 9.1], copper);
+      this.box('lounge-deck', [4.84, 0.13, 3.74], [x, 0.01, 9.1], wood);
+      for (let strip = 0; strip < 14; strip++) this.box('lounge-deck-plank', [4.7, 0.012, 0.018], [x, 0.082, 7.35 + strip * 0.26], dark);
+    }
+    this.box('south-approach', [3.0, 0.06, 5.8], [0, 0.01, 10.6], path);
+    this.box('campus-inlay-long', [0.18, 0.012, 1.05], [-0.28, 0.047, 11.6], dark);
+    this.box('campus-inlay-foot', [0.75, 0.012, 0.18], [0, 0.047, 12.04], dark);
+    this.buildCommons();
+
+    for (let index = 0; index < 20; index++) {
+      const angle = index * Math.PI * 2 / 20;
+      const x = Math.sin(angle) * (radius - 0.18), z = Math.cos(angle) * (radius - 0.18);
+      const bollard = this.box(`rim-bollard-${index}`, [0.15, 0.48, 0.15], [x, 0.23, z], dark);
       bollard.rotation.y = angle;
-      this.box(`rim-lamp-${index}`, [0.13, 0.08, 0.13], [x, 0.42, z], index % 4 === 0 ? orange : light);
-      const panel = this.box(`hull-panel-${index}`, [2.0, 0.45, 0.1], [Math.sin(angle) * (radius + 0.23), -0.45, Math.cos(angle) * (radius + 0.23)], trim);
-      panel.rotation.y = angle;
+      this.box(`rim-lamp-${index}`, [0.12, 0.09, 0.12], [x, 0.49, z], light);
     }
-    for (const prop of this.theme.layout.props) {
-      this.createPropFallback(prop.asset, prop.x, prop.z, prop.rotation || 0);
+    for (const prop of this.theme.layout.props) this.createPropFallback(prop.asset, prop.x, prop.z, prop.rotation || 0);
+    const plankGroups = new Map<StandardMaterial, Mesh[]>();
+    for (const mesh of this.mapRoot.getChildMeshes(true)) {
+      if (!(mesh instanceof Mesh) || !mesh.name.includes('plank') || !(mesh.material instanceof StandardMaterial)) continue;
+      const group = plankGroups.get(mesh.material) ?? []; group.push(mesh); plankGroups.set(mesh.material, group);
+    }
+    for (const [material, planks] of plankGroups) {
+      const merged = Mesh.MergeMeshes(planks, true, true);
+      if (merged) { merged.name = 'campus-deck-planks'; merged.material = material; merged.isPickable = false; merged.receiveShadows = true; }
     }
     this.buildBackground();
   }
 
+  private buildCommons(): void {
+    const stone = this.material('pond-ceramic', '#c7c1a8');
+    const pond = this.cylinder('pond-rim', 4.1, 0.22, 0.2, stone, 48);
+    pond.scaling.set(1.1, 1, 0.72); pond.position.x = 1.2; pond.position.z = 1.1;
+    const water = this.cylinder('pond-water', 3.77, 0.055, 0.305, this.material('garden-water', '#3f9f99', 0.13), 48);
+    water.scaling.set(1.1, 1, 0.72); water.position.x = 1.2; water.position.z = 1.1;
+    for (let index = 0; index < 3; index++) {
+      const ripple = this.ring(`pond-ripple-${index}`, 0.5 + index * 0.48, 0.012, 0.34, this.material('water-ripple', '#89c9b7', 0.18));
+      ripple.scaling.z = 0.72; ripple.position.x = 1.0; ripple.position.z = 1.2;
+    }
+    const wood = this.material('garden-bench-wood', '#a38461');
+    const iron = this.material('garden-bench-frame', '#324e4e');
+    for (const [x, z, angle] of [[-2.2, 3.25, -0.4], [3.2, -1.6, 0.8]]) {
+      const bench = new TransformNode('commons-bench', this.scene);
+      bench.position.set(x, 0.17, z); bench.rotation.y = angle;
+      this.box('bench-seat', [1.55, 0.1, 0.48], [0, 0.37, 0], wood, bench);
+      this.box('bench-back', [1.55, 0.35, 0.08], [0, 0.61, -0.19], wood, bench);
+      for (const side of [-0.58, 0.58]) this.box('bench-leg', [0.1, 0.4, 0.43], [side, 0.16, 0], iron, bench);
+      for (const mesh of bench.getChildMeshes()) this.shadow.addShadowCaster(mesh);
+    }
+    this.createGardenTree(-1.75, -1.35, 4.25, '#699b78');
+    this.createGardenTree(2.25, -2.55, 2.7, '#81a979');
+    this.createGardenTree(-3.1, 1.15, 2.35, '#ab987e');
+    this.createGardenTree(2.85, 2.7, 1.8, '#729878');
+    const leaves = ['#628966', '#8b9f6c', '#557e65', '#89a683'];
+    for (let index = 0; index < 31; index++) {
+      const angle = index * 2.39996;
+      const radius = 3.6 + (index % 3) * 0.18;
+      const x = Math.sin(angle) * radius, z = Math.cos(angle) * radius;
+      const shrub = MeshBuilder.CreateIcoSphere(`commons-shrub-${index}`, { radius: 0.3 + (index % 3) * 0.06, subdivisions: 1, flat: true }, this.scene);
+      shrub.position.set(x, 0.34, z); shrub.scaling.set(1.2, 0.68, 1);
+      shrub.material = this.material('commons-shrub', leaves[index % leaves.length]); shrub.isPickable = false;
+      this.shadow.addShadowCaster(shrub);
+      if (index % 4 === 0) {
+        const bloom = MeshBuilder.CreateIcoSphere(`commons-bloom-${index}`, { radius: 0.12, subdivisions: 1, flat: true }, this.scene);
+        bloom.position.set(x, 0.64, z); bloom.material = this.material('commons-flowers', index % 8 === 0 ? '#e3ae8f' : '#b2d4a4', 0.08); bloom.isPickable = false;
+      }
+    }
+  }
+
+  private createGardenTree(x: number, z: number, height: number, color: string, parent?: TransformNode): void {
+    const root = new TransformNode('garden-tree', this.scene); root.position.set(x, 0.18, z);
+    if (parent) root.parent = parent;
+    const trunk = this.cylinder('tree-trunk', height * 0.085, height * 0.64, height * 0.32, this.material('tree-trunk', '#806d57'), 7, root);
+    trunk.rotation.z = 0.07;
+    this.shadow.addShadowCaster(trunk);
+    for (let index = 0; index < 5; index++) {
+      const angle = index * 2.39996;
+      const crown = MeshBuilder.CreateIcoSphere(`tree-crown-${index}`, { radius: height * (index === 0 ? 0.27 : 0.22), subdivisions: 1, flat: true }, this.scene);
+      crown.position.set(index === 0 ? 0 : Math.sin(angle) * height * 0.15, height * (0.63 + (index % 3) * 0.1), index === 0 ? 0 : Math.cos(angle) * height * 0.15);
+      crown.scaling.y = 0.9; crown.parent = root; crown.isPickable = false;
+      const shade = Color3.FromHexString(color).scale(0.88 + index * 0.055).toHexString();
+      crown.material = this.material('tree-leaves', shade); this.shadow.addShadowCaster(crown);
+    }
+  }
+
   private buildBackground(): void {
     const rock = this.material('satellite-rock', '#274350');
-    for (let index = 0; index < 18; index++) {
+    for (let index = 0; index < 9; index++) {
       const angle = index * 2.39996;
       const distance = 19 + ((index * 7) % 19);
-      const mesh = MeshBuilder.CreatePolyhedron(`orbiting-rock-${index}`, { type: index % 3, size: 0.7 + (index % 4) * 0.7 }, this.scene);
+      const mesh = MeshBuilder.CreatePolyhedron(`orbiting-rock-${index}`, { type: index % 3, size: 0.5 + (index % 4) * 0.4 }, this.scene);
       mesh.position.set(Math.sin(angle) * distance, -4.2 - (index % 5), Math.cos(angle) * distance);
       mesh.rotation.set(index * 0.3, index, 0.7);
       mesh.scaling.y = 1.3;
@@ -225,7 +312,7 @@ export class OutpostWorld {
     }
   }
 
-  private createPropFallback(type: 'beacon' | 'habitat' | 'crates', x: number, z: number, rotation: number): TransformNode {
+  private createPropFallback(type: PropAssetType, x: number, z: number, rotation: number): TransformNode {
     const root = new TransformNode(`prop-${type}-${x}`, this.scene);
     root.position.set(x, 0, z);
     root.rotation.y = rotation;
@@ -247,6 +334,26 @@ export class OutpostWorld {
       this.shadow.addShadowCaster(tower);
       this.ring('beacon-orbit', 1.15, 0.065, 2.9, light, root);
       this.cylinder('beacon-lamp', 0.45, 0.35, 3.4, light, 6, root);
+    } else if (type === 'planter') {
+      this.cylinder('planter-pot', 1.35, 0.45, 0.22, pearl, 12, root);
+      this.cylinder('planter-soil', 1.2, 0.06, 0.46, this.material('planter-soil', '#5e6850'), 12, root);
+      this.createGardenTree(0, 0, 1.0, '#8ca984', root);
+    } else if (type === 'lounge') {
+      const cushion = this.material('lounge-cushion', '#8ba393');
+      for (const side of [-0.53, 0.53]) {
+        this.box('lounge-seat', [0.96, 0.24, 0.85], [side, 0.39, 0], cushion, root);
+        this.box('lounge-back', [0.96, 0.53, 0.16], [side, 0.59, -0.38], cushion, root);
+        this.box('lounge-base', [0.86, 0.24, 0.7], [side, 0.15, 0], dark, root);
+      }
+      for (const mesh of root.getChildMeshes()) this.shadow.addShadowCaster(mesh);
+    } else if (type === 'server') {
+      const cabinet = this.box('server-cabinet', [0.9, 1.8, 0.65], [0, 0.9, 0], dark, root);
+      this.shadow.addShadowCaster(cabinet);
+      this.box('server-cap', [1.0, 0.12, 0.75], [0, 1.86, 0], pearl, root);
+      for (let rack = 0; rack < 6; rack++) {
+        this.box('server-rack', [0.69, 0.18, 0.05], [0, 0.29 + rack * 0.25, 0.34], pearl, root);
+        this.box('server-light', [0.19, 0.035, 0.06], [0.18, 0.29 + rack * 0.25, 0.35], light, root);
+      }
     } else {
       const crate = this.box('cargo-crate', [1.2, 0.9, 0.9], [0, 0.45, 0], pearl, root);
       this.shadow.addShadowCaster(crate);
@@ -256,7 +363,7 @@ export class OutpostWorld {
     return root;
   }
 
-  private createActor(name: string, accent: string): Actor {
+  private createActor(name: string, accent: string, appearance: ResidentAssetType): Actor {
     const root = new TransformNode(name, this.scene);
     const fallback = new TransformNode(`${name}-fallback`, this.scene);
     fallback.parent = root;
@@ -280,28 +387,28 @@ export class OutpostWorld {
       this.box(`${name}-arm-${sign}`, [0.17, 0.51, 0.19], [sign * 0.39, 0.89, 0], pearl, body);
       this.box(`${name}-hand-${sign}`, [0.16, 0.15, 0.18], [sign * 0.39, 0.59, 0.025], navy, body);
     }
-    for (const sign of [-1, 1]) {
+    const legs = [-1, 1].map(sign => {
       const leg = new TransformNode(`${name}-leg-${sign}`, this.scene);
       leg.parent = fallback;
       leg.position.set(sign * 0.16, 0.6, 0);
       this.box(`${name}-leg-shell-${sign}`, [0.22, 0.4, 0.23], [0, -0.23, 0], pearl, leg);
       this.box(`${name}-boot-${sign}`, [0.25, 0.15, 0.34], [0, -0.52, 0.05], navy, leg);
-    }
+      return leg;
+    });
     this.shadow.addShadowCaster(torso, true);
     for (const mesh of fallback.getChildMeshes()) { this.shadow.addShadowCaster(mesh); mesh.isPickable = true; mesh.metadata = { actorID: name }; }
-    return { root, fallback, body };
+    return { root, fallback, body, appearance, walking: false, leftLeg: legs[0], rightLeg: legs[1] };
   }
 
   private createStation(x: number, z: number, rotation: number): TransformNode {
     const root = new TransformNode('workstation', this.scene);
     root.position.set(x, 0, z);
     root.rotation.y = rotation;
-    const berth = this.box('workstation-berth', [2.35, 0.035, 2.2], [0, 0.005, 0], this.material('station-berth', '#344e59'), root);
+    const berth = this.box('workstation-berth', [1.85, 0.035, 2.2], [0, 0.085, 0], this.material('station-berth', '#546c67'), root);
     berth.receiveShadows = true;
     const marking = this.material('berth-markings', '#7ca89f', 0.05);
-    this.box('berth-edge-left', [0.035, 0.045, 1.8], [-1.1, 0.035, 0], marking, root);
-    this.box('berth-edge-right', [0.035, 0.045, 1.8], [1.1, 0.035, 0], marking, root);
-    for (let stripe = 0; stripe < 3; stripe++) this.box('berth-access-stripe', [0.6, 0.025, 0.055], [0, 0.027, 1.1 + stripe * 0.17], marking, root);
+    this.box('berth-edge-left', [0.035, 0.045, 1.8], [-0.9, 0.11, 0], marking, root);
+    this.box('berth-edge-right', [0.035, 0.045, 1.8], [0.9, 0.11, 0], marking, root);
     const container = this.containers.get('station');
     if (container) {
       this.attachModel('station', root, container);
@@ -320,7 +427,8 @@ export class OutpostWorld {
 
   private attachModel(type: AssetType, parent: TransformNode, container: AssetContainer): InstantiatedEntries {
     for (const mesh of container.meshes) if (mesh instanceof Mesh) mesh.receiveShadows = true;
-    const instance = container.instantiateModelsToScene(name => `${parent.name}-${name}`, false, { doNotInstantiate: type === 'resident' });
+    const isResident = RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType);
+    const instance = container.instantiateModelsToScene(name => `${parent.name}-${name}`, false, { doNotInstantiate: isResident });
     const pivot = new TransformNode(`${parent.name}-model`, this.scene);
     const normalized = new TransformNode(`${parent.name}-normalized`, this.scene);
     for (const root of instance.rootNodes) root.parent = normalized;
@@ -336,8 +444,8 @@ export class OutpostWorld {
     pivot.parent = parent;
     pivot.rotation.y = this.theme.rotations[type] || 0;
     for (const mesh of pivot.getChildMeshes()) {
-      mesh.isPickable = type === 'resident';
-      mesh.metadata = { actorID: type === 'resident' ? parent.name : undefined };
+      mesh.isPickable = isResident;
+      mesh.metadata = { actorID: isResident ? parent.name : undefined };
       if (mesh instanceof Mesh) mesh.receiveShadows = true;
       this.shadow.addShadowCaster(mesh);
     }
@@ -346,12 +454,18 @@ export class OutpostWorld {
   }
 
   private upgradeActor(actor: Actor): void {
-    const container = this.containers.get('resident');
-    if (!container) return;
+    const type = this.containers.has(actor.appearance) ? actor.appearance : 'resident';
+    const container = this.containers.get(type);
+    if (!container || actor.loadedAppearance === type) return;
     try {
-      actor.model = this.attachModel('resident', actor.root, container);
+      actor.model?.dispose();
+      for (const child of [...actor.root.getChildren()]) if (child !== actor.fallback) child.dispose();
+      actor.model = this.attachModel(type, actor.root, container);
+      actor.loadedAppearance = type;
       actor.fallback.setEnabled(false);
       actor.idle = actor.model.animationGroups.find(group => /idle|standing|breath/i.test(group.name));
+      actor.walk = actor.model.animationGroups.find(group => /walk|running|run/i.test(group.name));
+      actor.walking = false;
       if (!this.reducedMotion) actor.idle?.start(true);
     } catch { this.callbacks.onAssetFailure(); }
   }
@@ -368,9 +482,9 @@ export class OutpostWorld {
           const container = await LoadAssetContainerAsync(url, this.scene, { pluginExtension: '.glb' });
           if (this.disposed) { container.dispose(); return; }
           this.containers.set(type, container);
-          if (type === 'resident') for (const resident of this.residents) this.upgradeActor(resident.actor);
+          if (RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType)) for (const resident of this.residents) this.upgradeActor(resident.actor);
           if (type === 'station') this.rebuildStations();
-          if (type === 'habitat' || type === 'beacon' || type === 'crates') {
+          if (!RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType) && type !== 'station') {
             for (const node of [...this.scene.transformNodes]) {
               if (node.metadata?.assetType === type && node.metadata?.propFallback) {
                 for (const mesh of [...node.getChildMeshes()]) mesh.dispose();
@@ -394,38 +508,54 @@ export class OutpostWorld {
     for (const station of this.stations) station.dispose();
     this.stations = [];
     for (const resident of this.residents) {
-      const radius = Math.hypot(resident.x, resident.z) || 1;
-      const x = resident.x + resident.x / radius * 1.15;
-      const z = resident.z + resident.z / radius * 1.15;
-      const station = this.createStation(x, z, Math.atan2(-resident.x, -resident.z));
+      const center = stationObstacle(resident.home);
+      const station = this.createStation(center.x, center.z, (resident.home.rotation ?? 0) + Math.PI);
       this.stations.push(station);
     }
+    this.navigation = themeNavigation(this.theme, this.residents.map(resident => resident.home));
   }
 
   setAgents(agents: Agent[], selectedID?: string): void {
     this.selectedID = selectedID;
-    const sameResidents = agents.length === this.residents.length && agents.every((agent, index) => agent.id === this.residents[index].id);
+    const existingByID = new Map(this.residents.map(resident => [resident.id, resident]));
+    const sameResidents = agents.length === this.residents.length && agents.every(agent => existingByID.has(agent.id));
     if (sameResidents) {
-      for (let index = 0; index < agents.length; index++) { this.residents[index].agent = agents[index]; this.updateLabel(this.residents[index]); }
+      // Reordering profiles must not interrupt their walk or change their desks.
+      for (const agent of agents) { const resident = existingByID.get(agent.id)!; resident.agent = agent; this.updateLabel(resident); }
       return;
     }
     for (const resident of this.residents) { resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.label.remove(); }
+    const appearances = RESIDENT_ASSET_TYPES.filter(type => !!this.theme.assets[type]);
+    if (!appearances.length) appearances.push('resident');
+    // Balance the initial campus while preserving every existing profile's look
+    // when statuses change, profiles reorder, or another sector is visited.
+    const counts = new Map(appearances.map(type => [type, 0]));
+    for (const appearance of this.appearanceAssignments.values()) if (counts.has(appearance)) counts.set(appearance, counts.get(appearance)! + 1);
+    for (const id of agents.map(agent => agent.id).sort()) {
+      if (this.appearanceAssignments.has(id)) continue;
+      const minimum = Math.min(...counts.values());
+      const appearance = residentAssetForID(id, appearances.filter(type => counts.get(type) === minimum));
+      this.appearanceAssignments.set(id, appearance);
+      counts.set(appearance, counts.get(appearance)! + 1);
+    }
     this.residents = agents.map((agent, index) => {
-      const placement = this.theme.layout.stations[index] || residentPosition(index, agents.length);
-      const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][index % 4]);
-      actor.root.position.set(placement.x, 0, placement.z);
-      actor.root.rotation.y = placement.rotation ?? Math.atan2(-placement.x, -placement.z);
+      const placement = this.theme.layout.stations[index] || DEFAULT_STATIONS[index];
+      const appearance = this.appearanceAssignments.get(agent.id)!;
+      const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][residentSeed(agent.id) % 4], appearance);
+      actor.root.position.set(placement.x, 0.075, placement.z);
+      actor.root.rotation.y = placement.rotation ?? 0;
       this.upgradeActor(actor);
       const label = document.createElement('div');
       label.className = 'agent-label';
       label.dataset.agentId = agent.id;
+      label.dataset.appearance = appearance;
       label.title = `Interact with ${agent.name}`;
       label.addEventListener('click', () => this.callbacks.onSelect(agent.id));
       label.addEventListener('pointerenter', () => this.setHovered(agent.id));
       label.addEventListener('pointerleave', () => this.setHovered(undefined));
-      const ring = this.ring(`resident-pad-${agent.id}`, 1.65, 0.035, 0.04, this.material('resident-pad', '#829c96', 0.1));
+      const ring = this.ring(`resident-pad-${agent.id}`, 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
       ring.position.x = placement.x; ring.position.z = placement.z;
-      const resident = { agent, actor, label, ring, x: placement.x, z: placement.z, id: agent.id, phase: index * 1.5 };
+      const resident = { agent, actor, label, ring, home: placement, motion: createResidentMotion(agent.id, placement), id: agent.id, phase: index * 1.5 };
       this.labels.append(label);
       this.updateLabel(resident);
       return resident;
@@ -445,18 +575,33 @@ export class OutpostWorld {
     resident.label.classList.toggle('hovered', resident.id === this.hoveredID);
     resident.label.title = `Interact with ${resident.agent.name}`;
     resident.label.style.setProperty('--status', meta.color);
+    resident.label.dataset.status = resident.agent.status;
     const selected = resident.id === this.selectedID, hovered = resident.id === this.hoveredID;
     resident.ring.material = this.material('resident-pad', selected ? '#a6f1dc' : hovered ? '#9ed7c5' : '#829c96', selected ? 0.8 : hovered ? 0.45 : 0.1);
+    resident.ring.isVisible = selected || hovered;
   }
 
   private buildInput(): void {
     const listen = <K extends keyof WindowEventMap>(type: K, listener: (event: WindowEventMap[K]) => void) => { window.addEventListener(type, listener); this.cleanups.push(() => window.removeEventListener(type, listener)); };
     listen('resize', () => this.engine.resize());
+    const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+    const motionPreferenceChanged = (event: MediaQueryListEvent) => {
+      this.reducedMotion = event.matches;
+      this.camera.inertia = this.reducedMotion ? 0 : 0.75;
+      if (this.reducedMotion) {
+        this.camera.inertialAlphaOffset = 0;
+        this.camera.inertialBetaOffset = 0;
+        this.camera.inertialRadiusOffset = 0;
+      }
+      for (const resident of this.residents) this.setActorWalking(resident.actor, resident.motion.walking, true);
+    };
+    motionPreference.addEventListener('change', motionPreferenceChanged);
+    this.cleanups.push(() => motionPreference.removeEventListener('change', motionPreferenceChanged));
     let pointerStart: ScreenPoint | undefined;
     let dragged = false;
     const pickResident = (event: PointerEvent): string | undefined => {
       const rect = this.canvas.getBoundingClientRect();
-      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => typeof mesh.metadata?.actorID === 'string')?.pickedMesh?.metadata?.actorID;
+      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && typeof mesh.metadata?.actorID === 'string')?.pickedMesh?.metadata?.actorID;
     };
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -501,9 +646,27 @@ export class OutpostWorld {
     const dt = Math.min((now - (this.lastFrame || now)) / 1000, 0.05);
     this.lastFrame = now;
     this.elapsed += dt;
-    for (const resident of this.residents) {
+    const rosterIDs = this.residents.map(resident => resident.id);
+    const pausedIDs = new Set(this.residents.filter(resident => statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID)).map(resident => resident.id));
+    const previous = this.residents.map(resident => resident.motion);
+    const proposed = this.residents.map(resident => stepResidentMotion(resident.motion, { status: resident.agent.status, home: resident.home, dt, rosterIDs, visible: this.visible, paused: pausedIDs.has(resident.id), reducedMotion: this.reducedMotion }, this.navigation));
+    const motions = resolveResidentSpacing(proposed, previous, this.navigation, pausedIDs);
+    for (let index = 0; index < this.residents.length; index++) {
+      const resident = this.residents[index];
+      resident.motion = motions[index];
+      resident.actor.root.position.set(resident.motion.x, 0.075, resident.motion.z);
+      resident.actor.root.rotation.y = resident.motion.heading;
+      resident.ring.position.x = resident.motion.x;
+      resident.ring.position.z = resident.motion.z;
+      resident.label.dataset.behavior = resident.motion.phase;
+      resident.label.dataset.walking = String(resident.motion.walking);
+      resident.label.dataset.worldX = resident.motion.x.toFixed(3);
+      resident.label.dataset.worldZ = resident.motion.z.toFixed(3);
+      this.setActorWalking(resident.actor, resident.motion.walking);
       if (!this.reducedMotion && !resident.actor.model && resident.actor.body) {
-        resident.actor.body.position.y = Math.sin(this.elapsed * 1.4 + resident.phase) * 0.017;
+        resident.actor.body.position.y = resident.motion.walking ? Math.abs(Math.sin(this.elapsed * 8 + resident.phase)) * 0.035 : Math.sin(this.elapsed * 1.4 + resident.phase) * 0.017;
+        if (resident.actor.leftLeg) resident.actor.leftLeg.rotation.x = resident.motion.walking ? Math.sin(this.elapsed * 8 + resident.phase) * 0.42 : 0;
+        if (resident.actor.rightLeg) resident.actor.rightLeg.rotation.x = resident.motion.walking ? -Math.sin(this.elapsed * 8 + resident.phase) * 0.42 : 0;
         // Real working status only; available residents do not simulate task activity.
         resident.actor.body.rotation.y = resident.agent.status === 'working' ? Math.sin(this.elapsed * 1.8 + resident.phase) * 0.045 : 0;
       }
@@ -511,6 +674,16 @@ export class OutpostWorld {
     this.scene.render();
     this.updateLabels();
   };
+
+  private setActorWalking(actor: Actor, walking: boolean, force = false): void {
+    if (!force && actor.walking === walking) return;
+    actor.walking = walking;
+    actor.walk?.stop();
+    actor.idle?.stop();
+    if (this.reducedMotion) return;
+    if (walking && actor.walk) actor.walk.start(true, 0.8);
+    else actor.idle?.start(true);
+  }
 
   private updateLabels(): void {
     const viewport = this.camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
@@ -521,12 +694,19 @@ export class OutpostWorld {
       const rect = element.getBoundingClientRect();
       return { left: rect.left - canvasRect.left, top: rect.top - canvasRect.top, right: rect.right - canvasRect.left, bottom: rect.bottom - canvasRect.top };
     });
-    for (const resident of this.residents) {
-      const projected = Vector3.Project(new Vector3(resident.x, 2.13, resident.z), Matrix.IdentityReadOnly, this.scene.getTransformMatrix(), viewport);
+    const candidates = this.residents.map(resident => {
+      const projected = Vector3.Project(resident.actor.root.position.add(new Vector3(0, this.theme.heights[resident.actor.appearance] + 0.26, 0)), Matrix.IdentityReadOnly, this.scene.getTransformMatrix(), viewport);
       const x = projected.x * scaleX, y = projected.y * scaleY;
       const halfWidth = resident.label.offsetWidth / 2;
       const bounds = { left: x - halfWidth, top: y - resident.label.offsetHeight, right: x + halfWidth, bottom: y };
-      const visible = projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, overlays);
+      const priority = resident.id === this.selectedID ? 0 : resident.id === this.hoveredID ? 1 : resident.agent.status === 'needs_attention' ? 2 : resident.agent.status === 'working' ? 3 : 4;
+      return { resident, projected, x, y, bounds, priority };
+    }).sort((a, b) => a.priority - b.priority || a.projected.z - b.projected.z || a.resident.id.localeCompare(b.resident.id));
+    const occupied = [...overlays];
+    for (const { resident, projected, x, y, bounds } of candidates) {
+      const visible = projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, occupied);
+      if (visible) occupied.push(bounds);
+      resident.label.dataset.labelVisible = String(visible);
       resident.label.style.opacity = visible ? '1' : '0';
       // Hide immediately on overlap; an opacity transition must not linger over the HUD.
       resident.label.style.visibility = visible ? 'visible' : 'hidden';

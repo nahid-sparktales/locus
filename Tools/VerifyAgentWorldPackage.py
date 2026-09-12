@@ -26,6 +26,14 @@ def main() -> None:
     provenance = json.loads((theme_root / "provenance.json").read_text())
     assert provenance["reserved_credits"] < 1000
     assert provenance["reported_credits"] <= provenance["reserved_credits"]
+    tasks = provenance["tasks"]
+    assert tasks and all(task["status"] == "SUCCEEDED" for task in tasks), "Unfinished asset generation"
+    assert len({task["id"] for task in tasks}) == len(tasks), "Duplicated paid task in credit accounting"
+    assert sum(max(task["reserved_credits"], task.get("consumed_credits", 0)) for task in tasks) == provenance["reserved_credits"]
+    assert sum(task.get("consumed_credits", 0) for task in tasks) == provenance["reported_credits"]
+    if campaigns := provenance.get("campaigns"):
+        assert sum(campaign["reserved_credits"] for campaign in campaigns) == provenance["reserved_credits"]
+        assert sum(campaign["reported_credits"] for campaign in campaigns) == provenance["reported_credits"]
     for name, relative in theme["assets"].items():
         path = (theme_root / relative).resolve()
         assert path.is_relative_to(theme_root.resolve())
@@ -40,10 +48,11 @@ def main() -> None:
         assert all(not item.get("uri") for item in gltf.get("buffers", [])), "GLB must embed buffers"
         assert all(not item.get("uri") for item in gltf.get("images", [])), "GLB must embed textures"
         assert hashlib.sha256(data).hexdigest() == provenance["assets"][name]["sha256"]
-        if name == "resident":
+        if name == "resident" or name.startswith("resident_"):
             assert gltf.get("skins"), f"Missing rig: {name}"
             clips = [a.get("name", "").lower() for a in gltf.get("animations", [])]
             assert any("idle" in clip for clip in clips), f"Missing idle animation: {name}"
+            assert any("walk" in clip for clip in clips), f"Missing walk animation: {name}"
         print(f"{name}: {len(data) / 1_000_000:.2f} MB, {len(gltf['meshes'])} meshes")
     html = (root / "ui/index.html").read_text()
     assert "<script" in html and "https://" not in html

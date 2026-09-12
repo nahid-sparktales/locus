@@ -5,12 +5,16 @@ assign work through a native Locus conversation panel.
 
 Requires a Locus build supporting version-1 plugin screens. Install this
 package through Locus Extensions, then choose Open or use the Work menu.
-The first theme, the Babylon.js runtime, and five prepared Meshy models are
+The first theme, the Babylon.js runtime, and eleven prepared Meshy models are
 included. No generation service or API key is needed to use the plugin.
 
 Click an agent or its label to interact. Drag to orbit the overview camera and
 scroll to zoom. The resident list provides keyboard and search access to every
 agent. Closing the window does not stop agent tasks.
+
+Free agents wander through the planted commons and pause at landmarks. Agents
+with work return to their assigned stations. Four resident designs, lounge
+areas, hydroponic planters, and computation stations give the campus variety.
 
 The plugin requests:
 
