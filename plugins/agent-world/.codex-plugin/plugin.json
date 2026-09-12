@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Agent World",
     "shortDescription": "A world for your agents in Locus.",
-    "longDescription": "Oversee the Orbital Outpost and click characters connected to your saved agent profiles. Chat, assign tasks, and follow progress in a separate Locus window. Includes a locally rendered sci-fi theme and prepared Meshy assets.",
+    "longDescription": "Oversee a living garden outpost where free agents explore and working agents return to their stations. Click characters connected to your saved profiles to chat, assign tasks, and follow progress in a separate Locus window. Includes diverse animated residents and prepared Meshy scenery.",
     "developerName": "SparkTales",
     "category": "Productivity",
     "capabilities": [],

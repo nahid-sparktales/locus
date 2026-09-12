@@ -383,9 +383,12 @@ extension AgentWorldModel {
               ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_WORLD_ROOT"] == root else { return }
         subscriptions.removeAll()
         let profiles = [
-            AgentProfile(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, name: "Atlas", model: "Fixture model", role: .generalist),
-            AgentProfile(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, name: "Nova", model: "Fixture model", role: .generalist),
-            AgentProfile(id: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!, name: "Echo", model: "Fixture model", role: .generalist),
+            AgentProfile(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, name: "Atlas", model: "Fixture model", role: .researcher),
+            AgentProfile(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, name: "Nova", model: "Fixture model", role: .implementer),
+            AgentProfile(id: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!, name: "Echo", model: "Fixture model", role: .reviewer),
+            AgentProfile(id: UUID(uuidString: "44444444-4444-4444-8444-444444444444")!, name: "Orion", model: "Fixture model", role: .planner),
+            AgentProfile(id: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!, name: "Sage", model: "Fixture model", role: .generalist),
+            AgentProfile(id: UUID(uuidString: "66666666-6666-4666-8666-666666666666")!, name: "Pip", model: "Fixture model", role: .tester),
         ]
         profilesProvider = { profiles }
         availabilityProvider = { _ in nil }
@@ -394,7 +397,11 @@ extension AgentWorldModel {
         stateProvider = { _ in .init(blocks: [ChatBlock(kind: .assistant, text: "Welcome to the outpost. Choose Chat to talk, or Assign work to begin a task.")]) }
         dispatch = { _, _, _, _, _ in throw AgentWorldError.unavailable("This is a visual test fixture; model calls are disabled.") }
         activityProvider = { profile, _ in
-            profile.name == "Nova" ? .init(status: "working", detail: "Fixture activity", busy: true) : nil
+            switch profile.name {
+            case "Nova": .init(status: "working", detail: "Fixture activity", busy: true)
+            case "Echo": .init(status: "needs_attention", detail: "Fixture attention state", busy: true)
+            default: nil
+            }
         }
         stopConversation = { _ in }; openConversation = { _ in }; defaults = nil
         var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true

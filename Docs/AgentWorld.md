@@ -25,6 +25,9 @@ screen extension.
 - Drag to orbit the overview camera; scroll to zoom.
 - Click an agent or its label to interact. The searchable resident list also
   provides direct access to every agent.
+- Available agents explore the commons and pause at landmarks. Agents with
+  active work return to their assigned workstation. Selecting or hovering over
+  a wandering agent pauses it so it is easy to interact with.
 - Use **Chat** for a conversation or **Assign work** to start agentic work.
   The native conversation panel shows replies, progress, and any attention
   required. Existing Locus permission controls continue to apply.
@@ -36,9 +39,10 @@ screen extension.
 - Closing the world releases its rendering resources. It does not stop work.
   Use the conversation's Stop action to interrupt a task.
 
-The initial world uses robot residents with role colors. Additional residents
-appear in sectors of up to twelve. A missing
-profile, unavailable account, disconnected worker, or failed 3D renderer is
+The outpost combines planted commons, lounge areas, and workstations with
+different resident designs. Each agent keeps a stable appearance. Additional
+residents appear in sectors of up to twelve. A missing profile, unavailable
+account, disconnected worker, or failed 3D renderer is
 shown explicitly; the world never substitutes a different model account.
 
 ## Develop and verify
@@ -61,12 +65,12 @@ Locus bridge is absent. Demonstration residents cannot start real agent tasks.
 A theme directory contains `theme.json` and self-contained GLB files. The
 version-1 manifest describes the theme ID, name, description, palette, asset
 paths, target model heights, orientation corrections, and optional map layout.
-The layout can set the map radius, resident workstation positions, and
-decorative props. All paths stay within
-the installed plugin. Use embedded textures and geometry without external
+The layout can set the map radius, resident workstation positions, navigation
+landmarks, and decorative props. All asset paths stay within the installed
+plugin. Use embedded textures and geometry without external
 Draco, Basis, or meshopt decoders.
 
-Characters can carry idle animation clips, selected by their clip names.
+Characters carry idle and walking animation clips, selected by their clip names.
 Missing artwork uses simple geometry so agents remain reachable.
 Changing artwork or a map does not change profile IDs, conversations, provider
 routes, or permissions. The initial release includes only the outpost theme.
@@ -78,12 +82,14 @@ task IDs, hashes, and credit totals are recorded in the theme's
 `provenance.json`. Babylon.js retains its Apache-2.0 license; packaged notices
 are included with the plugin.
 
-The original generation campaign consumed **112 Meshy credits** across sixteen
-completed tasks. Five models are included in the overview; the unused explorer
-model remains available in repository history. The provenance retains all six
-generated models and their costs. No additional generation was needed for the
-overview. The packaged hashes identify the shipped files; submitting the same
-prompts again is not guaranteed to reproduce identical models.
+The original generation campaign consumed **112 Meshy credits**. The commons
+campaign consumed **97 additional credits**, for **209 credits total**, and adds
+two animated resident designs and three scenery models. Both campaigns are
+recorded in `provenance.json`.
+Eleven models are included: four animated resident designs and seven scenery
+models. The original explorer is reused as an autonomous resident. The packaged
+hashes identify the shipped files; submitting the same prompts again is not
+guaranteed to reproduce identical models.
 
 `Tools/GenerateAgentWorldAssets.py` is a developer-only generation utility. It
 reads the Meshy key from a hidden prompt or `MESHY_API_KEY`, keeps the key in
@@ -101,7 +107,10 @@ tasks remain recorded and are not automatically regenerated.
 
 The ceiling bounds the recorded reservations using the prices in this script;
 check those prices against Meshy's current pricing before starting a new asset
-campaign. Keep the existing state directory when resuming a campaign: a new
-directory starts a separate ledger.
+campaign. Keep the existing state directory when resuming a campaign. The
+`commons` campaign requires the completed original ledger through
+`--prior-ledger`; both ledgers count toward `--total-credit-ceiling`. Its
+additional campaign ceiling cannot exceed 200 credits. Resume configuration is
+bound to the original prompts, animation IDs, and prior ledger hash.
 
 Asset generation is never part of plugin installation, startup, or normal use.
