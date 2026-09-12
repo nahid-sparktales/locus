@@ -1,0 +1,106 @@
+# Agent World
+
+Agent World is an optional Locus plugin. It opens a separate window containing
+Orbital Outpost, a walkable 3D setting populated by the user's saved agent
+profiles. Conversations and work run through Locus's existing providers and
+permissions. Exploring the world makes no model calls.
+
+## Install and enter
+
+Build the Locus version containing plugin screen support. In Settings →
+Extensions, add this repository directory as a local marketplace if it has not
+already been discovered from the current workspace. Install **Agent World**,
+review its screen capabilities, and choose **Open**. Installed screens also
+appear in the Work menu.
+
+The repository's `.agents/plugins/marketplace.json` points to the distributable
+package at `plugins/agent-world`. The web runtime and prepared assets are
+included in that package. Users do not need Node, a Meshy account, or a Meshy
+API key. Installing this plugin in a Locus version without screen support does
+not provide a launchable world. This is a Locus screen extension, not a Codex
+screen extension.
+
+## Meet your agents
+
+- Move with WASD or the arrow keys. Drag to orbit the camera; scroll to zoom.
+- Approach a resident and press E, or click its character. The searchable
+  resident list also provides direct access without walking.
+- Use **Chat** for a conversation or **Assign work** to start agentic work.
+  The native conversation panel shows replies, progress, and any attention
+  required. Existing Locus permission controls continue to apply.
+- Each saved profile has a separate persistent conversation for each project.
+  **Open in Locus** opens that same saved conversation in the main workspace.
+  The world stays with the project it opened in; changing the main workspace
+  does not redirect queued work. Use **Start a new conversation** in the
+  resident's menu to deliberately replace that resident's saved binding.
+- Closing the world releases its rendering resources. It does not stop work.
+  Use the conversation's Stop action to interrupt a task.
+
+The initial world uses a robot resident with role colors and a distinct explorer
+avatar. Additional residents appear in sectors of up to twelve. A missing
+profile, unavailable account, disconnected worker, or failed 3D renderer is
+shown explicitly; the world never substitutes a different model account.
+
+## Develop and verify
+
+The frontend source lives in `AgentWorldWeb`. From that directory, run
+`npm ci` and `npm run check`. The build writes the bundled runtime into
+`plugins/agent-world/ui` and preserves the theme assets.
+
+From the repository root, run `agent/.venv/bin/python
+Tools/VerifyAgentWorldPackage.py` to validate the plugin, embedded GLB resources,
+animation clips, asset hashes, and generation credit ledger. Use the repository's
+normal Python and native test commands for the host and execution contracts.
+
+For a standalone visual preview, serve `plugins/agent-world/ui` with a local
+HTTP server. It displays a clearly marked demonstration roster when the native
+Locus bridge is absent. Demonstration residents cannot start real agent tasks.
+
+## Add a theme
+
+A theme directory contains `theme.json` and self-contained GLB files. The
+version-1 manifest describes the theme ID, name, description, palette, asset
+paths, target model heights, orientation corrections, and optional map layout.
+The layout can set the walkable radius, player spawn, resident workstation
+positions, and decorative props with collision radii. All paths stay within
+the installed plugin. Use embedded textures and geometry without external
+Draco, Basis, or meshopt decoders.
+
+Characters can carry idle and walking animation clips, selected by their clip
+names. Missing artwork uses simple geometry so agents remain reachable.
+Changing artwork or a map does not change profile IDs, conversations, provider
+routes, or permissions. The initial release includes only the outpost theme.
+
+## Asset provenance and regeneration
+
+The prepared assets were generated using Meshy for this project. Their prompts,
+task IDs, hashes, and credit totals are recorded in the theme's
+`provenance.json`. Babylon.js retains its Apache-2.0 license; packaged notices
+are included with the plugin.
+
+The six shipped models consumed **112 Meshy credits** across sixteen completed
+tasks, including idle and casual-walk animations for both characters. The
+ledger reserves the same 112 credits. The packaged hashes identify these exact
+files; submitting the same prompts again is not guaranteed to reproduce
+identical models.
+
+`Tools/GenerateAgentWorldAssets.py` is a developer-only generation utility. It
+reads the Meshy key from a hidden prompt or `MESHY_API_KEY`, keeps the key in
+memory, and reserves the documented credit cost before every submission. It
+flushes reservations to disk before making paid requests and refuses a ceiling
+of 1,000 or more. API redirects are rejected so authorization cannot be
+forwarded to another host. A private state directory outside the
+repository stores expiring provider responses and the durable ledger; resume
+with that same directory and generation script to avoid submitting duplicate
+tasks or relabeling older outputs with changed prompts. The utility rejects a
+state directory inside this repository. Missing completed output files are
+downloaded again from the existing tasks without new generation. Uncertain
+submissions require reconciliation rather than an automatic retry. Failed
+tasks remain recorded and are not automatically regenerated.
+
+The ceiling bounds the recorded reservations using the prices in this script;
+check those prices against Meshy's current pricing before starting a new asset
+campaign. Keep the existing state directory when resuming a campaign: a new
+directory starts a separate ledger.
+
+Asset generation is never part of plugin installation, startup, or normal use.

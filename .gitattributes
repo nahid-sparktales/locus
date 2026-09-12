@@ -1,0 +1,3 @@
+# Bundled Babylon shader strings retain upstream whitespace verbatim.
+plugins/agent-world/ui/static/world.js linguist-generated=true -whitespace
+plugins/agent-world/ui/static/world.css linguist-generated=true

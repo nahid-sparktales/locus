@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "outpost",
+  "name": "Orbital Outpost",
+  "description": "A quiet research station at the edge of a new world.",
+  "assets": {
+    "resident": "assets/resident.glb",
+    "player": "assets/player.glb",
+    "station": "assets/station.glb",
+    "beacon": "assets/beacon.glb",
+    "habitat": "assets/habitat.glb",
+    "crates": "assets/crates.glb"
+  },
+  "heights": {"resident": 1.7, "player": 1.7, "station": 1.25, "beacon": 3.5, "habitat": 4, "crates": 1.2},
+  "palette": {"ground": "#192A37", "accent": "#74F3CD", "sky": "#07131D"},
+  "rotations": {"resident": 0, "player": 0, "station": 0, "beacon": 0, "habitat": 0, "crates": 0},
+  "layout": {"radius": 14.1, "playerSpawn": {"x": 0, "z": 5.5}}
+}

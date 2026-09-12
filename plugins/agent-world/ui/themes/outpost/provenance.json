@@ -1,0 +1,163 @@
+{
+  "generator": "Meshy",
+  "model": "meshy-t2",
+  "credit_ceiling": 999,
+  "reserved_credits": 112,
+  "reported_credits": 112,
+  "tasks": [
+    {
+      "asset": "resident",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09716-afef-70e6-9d7e-a59f73e3604c",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "player",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09716-bc8b-7598-94a2-5e61d89da4c0",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "station",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09716-c68c-7147-aa81-eaa35e699ded",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "resident",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a09717-0ebd-76af-aa92-4ffc78303b6a",
+      "consumed_credits": 10
+    },
+    {
+      "asset": "player",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a09717-10bd-7058-8336-1d802774094e",
+      "consumed_credits": 10
+    },
+    {
+      "asset": "station",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a09717-12ea-7496-92bd-36efe8631e1b",
+      "consumed_credits": 10
+    },
+    {
+      "asset": "player",
+      "stage": "rig",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09718-0e88-7005-bb20-2e8724654805",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "resident",
+      "stage": "rig",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09718-5c94-72b0-8b18-88ae150d756d",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "beacon",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09718-6888-76d9-b3c2-bf50d97e4408",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "player",
+      "stage": "animate",
+      "reserved_credits": 6,
+      "status": "SUCCEEDED",
+      "id": "01a09718-b0c9-7769-bf76-d5ad72c68c08",
+      "consumed_credits": 6
+    },
+    {
+      "asset": "beacon",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a09718-b2db-72de-a57b-7f5d321ef3c7",
+      "consumed_credits": 10
+    },
+    {
+      "asset": "resident",
+      "stage": "animate",
+      "reserved_credits": 6,
+      "status": "SUCCEEDED",
+      "id": "01a09718-f261-7053-b636-efe973f43785",
+      "consumed_credits": 6
+    },
+    {
+      "asset": "habitat",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a09719-eda0-7650-8fc4-64fdda3c3bef",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "habitat",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0971a-3543-7279-be75-35237c1b6c77",
+      "consumed_credits": 10
+    },
+    {
+      "asset": "crates",
+      "stage": "preview",
+      "reserved_credits": 5,
+      "status": "SUCCEEDED",
+      "id": "01a0971b-abb8-7686-b062-f57f864a944e",
+      "consumed_credits": 5
+    },
+    {
+      "asset": "crates",
+      "stage": "refine",
+      "reserved_credits": 10,
+      "status": "SUCCEEDED",
+      "id": "01a0971c-33d9-776a-9cfe-ee80dfd4bba4",
+      "consumed_credits": 10
+    }
+  ],
+  "assets": {
+    "resident": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly bipedal humanoid service robot, full body, two clearly separated arms and legs, hands with simple fingers, articulated elbows and knees, A pose. Pearl ceramic armor, dark navy flexible joints, oval black glass face with two cyan glowing eyes, small orange chest accent. Warm approachable proportions, elegant compact silhouette, practical space station assistant. No weapons, no accessories held in hands.",
+      "sha256": "091b1adb142626715f47fe1556f8078b5c8df6227ad6e708aef901f7ccd8667c"
+    },
+    "player": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Full body humanoid astronaut explorer in A pose, clearly separated arms and legs, hands with simple fingers. Compact rounded helmet with dark blue glass visor, warm orange and ivory space suit, navy flexible joints, small backpack, sturdy boots. Friendly stylized game character, clean readable silhouette, no weapons, no objects in hands.",
+      "sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd"
+    },
+    "station": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Freestanding futuristic workstation console for one standing humanoid, waist height, compact wide desk with angled inset cyan display, ivory ceramic panels, navy metal frame, orange corner accents, thick single central pedestal and stable base. Screen is part of the desk, no chair, no wires, no person. Designed for a peaceful orbital research outpost.",
+      "sha256": "fb858cab7b3b9c1bab81704b94ded8b84960f630504ba88afd2dfe83db469fa3"
+    },
+    "beacon": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Elegant space outpost navigation beacon tower, tapered dark navy base, stacked ivory ceramic rings, luminous turquoise central energy core, small orange bands. Freestanding compact sci-fi monument with clean strong silhouette, no cables, no people. Solarpunk optimistic futuristic industrial design.",
+      "sha256": "18091f3bf61a53b6706e8a8fcc88ec801be6dd2a8a819dde04b2b124b902b803"
+    },
+    "habitat": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Small single modular science fiction habitat building, rounded rectangular ivory pod on short dark navy legs, one closed sliding door in front with orange frame, blue panoramic side windows, dark navy roof with small antenna. Peaceful lunar research station, compact one story architectural prop, no terrain, no people, no separate objects.",
+      "sha256": "2ab1f2176c38ce232555d0097e95263c1110b2ff8e1d1ba1ccab5843df1e16ed"
+    },
+    "crates": {
+      "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single compact futuristic cargo container, rounded rectangular dark navy storage box, ivory reinforcement corners, orange locking bands, recessed cyan small indicator, bevelled edges, sturdy feet. Peaceful space outpost supply crate, no text, closed lid, no other objects.",
+      "sha256": "1b6b229432efc355011e3d4a5eeb21c1da7dc46f9e97ed970500b941d66851f6"
+    }
+  }
+}

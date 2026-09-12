@@ -1,0 +1,27 @@
+{
+  "name": "agent-world",
+  "version": "0.1.0",
+  "description": "Explore a sci-fi outpost, meet your saved Locus agents, and give them real work.",
+  "author": {
+    "name": "SparkTales"
+  },
+  "license": "Apache-2.0",
+  "interface": {
+    "displayName": "Agent World",
+    "shortDescription": "A world for your agents in Locus.",
+    "longDescription": "Walk around the Orbital Outpost and meet characters connected to your saved agent profiles. Chat, assign tasks, and follow progress in a separate Locus window. Includes a locally rendered sci-fi theme and prepared Meshy assets.",
+    "developerName": "SparkTales",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Open Agent World in Locus to meet my saved agents."
+  },
+  "locus": {
+    "screens": [{
+      "id": "agent-world",
+      "title": "Agent World",
+      "entrypoint": "ui/index.html",
+      "version": 1,
+      "capabilities": ["agents.read", "agents.interact", "world.preferences"]
+    }]
+  }
+}

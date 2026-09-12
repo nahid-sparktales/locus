@@ -8,11 +8,13 @@ struct ExtensionCapabilities: Codable, Hashable {
     var mcpApps = false
     var hooks = false
     var sandboxed = false
+    var pluginScreens: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case stdio, oauth, hooks, sandboxed
         case streamableHTTP = "streamable_http"
         case mcpApps = "mcp_apps"
+        case pluginScreens = "plugin_screens"
     }
 }
 
@@ -82,6 +84,32 @@ struct ExtensionSkillProvenance: Codable, Hashable {
     }
 }
 
+struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let entrypoint: String
+    let version: Int
+    let capabilities: [String]
+
+    var capabilityDescription: String {
+        capabilities.map { capability in
+            switch capability {
+            case "agents.read": "Can read agent names, roles and activity."
+            case "agents.interact": "Can select an agent in the native conversation panel."
+            case "world.preferences": "Can save the selected world theme."
+            default: capability
+            }
+        }.joined(separator: " ")
+    }
+
+    var isSupported: Bool {
+        version == 1 && !id.isEmpty && !title.isEmpty
+            && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences"])
+            && PluginScreenFiles.isSafeRelativePath(entrypoint)
+            && ["html", "htm"].contains(URL(fileURLWithPath: entrypoint).pathExtension.lowercased())
+    }
+}
+
 struct ExtensionPlugin: Codable, Identifiable, Hashable {
     let id: String
     let name: String
@@ -100,9 +128,11 @@ struct ExtensionPlugin: Codable, Identifiable, Hashable {
     let unsupported: [String]?
     let updateAvailable: Bool?
     let error: String?
+    var root: String? = nil
+    var screens: [ExtensionPluginScreen]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, version, author, digest, skills, scripts, unsupported, error
+        case id, name, description, version, author, digest, skills, scripts, unsupported, error, root, screens
         case displayName = "display_name"
         case enabledGlobal = "enabled_global"
         case enabledWorkspaces = "enabled_workspaces"
@@ -295,13 +325,14 @@ struct PluginTrustMCPServer: Codable, Hashable {
 }
 
 struct PluginTrustSummary: Codable, Hashable {
+    var screens: [ExtensionPluginScreen]? = nil
     let skills: Int
     let skillScripts: [String]
     let mcpServers: [PluginTrustMCPServer]
     let unsupported: [String]
 
     enum CodingKeys: String, CodingKey {
-        case skills, unsupported
+        case skills, unsupported, screens
         case skillScripts = "skill_scripts"
         case mcpServers = "mcp_servers"
     }

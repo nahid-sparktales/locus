@@ -113,6 +113,7 @@ struct LocusApp: App {
             height: LocusWindowSizing.defaultSize.height
         )
         .commands {
+            AgentWorldCommands(model: model.agentWorld)
             CommandGroup(replacing: .help) {
                 Button("Getting Started…") { model.onboarding.present() }
                     .accessibilityIdentifier("menu.gettingStarted")
