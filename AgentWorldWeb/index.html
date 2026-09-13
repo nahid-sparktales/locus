@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; font-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="color-scheme" content="dark">
+    <title>Agent World · Locus</title>
+    <link rel="stylesheet" href="./static/world.css">
+    <script defer src="./static/world.js"></script>
+  </head>
+  <body>
+    <main id="world-shell" aria-label="Agent World">
+      <canvas id="world" tabindex="0" aria-label="3D outpost overview. Click an agent to interact, drag to rotate the view, and scroll to zoom. Use the Residents list to select agents with the keyboard."></canvas>
+      <div class="vignette" aria-hidden="true"></div>
+      <header class="world-header">
+        <div class="brand"><span class="brand-icon" aria-hidden="true">⌘</span><div><span class="eyebrow">LOCUS / AGENT WORLD</span><h1>Orbital Outpost<span class="demo-badge" id="demo-badge" hidden>DEMO</span></h1></div></div>
+        <button class="theme-button" id="theme-button" aria-expanded="false" aria-controls="theme-popover"><span class="planet-dot" aria-hidden="true"></span><span>Outpost</span><span class="chevron" aria-hidden="true">⌄</span></button>
+        <div id="theme-popover" class="theme-popover" hidden><span class="eyebrow">WORLD THEME</span><button class="theme-choice" id="outpost-theme"><span class="planet-dot" aria-hidden="true"></span><span>Orbital Outpost<small>Your agents, among the stars.</small></span><span aria-hidden="true">✓</span></button><p>More worlds can arrive with future plugin updates.</p></div>
+      </header>
+      <aside class="roster-panel" aria-label="Residents">
+        <div class="roster-heading"><h2>Residents <span id="resident-count">0</span></h2><button id="roster-toggle" class="icon-button" aria-label="Collapse residents" aria-expanded="true" aria-controls="roster-body">−</button></div>
+        <div id="roster-body">
+          <p id="project-name" class="project-name">Connecting to your project…</p>
+          <label class="search-field"><span aria-hidden="true">⌕</span><input id="resident-search" type="search" placeholder="Find an agent" autocomplete="off" aria-label="Search residents"></label>
+          <div id="resident-list" class="resident-list" role="list"></div>
+          <div id="empty-state" class="empty-state" hidden><span class="empty-orbit" aria-hidden="true">◎</span><strong>No residents yet</strong><p>Create an agent profile in Locus to give it a home here.</p></div>
+          <div class="roster-bottom"><span class="live-dot" aria-hidden="true"></span><span id="live-label">Connected to Locus</span><span id="sector-label" class="sector-label">01 / 01</span></div>
+        </div>
+      </aside>
+      <div id="agent-labels" aria-hidden="true"></div>
+      <div class="coordinate-label" aria-hidden="true"><span class="coordinate-line"></span><span>LYRA SYSTEM<br>SECTOR <b id="coordinate-sector">01</b> · 04.28 N / 78.16 E</span></div>
+      <div id="selection-note" class="selection-note" role="status" hidden></div>
+      <div id="graphics-fallback" class="graphics-fallback" hidden><span class="fallback-icon" aria-hidden="true">◎</span><h2>Your agents are still here.</h2><p id="fallback-reason">3D graphics are unavailable on this device. Select a resident to open their conversation.</p></div>
+      <div id="loading-indicator" class="loading-indicator" role="status"><span class="loading-orbit"></span><span>Arriving at your outpost</span></div>
+      <div id="asset-loading" class="asset-loading" role="status" hidden>Preparing world artwork…</div>
+      <div id="asset-notice" class="asset-notice" role="status" hidden>Some artwork is unavailable. The outpost is using built-in models.</div>
+      <footer class="world-footer"><div class="controls"><span class="select-hint">Click an agent to interact</span><span class="control-separator"></span><span>Drag to rotate</span><span>Scroll to zoom</span></div><div class="world-status"><span class="live-dot" aria-hidden="true"></span><span id="working-count">All systems calm</span><span class="version">OUTPOST 01</span></div></footer>
+      <div id="screen-reader-status" class="sr-only" role="status" aria-live="polite"></div>
+    </main>
+  </body>
+</html>

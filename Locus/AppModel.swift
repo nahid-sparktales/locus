@@ -114,6 +114,7 @@ final class AppModel: ObservableObject {
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
     let backgroundServicesModel = BackgroundServicesModel()
     let extensionsModel: ExtensionsModel
+    let agentWorld = AgentWorldModel()
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
     /// Compatibility notification for an AppModel-owned identity transition,
@@ -1279,6 +1280,7 @@ final class AppModel: ObservableObject {
             executionRouteWillChange: { [weak self] in self?.pauseGoalForRouteChange() }
         )
         configureTaskCapsules()
+        configureAgentWorld()
         configureGoals()
         configureOptionalQuestions()
         runs.configure(
@@ -1379,6 +1381,9 @@ final class AppModel: ObservableObject {
 
         if isUITesting {
             seedUITestState()
+            if let root = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_WORLD_ROOT"] {
+                Task { @MainActor [weak self] in self?.agentWorld.openUITestFixture(root: root) }
+            }
         } else if startImmediately {
             // Shutdown must not depend on any window still existing at quit
             // time, so the terminate hook lives on the model, not a view.

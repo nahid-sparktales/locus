@@ -1489,3 +1489,74 @@ responses are limited to 2 MB after decompression. `web_fetch` never follows
 redirects: the final URL must be approved explicitly. Stop requests interrupt
 provider streams and long-running shell, git, search, directory, and web-fetch
 operations cooperatively; spawned shell and git process groups are terminated.
+
+## Plugin screens and Agent World
+
+`GET /api/extensions` returns `capabilities.plugin_screens` to advertise Locus screen
+extensions. A plugin may declare `locus.screens` in its manifest, with entries
+containing `id`, `title`, relative HTML `entrypoint`, bridge `version: 1`, and
+`capabilities`. Version 1 supports `agents.read`, `agents.interact`, and
+`world.preferences`. Installation inspection exposes these screen declarations
+in the existing trust summary; changed declarations participate in renewed
+trust review when screens are added or removed, capabilities change, or an
+entrypoint or bridge version changes. A title-only edit does not add a
+capability warning, although the usual reviewed digest is still required to
+install any update. Installed plugin responses include `root` and `screens`;
+legacy plugins have an empty screen list. Up to sixteen screens are accepted,
+with unique lowercase IDs of at most eighty characters and titles of 1–120
+characters. HTML entrypoints must exist within the plugin root; absolute
+paths, traversal, URL syntax, and symlink escapes are rejected.
+
+The native host serves only files beneath the installed plugin root through
+`locus-screen://plugin/`. It blocks external requests, navigation, popups,
+media capture, path traversal, and symlink escapes. A main-frame screen sends
+strictly shaped messages to `window.webkit.messageHandlers.locusScreen`:
+
+```json
+{"version":1,"type":"ready"}
+{"version":1,"type":"selectAgent","agentID":"<profile UUID>"}
+{"version":1,"type":"preferences","preferences":{"theme":"outpost"}}
+```
+
+The host calls `window.locusAgentWorld.receive(message)` with a version-1
+`snapshot` containing `agents` (ID, name, role, status),
+`selectedAgentID`, `theme`, and `projectName`, or a `visibility` message with
+`visible`. Roster data requires `agents.read`; selecting a resident requires
+`agents.interact`; preferences require `world.preferences`. Disabling,
+uninstalling, or replacing the active plugin revokes the bridge. JavaScript
+cannot submit prompts, receive transcripts, access credentials, or configure
+providers. Detailed route errors also remain in the native panel. Those
+functions belong to the native conversation panel.
+
+`POST /api/sessions/detached` creates a durable conversation without replacing
+the foreground session. It accepts an existing workspace directory as `cwd`,
+a `title` of 1–120 characters, and an optional UUID `agent_profile_id`. It
+returns `{"session_id":"..."}`; normal session routes then manage that chat.
+It can create the conversation while the foreground is busy, and validates
+the directory and title before writing. The native model persists the mapping
+from canonical workspace plus profile UUID to this session; repeated calls to
+the endpoint itself create distinct sessions. When `agent_profile_id` is
+supplied, the endpoint also stores a dedicated `agent_world_profile_id`
+binding. World-bound sessions require the matching `agent_profile` on every
+user-message turn, including when reopened from history. Raw `retry_last` is
+rejected; resend through the saved profile's Chat or Assign work action.
+The generic `agent_profile_id` used by existing deployed agents and
+automations does not impose this World-only requirement.
+
+An ordinary Chat or Work `user_message` may include `agent_profile`, containing
+the saved profile's identity, exact model, role, instructions, capability tags,
+access ceiling, timeout, token limit, behavior, and MCP policy. The native
+account broker configures the worker's exact provider beforehand; the backend
+rejects a model mismatch and ignores routes in this profile payload. If the
+saved conversation has an `agent_profile_id`, it must match the incoming
+profile ID. This
+profile form cannot combine with team, capsule, workflow, identity, or slash
+command dispatch. The profile's behavior capability policy is constrained by
+its access ceiling; capability tags describe expertise and do not grant
+tools. Existing stricter behavior limits are preserved when applying profile
+timeout and token limits. MCP access uses the profile's explicit policy;
+omitting it grants no MCP access. Solo delegation is disabled for these turns.
+Timeouts also release pending native-tool and approval waits. Temporary
+identity, configuration, and tool policies are restored afterward. Agent
+World conversations use this path with ordinary admission, event streaming,
+permissions, cancellation, and persistence.

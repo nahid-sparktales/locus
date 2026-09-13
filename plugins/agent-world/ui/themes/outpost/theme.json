@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "id": "outpost",
+  "name": "Orbital Outpost",
+  "description": "A garden campus of workshops, planted paths, and places for your agents to unwind.",
+  "assets": {
+    "resident": "assets/resident.glb",
+    "station": "assets/station.glb",
+    "beacon": "assets/beacon.glb",
+    "habitat": "assets/habitat.glb",
+    "crates": "assets/crates.glb",
+    "resident_explorer": "assets/resident_explorer.glb",
+    "resident_botanist": "assets/resident_botanist.glb",
+    "resident_engineer": "assets/resident_engineer.glb",
+    "planter": "assets/planter.glb",
+    "lounge": "assets/lounge.glb",
+    "server": "assets/server.glb"
+  },
+  "heights": {
+    "resident": 1.8,
+    "station": 1.25,
+    "beacon": 3.5,
+    "habitat": 4,
+    "crates": 1.2,
+    "resident_explorer": 1.85,
+    "resident_botanist": 1.8,
+    "resident_engineer": 1.7,
+    "planter": 1.15,
+    "lounge": 0.9,
+    "server": 1.9
+  },
+  "palette": {
+    "ground": "#192A37",
+    "accent": "#74F3CD",
+    "sky": "#07131D"
+  },
+  "rotations": {
+    "resident": 0,
+    "station": 0,
+    "beacon": 0,
+    "habitat": 0,
+    "crates": 0,
+    "resident_explorer": 0,
+    "resident_botanist": 0,
+    "resident_engineer": 0,
+    "planter": 0,
+    "lounge": 0,
+    "server": 0
+  },
+  "layout": {
+    "radius": 14.1
+  }
+}

@@ -269,6 +269,49 @@ def session_new(
         raise HTTPException(409, str(exc)) from exc
 
 
+def session_detached(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Create a saved conversation for a dedicated worker without switching the foreground."""
+    raw_cwd = body.get("cwd")
+    title = body.get("title")
+    if not isinstance(raw_cwd, str) or not raw_cwd.strip():
+        raise HTTPException(422, "cwd must identify an existing workspace directory")
+    workspace = Path(raw_cwd).expanduser().resolve()
+    if not workspace.is_dir():
+        raise HTTPException(422, "The conversation workspace is unavailable")
+    if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 \
+            or any(ord(character) < 32 or ord(character) == 127 for character in title):
+        raise HTTPException(422, "title must contain 1–120 characters")
+    profile_id = body.get("agent_profile_id")
+    if profile_id is not None:
+        try:
+            profile_id = str(uuid.UUID(profile_id))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise HTTPException(422, "agent_profile_id must be a UUID") from exc
+    session = SessionStore(str(workspace))
+    try:
+        # SessionStore's ordinary logging is best effort; creation must prove
+        # that the dedicated worker can resume a durable, valid transcript.
+        session.append_strict({"type": "detached_session_created"})
+        saved_metadata = SessionMeta.update(
+            session.session_id,
+            title=title.strip(),
+            workspace_root=str(workspace),
+            execution_path=str(workspace),
+            environment={"type": "local", "isolation": "local"},
+            **({"agent_profile_id": profile_id, "agent_world_profile_id": profile_id}
+               if profile_id is not None else {}),
+        )
+        if SessionMeta.get(session.session_id) != saved_metadata:
+            raise OSError("conversation metadata was not persisted")
+    except OSError as exc:
+        session.path.unlink(missing_ok=True)
+        SessionMeta.forget([session.session_id])
+        raise HTTPException(500, "The conversation could not be saved") from exc
+    return {"session_id": session.session_id}
+
+
 def sessions_clear(service: ServiceDependency) -> dict[str, Any]:
     """Move every saved session except the active one to the recovery folder."""
     active_session = service.core.session.session_id
@@ -743,6 +786,7 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route("/api/sessions/search", sessions_search, methods=["GET"])
     router.add_api_route("/api/sessions/new", session_new, methods=["POST"])
+    router.add_api_route("/api/sessions/detached", session_detached, methods=["POST"])
     router.add_api_route("/api/sessions", sessions_clear, methods=["DELETE"])
     router.add_api_route("/api/sessions/{session_id}", session_delete, methods=["DELETE"])
     router.add_api_route("/api/sessions/restore", sessions_restore, methods=["POST"])
