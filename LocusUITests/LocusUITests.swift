@@ -261,9 +261,12 @@ final class LocusUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let titledItem = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ AND (label == %@ OR title == %@ OR value == %@)",
-            identifier, title, title, title
+        let identifiedItems = app.descendants(matching: .any).matching(identifier: identifier)
+        XCTAssertEqual(identifiedItems.count, 1, "The title must belong to the unique action being clicked",
+            file: file, line: line)
+        let titledItem = identifiedItems.matching(NSPredicate(
+            format: "label == %@ OR title == %@ OR value == %@",
+            title, title, title
         )).firstMatch
         XCTAssertTrue(titledItem.exists, "\(identifier) must display exactly \"\(title)\"",
             file: file, line: line)
