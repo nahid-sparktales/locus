@@ -70,8 +70,27 @@ def mcp_task_list(
 
 def mcp_task_lookup(service: ServiceDependency, task_id: str) -> dict[str, Any]:
     _require_capability("modern_mcp")
+    # Lookup can outlast a chat switch. Use the task's durable owning run,
+    # falling back to the current chat only when no run ownership was recorded.
+    session_id = service.core.session.session_id
+    task = service.run_store.mcp_task(task_id) or {}
+    run = service.run_store.run(str(task.get("run_id") or "")) if task.get("run_id") else None
+    if run and run.get("session_id"):
+        session_id = str(run["session_id"])
+    invocation_id = str(task.get("tool_call_id") or uuid.uuid4().hex)
     try:
-        return {"ok": True, **service.core.mcp.lookup_task(task_id)}
+        result = service.core.mcp.lookup_task(task_id)
+        attachments = result.pop("attachments", [])
+        if attachments:
+            from ..mcp_media import cache_media
+            try:
+                if SessionStore.path_for(session_id) is None:
+                    raise ValueError("The task's chat is no longer available")
+                result["attachments"] = cache_media(session_id, invocation_id, attachments)
+                result["session_id"] = session_id
+            except (OSError, ValueError):
+                result["media_warning"] = "The task completed, but its image previews could not be saved."
+        return {"ok": True, **result}
     except ExtensionError as exc:
         raise HTTPException(409, str(exc)) from exc
 

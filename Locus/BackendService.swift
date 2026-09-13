@@ -146,6 +146,25 @@ final class BackendService {
         try await request(path, method: "POST", body: body, timeout: timeout, as: type)
     }
 
+    func chatImage(sessionID: String, mediaID: String) async throws -> Data {
+        guard !sessionID.isEmpty, !sessionID.contains("/"), !sessionID.contains("\\"),
+              mediaID.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil else {
+            throw URLError(.badURL)
+        }
+        let url = try endpointURL("/api/sessions/\(sessionID)/media/\(mediaID)")
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
+        let (data, response) = try await session.data(for: request)
+        try validate(response, data: data)
+        guard data.count <= 15 * 1024 * 1024,
+              ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(response.mimeType ?? "") else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return data
+    }
+
     func patch<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
         try await request(path, method: "PATCH", body: body, timeout: 10, as: type)
     }

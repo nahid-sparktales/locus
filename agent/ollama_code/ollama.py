@@ -86,6 +86,7 @@ class ToolCall:
     arguments: dict[str, Any]
     call_id: str = ""
     execution_receipt: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    result_media: list[dict[str, Any]] = field(default_factory=list, repr=False, compare=False)
 
 
 @dataclass

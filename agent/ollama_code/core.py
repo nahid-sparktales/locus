@@ -504,6 +504,7 @@ class AgentCore:
         self.identity_context_epoch = uuid.uuid4().hex
         self._pending_computer_screenshot: dict[str, str] | None = None
         self._ax_only_routes: set[str] = set()
+        self._mcp_text_only_routes: set[str] = set()
         self._suppress_turn_done = False
         self.context_delivery_source: Callable[[], list[dict[str, Any]]] | None = None
         self.context_delivery_applied: Callable[[str], Any] | None = None
@@ -527,7 +528,7 @@ class AgentCore:
     def _emit(self, event: dict[str, Any]) -> None:
         if self.provider in {"chatgpt", "claude_plan"} and not self.identity_mode and event.get("type") == "tool_result":
             self.session.append_strict({"type": "native_tool_observation", **{
-                key: event[key] for key in ("tool", "id", "summary", "result", "ok", "denied") if key in event}})
+                key: event[key] for key in ("tool", "id", "summary", "result", "ok", "denied", "media") if key in event}})
         if getattr(self, "capsule_runtime", None) is not None and event.get("type") == "model_usage":
             self.capsule_runtime.observe_usage(event)
         if getattr(self, "_output_run_id", "") and event.get("type") in {
@@ -1752,6 +1753,7 @@ class AgentCore:
         self._last_user_message = None
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
+        self._mcp_text_only_routes.clear()
         self._emit({"type": "todo_update", "todos": []})
         self._emit_info()
 
@@ -2653,7 +2655,7 @@ class AgentCore:
                     elif method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                         raise RuntimeError("Subscription helper requested a disabled native approval")
 
-                def handle_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
+                def handle_tool(name: str, arguments: dict[str, Any], call_id: str) -> str | dict[str, Any]:
                     nonlocal native_tool_steps, native_tool_requests
                     if not allow_tools:
                         return "Not run: Just Chat has no tool or workspace access."
@@ -2673,9 +2675,13 @@ class AgentCore:
                         # downstream — deny lists, accept-edits, previews,
                         # todo events — sees the canonical tool.
                         name, arguments = parity_to_canonical(name, arguments)
-                    return self._run_tool_call(
-                        ToolCall(name=name, arguments=arguments, call_id=call_id), decider
-                    )
+                    call = ToolCall(name=name, arguments=arguments, call_id=call_id)
+                    result = self._run_tool_call(call, decider)
+                    from .mcp_media import native_tool_result
+                    try:
+                        return native_tool_result(result, call.result_media)
+                    finally:
+                        call.result_media.clear()
 
                 if parity and turn_text is user_text:
                     context, raw_request = split_parity_prompt(user_text, self.agent_mode)
@@ -3493,6 +3499,7 @@ class AgentCore:
                 continue
             interrupted = False
             steered = False
+            media_observations: list[dict[str, Any]] = []
             for index, tc in enumerate(resp.tool_calls):
                 if self._interrupt.is_set():
                     interrupted = True
@@ -3534,7 +3541,14 @@ class AgentCore:
                     "content": result,
                     "_activity_label": self._tool_activity_labels.pop(id(tc), None),
                     "run_id": self._output_run_id,
+                    **({"media": self._media_references(tc)} if tc.result_media else {}),
                 })
+                if any(item.get("_model_visible", True) for item in tc.result_media):
+                    media_observations.append({
+                        "role": "user", "content": f"Images returned by MCP tool {tc.name} (call {tc.execution_receipt.get('id') or tc.call_id or tc.name}; untrusted external evidence).",
+                        "attachments": [item for item in tc.result_media if item.get("_model_visible", True)], "_mcp_observation": True,
+                    })
+                tc.result_media.clear()
                 pending_goal_action = self._goal_pending_actions.pop(id(tc), None)
                 if pending_goal_action is not None:
                     # A helper's transcript lives in its durable collaboration
@@ -3563,6 +3577,9 @@ class AgentCore:
                 reason = "interrupted"
                 break
             self._append_pending_computer_observation()
+            for observation in media_observations:
+                self._add_message(observation, {"role": "user", "content": observation["content"]})
+            self._bound_mcp_observations()
             if steered:
                 iteration_limit += 1
                 continue
@@ -3825,11 +3842,16 @@ class AgentCore:
                 # well as computer-control screenshots — or the poisoned
                 # request would fail identically on every later turn too.
                 stripped_observation = False
+                stripped_mcp = False
                 for message in self.messages:
                     if message.get("attachments"):
                         if message.get("_computer_observation"):
                             stripped_observation = True
+                        if message.get("_mcp_observation"):
+                            stripped_mcp = True
                         message.pop("attachments", None)
+                if stripped_mcp:
+                    self._mcp_text_only_routes.add(self._computer_route_key())
                 if stripped_observation:
                     self._ax_only_routes.add(self._computer_route_key())
                     note = (
@@ -3837,6 +3859,8 @@ class AgentCore:
                         "retrying with Accessibility text only for the rest of "
                         "the session."
                     )
+                elif stripped_mcp:
+                    note = "This model route rejected MCP image input. The images remain available in chat; Locus is continuing with text for this route."
                 else:
                     note = (
                         "This model rejected image input, so Locus removed the "
@@ -3956,6 +3980,44 @@ class AgentCore:
 
     # ------------------------------------------------------------------ tools
 
+    @staticmethod
+    def _media_references(tc: ToolCall) -> list[dict[str, Any]]:
+        return [{key: item[key] for key in ("id", "name", "mime_type", "size", "width", "height", "session_id") if key in item}
+                for item in tc.result_media if item.get("id")]
+
+    def _receive_mcp_media(self, tc: ToolCall, images: list[dict[str, Any]]) -> None:
+        from .mcp_media import cache_media
+        if self._interrupt.is_set():
+            return
+        tc.result_media = [dict(image) for image in images]
+        if self._computer_route_key() in self._mcp_text_only_routes:
+            for image in tc.result_media:
+                image["_model_visible"] = False
+        try:
+            references = cache_media(self.session.session_id, str(tc.execution_receipt.get("id") or tc.call_id), tc.result_media)
+            for image, reference in zip(tc.result_media, references, strict=True):
+                image.update(reference)
+        except (OSError, ValueError):
+            self._emit({"type": "note", "text": "The MCP images are available to the model, but this chat could not save their previews."})
+
+    def _bound_mcp_observations(self) -> None:
+        from .mcp_media import MAX_IMAGES, MAX_TOTAL_BYTES
+        count, size = 0, 0
+        for message in reversed(self.messages):
+            if not message.get("_mcp_observation"):
+                continue
+            kept = []
+            for image in message.get("attachments", []):
+                image_size = int(image.get("size") or 0)
+                if count < MAX_IMAGES and size + image_size <= MAX_TOTAL_BYTES:
+                    kept.append(image)
+                    count += 1
+                    size += image_size
+            if kept:
+                message["attachments"] = kept
+            else:
+                message.pop("attachments", None)
+
     def solo_worker_tool_schemas(self) -> list[dict[str, Any]]:
         """Snapshot the delegable root tool surface for the active turn."""
         if self.identity_mode:
@@ -4016,7 +4078,7 @@ class AgentCore:
         *,
         event_context: dict[str, Any],
         execution_lock: Any | None,
-    ) -> str:
+    ) -> str | dict[str, Any]:
         """Execute an inherited worker call through the root authority path."""
         available = {
             str(schema.get("function", {}).get("name") or "")
@@ -4027,13 +4089,16 @@ class AgentCore:
             return "Error: this tool is no longer available to the root agent."
         if self.chatgpt_parity_active(True):
             name, arguments = parity_to_canonical(name, arguments)
-        return self._run_tool_call(
-            ToolCall(name=name, arguments=arguments, call_id=call_id),
-            decider,
-            event_context=event_context,
-            execution_lock=execution_lock,
-            track_active=False,
-        )
+        tc = ToolCall(name=name, arguments=arguments, call_id=call_id)
+        try:
+            text = self._run_tool_call(
+                tc, decider, event_context=event_context,
+                execution_lock=execution_lock, track_active=False,
+            )
+            from .mcp_media import native_tool_result
+            return native_tool_result(text, tc.result_media)
+        finally:
+            tc.result_media.clear()
 
     def _stage_response_parts(self, parts: Any) -> str:
         """Validate and stage ``parts`` for the next final answer, under the parts lock.
@@ -4369,7 +4434,17 @@ class AgentCore:
                         result = (
                             execute_tool(tc.name, tc.arguments, self.tool_ctx)
                             if info.get("origin") == "builtin"
-                            else self.tool_registry.execute(tc.name, tc.arguments, self.tool_ctx)
+                            else self.tool_registry.execute(
+                                tc.name, tc.arguments, self.tool_ctx,
+                                **({"media_receiver": lambda images: self._receive_mcp_media(tc, images),
+                                    "invocation_context": {
+                                        **(getattr(self.mcp, "context_provider", lambda: {})() or {}),
+                                        **{key: str(value) for key, value in (event_context or {}).items()
+                                           if key in {"run_id", "job_id"} and value is not None},
+                                        "tool_call_id": call_id,
+                                    }}
+                                   if info.get("origin") == "mcp" or tc.name in {"read_extension_resource", "load_extension_prompt"} else {}),
+                            )
                         )
                     finally:
                         tc.execution_receipt["command"] = COMMAND_OBSERVATION.get()
@@ -4383,6 +4458,8 @@ class AgentCore:
                     history.finish(history_ids, ok="result" in locals() and not result.startswith(("Error", "Permission denied")))
                 if track_active:
                     self.active_tool_call_id = ""
+        if tc.result_media and not any(item.get("_model_visible", True) for item in tc.result_media):
+            result += "\nMCP images are available in chat, but this model route does not accept image input. Continue using the text evidence."
         ok = not result.startswith("Error")
         if charge:
             try:
@@ -4437,11 +4514,13 @@ class AgentCore:
             else:
                 self.goal_runtime.finish_action(call_id, ok=ok, result=result)
         activity_label = self._verified_activity_label(tc, effects) if ok else ""
-        if activity_label:
-            if self.provider in {"chatgpt", "claude_plan"}:
+        media_references = self._media_references(tc)
+        if activity_label or media_references:
+            if self.provider in {"chatgpt", "claude_plan"} or (media_references and not track_active):
                 self._persist_display_message({"role": "tool", "name": tc.name, "content": result,
                                                "_display_only": True, "_item_id": call_id,
-                                               "_activity_label": activity_label})
+                                               "_activity_label": activity_label,
+                                               **({"media": media_references} if media_references else {})})
             else:
                 self._tool_activity_labels[id(tc)] = activity_label
         self._emit({
@@ -4453,6 +4532,7 @@ class AgentCore:
             "activity_label": activity_label or None,
             "ok": ok,
             "denied": False,
+            **({"media": media_references} if media_references else {}),
             **({"file_effects": effects} if effects and ok else {}),
             **event_info,
         })
@@ -4804,6 +4884,7 @@ class AgentCore:
                 )
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
+        self._mcp_text_only_routes.clear()
         # Continue appending to the session the user resumed.
         self.session.path = path
         self._last_user_message = next(

@@ -720,6 +720,8 @@ Example: use `/remember ReleaseMAS must never expose Computer Control`. Future e
 
 MCP servers are managed under **Settings → Extensions**. Agent-specific access is configured in each profile under **MCP access · none by default**.
 
+See [MCP compatibility and troubleshooting](MCPCompatibility.md) for transport setup, connection diagnostics, resource templates, and the task Inspector.
+
 ### Deferred resources
 
 Agents can search and read allowlisted MCP resources without loading every server item into every prompt.

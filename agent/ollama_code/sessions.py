@@ -856,6 +856,8 @@ class SessionStore:
                     item["item_id"] = message["_item_id"]
                 item["name"] = str(message.get("name") or "tool")[:255]
                 item["content"] = str(message.get("content") or "") if include_tool_details else ""
+                if message.get("media"):
+                    item["media"] = message["media"]
             output.append(item)
         return output
 
@@ -914,9 +916,16 @@ class SessionStore:
         if not records or records[0].get("type") != "meta":
             clone.path.unlink(missing_ok=True)
             raise ValueError("the source chat has no valid provenance record")
-        with _APPEND_LOCK, clone.path.open("w", encoding="utf-8") as destination:
-            for record in records:
-                destination.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        from .mcp_media import copy_session_media, remove_session_media
+        try:
+            with _APPEND_LOCK, clone.path.open("w", encoding="utf-8") as destination:
+                for record in records:
+                    destination.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            copy_session_media(path.stem, clone.session_id, records)
+        except Exception:
+            clone.path.unlink(missing_ok=True)
+            remove_session_media(clone.session_id)
+            raise
         return clone
 
     @staticmethod
@@ -1396,7 +1405,13 @@ class SessionStore:
                 continue
             try:
                 shutil.move(str(path), str(target / path.name))
-            except OSError:
+                from .mcp_media import move_session_media
+                try:
+                    move_session_media(session_id, session_id, source_root=SESSIONS_DIR, destination_root=target)
+                except (OSError, ValueError):
+                    shutil.move(str(target / path.name), str(path))
+                    raise
+            except (OSError, ValueError):
                 if require_all:
                     # Metadata and placements are still untouched. Roll back
                     # moved files; if rollback itself fails, the prewritten
@@ -1404,7 +1419,10 @@ class SessionStore:
                     for moved_id in moved:
                         original = planned_paths[moved_id]
                         shutil.move(str(target / original.name), str(original))
+                        move_session_media(moved_id, moved_id, source_root=target, destination_root=SESSIONS_DIR)
                     (target / "manifest.json").unlink(missing_ok=True)
+                    if (target / "media").is_dir():
+                        (target / "media").rmdir()
                     target.rmdir()
                     raise
                 continue
@@ -1464,7 +1482,13 @@ class SessionStore:
                         break
             try:
                 shutil.move(str(path), str(destination))
-            except OSError:
+                from .mcp_media import move_session_media
+                try:
+                    move_session_media(path.stem, destination.stem, source_root=folder, destination_root=SESSIONS_DIR)
+                except (OSError, ValueError):
+                    shutil.move(str(destination), str(path))
+                    raise
+            except (OSError, ValueError):
                 continue
             restored_ids.append(destination.stem)
             entry = (manifest.get("sessions") or {}).get(path.stem)
@@ -1477,6 +1501,8 @@ class SessionStore:
             # make the next "restore newest" a no-op.
             try:
                 (folder / "manifest.json").unlink(missing_ok=True)
+                if (folder / "media").is_dir():
+                    (folder / "media").rmdir()
                 folder.rmdir()
             except OSError:
                 pass

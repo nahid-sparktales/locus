@@ -175,6 +175,18 @@ def test_locus_tools_and_images_use_sdk_with_no_native_tools(manager, sdk):
     assert sdk.prompts[0][0]['message']['content'][1]['source']['media_type'] == 'image/png'
 
 
+def test_locus_image_tool_result_reaches_claude_sdk(manager, sdk):
+    from ollama_code.mcp_media import native_tool_result, normalize_mcp_media
+    encoded = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf9sAAAAASUVORK5CYII='
+    images, notes = normalize_mcp_media([{'type': 'image', 'mimeType': 'image/png', 'data': encoded}])
+    assert not notes
+    tool = {'type': 'function', 'function': {'name': 'snapshot', 'parameters': {'type': 'object'}}}
+    thread = manager.start_thread(model='default', cwd='/workspace', tools=[tool])
+    manager.run_turn(thread_id=thread, text='inspect', tool_handler=lambda *args: native_tool_result('Screenshot', images))
+    assert sdk.tool_reply['content'][1] == {'type': 'image', 'mimeType': 'image/png', 'data': encoded}
+    assert sdk.tool_reply['isError'] is False
+
+
 def test_streaming_and_complete_messages_are_not_duplicated(manager, sdk):
     sdk.response = [
         msg('StreamEvent', event={'type': 'message_start', 'message': {'id': 'm'}}),

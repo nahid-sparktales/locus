@@ -383,20 +383,76 @@ def parse_plugin(root: Path) -> dict[str, Any]:
     }
 
 
-def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
+def _mcp_selection(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or len(value) > 1_000 or any(
+        not isinstance(item, str) or not item.strip() or len(item) > 8_192 for item in value
+    ):
+        raise ExtensionError(f"{field} must contain at most 1000 non-empty strings")
+    return list(dict.fromkeys(value))
+
+
+def _oauth_endpoint_allowed(
+    endpoint: str, raw: dict[str, Any], *, allow_loopback_oauth: bool, issuer: bool = False
+) -> bool:
+    parsed = urlparse(endpoint)
+    if not parsed.hostname or parsed.username or parsed.password or parsed.fragment \
+            or (issuer and parsed.query):
+        return False
+    try:
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return False
+    except ValueError:
+        return False
+    oauth = raw.get("oauth") or {}
+    target = urlparse(str(raw.get("url") or ""))
+    local_oauth = allow_loopback_oauth and oauth.get("allow_loopback_http") is True \
+        and target.scheme == "http"
+    if not local_oauth:
+        return parsed.scheme == "https"
+    try:
+        return (
+            parsed.scheme == target.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            and (target.port is None or 1 <= target.port <= 65535)
+            and (parsed.hostname, parsed.port or 80) == (target.hostname, target.port or 80)
+            and not target.username and not target.password
+        )
+    except ValueError:
+        return False
+
+
+def _normalize_mcp_config(
+    raw: dict[str, Any], *, allow_loopback_oauth: bool = False
+) -> dict[str, Any]:
     url = str(raw.get("url") or "").strip()
     command = str(raw.get("command") or "").strip()
     if bool(url) == bool(command):
         raise ExtensionError("MCP server must declare exactly one of url or command")
     if url:
-        parsed = urlparse(url)
+        try:
+            parsed = urlparse(url)
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError("invalid port")
+        except ValueError as exc:
+            raise ExtensionError("MCP URL must have a valid hostname and port") from exc
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ExtensionError("MCP URL must use http or https")
         if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ExtensionError("remote MCP URLs must use HTTPS")
-        transport = "streamable_http"
-    else:
-        transport = "stdio"
+    aliases = {"http": "streamable_http", "streamable-http": "streamable_http",
+               "streamable_http": "streamable_http", "sse": "sse", "stdio": "stdio"}
+    declared = str(raw.get("transport") or raw.get("type") or ("http" if url else "stdio")).lower()
+    transport = aliases.get(declared)
+    if transport is None:
+        raise ExtensionError("MCP transport must be stdio, streamable_http, or sse")
+    if (transport == "stdio") != bool(command):
+        raise ExtensionError("stdio requires a command; HTTP and SSE require a URL")
+    protocol_mode = str(raw.get("protocol_mode") or "auto").lower()
+    if protocol_mode not in {"auto", "legacy"}:
+        raise ExtensionError("MCP protocol_mode must be auto or legacy")
+    share_workspace_root = raw.get("share_workspace_root", False)
+    if not isinstance(share_workspace_root, bool):
+        raise ExtensionError("share_workspace_root must be a boolean")
     args = raw.get("args") if isinstance(raw.get("args"), list) else []
     env = raw.get("env") if isinstance(raw.get("env"), dict) else {}
     headers = raw.get("http_headers") if isinstance(raw.get("http_headers"), dict) else (
@@ -405,9 +461,19 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
     env_headers = raw.get("env_http_headers") if isinstance(raw.get("env_http_headers"), dict) else {}
     enabled_tools = raw.get("enabled_tools") if isinstance(raw.get("enabled_tools"), list) else []
     disabled_tools = raw.get("disabled_tools") if isinstance(raw.get("disabled_tools"), list) else []
-    enabled_resources = raw.get("enabled_resources") if isinstance(raw.get("enabled_resources"), list) else []
-    enabled_prompts = raw.get("enabled_prompts") if isinstance(raw.get("enabled_prompts"), list) else []
+    enabled_resources = _mcp_selection(raw.get("enabled_resources", []), "enabled_resources")
+    enabled_prompts = _mcp_selection(raw.get("enabled_prompts", []), "enabled_prompts")
+    resource_access = str(raw.get("resource_access") or ("selected" if enabled_resources else "all"))
+    if resource_access not in {"all", "selected", "none"}:
+        raise ExtensionError("resource_access must be all, selected, or none")
     oauth_raw = raw.get("oauth") if isinstance(raw.get("oauth"), dict) else {}
+    if "allow_loopback_http" in oauth_raw and not isinstance(oauth_raw["allow_loopback_http"], bool):
+        raise ExtensionError("oauth.allow_loopback_http must be a boolean")
+    if allow_loopback_oauth and oauth_raw.get("allow_loopback_http") is True and (
+        not url or urlparse(url).scheme != "http"
+        or not _oauth_endpoint_allowed(url, raw, allow_loopback_oauth=True)
+    ):
+        raise ExtensionError("HTTP OAuth compatibility requires a credential-free loopback HTTP MCP URL")
     oauth = {
         "issuer": str(oauth_raw.get("issuer") or "").rstrip("/"),
         "authorization_endpoint": str(oauth_raw.get("authorization_endpoint") or ""),
@@ -416,20 +482,20 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         "scopes": [str(value) for value in oauth_raw.get("scopes", [])]
         if isinstance(oauth_raw.get("scopes"), list) else [],
         "redirect_uri": str(oauth_raw.get("redirect_uri") or f"{PRODUCT_URL_SCHEME}://mcp/oauth"),
+        "allow_loopback_http": oauth_raw.get("allow_loopback_http") is True and allow_loopback_oauth,
     }
     auth = str(raw.get("auth") or ("bearer" if raw.get("bearer_token_env_var") else "none")).lower()
     if auth not in {"none", "bearer", "headers", "oauth", "auto"}:
         raise ExtensionError("MCP auth must be none, bearer, headers, oauth, or auto")
     if auth == "oauth":
         if oauth["issuer"]:
-            issuer = urlparse(oauth["issuer"])
-            if issuer.scheme != "https" or not issuer.hostname \
-                    or issuer.username or issuer.password or issuer.query or issuer.fragment:
-                raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL")
+            if not _oauth_endpoint_allowed(
+                oauth["issuer"], raw, allow_loopback_oauth=allow_loopback_oauth, issuer=True
+            ):
+                raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL or explicitly allowed same-origin loopback HTTP URL")
         for field in ("authorization_endpoint", "token_endpoint"):
-            endpoint = urlparse(oauth[field])
-            if endpoint.scheme != "https" or not endpoint.hostname:
-                raise ExtensionError(f"OAuth {field} must use HTTPS")
+            if not _oauth_endpoint_allowed(oauth[field], raw, allow_loopback_oauth=allow_loopback_oauth):
+                raise ExtensionError(f"OAuth {field} must use HTTPS or explicitly allowed same-origin loopback HTTP")
         if not oauth["client_id"]:
             raise ExtensionError("OAuth client_id is required")
         redirect = urlparse(oauth["redirect_uri"])
@@ -444,6 +510,8 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         raise ExtensionError("MCP timeouts must be whole numbers") from exc
     return {
         "transport": transport,
+        "protocol_mode": protocol_mode,
+        "share_workspace_root": share_workspace_root,
         "url": url,
         "command": command,
         "args": [str(value) for value in args[:100]],
@@ -464,9 +532,11 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
         # Resources are evidence and are discoverable by default. Prompts are
         # instructions, so their allowlist deliberately defaults to empty.
         "enabled_resources": [str(value) for value in enabled_resources],
+        "resource_access": resource_access,
         "enabled_prompts": [str(value) for value in enabled_prompts],
-        "approval_mode": str(raw.get("default_tools_approval_mode") or "annotations").lower(),
-        "tool_policies": raw.get("tools") if isinstance(raw.get("tools"), dict) else {},
+        "approval_mode": str(raw.get("default_tools_approval_mode") or raw.get("approval_mode") or "annotations").lower(),
+        "tool_policies": raw.get("tools") if isinstance(raw.get("tools"), dict)
+        else dict(raw.get("tool_policies") or {}),
         "status": "disconnected",
         "error": None,
         "tools": [],
@@ -476,25 +546,30 @@ def _normalize_mcp_config(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def discover_oauth_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+def discover_oauth_metadata(
+    raw: dict[str, Any], *, allow_loopback_oauth: bool = False
+) -> dict[str, Any]:
     """Resolve and validate an explicitly configured OAuth issuer."""
     value = dict(raw)
     oauth = dict(value.get("oauth") or {})
     issuer = str(oauth.get("issuer") or "").rstrip("/")
     if str(value.get("auth") or "").lower() != "oauth" or not issuer:
         return value
-    parsed = urlparse(issuer)
-    if parsed.scheme != "https" or not parsed.hostname \
-            or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL")
+    if not _oauth_endpoint_allowed(
+        issuer, value, allow_loopback_oauth=allow_loopback_oauth, issuer=True
+    ):
+        raise ExtensionError("OAuth issuer must be a credential-free HTTPS URL or explicitly allowed same-origin loopback HTTP URL")
     metadata_url = issuer + "/.well-known/oauth-authorization-server"
     try:
-        response = requests.get(
-            metadata_url,
-            headers={"Accept": "application/json"},
-            timeout=(5, 15),
-            allow_redirects=False,
-        )
+        kwargs = {"headers": {"Accept": "application/json"}, "timeout": (5, 15),
+                  "allow_redirects": False}
+        if urlparse(issuer).scheme == "http":
+            # Loopback consent covers this server only, never an environment proxy.
+            with requests.Session() as session:
+                session.trust_env = False
+                response = session.get(metadata_url, **kwargs)
+        else:
+            response = requests.get(metadata_url, **kwargs)
     except requests.RequestException as exc:
         raise ExtensionError(f"OAuth metadata discovery failed: {exc}") from exc
     if 300 <= response.status_code < 400:
@@ -509,8 +584,7 @@ def discover_oauth_metadata(raw: dict[str, Any]) -> dict[str, Any]:
         raise ExtensionError("OAuth metadata issuer does not exactly match the configured issuer")
     for key in ("authorization_endpoint", "token_endpoint"):
         endpoint = str(metadata.get(key) or "")
-        parsed_endpoint = urlparse(endpoint)
-        if parsed_endpoint.scheme != "https" or not parsed_endpoint.hostname:
+        if not _oauth_endpoint_allowed(endpoint, value, allow_loopback_oauth=allow_loopback_oauth):
             raise ExtensionError(f"OAuth metadata has no valid {key}")
         configured = str(oauth.get(key) or "")
         if configured and configured != endpoint:
@@ -1553,15 +1627,40 @@ class ExtensionManager:
     def upsert_mcp_server(self, raw: dict[str, Any], server_id: str = "") -> dict[str, Any]:
         # Standalone secret values are accepted only as transient credentials.
         # Plugin manifests are parsed elsewhere and remain visible in trust review.
-        sanitized = discover_oauth_metadata(raw)
-        transient_env = sanitized.pop("env", {}) if isinstance(sanitized.get("env"), dict) else {}
-        transient_headers = (
-            sanitized.pop("http_headers", {})
-            if isinstance(sanitized.get("http_headers"), dict) else {}
+        existing = next((item for item in self._state["mcp_servers"]
+                         if item.get("id") == server_id), None) if server_id else None
+        merged = {**(existing or {}), **raw}
+        if isinstance(raw.get("oauth"), dict):
+            merged["oauth"] = {**((existing or {}).get("oauth") or {}), **raw["oauth"]}
+        if raw.get("url") and "command" not in raw:
+            merged["command"] = ""
+            if "transport" not in raw and "type" not in raw and (existing or {}).get("transport") == "stdio":
+                merged["transport"] = "streamable_http"
+        elif raw.get("command") and "url" not in raw:
+            merged["url"] = ""
+            if "transport" not in raw and "type" not in raw:
+                merged["transport"] = "stdio"
+        if "type" in raw and "transport" not in raw:
+            merged["transport"] = raw["type"]
+        oauth_changed = existing is None or any(
+            merged.get(key) != existing.get(key) for key in ("url", "auth", "oauth")
         )
-        config = _normalize_mcp_config(sanitized)
+        sanitized = discover_oauth_metadata(merged, allow_loopback_oauth=True) if oauth_changed \
+            else dict(merged)
+        transient_env = sanitized.pop("env", {}) if isinstance(sanitized.get("env"), dict) else {}
+        transient_headers: dict[str, str] = {}
+        for field in ("headers", "http_headers"):
+            supplied = sanitized.pop(field, {})
+            if isinstance(supplied, dict):
+                for key, value in supplied.items():
+                    for previous in list(transient_headers):
+                        if previous.lower() == str(key).lower():
+                            transient_headers.pop(previous)
+                    transient_headers[str(key)] = str(value)
+        config = _normalize_mcp_config(sanitized, allow_loopback_oauth=True)
         identifier = server_id or f"user:{_slug(str(raw.get('name') or 'mcp'))}:{uuid.uuid4().hex[:8]}"
-        name = _safe_name(raw.get("name") or identifier.split(":")[-2], "MCP server name")
+        name = _safe_name(merged.get("name") or identifier.split(":")[-2], "MCP server name")
+        raw = merged
         record = {
             **config,
             "id": identifier,
@@ -1589,12 +1688,26 @@ class ExtensionManager:
             ]
             self._state["mcp_servers"].append(record)
             self._save()
+        previous_oauth = dict((existing or {}).get("oauth") or {})
+        if previous_oauth:
+            previous_oauth.setdefault("allow_loopback_http", False)
+        if existing is not None and (
+            any(existing.get(key) != record.get(key) for key in ("url", "command", "transport", "auth"))
+            or previous_oauth != (record.get("oauth") or {})
+        ):
+            self._credential_values.pop(identifier, None)
         if transient_env or transient_headers:
-            existing = self.credentials(identifier)
+            credentials = self.credentials(identifier)
+            headers = dict(credentials.get("headers") or {})
+            for key, value in transient_headers.items():
+                for previous in list(headers):
+                    if previous.lower() == key.lower():
+                        headers.pop(previous)
+                headers[key] = value
             self.set_credentials(identifier, {
-                **existing,
-                "env": {**(existing.get("env") or {}), **transient_env},
-                "headers": {**(existing.get("headers") or {}), **transient_headers},
+                **credentials,
+                "env": {**(credentials.get("env") or {}), **transient_env},
+                "headers": headers,
             })
         return self._public_server(record)
 
@@ -1633,22 +1746,34 @@ class ExtensionManager:
     def set_mcp_policy(
         self,
         server_id: str,
-        mode: str,
+        mode: str | None = None,
         *,
         tool_name: str = "",
+        resource_access: str | None = None,
+        enabled_resources: list[str] | None = None,
+        enabled_prompts: list[str] | None = None,
     ) -> dict[str, Any]:
-        normalized = mode.strip().lower()
-        if normalized not in {"annotations", "ask", "allow", "disabled"}:
+        normalized = mode.strip().lower() if mode is not None else None
+        if normalized is not None and normalized not in {"annotations", "ask", "allow", "disabled"}:
             raise ExtensionError("tool policy must be annotations, ask, allow, or disabled")
+        if resource_access is not None and resource_access not in {"all", "selected", "none"}:
+            raise ExtensionError("resource_access must be all, selected, or none")
+        selections = {}
+        for field, value in (("enabled_resources", enabled_resources), ("enabled_prompts", enabled_prompts)):
+            if value is not None:
+                selections[field] = _mcp_selection(value, field)
         if not any(server.get("id") == server_id for server in self.mcp_servers()):
             raise ExtensionError("MCP server not found")
         with self._guard:
             policies = self._state.setdefault("mcp_policies", {})
-            record = policies.setdefault(server_id, {"default": "annotations", "tools": {}})
-            if tool_name:
+            record = policies.setdefault(server_id, {"tools": {}})
+            if tool_name and normalized is not None:
                 record.setdefault("tools", {})[tool_name] = normalized
-            else:
+            elif normalized is not None:
                 record["default"] = normalized
+            if resource_access is not None:
+                record["resource_access"] = resource_access
+            record.update(selections)
             self._save()
         server = next(item for item in self.mcp_servers() if item.get("id") == server_id)
         return self._public_server(server)
@@ -1677,6 +1802,9 @@ class ExtensionManager:
         configured = dict(server.get("tool_policies") or {})
         configured.update(policy.get("tools") or {})
         server["tool_policies"] = configured
+        for field in ("resource_access", "enabled_resources", "enabled_prompts"):
+            if field in policy:
+                server[field] = policy[field]
 
     # --------------------------------------------------------------- helpers
 

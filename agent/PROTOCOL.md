@@ -293,14 +293,18 @@ creates deduplicated Inbox candidates only; finding none is a successful run.
 ### Modern MCP catalogs, tasks, and input
 
 MCP capability negotiation preserves legacy servers and conditionally adds
-bounded deferred resources/prompts. The permission-free discovery tools are
+bounded deferred resources/prompts. The agent tools are
 `search_extension_resources`, `read_extension_resource`,
 `search_extension_prompts`, and `load_extension_prompt`. Resources are
 untrusted evidence. Prompts are untrusted instructions and require both server
-and profile allowlisting. Lists are bounded and cached by server TTL.
+and profile allowlisting. Catalogs are paginated and bounded; resource reads
+can be cached by server TTL. The Settings catalog retains disabled entries,
+while agent discovery exposes only permitted entries. Resource policy uses
+`resource_access: all|selected|none`; template reads retain the original catalog
+URI as their permission identity and pass expansion values in `arguments`.
 
 Task-required tools persist remote task ID, run/job/tool-call origin, progress,
-state, cancellation and terminal payload in the run database. `mcp_task_*`
+state and cancellation in the run database. `mcp_task_*`
 events are ordered with their run. `GET /api/mcp/tasks` lists persisted tasks;
 explicit `/lookup` and `/cancel` actions reconnect or terminate a selected
 remote task and never run automatically at startup. Form elicitation admits only bounded,
@@ -311,6 +315,27 @@ content?}`. Decline, timeout, cancellation, or disconnect produces a normal
 terminal tool result. OAuth uses PKCE, exact callback scheme/host/port/path,
 issuer metadata discovery and exact issuer validation, and never forwards
 tokens to another origin.
+
+Status snapshots and `mcp_status` events retain `state` and `error` and add
+optional `diagnostics`, `protocol_version`, and `negotiated_capabilities`.
+Diagnostics include transport, stage, sanitized target, elapsed milliseconds,
+authentication presence, HTTP status, bounded causes/STDERR, and next-step hints.
+Initialization and initial discovery share `startup_timeout_sec` (1–120 seconds,
+default 10). URL servers default to Streamable HTTP; `sse` is explicit, and
+`protocol_mode` defaults to `auto` with opt-in `legacy` initialization.
+
+`oauth.allow_loopback_http` defaults to false. For opted-in user HTTP servers,
+OAuth endpoints must use the exact configured localhost/127.0.0.1/::1 origin.
+This exception retains application callbacks, PKCE, origin binding, and native
+credential storage; it does not add an HTTP callback listener.
+
+Media-bearing tool results preserve the `content_items` envelope for provider
+and broker transport. UI events and saved transcripts contain opaque attachment
+references, with authenticated retrieval at
+`GET /api/sessions/{session_id}/media/{media_id}`. Images are limited to 10 per
+result, 15 MiB each, and 25 MiB combined. Explicit task lookups can also return
+`attachments` and their owning `session_id`; opening the Inspector reads stored
+records without fetching remote results.
 
 An agent profile's `mcp_policy` has explicit `server_ids`, `tools`, `resources`
 and `prompts` allowlists. Empty is no access. Read-only specialists,
@@ -805,17 +830,21 @@ The extension surface shares one error and concurrency contract:
 | POST | `/api/extensions/skills/import` | Import a skill. |
 | POST | `/api/extensions/skills/enable` | Enable or disable a skill. |
 | DELETE | `/api/extensions/skills/{skill_id:path}` | Remove a skill. |
-| POST | `/api/extensions/mcp` | Create or update an MCP server. `transport` is `"streamable_http"` or `"stdio"` — note the underscore. |
+| POST | `/api/extensions/mcp` | Create or update an MCP server. `transport` is `"streamable_http"`, `"stdio"`, or `"sse"`. Omitted settings and activation scope are preserved when editing. |
 | POST | `/api/extensions/mcp/presets/materialize` | Idempotently copy one reviewed preset into a normal user-editable server that is disabled globally. Supabase also requires `project_ref`. |
 | POST | `/api/extensions/mcp/enable` | Enable or disable a server. |
 | POST | `/api/extensions/mcp/test` | Probe a server's connectivity. |
 | POST | `/api/extensions/mcp/reconnect` | Drop and re-establish a server's session. |
-| POST | `/api/extensions/mcp/policy` | Set a server's default tool-approval mode. |
+| POST | `/api/extensions/mcp/policy` | Set tool approval and/or resource/prompt policy; omitted policy fields are preserved. |
+| GET | `/api/extensions/mcp/{server_id:path}/catalog` | Full discovered `tools`, `resources`, `templates`, and `prompts` metadata for Settings; discovery grants no access. |
+| POST | `/api/extensions/mcp/resource` | Read `{id, uri, arguments?}` after server and agent permission checks; returns `{content, attachments, session_id}`. |
+| POST | `/api/extensions/mcp/prompt` | Retrieve `{id, prompt, arguments?}` after explicit prompt permission checks; returns the same preview shape. |
+| POST | `/api/extensions/mcp/complete` | Complete `{id, kind, name, argument, value, context_arguments?}` for an allowed template or prompt; returns `{values, has_more, total?}`. |
 | POST | `/api/extensions/mcp/credentials` | Hand only the current access token/header/environment credential to the agent. OAuth registrations, client secrets, and refresh tokens remain in the native client's user-only credential file and never enter this endpoint. |
 | DELETE | `/api/extensions/mcp/{server_id:path}` | Remove a server. Clients must also delete the matching native credential-file entry. |
 
 `stdio` transport is refused when the agent is sandboxed, so App Store builds
-can only use remote servers.
+can only use HTTP/SSE network transports, including configured local endpoints.
 
 ---
 

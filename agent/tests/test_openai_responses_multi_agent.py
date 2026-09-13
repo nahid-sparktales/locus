@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import threading
 import time
+import urllib.error
 
 import pytest
 
@@ -106,6 +108,46 @@ def test_safe_tool_allowlist_has_no_mutation_or_external_tools():
         "write_file", "edit_file", "shell", "bash", "mcp", "browser",
         "computer", "credentials",
     })
+
+
+@pytest.mark.parametrize("reject_images", [False, True])
+def test_hosted_image_outputs_keep_exact_call_ids_and_retry_without_replaying_tools(tmp_path, reject_images):
+    from test_mcp_media import ENCODED, attachments
+
+    from ollama_code.mcp_media import native_tool_result
+
+    requests, calls, emitted = [], [], []
+    first = [{"type": "response.output_item.done", "item": {
+        "type": "function_call", "name": "snapshot", "arguments": "{}", "call_id": call_id,
+        "agent": {"agent_name": f"/root/{call_id}"},
+    }} for call_id in ["one", "two"]]
+    def opener(request, **kwargs):
+        requests.append(json.loads(request.data))
+        if len(requests) == 1:
+            return _Response(first)
+        if len(requests) == 2 and reject_images:
+            raise urllib.error.HTTPError(request.full_url, 400, "Bad request", {}, io.BytesIO(b'{"error":"input_image unsupported private request material"}'))
+        return _Response(_events('{"results":[]}'))
+    def execute(name, arguments, call_id, agent):
+        calls.append((call_id, agent))
+        return native_tool_result("Evidence " + call_id, attachments())
+    client = OpenAIResponsesMultiAgentClient(
+        api_key="test", model="fixture", workspace=str(tmp_path), opener=opener,
+        tool_executor=execute, emit=emitted.append,
+    )
+    assert client.run("Inspect").output == {"results": []}
+    assert sorted(calls) == [("one", "/root/one"), ("two", "/root/two")]
+    outputs = [item for item in requests[1]["input"] if item.get("type") == "function_call_output"]
+    assert [item["call_id"] for item in outputs] == ["one", "two"]
+    for item in outputs:
+        assert item["output"] == [{"type": "input_text", "text": "Evidence " + item["call_id"]},
+                                  {"type": "input_image", "image_url": f"data:image/png;base64,{ENCODED}", "detail": "auto"}]
+    assert len(requests) == (3 if reject_images else 2)
+    if reject_images:
+        retried = [item for item in requests[-1]["input"] if item.get("type") == "function_call_output"]
+        assert all(len(item["output"]) == 1 for item in retried)
+        assert client._image_input_disabled and any(event["type"] == "note" for event in emitted)
+    assert "private request material" not in json.dumps(emitted)
 
 
 def test_flat_responses_evidence_can_use_read_only_tools_without_subagents(tmp_path):

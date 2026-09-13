@@ -23,6 +23,7 @@ dependencies = [
     "websockets>=12.0",
     "cryptography>=50.0",
     "mcp==2.0.0",
+    "jsonschema==4.26.0",
     "httpx2>=2.12,<3",
     "opentelemetry-sdk==1.44.0",
     "opentelemetry-exporter-otlp-proto-http==1.44.0",

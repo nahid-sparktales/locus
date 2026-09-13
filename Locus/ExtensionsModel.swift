@@ -14,10 +14,15 @@ final class ExtensionsModel: ObservableObject {
     @Published private(set) var isLoadingExtensions = false
     @Published var mcpInputRequest: MCPInputRequest?
     @Published var mcpDeviceAuthorization: MCPDeviceAuthorizationPrompt?
+    @Published private(set) var mcpOperations: [String: String] = [:]
+    @Published private(set) var mcpProbeStatuses: [String: MCPStatusResponse] = [:]
+    @Published private(set) var mcpProbeErrors: [String: String] = [:]
+    @Published private(set) var mcpCatalogs: [String: MCPServerCatalog] = [:]
 
     private let mcpAuthCoordinator: MCPAuthCoordinator
     private let credentialStore: any MCPCredentialStoring
     private var extensionRefreshTask: Task<Void, Never>?
+    private var mcpConfigurationEdits: Set<String> = []
 
     private var backend: BackendService?
     private var isUITesting = false
@@ -78,6 +83,13 @@ final class ExtensionsModel: ObservableObject {
         do {
             let response = try await backend.get("/api/extensions", as: ExtensionsResponse.self)
             extensions = response
+            mcpProbeStatuses = [:]
+            let serverIDs = Set(response.mcpServers.map(\.id))
+            mcpProbeErrors = mcpProbeErrors.filter { serverIDs.contains($0.key) }
+            for server in response.mcpServers where server.state == "connected" || server.state == "connecting" {
+                mcpProbeErrors.removeValue(forKey: server.id)
+            }
+            mcpCatalogs = mcpCatalogs.filter { serverIDs.contains($0.key) }
             extensionErrorMessage = response.errors.first
             // Reclaim OAuth tokens whose server is gone — but only from a
             // clean read. An empty `errors` is the agent's promise that this
@@ -320,17 +332,29 @@ final class ExtensionsModel: ObservableObject {
         }
     }
 
-    func saveMCPServer(_ body: [String: Any]) async {
-        guard let backend else { return }
+    @discardableResult
+    func saveMCPServer(_ body: [String: Any]) async -> Bool {
+        guard let backend else { return false }
+        let id = body["id"] as? String ?? ""
+        let previous = extensions.mcpServers.first { $0.id == id }
+        mcpConfigurationEdits.insert(id)
+        defer { mcpConfigurationEdits.remove(id) }
         do {
-            _ = try await backend.post(
+            let saved = try await backend.post(
                 "/api/extensions/mcp",
                 body: body,
                 as: ExtensionMCPServer.self
             )
+            if let previous, previous.credentialBinding != saved.credentialBinding {
+                // The runtime has invalidated its handoff too. Remove native
+                // credentials before a refresh can replay a legacy record.
+                credentialStore.remove(serverID: id)
+            }
             await refreshExtensions()
+            return true
         } catch {
             extensionErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -372,37 +396,104 @@ final class ExtensionsModel: ObservableObject {
 
     @discardableResult
     func testMCPServer(_ id: String) async -> Bool {
-        guard let backend else { return false }
+        await probeMCPServer(id, reconnect: false)
+    }
+
+    func reconnectMCPServer(_ id: String) async {
+        _ = await probeMCPServer(id, reconnect: true)
+    }
+
+    private func probeMCPServer(_ id: String, reconnect: Bool) async -> Bool {
+        guard let backend, mcpOperations[id] == nil else { return false }
+        mcpOperations[id] = reconnect ? "Reconnecting…" : "Testing…"
+        mcpProbeStatuses.removeValue(forKey: id)
+        mcpProbeErrors.removeValue(forKey: id)
+        extensionErrorMessage = nil
+        defer { mcpOperations.removeValue(forKey: id) }
         do {
             let response = try await backend.post(
-                "/api/extensions/mcp/test",
+                reconnect ? "/api/extensions/mcp/reconnect" : "/api/extensions/mcp/test",
                 body: ["id": id],
                 timeout: 135,
                 as: MCPTestResponse.self
             )
             await refreshExtensions()
-            toastHandler(response.status?.state == "connected" ? "MCP server connected" : "MCP test finished")
-            return response.status?.state == "connected"
+            if let status = response.status { mcpProbeStatuses[id] = status }
+            if response.status?.state == "connected" {
+                toastHandler(reconnect ? "MCP server reconnected" : "MCP server connected")
+                return true
+            }
+            let message = response.status?.error ?? "The MCP server did not connect. Open Connection details for more information."
+            mcpProbeErrors[id] = message
+            extensionErrorMessage = message
+            toastHandler("MCP connection failed")
+            return false
         } catch {
-            extensionErrorMessage = mcpConnectionError(error, serverID: id)
+            let message = (error as NSError).code == NSURLErrorTimedOut
+                ? "Locus did not receive the connection test result in time. Check the server's latest connection details."
+                : mcpConnectionError(error, serverID: id)
+            await refreshExtensions()
+            mcpProbeErrors[id] = message
+            extensionErrorMessage = message
+            toastHandler("MCP connection failed")
             return false
         }
     }
 
-    func reconnectMCPServer(_ id: String) async {
-        guard let backend else { return }
-        do {
-            let response = try await backend.post(
-                "/api/extensions/mcp/reconnect",
-                body: ["id": id],
-                timeout: 135,
-                as: MCPTestResponse.self
-            )
-            await refreshExtensions()
-            toastHandler(response.status?.state == "connected" ? "MCP server reconnected" : "MCP reconnect finished")
-        } catch {
-            extensionErrorMessage = mcpConnectionError(error, serverID: id)
+    func mcpError(for server: ExtensionMCPServer) -> String? {
+        mcpProbeErrors[server.id] ?? mcpProbeStatuses[server.id]?.error ?? server.error
+    }
+
+    func mcpDiagnostics(for server: ExtensionMCPServer) -> MCPConnectionDiagnostics? {
+        mcpProbeStatuses[server.id]?.diagnostics ?? server.diagnostics
+    }
+
+    @discardableResult
+    func loadMCPCatalog(_ serverID: String) async throws -> MCPServerCatalog {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        // Server IDs are generated identifiers; plugin IDs contain slashes,
+        // which this route accepts with a path capture. BackendService owns
+        // URL encoding, so pre-encoding here would encode '%' a second time.
+        let result = try await backend.get("/api/extensions/mcp/\(serverID)/catalog", timeout: 135, as: MCPServerCatalog.self)
+        mcpCatalogs[serverID] = result
+        return result
+    }
+
+    func updateMCPCatalogPolicy(serverID: String, resourceAccess: String, resources: [String], prompts: [String]) async throws {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        _ = try await backend.post("/api/extensions/mcp/policy", body: [
+            "id": serverID, "resource_access": resourceAccess,
+            "enabled_resources": resources, "enabled_prompts": prompts,
+        ], as: ExtensionMCPServer.self)
+        await refreshExtensions()
+        try await loadMCPCatalog(serverID)
+    }
+
+    func previewMCPItem(serverID: String, kind: String, name: String, arguments: [String: String]) async throws -> MCPPreviewResponse {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        return try await backend.post("/api/extensions/mcp/\(kind)", body: [
+            "id": serverID, kind == "prompt" ? "prompt" : "uri": name, "arguments": arguments,
+        ], timeout: 135, as: MCPPreviewResponse.self)
+    }
+
+    func completeMCPArgument(serverID: String, kind: String, name: String, argument: String, value: String, context: [String: String]) async throws -> [String] {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        let result = try await backend.post("/api/extensions/mcp/complete", body: [
+            "id": serverID, "kind": kind, "name": name, "argument": argument,
+            "value": value, "context_arguments": context,
+        ], timeout: 135, as: MCPCompletionResponse.self)
+        return result.values
+    }
+
+    func loadMCPPreviewImages(_ preview: MCPPreviewResponse) async throws -> [String: Data] {
+        guard let backend, let sessionID = preview.sessionID else { return [:] }
+        var images: [String: Data] = [:]
+        for attachment in (preview.attachments ?? []).prefix(10) {
+            let data = try await backend.chatImage(sessionID: sessionID, mediaID: attachment.id)
+            guard data.count <= 15_000_000, NSImage(data: data) != nil else { continue }
+            images[attachment.id] = data
         }
+        return images
     }
 
     private func mcpConnectionError(_ error: Error, serverID: String) -> String {
@@ -433,6 +524,7 @@ final class ExtensionsModel: ObservableObject {
                 as: ExtensionMCPServer.self
             )
             await refreshExtensions()
+            if mcpCatalogs[serverID] != nil { try await loadMCPCatalog(serverID) }
         } catch {
             extensionErrorMessage = error.localizedDescription
         }
@@ -454,7 +546,11 @@ final class ExtensionsModel: ObservableObject {
 
     @discardableResult
     func setMCPCredentials(serverID: String, values: [String: Any]) async -> Bool {
-        guard let backend else { return false }
+        guard let backend, !mcpConfigurationEdits.contains(serverID) else { return false }
+        var values = values
+        if let server = extensions.mcpServers.first(where: { $0.id == serverID }) {
+            values["mcp_server_binding"] = server.credentialBinding
+        }
         guard JSONSerialization.isValidJSONObject(values) else {
             extensionErrorMessage = "The MCP credentials could not be saved."
             return false
@@ -499,6 +595,54 @@ final class ExtensionsModel: ObservableObject {
         }
     }
 
+    func mcpCredentialNames(serverID: String, kind: String) -> [String] {
+        ((credentialStore.get(serverID: serverID)?[kind] as? [String: String]) ?? [:]).keys.sorted()
+    }
+
+    /// Empty editor values mean “keep the saved value”; deleting a row is the
+    /// explicit removal operation. Supplemental edits preserve OAuth data;
+    /// an explicit bearer replacement disables refresh of the old account token.
+    nonisolated static func mergingMCPCredentials(
+        _ current: [String: Any], accessToken: String? = nil,
+        headers: [String: String] = [:], env: [String: String] = [:],
+        removedHeaders: Set<String> = [], removedEnv: Set<String> = []
+    ) -> [String: Any] {
+        var result = current
+        if let accessToken, !accessToken.isEmpty {
+            result["access_token"] = accessToken
+            result.removeValue(forKey: "refresh_token")
+            result.removeValue(forKey: "expires_at")
+        }
+        for (kind, updates, removed) in [("headers", headers, removedHeaders), ("env", env, removedEnv)] {
+            var values = (current[kind] as? [String: String]) ?? [:]
+            for key in removed { values.removeValue(forKey: key) }
+            for (key, value) in updates where !value.isEmpty { values[key] = value }
+            if !values.isEmpty || current[kind] != nil { result[kind] = values }
+        }
+        return result
+    }
+
+    func updateMCPTransportCredentials(
+        serverID: String, accessToken: String?, headers: [String: String], env: [String: String],
+        removedHeaders: Set<String>, removedEnv: Set<String>
+    ) async -> Bool {
+        let server = extensions.mcpServers.first { $0.id == serverID }
+        let stored = credentialStore.get(serverID: serverID) ?? [:]
+        let current = server.map { Self.mcpCredentials(stored, areBoundTo: $0) } == false ? [:] : stored
+        let values = Self.mergingMCPCredentials(
+            current, accessToken: accessToken, headers: headers, env: env,
+            removedHeaders: removedHeaders, removedEnv: removedEnv
+        )
+        let hasAuthorization = (values["headers"] as? [String: String] ?? [:]).keys.contains { $0.lowercased() == "authorization" }
+        let suppliesBearer = !(values["access_token"] as? String ?? "").isEmpty
+            || !(server?.bearerTokenEnvVar ?? "").isEmpty || ["auto", "oauth"].contains(server?.auth ?? "")
+        guard !hasAuthorization || !suppliesBearer else {
+            extensionErrorMessage = "Authorization is already supplied by a bearer token or OAuth account. Remove the Authorization header, or switch to custom headers and clear the saved token/account and bearer environment mapping first. Other headers can be used alongside OAuth."
+            return false
+        }
+        return await setMCPCredentials(serverID: serverID, values: values)
+    }
+
     func authenticateMCPServer(
         _ server: ExtensionMCPServer,
         completion: ((Bool) -> Void)? = nil
@@ -516,7 +660,21 @@ final class ExtensionsModel: ObservableObject {
             switch result {
             case .success(let values):
                 Task {
-                    let saved = await self.setMCPCredentials(serverID: server.id, values: values)
+                    guard !self.mcpConfigurationEdits.contains(server.id),
+                          let current = self.extensions.mcpServers.first(where: { $0.id == server.id }),
+                          Self.mcpCredentials(values, areBoundTo: current),
+                          current.credentialBinding == server.credentialBinding
+                    else {
+                        self.extensionErrorMessage = "The MCP server settings changed during sign-in. Connect again using the current settings."
+                        completion?(false)
+                        return
+                    }
+                    var merged = values
+                    let previous = self.credentialStore.get(serverID: server.id) ?? [:]
+                    if Self.mcpCredentials(previous, areBoundTo: current) {
+                        for key in ["headers", "env"] { merged[key] = previous[key] }
+                    }
+                    let saved = await self.setMCPCredentials(serverID: server.id, values: merged)
                     completion?(saved)
                 }
             case .failure(let error):
@@ -557,12 +715,18 @@ final class ExtensionsModel: ObservableObject {
     private func restoreExtensionCredentials(for servers: [ExtensionMCPServer]) async {
         guard let backend else { return }
         for server in servers {
-            guard let storedValues = credentialStore.get(serverID: server.id) else { continue }
+            guard !mcpConfigurationEdits.contains(server.id),
+                  var storedValues = credentialStore.get(serverID: server.id) else { continue }
             guard Self.mcpCredentials(storedValues, areBoundTo: server) else {
-                extensionErrorMessage = "Saved OAuth credentials no longer match \(server.name). Reconnect it before enabling the server."
+                extensionErrorMessage = "Saved credentials no longer match \(server.name). Reconnect its account or update its credentials before enabling the server."
                 continue
             }
-            let values = (try? await mcpAuthCoordinator.refreshedCredentialsIfNeeded(storedValues))
+            if storedValues["mcp_server_binding"] == nil {
+                // Upgrade unchanged legacy records before any async handoff.
+                storedValues["mcp_server_binding"] = server.credentialBinding
+                guard credentialStore.set(storedValues, serverID: server.id) else { continue }
+            }
+            let values = (try? await mcpAuthCoordinator.refreshedCredentialsIfNeeded(storedValues, server: server))
                 ?? storedValues
             let oldData = try? JSONSerialization.data(withJSONObject: storedValues, options: [.sortedKeys])
             let refreshedData = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
@@ -585,6 +749,14 @@ final class ExtensionsModel: ObservableObject {
         _ values: [String: Any],
         areBoundTo server: ExtensionMCPServer
     ) -> Bool {
+        if let binding = values["mcp_server_binding"] as? String, binding != server.credentialBinding { return false }
+        if let origin = values["loopback_oauth_origin"] as? String {
+            guard server.oauth?.allowLoopbackHTTP == true,
+                  origin == MCPOAuthTransportPolicy.loopbackHTTPOrigin(server.url ?? "")
+            else { return false }
+        } else if (values["token_endpoint"] as? String)?.lowercased().hasPrefix("http:") == true {
+            return false
+        }
         if let resource = values["resource"] as? String {
             guard let rawURL = server.url,
                   var components = URLComponents(string: rawURL)

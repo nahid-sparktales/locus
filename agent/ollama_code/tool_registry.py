@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shlex
+from collections.abc import Callable
 from typing import Any
 
 from . import product_build
@@ -257,10 +258,12 @@ EXTENSION_TOOL_SCHEMAS = [
     ),
     _schema(
         "read_extension_resource",
-        "Read one concrete MCP resource returned by search_extension_resources.",
+        "Read an MCP resource returned by search_extension_resources. For a template, keep its original URI and supply arguments separately.",
         {
             "server_id": {"type": "string"},
             "uri": {"type": "string"},
+            "arguments": {"type": "object", "description": "URI-template variables, when reading a template.",
+                          "additionalProperties": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}},
         },
         ["server_id", "uri"],
     ),
@@ -1463,7 +1466,9 @@ class ToolRegistry:
             })
         return groups
 
-    def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
+    def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext, *,
+                media_receiver: Callable[[list[dict[str, Any]]], None] | None = None,
+                invocation_context: dict[str, str] | None = None) -> str:
         if name == "wait_for_locus" and self.runtime_wait_enabled and ctx.wait_for_locus:
             return ctx.wait_for_locus(arguments)
         if not self._user_allows(name):
@@ -1503,6 +1508,9 @@ class ToolRegistry:
                 return "Error: this agent profile does not allow that MCP resource."
             return self.mcp.read_resource(
                 server_id, uri,
+                **({"arguments": arguments["arguments"]} if "arguments" in arguments else {}),
+                **({"media_receiver": media_receiver} if media_receiver is not None else {}),
+                **({"invocation_context": invocation_context} if invocation_context is not None else {}),
             )
         if name == "search_extension_prompts":
             return self._search_catalog(arguments, "prompt")
@@ -1526,6 +1534,8 @@ class ToolRegistry:
             return self.mcp.load_prompt(
                 server_id, prompt_name,
                 prompt_arguments,
+                **({"media_receiver": media_receiver} if media_receiver is not None else {}),
+                **({"invocation_context": invocation_context} if invocation_context is not None else {}),
             )
         if name == "load_skill":
             skill_id = str(arguments.get("skill") or "")
@@ -1579,7 +1589,9 @@ class ToolRegistry:
                 return "Error: this agent profile does not allow that MCP tool."
             self._recent_mcp = [name, *[item for item in self._recent_mcp if item != name]][:8]
             return self.mcp.call_tool(
-                str(tool["server_id"]), str(tool["name"]), arguments, ctx.should_stop
+                str(tool["server_id"]), str(tool["name"]), arguments, ctx.should_stop,
+                **({"media_receiver": media_receiver} if media_receiver is not None else {}),
+                **({"invocation_context": invocation_context} if invocation_context is not None else {}),
             )
         return execute_tool(name, arguments, ctx)
 
@@ -1655,6 +1667,8 @@ class ToolRegistry:
                 lines.append(
                     f"- server_id={item.get('server_id')} uri={item.get('uri')}"
                     f"{template}: {item.get('title') or item.get('name')} — {item.get('description') or ''}"
+                    + (f" (returned by tool={item['source_tool']} call_id={item.get('source_tool_call_id') or 'unknown'})"
+                       if item.get("source_tool") else "")
                 )
             else:
                 arguments_text = ", ".join(
