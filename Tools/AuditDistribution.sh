@@ -461,6 +461,9 @@ if [[ "${sandboxed}" == "1" ]]; then
         exit 1
     }
 else
+    if [[ "${edition}" == "locus" ]]; then
+        python3 "${repo_root}/Tools/VerifyRuntimeHelper.py" "${app}"
+    fi
     if [[ "${edition}" == "locusx" ]]; then
     [[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
         echo "error: the direct-download build is missing WalletSigner.xpc" >&2
