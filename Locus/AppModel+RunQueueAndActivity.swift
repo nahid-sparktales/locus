@@ -534,9 +534,6 @@ extension AppModel {
                 guard let profileID = UUID(uuidString: rawProfileID) else {
                     throw AgentWorldError.unavailable("This conversation’s saved agent identity is invalid. Review its agent before retrying.")
                 }
-                guard run.runKind != "team", !run.isSoloSwarm else {
-                    throw AgentWorldError.unavailable("This automation belongs to a saved agent. Choose its solo runner before retrying.")
-                }
                 profileDispatch = try agentWorldProfileDispatch(profileID: profileID,
                     mode: run.manifest?["mode"]?.string.flatMap(WorkMode.canonical) ?? .work)
             } else { profileDispatch = nil }
@@ -634,7 +631,10 @@ extension AppModel {
                 request["agent_config"] = config
             }
             if let profileDispatch {
-                request["agent_profile"] = Self.agentWorldProfileBody(profileDispatch.profile)
+                request["conversation_profile_id"] = profileDispatch.profile.id.uuidString
+                if run.runKind != "team" {
+                    request["agent_profile"] = Self.agentWorldProfileBody(profileDispatch.profile)
+                }
                 request["agent_config"] = encodedJSONObject(profileDispatch.profile.resolvedBehavior)
             }
             if let goalID = run.manifest?["goal_id"]?.string {

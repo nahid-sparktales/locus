@@ -46,6 +46,25 @@ def test_goal_schema_and_unfinished_uniqueness(stores):
     assert make_goal(goals)["id"] != goal["id"]
 
 
+def test_saved_agent_goal_keeps_owner_and_configuration_in_continuations(stores):
+    import uuid
+
+    runs, goals = stores
+    owner = str(uuid.uuid4())
+    execution = {"provider": "ollama", "model": "local", "workspace_root": "/workspace",
+                 "runner": "solo", "conversation_profile_id": owner,
+                 "agent_profile_configuration": '{"name":"Saved agent","model":"local"}'}
+    goal = goals.create("saved-agent-chat", "Finish the assigned task", execution=execution)
+    automatic = goals.claim(goal["id"], goal["revision"])["run"]
+    assert automatic["manifest"]["conversation_profile_id"] == owner
+    assert automatic["manifest"]["agent_profile_configuration"] == execution["agent_profile_configuration"]
+    runs.set_state(automatic["id"], "completed")
+    manual = goals.queue_user_run(goal["id"], "manual-followup", goal["revision"],
+                                 session_id="saved-agent-chat", request="Check the remaining items")
+    assert manual["manifest"]["conversation_profile_id"] == owner
+    assert manual["manifest"]["agent_profile_configuration"] == execution["agent_profile_configuration"]
+
+
 def test_old_task_evidence_and_paraphrased_reports_do_not_restart_progress(stores):
     from ollama_code.task_journal import TaskJournal
     runs, goals = stores

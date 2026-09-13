@@ -136,7 +136,7 @@ def test_profile_rejects_model_substitution_and_discards_supplied_routes():
     assert profile.route == {}
 
 
-def test_world_profile_dispatch_isolated_from_solo_delegation(tmp_path, monkeypatch):
+def test_world_profile_dispatch_preserves_permissions_with_solo_delegation(tmp_path, monkeypatch):
     service = _service(tmp_path)
     calls = []
     monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
@@ -152,13 +152,14 @@ def test_world_profile_dispatch_isolated_from_solo_delegation(tmp_path, monkeypa
     forwarded = []
     monkeypatch.setattr(server, "_run_user_turn", lambda *args, **kwargs: forwarded.append((args, kwargs)))
     call(*args)
-    assert forwarded[0][1]["solo_swarm_enabled"] is False
+    assert forwarded[0][1]["solo_swarm_enabled"] is True
     assert forwarded[0][1]["agent_profile"].id == profile["id"]
     assert forwarded[0][0][4]["runtime_policy"]["max_total_tokens"] == 8_192
 
 
 @pytest.mark.parametrize("overrides", [
-    {"team": {}}, {"capsule_context": {}}, {"text": "/reset"},
+    {"team": {}}, {"text": "/reset"},
+    {"mode": "plan", "approved_plan": {}},
     {"workflow_outputs": "invalid"}, {"agent_profile": {"name": "Broken"}},
 ])
 def test_profile_dispatch_rejects_conflicting_or_invalid_configuration(tmp_path, monkeypatch, overrides):
@@ -260,7 +261,7 @@ def test_profile_runs_through_existing_worker_with_exact_identity(tmp_path, monk
         assert core.agent_configuration.custom_instructions == profile.instructions
         assert core.agent_configuration.runtime_policy.max_total_tokens == profile.token_limit
         assert core.tool_registry.mcp_agent_policy_snapshot()[1] == "read_only"
-        assert core.tool_ctx.delegate_read_only is None
+        assert (core.tool_ctx.delegate_read_only is None) is just_chat
         core.last_turn_result = {"type": "turn_done", "reason": "complete", "duration_ms": 0}
         core._emit(core.last_turn_result)
 
@@ -293,3 +294,85 @@ def test_saved_agent_automation_retains_workflow_outputs_and_profile_boundary(tm
     assert forwarded[0][1]["workflow_outputs"] == outputs
     assert forwarded[0][1]["agent_profile"].id == profile["id"]
     assert forwarded[0][0][4]["capability_policy"]["workspace_write"] is False
+
+
+@pytest.mark.parametrize("mode", ["ask", "work", "plan", "grill"])
+def test_saved_agent_accepts_every_native_mode_without_changing_identity(tmp_path, monkeypatch, mode):
+    service = _service(tmp_path)
+    profile = _profile()
+    SessionMeta.update(service.core.session.session_id, agent_world_profile_id=profile["id"])
+    calls = []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", lambda event: None)
+    asyncio.run(server._handle_client_message(service, {
+        "type": "user_message", "text": "Review the task", "mode": mode,
+        "conversation_profile_id": profile["id"], "agent_profile": profile,
+    }))
+    call, args = calls[0]
+    forwarded = []
+    monkeypatch.setattr(server, "_run_user_turn", lambda *args, **kwargs: forwarded.append((args, kwargs)))
+    call(*args)
+    assert forwarded[0][0][5] == mode
+    assert forwarded[0][1]["agent_profile"].id == profile["id"]
+    assert forwarded[0][1]["solo_swarm_enabled"] is (mode != "ask")
+
+
+def test_saved_agent_implements_approved_plan_with_its_profile(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    profile = _profile()
+    calls = []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", lambda event: None)
+    plan = {"revision": 1, "summary": "Build the agreed change"}
+    asyncio.run(server._handle_client_message(service, {
+        "type": "user_message", "text": "Implement the plan", "mode": "work",
+        "agent_profile": profile, "approved_plan": plan,
+    }))
+    forwarded = []
+    monkeypatch.setattr(server, "_run_user_turn", lambda *args, **kwargs: forwarded.append((args, kwargs)))
+    call, args = calls[0]
+    call(*args)
+    assert forwarded[0][1]["approved_plan"] == plan
+    assert forwarded[0][1]["agent_profile"].id == profile["id"]
+
+
+@pytest.mark.parametrize("stage", ["plan", "execute", "review", "followup"])
+def test_explicit_duo_stage_can_use_a_different_profile_without_rebinding_chat(tmp_path, monkeypatch, stage):
+    service = _service(tmp_path)
+    owner, specialist = _profile(), _profile()
+    SessionMeta.update(service.core.session.session_id, agent_world_profile_id=owner["id"])
+    calls, events = [], []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", events.append)
+    context = {"stage": stage}
+    message = {"type": "user_message", "text": "Continue the capsule", "mode": "plan",
+               "agent_profile": specialist, "capsule_context": context}
+    asyncio.run(server._handle_client_message(service, message))
+    assert not calls
+    assert "another agent profile" in events[-1]["message"]
+    asyncio.run(server._handle_client_message(service, {**message, "conversation_profile_id": owner["id"]}))
+    forwarded = []
+    monkeypatch.setattr(server, "_run_user_turn", lambda *args, **kwargs: forwarded.append((args, kwargs)))
+    call, args = calls[0]
+    call(*args)
+    assert forwarded[0][1]["agent_profile"].id == specialist["id"]
+    assert forwarded[0][1]["capsule_context"] == context
+    assert forwarded[0][1]["solo_swarm_enabled"] is False
+    assert SessionMeta.get(service.core.session.session_id)["agent_world_profile_id"] == owner["id"]
+
+
+def test_saved_agent_team_route_requires_matching_conversation_owner(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    owner = _profile()
+    SessionMeta.update(service.core.session.session_id, agent_world_profile_id=owner["id"])
+    calls, events = [], []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", events.append)
+    message = {"type": "user_message", "text": "Work together", "mode": "work", "team": {"run_id": "team-run"}}
+    for identifier in (None, str(uuid.uuid4())):
+        asyncio.run(server._handle_client_message(service, {**message, "conversation_profile_id": identifier}))
+        assert not calls
+        assert events[-1]["type"] == "command_error"
+    asyncio.run(server._handle_client_message(service, {**message, "conversation_profile_id": owner["id"]}))
+    assert calls[0][0] == server._run_team_turn
+    assert calls[0][1][2] == message["team"]

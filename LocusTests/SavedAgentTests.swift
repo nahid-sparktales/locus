@@ -3,6 +3,104 @@ import XCTest
 @testable import Locus
 
 final class SavedAgentTests: XCTestCase {
+    @MainActor
+    func testSavedAgentSendsChatWorkPlanAndGrill() {
+        for mode in [WorkMode.ask, .work, .plan, .grill] {
+            let model = savedAgentModel()
+            model.selectedMode = mode
+            model.send("Handle this assignment")
+            XCTAssertTrue(model.isBusy, "\(mode) must reach dispatch")
+            XCTAssertEqual(model.turnDispatchedMode, mode)
+            XCTAssertEqual(model.turnDispatchedInPlanMode, mode == .plan)
+            XCTAssertEqual(model.blocks.last(where: { $0.kind == .user })?.text, "Handle this assignment")
+            cancelPendingWork(model)
+        }
+    }
+
+    @MainActor
+    func testSavedAgentCanImplementAnApprovedPlan() {
+        let model = savedAgentModel()
+        model.selectedMode = .work
+        model.send("Implement the approved plan", preservingDraftOnFailure: true,
+                   approvedPlan: ["revision": .number(1)])
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.turnDispatchedMode, .work)
+        cancelPendingWork(model)
+    }
+
+    @MainActor
+    func testSavedAgentDuoDispatchesItsSelectedPlannerAndPreservesOwner() {
+        let model = savedAgentModel()
+        let owner = model.savedAgentProfileID(for: model.currentSessionID)
+        let planner = AgentProfile(name: "Duo planner", model: "planner-model", role: .planner)
+        let builder = AgentProfile(name: "Duo builder", model: "builder-model", role: .implementer,
+                                   accessCeiling: .workspaceWrite)
+        model.duo.setChoice(planner, planner: true)
+        model.duo.setChoice(builder, planner: false)
+        model.selectedMode = .duo
+        model.send("Build the requested feature")
+        XCTAssertEqual(model.duoTask?.planner.id, planner.id)
+        XCTAssertEqual(model.duoTask?.executor.id, builder.id)
+        XCTAssertEqual(model.turnDispatchedMode, .plan)
+        XCTAssertTrue(model.turnDispatchedInPlanMode)
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.savedAgentProfileID(for: model.currentSessionID), owner)
+        cancelPendingWork(model)
+    }
+
+    @MainActor
+    func testSavedAgentCanDispatchASelectedTeam() {
+        let model = savedAgentModel()
+        let dispatcher = AgentProfile(name: "Coordinator", model: "fixture", role: .dispatcher)
+        let writer = AgentProfile(name: "Writer", model: "fixture", role: .implementer,
+                                  accessCeiling: .workspaceWrite)
+        model.agentProfiles += [dispatcher, writer]
+        let team = AgentTeam(name: "Crew", dispatcherID: dispatcher.id, fallbackDispatcherID: nil,
+                             memberIDs: [dispatcher.id, writer.id], defaultWriterID: writer.id)
+        model.agentTeams = [team]
+        model.agentTeamsModel.selectAgentTeam(team.id)
+        model.selectedMode = .work
+        model.send("Complete the assigned task together")
+        XCTAssertTrue(model.isBusy)
+        XCTAssertNotNil(model.turnDispatchedTeamRunID)
+        cancelPendingWork(model)
+    }
+
+    @MainActor
+    func testSavedAgentCanOpenGoalWithItsOwnModel() {
+        let model = savedAgentModel()
+        model.backendCapabilities["persistent_goals_v1"] = true
+        XCTAssertTrue(model.canStartGoal)
+        model.presentGoalEditor()
+        XCTAssertTrue(model.goals.isPresented)
+        XCTAssertEqual(model.goals.draftRouteLabel, "fixture")
+        cancelPendingWork(model)
+    }
+
+    @MainActor
+    private func savedAgentModel() -> AppModel {
+        let model = AppModel(startImmediately: false)
+        let profile = AgentProfile(name: "Saved agent", model: "fixture", accessCeiling: .workspaceWrite)
+        model.agentProfiles = [profile]
+        let session = SessionSummary(id: "saved-chat", name: "saved-chat", preview: "", mtime: 1, size: 0,
+                                     cwd: model.workspacePath, agentProfileID: profile.id.uuidString)
+        model.sessions = [session]
+        model.installTranscriptSession(session.id, blocks: [])
+        model.agentRuntimePhase = .online
+        model.settings.automaticModelRoutingEnabled = false
+        model.configureTaskCapsules()
+        return model
+    }
+
+    @MainActor
+    private func cancelPendingWork(_ model: AppModel) {
+        model.pendingChatTurns.values.forEach { $0.cancel() }
+        model.pendingChatTurns.removeAll()
+        model.knowledge.cancelAll()
+        model.agentInstructions.cancelAll()
+        model.toastCenter.cancelPendingDismissal()
+    }
+
     func testExistingAgentProfileRestoresAfterServicePolicyUpgrade() throws {
         let json = #"{"route":{"kind":"account","accountID":"11111111-2222-3333-4444-555555555555"},"capabilityTags":[],"accessCeiling":"computer_control","tokenLimit":64000,"name":"Existing agent","instructions":"Review evidence","behavior":{"custom_instructions":"Review evidence","version":1,"mode_instructions":{"grill":"","work":"","plan":"","ask":""},"memory_policy":{"scopes":["personal","workspace","agent"],"max_automatic_memories":8,"recall_enabled":true,"proposals_enabled":true,"max_automatic_tokens":1200,"search_enabled":true,"cross_chat_context_enabled":true,"max_automatic_context_snapshots":2,"max_automatic_context_tokens":1200},"runtime_policy":{},"display_name":"Existing agent","response_style":{"cite_evidence":true,"tone":"balanced","use_markdown":true,"verbosity":"balanced"},"self_description":"A specialist for delegated tasks.","capability_policy":{"mcp":true,"network":true,"workspace_write":true,"computer_control":true,"workspace_read":true,"shell":true,"simulator_control":true}},"role":"generalist","mcpPolicy":{"prompts":[],"tools":[],"resources":[],"server_ids":[]},"metering":"self_hosted","id":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","timeoutSeconds":600,"model":"fixture"}"#
         let profile = try JSONDecoder().decode(AgentProfile.self, from: Data(json.utf8))

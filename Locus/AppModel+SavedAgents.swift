@@ -104,7 +104,7 @@ extension AppModel {
                 agentInspector.show(.fleet)
                 configureAgentPresented = false
                 sidebarDestination = .agents
-                selectedMode = .ask
+                selectedMode = .work
                 resume(session)
             } catch {
                 showToast("Could not open \(profile.name)’s chat: \(error.localizedDescription)")
