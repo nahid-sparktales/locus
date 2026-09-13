@@ -330,6 +330,18 @@ document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
 }
 /usr/bin/codesign --force --timestamp --options runtime \
     --sign "${identity}" "${document_helper}"
+if [[ "${edition}" == "locus" ]]; then
+    runtime_helper="${app}/Contents/Helpers/LocusRuntime"
+    [[ -x "${runtime_helper}" ]] || {
+        echo "error: release is missing the independent runtime launcher" >&2
+        exit 1
+    }
+    # The launcher only reads launch.json and execs the installed runtime; it
+    # needs no sandbox or JIT entitlements. Replace its build-time signature
+    # before sealing the containing app, just like the other native helpers.
+    /usr/bin/codesign --force --timestamp --options runtime \
+        --sign "${identity}" "${runtime_helper}"
+fi
 for simulator_helper in \
     "${app}/Contents/Helpers/LocusSimulatorTouch" \
     "${app}/Contents/Helpers/LocusSimulatorTree"
