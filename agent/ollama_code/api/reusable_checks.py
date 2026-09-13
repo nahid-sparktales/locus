@@ -71,9 +71,9 @@ async def propose(service: Service, body: dict = Body()):
 
     def generate():
         client = service.core.client
-        if service.core.provider == 'chatgpt':
+        if service.core.provider in {'chatgpt', 'claude_plan'}:
             from ..orchestration import ChatGPTTeamClient
-            client = ChatGPTTeamClient(service.codex, 180)
+            client = ChatGPTTeamClient(service.core.codex_manager, 180)
         response = tracked_chat(service.core, client, model=service.core.model, purpose='check_generation', context=context,
                                 messages=[{'role': 'system', 'content': instructions}, {'role': 'user', 'content': prompt}],
                                 tools=[], should_stop=service.core._should_stop_stream)

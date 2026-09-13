@@ -182,7 +182,7 @@ class UsageLedger:
         # Reserve the full output allowance and the most expensive input category.
         maximum_rate = max((float(value) for name, value in (price or {}).get('rates_per_million', {}).items() if name != 'output_tokens' and value is not None), default=0)
         reservation = (count(input_tokens) * maximum_rate + count(output_tokens) * float(price['rates_per_million'].get('output_tokens') or 0)) / 1e6 if price else None
-        coverage = 'local' if provider == 'ollama' else 'subscription' if provider == 'chatgpt' else 'pending' if price else 'unavailable'
+        coverage = 'local' if provider == 'ollama' else 'subscription' if provider in {'chatgpt', 'claude_plan'} else 'pending' if price else 'unavailable'
         tokens = count(input_tokens) + count(output_tokens)
         with self.runs._connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -199,8 +199,8 @@ class UsageLedger:
             consumed = sum(count(json.loads(row['usage']).get('total_tokens')) if row['state'] == 'settled' else max(row['reserved_tokens'], count(json.loads(row['usage']).get('total_tokens'))) for row in previous)
             if limits.get('max_tokens') and consumed + tokens > limits['max_tokens']:
                 raise UsageLimitError('The remaining token allowance cannot reserve this call')
-            if limits.get('max_estimated_usd') and provider not in {'ollama', 'chatgpt'}:
-                billable = [row for row in previous if row['provider'] not in {'ollama', 'chatgpt'}]
+            if limits.get('max_estimated_usd') and provider not in {'ollama', 'chatgpt', 'claude_plan'}:
+                billable = [row for row in previous if row['provider'] not in {'ollama', 'chatgpt', 'claude_plan'}]
                 if price is None or any(row['state'] == 'uncertain' or row['coverage'] in {'partial', 'unavailable'} or (row['state'] == 'pending' and row['reserved_cost'] is None) for row in billable):
                     raise UsageLimitError('Estimated spending control is paused until pricing and unsettled usage are reconciled')
                 spent = sum(float(row['estimated_cost'] if row['state'] == 'settled' else row['reserved_cost'] or 0) for row in billable)
@@ -234,7 +234,7 @@ class UsageLedger:
                 price = None
             full_cost = estimate(usage, price)
             cost = estimate(usage, price, partial=True)
-            coverage = 'local' if row['provider'] == 'ollama' else 'subscription' if row['provider'] == 'chatgpt' else 'known' if cost is not None and usage.get('reported') else 'unavailable'
+            coverage = 'local' if row['provider'] == 'ollama' else 'subscription' if row['provider'] in {'chatgpt', 'claude_plan'} else 'known' if cost is not None and usage.get('reported') else 'unavailable'
             if coverage == 'known' and (full_cost is None or usage.get('unpriced_tools')):
                 coverage = 'partial'
             if usage.get('reported_tool_cost_usd') is not None:

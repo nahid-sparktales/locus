@@ -28,7 +28,15 @@ def _busy_http() -> HTTPException:
 
 
 def health(service: ServiceDependency) -> dict[str, Any]:
-    if service.core.provider == "chatgpt":
+    if service.core.provider == "claude_plan":
+        from .claude import account_payload
+        try:
+            state = account_payload(service, service.core.account_id)
+        except HTTPException as exc:
+            state = {"status": "runtime_unavailable", "message": str(exc.detail)}
+        reachable = state["status"] == "signed_in"
+        error = None if reachable else state.get("message")
+    elif service.core.provider == "chatgpt":
         state = chatgpt_account_payload(service)
         reachable = state["status"] == "signed_in"
         error = None if reachable else state.get("message") or "ChatGPT sign-in is required"
@@ -243,7 +251,7 @@ def response_preview(service: ServiceDependency, body: dict[str, Any] = Body(def
     core.config = copy.deepcopy(service.core.config)
     if "provider" in body:
         provider = body["provider"]
-        if not isinstance(provider, str) or provider not in {"ollama", "remote", "chatgpt"}:
+        if not isinstance(provider, str) or provider not in {"ollama", "remote", "chatgpt", "claude_plan"}:
             raise HTTPException(422, "unknown selected provider")
         core.provider = provider
         # A profile preview must not borrow the active account's identity.

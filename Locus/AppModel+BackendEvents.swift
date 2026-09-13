@@ -43,13 +43,13 @@ extension AppModel {
             orchestrationEvents.sort { $0.sequence < $1.sequence }
         }
         switch type {
-        case "chatgpt_account_updated":
+        case "chatgpt_account_updated", "claude_account_updated":
             Task {
                 await providerAccountsModel.refreshChatGPTAccounts()
                 await providerAccountsModel.refreshAccountCatalogs(force: true)
             }
 
-        case "chatgpt_usage_updated":
+        case "chatgpt_usage_updated", "claude_usage_updated":
             Task { await providerAccountsModel.refreshActiveChatGPTUsage() }
 
         case "worker_identity":

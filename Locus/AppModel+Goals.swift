@@ -47,7 +47,7 @@ extension AppModel {
             "workspace_root": sessionInfo?.workspaceRoot ?? workspacePath,
             "execution_path": activeTaskRecord?.executionPath ?? workspacePath,
             "execution_environment": currentExecutionEnvironment.rawValue,
-            "provider": activeAccount.map { $0.kind == .chatGPT ? "chatgpt" : "remote" } ?? "ollama",
+            "provider": activeAccount.map { $0.kind.backendProvider } ?? "ollama",
             "model": activeAccount.map { routedModel(for: $0) } ?? selectedModel,
             "runner": selectedAgentTeam == nil ? "solo" : "team",
             "solo_swarm": true,
@@ -194,7 +194,7 @@ extension AppModel {
                   let id = UUID(uuidString: rawID),
                   let account = providerAccounts.first(where: { $0.id == id }),
                   account.isCredentialReady(in: credentialStore) else { return "The goal's model account is unavailable." }
-            let kind = account.kind == .chatGPT ? "chatgpt" : "remote"
+            let kind = account.kind.backendProvider
             guard execution["provider"]?.string == kind else { return "The goal's model account changed." }
         }
         if execution["runner"]?.string == "team" {

@@ -62,7 +62,7 @@ struct AccountEditorView: View {
         keyStored: Bool,
         typedKey: String
     ) -> String? {
-        if kind == .chatGPT { return nil }
+        if kind.isManagedPlan { return nil }
         if resolvedBaseURL.isEmpty { return "Enter the endpoint URL." }
         // A key is required to reach a hosted provider — an endpoint that has
         // one saved already does not need it typed again — but a custom
@@ -131,8 +131,8 @@ struct AccountEditorView: View {
                     Text(isNew ? "Add \(kind.marketingName) Account" : "Edit \(account.displayName)")
                         .font(.locus(size: 16, weight: .bold))
                     Text(
-                        kind == .chatGPT
-                            ? "Use included usage from your ChatGPT plan"
+                        kind.isManagedPlan
+                            ? "Use your subscription through its managed runtime"
                             : kind.vendorName.isEmpty
                             ? "An OpenAI-compatible endpoint"
                             : "Models served by \(kind.vendorName)"
@@ -168,7 +168,7 @@ struct AccountEditorView: View {
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
 
-                    if kind == .chatGPT {
+                    if kind.isManagedPlan {
                         chatGPTControls
                     } else {
                         if kind.allowsBaseURLOverride {
@@ -286,7 +286,7 @@ struct AccountEditorView: View {
             baseURL = account.baseURLOverride ?? ""
             keyStored = account.hasKey(in: model.credentialStore)
             contextWindow = account.contextWindow.map(String.init) ?? ""
-            if kind == .chatGPT {
+            if kind.isManagedPlan {
                 nativeMode = account.codexNativeModeEnabled
                 webSearch = account.codexWebSearchEnabled
                 reasoningEffort = account.codexReasoningEffortValue
@@ -334,7 +334,9 @@ struct AccountEditorView: View {
                         Task { await providerAccounts.cancelChatGPTLogin(for: account) }
                     }
                 }
-            } else if model.chatGPTComponentMissing {
+            } else if kind == .claudePlan && model.claudeComponentMissing {
+                claudeComponentDownload
+            } else if kind == .chatGPT && model.chatGPTComponentMissing {
                 componentDownload
             } else {
                 if let message = status?.message, !message.isEmpty {
@@ -343,13 +345,14 @@ struct AccountEditorView: View {
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Button("Sign in with ChatGPT") {
+                Button(kind == .claudePlan ? "Sign in with Claude" : "Sign in with ChatGPT") {
                     Task { await providerAccounts.startChatGPTLogin(for: account) }
                 }
                 .disabled(status?.runtimeAvailable == false)
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")
             }
 
+            if kind == .chatGPT {
             Toggle("Codex-native mode", isOn: $nativeMode)
                 .accessibilityIdentifier("accountEditor.chatGPT.nativeMode")
             Text("Off by default: this account's chats use Locus's prompt, tools, memory, and skills. Turn it on to match OpenAI's Codex instead — native prompt and tools, and no Locus memory or skills here. Changing this restarts conversation context.")
@@ -364,6 +367,7 @@ struct AccountEditorView: View {
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
+            }
             Picker("Reasoning effort", selection: $reasoningEffort) {
                 Text("Default").tag("")
                 ForEach(reasoningEffortOptions, id: \.self) { effort in
@@ -373,14 +377,21 @@ struct AccountEditorView: View {
             .accessibilityIdentifier("accountEditor.chatGPT.reasoningEffort")
 
             Text(
-                "Authentication is managed by OpenAI's bundled agent runtime. "
-                + "Locus never reads or stores its OAuth tokens, and this route never falls back to paid API usage."
+                "Authentication is managed by the provider's agent runtime. "
+                + "Locus never reads or stores its OAuth tokens and does not switch this account to API-key billing."
             )
             .font(.locus(size: 9))
             .foregroundStyle(LocusTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var claudeComponentDownload: some View {
+#if !LOCUS_APP_STORE
+        ClaudeComponentDownloadView(account: account)
+#endif
     }
 
     /// The efforts the account's preferred model supports, from the fetched
@@ -391,7 +402,7 @@ struct AccountEditorView: View {
             .first(where: { $0.id == account.preferredModel })?
             .supportedReasoningEfforts?
             .map(\.effort) ?? []
-        if efforts.isEmpty {
+        if efforts.isEmpty && kind == .chatGPT {
             efforts = ["minimal", "low", "medium", "high", "xhigh"]
         }
         if !reasoningEffort.isEmpty, !efforts.contains(reasoningEffort) {
@@ -534,7 +545,7 @@ struct AccountEditorView: View {
     }
 
     private func save() {
-        if kind == .chatGPT {
+        if kind.isManagedPlan {
             var updated = account
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
             if updated.preferredModel.isEmpty {

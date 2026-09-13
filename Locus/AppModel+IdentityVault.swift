@@ -19,7 +19,7 @@ extension AppModel {
     func identityProviderIdentity(accountID: String? = nil, model: String? = nil) -> IdentityProviderIdentity {
         let account = (accountID ?? settings.activeAccountID).flatMap { id in providerAccounts.first { $0.id.uuidString == id } }
         if let account, settings.provider != .ollama || accountID != nil {
-            return .init(accountID: account.id.uuidString, provider: account.kind == .chatGPT ? "chatgpt" : "remote",
+            return .init(accountID: account.id.uuidString, provider: account.kind.backendProvider,
                          endpoint: account.resolvedBaseURL, model: model ?? selectedModel, label: account.displayName)
         }
         return .init(accountID: "", provider: "ollama", endpoint: ollamaHost,
@@ -35,7 +35,7 @@ extension AppModel {
             showToast("Wait for Locus to connect before opening an Identity task.")
             return
         }
-        guard activeAccount?.kind != .chatGPT else {
+        guard activeAccount?.kind.isManagedPlan != true else {
             identityVault.notice = "Private Identity tasks currently require Local Ollama or an API provider. ChatGPT-plan sessions retain provider-side tool context and cannot yet enforce private source handling. Choose another model provider first."
             identityVault.isPresented = true
             return
@@ -108,7 +108,7 @@ extension AppModel {
             return
         }
         guard let provider = runtime?.identityProvider,
-              provider.provider != "chatgpt",
+              !["chatgpt", "claude_plan"].contains(provider.provider),
               (event["provider"] as? String).map({ $0 == provider.provider }) ?? true,
               (event["model"] as? String).map({ $0 == provider.model }) ?? true else {
             reply(["error": "This task's provider changed or is not ready. Reopen the Identity task before sharing."])

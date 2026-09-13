@@ -108,7 +108,7 @@ def tracked_chat(core, client, *args, purpose='worker', context=None, runs=None,
 
 def tracked_native(core, call, *, purpose='worker', context=None, runs=None, **kwargs):
     context = dict(context or context_for(core, purpose))
-    context.update(provider='chatgpt', purpose=purpose)
+    context.update(provider=getattr(core, 'provider', None) or context.get('provider') or 'chatgpt', purpose=purpose)
     ledger = ledger_for(core, runs)
     invocation = ledger.begin(context, input_tokens=len(str(kwargs.get('text', ''))) // 3 + 128, output_tokens=8192)
     original = kwargs.get('event_handler')
@@ -134,7 +134,7 @@ def tracked_native(core, call, *, purpose='worker', context=None, runs=None, **k
                 seen.add(current)
                 if current[0] >= totals[0] and current[1] >= totals[1]:
                     totals = current
-                    calls += 1
+                    calls += max(count(token_usage.get("modelCalls")), 1)
                     usage = normalize_usage('openai', {key: max(current[index] - baseline[index], 0) for index, key in enumerate(('inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningOutputTokens'))})
                     usage['model_calls'] = calls
                     with ledger.runs._connect() as db:

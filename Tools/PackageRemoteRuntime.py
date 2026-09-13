@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--runtime', type=Path, required=True)
 parser.add_argument('--codex-helper', type=Path, required=True)
 parser.add_argument('--codex-code-mode-host', type=Path, required=True)
+parser.add_argument('--claude-helper', type=Path)
 parser.add_argument('--target', choices=['linux-x86_64', 'linux-arm64', 'macos-arm64'], required=True)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
@@ -36,6 +37,11 @@ files = {}
 for path in sorted(args.runtime.rglob('*')):
     if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
         files[path.relative_to(args.runtime).as_posix()] = path
+if args.claude_helper:
+    version = subprocess.run([str(args.claude_helper.resolve()), '--version'], capture_output=True, text=True, timeout=20)
+    if version.returncode or not version.stdout.startswith('2.1.259 '):
+        parser.error('The Claude runtime must be pinned to version 2.1.259.')
+    files['claude-runtime'] = args.claude_helper
 files['codex-app-server'] = args.codex_helper
 files['codex-code-mode-host'] = args.codex_code_mode_host
 manifest = {'version': 1, 'protocol_version': 1, 'target': args.target, 'codex_version': '0.147.0',

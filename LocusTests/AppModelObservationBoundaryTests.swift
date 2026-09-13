@@ -313,7 +313,8 @@ final class AppModelObservationBoundaryStructureTests: XCTestCase {
     func testReactiveViewsDoNotReachThroughAppModelFeatureFacades() throws {
         let allowedCompositionFile = "AppFeatureEnvironment.swift"
         let patterns = [
-            "providerAccountsModel", "voiceControl", "codexComponent", "agentTeamsModel",
+            "providerAccountsModel", "voiceControl", "codexComponent", "claudeComponent",
+            "agentTeamsModel",
             "teamRunLive", "landingFlow", "runs", "evaluations", "knowledge", "activity",
             "schedule", "backgroundServicesModel", "extensionsModel", "gitWorkspace",
             "workspaceFiles", "agentInstructions", "applicationContext", "toastCenter",

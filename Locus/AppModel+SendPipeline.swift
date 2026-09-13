@@ -62,7 +62,7 @@ extension AppModel {
             showToast("Slash commands are unavailable in private Identity tasks.")
             return
         }
-        if privateIdentity, capturedIdentityProvider?.provider == "chatgpt" {
+        if privateIdentity, ["chatgpt", "claude_plan"].contains(capturedIdentityProvider?.provider ?? "") {
             showToast("Choose Local Ollama or an API provider for a private Identity task.")
             return
         }

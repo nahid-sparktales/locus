@@ -38,6 +38,15 @@ if [[ -z "${LOCUS_BUNDLE_CODEX:-}" \
     LOCUS_BUNDLE_CODEX="component"
 fi
 
+if [[ -z "${LOCUS_BUNDLE_CLAUDE:-}" ]]; then
+    if [[ "${CONFIGURATION:-}" == "Release" \
+        && ( "${TARGET_NAME:-}" == "Locus" || "${TARGET_NAME:-}" == "LocusX" ) ]]; then
+        LOCUS_BUNDLE_CLAUDE="component"
+    else
+        LOCUS_BUNDLE_CLAUDE="build"
+    fi
+fi
+
 if [[ "${mode}" == "skip" ]]; then
     echo "note: LOCUS_BUNDLE_MODE=skip — agent runtime not bundled."
     exit 0
@@ -83,6 +92,27 @@ write_provenance() {
 }
 
 write_provenance
+
+bundle_claude_helper() {
+    [[ "${LOCUS_BUNDLE_CLAUDE}" == "skip" ]] && return 0
+    local arch="$(/usr/bin/uname -m)"
+    local claude_cache="${repo_root}/.claude-runtime/${arch}"
+    python3 "${script_dir}/PrepareClaudeRuntime.py" --target "macos-${arch}" --output "${claude_cache}"
+    /bin/mkdir -p "${resources}/ThirdPartyLicenses/claude"
+    for name in LICENSE NOTICE PROVENANCE; do
+        copy_without_extended_metadata "${claude_cache}/${name}" "${resources}/ThirdPartyLicenses/claude/${name}"
+    done
+    [[ "${LOCUS_BUNDLE_CLAUDE}" == "component" ]] && return 0
+    local helper="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/claude"
+    /bin/mkdir -p "${helper:h}"
+    copy_without_extended_metadata "${claude_cache}/claude" "${helper}"
+    local entitlements="${repo_root}/Config/CodexCodeModeHost.entitlements"
+    if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
+        entitlements="${repo_root}/Config/CodexCodeModeHostSandbox.entitlements"
+    fi
+    /usr/bin/codesign --force --options runtime --entitlements "${entitlements}" \
+        --identifier io.sparktales.locus.claude --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "${helper}"
+}
 
 bundle_codex_helper() {
     # build      embed the helpers in the app (App Store build, local Debug)
@@ -339,6 +369,7 @@ if ! bundle_standalone; then
     exit 1
 fi
 bundle_codex_helper
+bundle_claude_helper
 if [[ "${LOCUS_EDITION:-locus}" == "locusx" ]]; then
     "${script_dir}/PrepareWalletArchive.sh"
 fi

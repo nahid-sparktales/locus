@@ -278,8 +278,12 @@ def set_provider(
 def _apply_provider(service: ChatService, body: dict[str, Any]) -> dict[str, Any]:
     """Apply a provider request after the service has reserved mutable state."""
     provider = str(body.get("provider") or "").strip().lower()
-    if provider not in ("ollama", "remote", "chatgpt"):
-        raise HTTPException(422, "provider must be 'ollama', 'remote', or 'chatgpt'")
+    if provider not in ("ollama", "remote", "chatgpt", "claude_plan"):
+        raise HTTPException(422, "provider must be 'ollama', 'remote', 'chatgpt', or 'claude_plan'")
+
+    if provider == "claude_plan":
+        from .claude import select_claude
+        return select_claude(service, body)
 
     if provider == "ollama":
         try:
@@ -354,7 +358,7 @@ def _apply_provider(service: ChatService, body: dict[str, Any]) -> dict[str, Any
 
 
 def models(service: ServiceDependency) -> dict[str, Any]:
-    if service.core.provider == "chatgpt":
+    if service.core.provider in {"chatgpt", "claude_plan"}:
         try:
             return {
                 "models": [
@@ -370,7 +374,7 @@ def models(service: ServiceDependency) -> dict[str, Any]:
                             else None
                         ),
                     }
-                    for item in service.codex.models()
+                    for item in service.core.codex_manager.models()
                     if item.get("model") or item.get("id")
                 ],
                 "current": service.core.model,

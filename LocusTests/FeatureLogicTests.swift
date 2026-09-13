@@ -3614,7 +3614,7 @@ final class FeatureLogicTests: XCTestCase {
 
         XCTAssertEqual(restored.count, 1)
         XCTAssertEqual(restored[0].kind, .claude)
-        XCTAssertEqual(restored[0].displayName, "Claude — Work")
+        XCTAssertEqual(restored[0].displayName, "Claude API — Work")
         XCTAssertEqual(restored[0].resolvedBaseURL, "https://api.anthropic.com/v1")
         XCTAssertEqual(restored[0].credentialAccount, CredentialStore.providerAccountKey(account.id))
         XCTAssertFalse(encoded.contains("apikey"))
@@ -3826,8 +3826,8 @@ final class FeatureLogicTests: XCTestCase {
             ProviderAccountStore.uniqueName("Work", kind: .claude, existing: existing),
             "Work 2"
         )
-        // A different provider may reuse the name — "Claude — Work" and
-        // "Codex — Work" are already distinct.
+        // A different provider may reuse the name — "Claude API — Work" and
+        // "OpenAI API — Work" are already distinct.
         XCTAssertEqual(
             ProviderAccountStore.uniqueName("Personal", kind: .claude, existing: existing),
             "Personal"
@@ -3909,7 +3909,7 @@ final class FeatureLogicTests: XCTestCase {
             accountStatus: [kimi.id: .keyRejected]
         )
 
-        XCTAssertEqual(sections.map(\.title), ["Local (Ollama)", "Claude — Work", "Kimi"])
+        XCTAssertEqual(sections.map(\.title), ["Local (Ollama)", "Claude API — Work", "Kimi"])
         XCTAssertNil(sections[0].account)
         XCTAssertEqual(sections[1].models, ["claude-sonnet-4-5"])
         XCTAssertNil(sections[1].emptyMessage)

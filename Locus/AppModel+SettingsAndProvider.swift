@@ -328,9 +328,9 @@ extension AppModel {
             body["context_window"] = settings.localContextWindow ?? 0
             return body
         }
-        if account.kind == .chatGPT {
+        if account.kind.isManagedPlan {
             return [
-                "provider": "chatgpt",
+                "provider": account.kind.backendProvider,
                 "account_id": account.id.uuidString,
                 "codex_home_id": account.codexHomeIdentifier,
                 "account_label": account.displayName,
@@ -388,7 +388,7 @@ extension AppModel {
         let effort = resolvedReasoningEffort
         guard !effort.isEmpty else { return "" }
         let model = routedModel(for: account)
-        guard account.kind == .chatGPT else {
+        guard account.kind.isManagedPlan else {
             return account.kind.publishedReasoningEfforts(for: model)
                 .contains(effort) ? effort : ""
         }
@@ -409,7 +409,7 @@ extension AppModel {
     @discardableResult
     func applyProvider(verify: Bool = false, announce: Bool = true) async -> Bool {
         let account = activeAccount
-        if let account, account.kind != .chatGPT, account.resolvedBaseURL.isEmpty {
+        if let account, !account.kind.isManagedPlan, account.resolvedBaseURL.isEmpty {
             if announce {
                 showToast("Add the endpoint URL for \(account.displayName) in Settings")
             }
@@ -442,7 +442,7 @@ extension AppModel {
             }
             guard announce else { return true }
             showToast(
-                state.provider == "remote" || state.provider == "chatgpt"
+                state.provider == "remote" || state.provider == "chatgpt" || state.provider == "claude_plan"
                     ? "Using \(account?.displayName ?? shortHost(state.host))"
                     : "Using local Ollama"
             )

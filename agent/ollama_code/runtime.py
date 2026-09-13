@@ -16,6 +16,7 @@ from typing import Any
 import requests
 from websockets.asyncio.client import connect
 
+from .capabilities import enabled as capability_enabled
 from .runtime_store import PrivateStore, RuntimeStore, identifier
 
 TURN_COMMANDS = {"user_message", "retry_last", "evaluation_run"}
@@ -111,7 +112,7 @@ class RuntimeSupervisor:
                 "pending_approvals": self.store.decisions(), "max_active_chats": self.limit,
                 "active_work": sum(bool(worker.active_command) for worker in self.workers.values()),
                 "capabilities": {"durable_events": True, "background_schedules": True,
-                                 "desktop_requires_controller": True, "remote_chatgpt": True}}
+                                 "desktop_requires_controller": True, "remote_chatgpt": True, "remote_claude_plan": capability_enabled("claude_plan_v1")}}
 
     async def ensure_worker(self, session_id: str, workspace: str, *, keep_running: bool | None = None) -> Worker:
         identifier(session_id)

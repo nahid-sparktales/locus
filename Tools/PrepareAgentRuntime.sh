@@ -84,7 +84,8 @@ fi
     --target "${workdir}/site-packages" \
     --requirement "${requirements_lock}"
 /bin/rm -rf \
-    "${workdir}/site-packages/bin"
+    "${workdir}/site-packages/bin" \
+    "${workdir}/site-packages/claude_agent_sdk/_bundled"
 
 # Pre-compile EVERYTHING — stdlib included. The bundle is sealed by the app's
 # code signature after this; a .pyc written at first launch would break the

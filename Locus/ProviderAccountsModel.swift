@@ -116,11 +116,11 @@ final class ProviderAccountsModel: ObservableObject {
         guard !due.isEmpty else { return }
         let now = Date()
         for account in due { accountCatalogFetchedAt[account.id] = now }
-        for account in due where account.kind == .chatGPT {
+        for account in due where account.kind.isManagedPlan {
             do {
                 let response = try await backend.get(
-                    "/api/chatgpt/models",
-                    query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
+                    account.kind.managedAPIPath + "/models",
+                    query: [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)],
                     as: ChatGPTModelsResponse.self
                 )
                 let names = response.models.map(\.id)
@@ -132,7 +132,7 @@ final class ProviderAccountsModel: ObservableObject {
                 accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
             }
         }
-        let endpointAccounts = due.filter { $0.kind != .chatGPT }
+        let endpointAccounts = due.filter { !$0.kind.isManagedPlan }
         await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
             for account in endpointAccounts {
                 let credentialStore = credentialStore
@@ -177,13 +177,13 @@ final class ProviderAccountsModel: ObservableObject {
     }
 
     func noteLocalHost(from info: SessionInfo) {
-        guard info.provider != "remote", !info.host.isEmpty else { return }
+        guard info.provider == "ollama", !info.host.isEmpty else { return }
         lastOllamaHost = info.host
     }
 
     /// Refreshes every ChatGPT account, each against its own credential home.
     func refreshChatGPTAccounts(forceTokenRefresh: Bool = false) async {
-        for account in providerAccounts where account.kind == .chatGPT {
+        for account in providerAccounts where account.kind.isManagedPlan {
             await refreshChatGPTAccount(for: account, forceTokenRefresh: forceTokenRefresh)
         }
     }
@@ -193,21 +193,24 @@ final class ProviderAccountsModel: ObservableObject {
         forceTokenRefresh: Bool = false
     ) async {
         guard let backend else { return }
-        var query = [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)]
+        var query = [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)]
         if forceTokenRefresh {
             query.append(URLQueryItem(name: "refresh", value: "true"))
         }
         do {
             let state = try await backend.get(
-                "/api/chatgpt/account",
+                account.kind.managedAPIPath + "/account",
                 query: query,
                 as: ChatGPTAccountResponse.self
             )
             chatGPTAccounts[account.id] = state
+            if account.kind == .claudePlan && state.status == "signed_out" {
+                chatGPTLoginIDs[account.id] = nil
+            }
             accountStatus[account.id] = switch state.status {
             case "signed_in": .signedIn(email: state.email, plan: state.planType)
             case "runtime_unavailable":
-                .runtimeUnavailable(state.message ?? "The ChatGPT runtime is unavailable")
+                .runtimeUnavailable(state.message ?? "The subscription runtime is unavailable")
             case "signing_in": .signingIn
             default: .signedOut
             }
@@ -224,18 +227,19 @@ final class ProviderAccountsModel: ObservableObject {
         guard let backend else { return }
         do {
             let response = try await backend.post(
-                "/api/chatgpt/login/start",
-                body: ["account_id": account.codexHomeIdentifier],
+                account.kind.managedAPIPath + "/login/start",
+                body: ["account_id": account.managedHomeIdentifier],
                 as: ChatGPTLoginResponse.self
             )
             chatGPTLoginIDs[account.id] = response.loginID
             accountStatus[account.id] = .signingIn
+            if response.authURL.isEmpty { return }
             guard let url = URL(string: response.authURL), NSWorkspace.shared.open(url) else {
-                toastHandler("Could not open the ChatGPT sign-in page")
+                toastHandler("Could not open the subscription sign-in page")
                 return
             }
         } catch {
-            toastHandler("Could not start ChatGPT sign-in: \(error.localizedDescription)")
+            toastHandler("Could not start subscription sign-in: \(error.localizedDescription)")
             await refreshChatGPTAccount(for: account)
         }
     }
@@ -245,10 +249,10 @@ final class ProviderAccountsModel: ObservableObject {
         guard let loginID = chatGPTLoginIDs[account.id] else { return }
         do {
             let state = try await backend.post(
-                "/api/chatgpt/login/cancel",
+                account.kind.managedAPIPath + "/login/cancel",
                 body: [
                     "login_id": loginID,
-                    "account_id": account.codexHomeIdentifier,
+                    "account_id": account.managedHomeIdentifier,
                 ],
                 as: ChatGPTAccountResponse.self
             )
@@ -256,7 +260,7 @@ final class ProviderAccountsModel: ObservableObject {
             chatGPTAccounts[account.id] = state
             await refreshChatGPTAccount(for: account)
         } catch {
-            toastHandler("Could not cancel ChatGPT sign-in: \(error.localizedDescription)")
+            toastHandler("Could not cancel subscription sign-in: \(error.localizedDescription)")
         }
     }
 
@@ -264,8 +268,8 @@ final class ProviderAccountsModel: ObservableObject {
         guard let backend else { return }
         do {
             let state = try await backend.post(
-                "/api/chatgpt/logout",
-                body: ["account_id": account.codexHomeIdentifier],
+                account.kind.managedAPIPath + "/logout",
+                body: ["account_id": account.managedHomeIdentifier],
                 as: ChatGPTAccountResponse.self
             )
             chatGPTAccounts[account.id] = state
@@ -276,19 +280,19 @@ final class ProviderAccountsModel: ObservableObject {
             // of a second plan must leave a chat running on the first alone.
             await accountRoutingDeactivated(account.id)
         } catch {
-            toastHandler("Could not sign out of ChatGPT: \(error.localizedDescription)")
+            toastHandler("Could not sign out of the account: \(error.localizedDescription)")
         }
     }
 
     /// The plan usage of the ChatGPT account currently routing requests, which
     /// is the only one the usage dashboard's plan section can be about.
     var activeChatGPTUsage: ChatGPTUsageResponse? {
-        guard let account = activeAccountProvider(), account.kind == .chatGPT else { return nil }
+        guard let account = activeAccountProvider(), account.kind.isManagedPlan else { return nil }
         return chatGPTUsageByAccount[account.id]
     }
 
     func refreshActiveChatGPTUsage() async {
-        guard let account = activeAccountProvider(), account.kind == .chatGPT else { return }
+        guard let account = activeAccountProvider(), account.kind.isManagedPlan else { return }
         await refreshChatGPTUsage(for: account)
     }
 
@@ -300,11 +304,14 @@ final class ProviderAccountsModel: ObservableObject {
         }
         do {
             let usage = try await backend.get(
-                "/api/chatgpt/usage",
-                query: [URLQueryItem(name: "account_id", value: account.codexHomeIdentifier)],
+                account.kind.managedAPIPath + "/usage",
+                query: [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)],
                 as: ChatGPTUsageResponse.self
             )
             chatGPTUsageByAccount[account.id] = usage
+            if usage.limitStatus == "rejected" {
+                accountStatus[account.id] = .rateLimited(resetAt: usage.rateLimits.rateLimits?.primary?.resetsAt.map { Date(timeIntervalSince1970: Double($0)) })
+            }
             if let window = usage.rateLimits.rateLimits?.primary,
                window.usedPercent >= 100
             {
