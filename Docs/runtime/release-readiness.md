@@ -45,6 +45,9 @@ Select the archive and checksum in Settings → Runtimes. SHA-256 verifies the
 selected artifact's integrity; it is not a replacement for trusted distribution or
 the separate signed desktop Service Management helper. The lower-level
 `Tools/PackageRemoteRuntime.py` remains available for an already prepared layout.
+Its optional `--claude-helper` accepts the pinned Claude runtime. Packages without
+that binary disable Claude plan capability explicitly; including the verified
+binary enables it. The standard candidate builder currently includes Codex only.
 
 ## Update transaction and recovery
 

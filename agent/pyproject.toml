@@ -14,6 +14,7 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["../LICENSE"]
 dependencies = [
+    "claude-agent-sdk==0.2.152",
     "requests>=2.31",
     "rich>=13.7",
     "prompt_toolkit>=3.0",

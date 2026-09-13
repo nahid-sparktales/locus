@@ -44,7 +44,7 @@ def execution_manifest(capsule: dict, profiles: list[dict], run_id: str) -> dict
         members.append(reviewer)
     for profile in members:
         route = profile.get("route") or {}
-        if route.get("provider") in {"chatgpt", "ollama"} or str(route.get("account_kind") or "").lower().replace("_", "") == "kimicode":
+        if route.get("provider") in {"chatgpt", "claude_plan", "ollama"} or str(route.get("account_kind") or "").lower().replace("_", "") == "kimicode":
             profile["metering"] = "self_hosted"
             profile.pop("input_cost_per_million", None)
             profile.pop("output_cost_per_million", None)

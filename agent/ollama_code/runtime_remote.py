@@ -153,7 +153,30 @@ class RemoteRuntimes:
         self.disconnect(key)
         return result
 
-    def login(self, key, account_id, method):
+    def login(self, key, account_id, method, provider="chatgpt"):
+        if provider == "claude_plan":
+            from urllib.parse import parse_qs, urlsplit
+            status = self.request(key, "GET", "/api/runtime")
+            if not status.get("capabilities", {}).get("remote_claude_plan"):
+                raise ValueError("This host does not advertise Claude plan support. Update and enable its runtime first.")
+            result = self.request(key, "POST", "/api/claude/login/start", {"account_id": account_id})
+            callback = parse_qs(urlsplit(result.get("auth_url", "")).query).get("redirect_uri", [""])[0]
+            address = urlsplit(callback)
+            if address.hostname in {"localhost", "127.0.0.1"} and address.port and address.port >= 1024:
+                existing = self.login_tunnels.pop(key, None)
+                if existing:
+                    existing.terminate()
+                base = ssh_arguments(self.record(key)["host"])
+                port = address.port
+                args = base[:-2] + ["-N", "-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"] + base[-2:]
+                process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.login_tunnels[key] = process
+                time.sleep(.3)
+                if process.poll() is not None:
+                    raise ValueError("The Claude login callback port is unavailable on this Mac.")
+            return result
+        if provider != "chatgpt":
+            raise ValueError("Unsupported subscription provider")
         if method == "browser":
             existing = self.login_tunnels.pop(key, None)
             if existing:

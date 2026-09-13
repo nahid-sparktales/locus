@@ -394,7 +394,7 @@ def _dispatch_companion_chat(
         if environment == "worktree" and not is_git_workspace(workspace_root):
             raise HTTPException(422, "mobile worktrees require a Git repository")
         provider = str(body.get("provider") or "ollama").strip().lower()
-        if provider not in {"ollama", "remote", "chatgpt"}:
+        if provider not in {"ollama", "remote", "chatgpt", "claude_plan"}:
             raise HTTPException(422, "provider is unavailable")
         account = str(body.get("provider_account_id") or "").strip()
         model = str(body.get("model") or "").strip()

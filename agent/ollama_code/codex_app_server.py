@@ -1036,6 +1036,7 @@ class CodexBrokerClient:
         should_interrupt: Callable[[], bool] | None = None,
         on_tick: Callable[[], None] | None = None,
         timeout: float = 1_800,
+        max_turns: int | None = None,
     ) -> dict[str, Any]:
         with self._connect() as socket:
             socket.send(json.dumps(self._request("turn_run", {
@@ -1047,6 +1048,7 @@ class CodexBrokerClient:
                 "effort": effort,
                 "output_schema": output_schema,
                 "timeout": timeout,
+                **({"max_turns": max_turns} if max_turns is not None else {}),
             })))
             while True:
                 if on_tick is not None:

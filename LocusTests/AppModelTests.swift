@@ -2684,7 +2684,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(body["model"] as? String, "claude-sonnet-4-5")
         XCTAssertEqual(body["api_key"] as? String, "sk-ant-secret")
         XCTAssertEqual(body["auth_style"] as? String, "anthropic")
-        XCTAssertEqual(body["account_label"] as? String, "Claude — Work")
+        XCTAssertEqual(body["account_label"] as? String, "Claude API — Work")
     }
 
     @MainActor
@@ -2887,6 +2887,9 @@ final class AppModelTests: XCTestCase {
         model.saveProviderAccount(ProviderAccount(kind: .chatGPT, name: "Work"), apiKey: nil)
         let account = try! XCTUnwrap(model.providerAccounts.first)
         model.settings.activeAccountID = account.id.uuidString
+        // Seeded for the same reason: a real workspace profile carrying an
+        // effort would answer here instead of the account's own default.
+        model.workspaceProfiles = [seededProfile(path: model.workspacePath)]
 
         let body = model.providerRequestBody()
         XCTAssertEqual(body["provider"] as? String, "chatgpt")
@@ -2909,6 +2912,10 @@ final class AppModelTests: XCTestCase {
         account.codexReasoningEffort = "xhigh"
         model.saveProviderAccount(account, apiKey: nil)
         model.settings.activeAccountID = account.id.uuidString
+        // Seeded with no effort of its own: profiles are read from the real
+        // defaults even with persistence off, so a workspace on this machine
+        // that had chosen Auto would override the account and empty the field.
+        model.workspaceProfiles = [seededProfile(path: model.workspacePath)]
 
         let body = model.providerRequestBody()
         XCTAssertEqual(body["native_mode"] as? Bool, false)
@@ -3221,7 +3228,7 @@ final class AppModelTests: XCTestCase {
 
         let account = seedAccount(model, kind: .claude, name: "Work")
         model.settings.activeAccountID = account.id.uuidString
-        XCTAssertEqual(model.providerLabel, "Claude ready")
+        XCTAssertEqual(model.providerLabel, "Claude API ready")
     }
 
     @MainActor

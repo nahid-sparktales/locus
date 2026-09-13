@@ -282,7 +282,7 @@ async def remote_control(runtime_id: str, request: Request, body: dict = Body(de
 
 
 async def remote_login(runtime_id: str, request: Request, body: dict = Body(default_factory=dict)):
-    return await invoke(remotes(request).login, runtime_id, str(body.get("account_id", "")), str(body.get("method", "device_code")))
+    return await invoke(remotes(request).login, runtime_id, str(body.get("account_id", "")), str(body.get("method", "device_code")), str(body.get("provider", "chatgpt")))
 
 
 async def retry_deployment(runtime_id: str, deployment_id: str, request: Request):

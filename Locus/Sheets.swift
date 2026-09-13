@@ -3065,7 +3065,7 @@ struct SettingsView: View {
                     // Menu flattens custom Label icons: monogram logos (A, K, …)
                     // replace the item title with invisible white text, so the
                     // dropdown stays text-only.
-                    ForEach(ProviderKind.allCases) { kind in
+                    ForEach(ProviderKind.allCases.filter { $0 != .claudePlan || model.claudePlanEnabled }) { kind in
                         Button(kind.title) {
                             addingAccount = ProviderAccount(kind: kind)
                         }
@@ -3073,7 +3073,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.accounts.add")
 
-                Text("API accounts keep their keys in \(CredentialStore.displayPath), readable only by your macOS user account. ChatGPT plan sign-in is isolated in OpenAI's managed runtime and its tokens never enter Locus account files.")
+                Text("API accounts keep their keys in \(CredentialStore.displayPath), readable only by your macOS user account. Subscription sign-in is isolated in each provider's managed runtime and its tokens never enter Locus account files.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3399,7 +3399,7 @@ struct SettingsView: View {
     private func accountDetail(_ account: ProviderAccount) -> String {
         let status = providerAccounts.accountStatus[account.id]
             ?? (account.hasKey(in: model.credentialStore) ? .keySaved : .noKey)
-        if account.kind == .chatGPT,
+        if account.kind.isManagedPlan,
            let window = providerAccounts.chatGPTUsageByAccount[account.id]?.rateLimits.rateLimits?.primary
         {
             let reset = window.resetsAt.map {
@@ -3410,7 +3410,10 @@ struct SettingsView: View {
                 .activity.summary?.lifetimeTokens.map {
                 $0.formatted(.number.notation(.compactName)) + " activity tokens"
             }
-            return [status.summary, "\(window.usedPercent)% used", reset, activity]
+            let observed = providerAccounts.chatGPTUsageByAccount[account.id]?.observedAt.map {
+                "updated " + Date(timeIntervalSince1970: $0).formatted(.relative(presentation: .named))
+            }
+            return [status.summary, "\(window.usedPercent)% used", reset, activity, observed]
                 .compactMap { $0 }
                 .joined(separator: " · ")
         }

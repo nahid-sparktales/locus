@@ -16,6 +16,7 @@ anyio==4.14.2 \
     --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
     --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
+    #   claude-agent-sdk
     #   httpx2
     #   mcp
     #   sse-starlette
@@ -227,6 +228,14 @@ charset-normalizer==3.4.9 \
     --hash=sha256:fa36ec09ef71d158186bc79e359ff5fdd6e7996fe8ab638f00d6b93139ba4fcf \
     --hash=sha256:fe2c7201c642b7c308f1675355ad7ff7b66acfe3541625efe5a3ad38f29d6115
     # via requests
+claude-agent-sdk==0.2.152 \
+    --hash=sha256:0822bbdf700ccdd1acecf8365345a56bde07833afe7f8bd1bee68cba0e2fcf9a \
+    --hash=sha256:1e5b619e6fa3c98f06ddc107652f7820c4573fb73a9a24263568d9974078bbc2 \
+    --hash=sha256:6cc1e949743c7634274ae526bfd1c0a216ff9d71c6b36d94cab80f32b0d32b4c \
+    --hash=sha256:9c79c4ef91b15e5fae6aba62a82afb983dc360bc159902c541046227e2852c86 \
+    --hash=sha256:f422c256358997ffa3a740f9fdc8127aa8404a9d57493502dc7d2ac05ecb5486 \
+    --hash=sha256:f885bd935054082a599dcf92bbdaf3c0b853117a79375cb3aae74674a8124326
+    # via -r agent/requirements-runtime.in
 click==8.4.2 \
     --hash=sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6 \
     --hash=sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76
@@ -319,7 +328,9 @@ idna==3.18 \
 jsonschema==4.26.0 \
     --hash=sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326 \
     --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
-    # via mcp
+    # via
+    #   claude-agent-sdk
+    #   mcp
 jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
@@ -509,7 +520,9 @@ markdown-it-py==4.2.0 \
 mcp==2.0.0 \
     --hash=sha256:0f440e735c13ece8bb19bc62cf0b86f4313448432fbb77d35e14034f4e050728 \
     --hash=sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6
-    # via -r agent/requirements-runtime.in
+    # via
+    #   -r agent/requirements-runtime.in
+    #   claude-agent-sdk
 mcp-types==2.0.0 \
     --hash=sha256:6b2de797ca2797f568b79529e1b25948e34de511bcc0bd82fef1039a6d1b8eb0 \
     --hash=sha256:d7d939b9285c9961ae8866ba75ef85da34d12bafe276efbf4eb6a131786d8379
@@ -860,6 +873,10 @@ rpds-py==2026.6.3 \
     # via
     #   jsonschema
     #   referencing
+sniffio==1.3.1 \
+    --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
+    --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
+    # via claude-agent-sdk
 socksio==1.0.0 \
     --hash=sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3 \
     --hash=sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac

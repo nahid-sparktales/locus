@@ -84,6 +84,42 @@ def test_package_rejects_external_links_wrong_target_and_private_files(layout, t
     assert not output.exists()
 
 
+def test_optional_claude_helper_is_versioned_hashed_and_relocatable(layout, tmp_path, monkeypatch):
+    helper = tmp_path / "claude"
+    helper.write_bytes(b"pinned Claude fixture")
+    helper.chmod(0o700)
+    monkeypatch.setattr(packager.subprocess, "run", lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=0, stdout="2.1.259 (Claude Code)\n"))
+    output = tmp_path / "with-claude.tar.gz"
+    checksum = packager.package_runtime(*layout, "linux-arm64", output, claude_helper=helper)
+    installed = installer.extract_package(output.read_bytes(), checksum, tmp_path / "relocated", "linux-arm64")
+    assert (installed / "claude-runtime").read_bytes() == helper.read_bytes()
+    assert json.loads((installed / "manifest.json").read_text())["files"]["claude-runtime"] == packager.digest(helper)
+    second = tmp_path / "same-claude.tar.gz"
+    assert packager.package_runtime(*layout, "linux-arm64", second, claude_helper=helper) == checksum
+    monkeypatch.setattr(packager.subprocess, "run", lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=0, stdout="2.1.260 (Claude Code)\n"))
+    with pytest.raises(ValueError, match="pinned to version"):
+        packager.package_runtime(*layout, "linux-arm64", tmp_path / "wrong-version.tar.gz", claude_helper=helper)
+    assert not (tmp_path / "wrong-version.tar.gz").exists()
+
+
+@pytest.mark.parametrize("system", ["Linux", "Darwin"])
+def test_service_definition_preserves_claude_opt_in_and_package_identity(tmp_path, system):
+    package = tmp_path / "versions" / ("a" * 64)
+    package.mkdir(parents=True)
+    _, ordinary = installer.service_definition({"system": system}, tmp_path, package, 8793, "fixture")
+    assert "LOCUS_CLAUDE_RUNTIME_PATH" not in ordinary
+    assert ordinary["LOCUS_CAPABILITY_CLAUDE_PLAN_V1"] == "0"
+    (package / "claude-runtime").write_bytes(b"verified helper")
+    unit, environment = installer.service_definition({"system": system}, tmp_path, package, 8793, "fixture")
+    assert environment["LOCUS_CLAUDE_RUNTIME_PATH"] == str(package / "claude-runtime")
+    assert environment["LOCUS_CAPABILITY_CLAUDE_PLAN_V1"] == "1"
+    assert environment["LOCUS_CODEX_HELPER_KIND"] == "cli"
+    assert environment["LOCUS_RUNTIME_PACKAGE_ID"] == package.name
+    assert b"LOCUS_CAPABILITY_CLAUDE_PLAN_V1" in unit
+
+
 def test_reused_package_cannot_rewrite_its_own_trust_manifest(layout, tmp_path):
     output = tmp_path / "package.tar.gz"
     checksum = packager.package_runtime(*layout, "linux-arm64", output)
@@ -252,6 +288,19 @@ def test_failed_update_restores_unit_package_and_consumed_allowances(installatio
         assert db.execute("SELECT value FROM evidence").fetchone()[0] == "consumed allowance"
     assert list((value.root / "install-backups").rglob("*.sqlite3"))
     assert not (value.database.parent / "new-feature.sqlite3").exists()
+
+
+def test_wrong_claude_version_is_rejected_before_stopping_previous_service(installation, monkeypatch):
+    value = installation
+    (value.candidate / "claude-runtime").write_bytes(b"wrong version")
+    monkeypatch.setattr(installer.subprocess, "run", lambda command, **_kwargs: SimpleNamespace(
+        returncode=0, stdout="2.1.260 (Claude Code)\n" if command[0].endswith("claude-runtime") else "codex-cli 0.147.0\n"))
+    with pytest.raises(ValueError, match="Claude runtime does not match"):
+        installer.install(value.header, b"fixture")
+    assert value.state["running"] and value.state["starts"] == []
+    assert value.unit.read_bytes() == b"old-unit"
+    assert (value.root / "current").resolve() == value.previous
+    assert not (value.root / "installation.json").exists()
 
 
 def test_failed_recovery_retains_journal_and_blocks_service_start(installation, monkeypatch):

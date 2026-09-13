@@ -428,7 +428,7 @@ def configuration_snapshot(core, case: dict, manifest: dict) -> dict:
              "mode": case.get("mode", "write"), "target": case.get("target", "team"),
              "model_version": config.get("model_version", "unreported"),
              "effort": config.get("chatgpt_reasoning_effort", config.get("reasoning_effort")),
-             "account_class": "subscription" if getattr(core, "provider", "") == "chatgpt" else "local" if getattr(core, "provider", "") == "ollama" else "metered",
+             "account_class": "subscription" if getattr(core, "provider", "") in {"chatgpt", "claude_plan"} else "local" if getattr(core, "provider", "") == "ollama" else "metered",
              "recipe": manifest.get("team") or {}, "profiles": profiles,
              "tools": "local_evaluation", "permissions": "isolated_workspace", "app_version": __import__("ollama_code").__version__}
     value["fingerprint"] = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

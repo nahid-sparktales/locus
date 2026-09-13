@@ -16,6 +16,7 @@ from pathlib import Path
 
 TARGETS = ("linux-x86_64", "linux-arm64", "macos-arm64")
 CODEX_VERSION = "0.147.0"
+CLAUDE_VERSION = "2.1.259"
 
 
 def host_target() -> str:
@@ -71,7 +72,7 @@ def check_runtime(runtime: Path, helper: Path) -> None:
             raise ValueError("The prepared Python runtime cannot import its dependencies in isolation")
 
 
-def package_runtime(runtime: Path, helper: Path, code_host: Path, target: str, output: Path) -> str:
+def package_runtime(runtime: Path, helper: Path, code_host: Path, target: str, output: Path, *, claude_helper: Path | None = None) -> str:
     if target not in TARGETS or host_target() != target:
         raise ValueError("Build and validate this package on its target operating system and architecture")
     runtime = runtime.resolve(strict=True)
@@ -83,6 +84,13 @@ def package_runtime(runtime: Path, helper: Path, code_host: Path, target: str, o
         if not path.is_file() or not os.access(path, os.X_OK):
             raise ValueError("Both pinned ChatGPT helper executables are required")
     check_runtime(runtime, helper)
+    if claude_helper is not None:
+        if not claude_helper.is_file() or not os.access(claude_helper, os.X_OK):
+            raise ValueError("The optional Claude runtime must be executable")
+        version = subprocess.run([str(claude_helper.resolve()), "--version"], capture_output=True, text=True, timeout=20, check=False)
+        if version.returncode or not version.stdout.startswith(CLAUDE_VERSION + " "):
+            raise ValueError("The Claude runtime must be pinned to version " + CLAUDE_VERSION)
+        files["claude-runtime"] = claude_helper
     files.update({"codex-app-server": helper, "codex-code-mode-host": code_host})
     hashes = {name: digest(path) for name, path in sorted(files.items())}
     manifest = {"version": 1, "protocol_version": 1, "target": target, "codex_version": CODEX_VERSION, "files": hashes}
@@ -115,10 +123,12 @@ def main() -> None:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--codex-helper", type=Path, required=True)
     parser.add_argument("--codex-code-mode-host", type=Path, required=True)
+    parser.add_argument("--claude-helper", type=Path)
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    checksum = package_runtime(args.runtime, args.codex_helper, args.codex_code_mode_host, args.target, args.output)
+    checksum = package_runtime(args.runtime, args.codex_helper, args.codex_code_mode_host, args.target, args.output,
+                               claude_helper=args.claude_helper)
     print(json.dumps({"target": args.target, "package": args.output.name, "sha256": checksum}))
 
 

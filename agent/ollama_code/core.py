@@ -387,9 +387,9 @@ class AgentCore:
                 )
                 self.config["remote_api_key"] = ""
                 self._build_remote_client()
-        elif self.provider == "chatgpt":
-            self.host = "chatgpt://managed"
-            self.model = model or str(self.config.get("chatgpt_model") or "")
+        elif self.provider in {"chatgpt", "claude_plan"}:
+            self.host = f"{self.provider}://managed"
+            self.model = model or str(self.config.get(f"{self.provider}_model") or "")
         # Injected by ChatService. Keeping the transport out of Swift and out
         # of provider clients prevents managed OAuth from ever entering an API
         # key route.
@@ -525,7 +525,7 @@ class AgentCore:
         self._event_handler = handler
 
     def _emit(self, event: dict[str, Any]) -> None:
-        if self.provider == "chatgpt" and not self.identity_mode and event.get("type") == "tool_result":
+        if self.provider in {"chatgpt", "claude_plan"} and not self.identity_mode and event.get("type") == "tool_result":
             self.session.append_strict({"type": "native_tool_observation", **{
                 key: event[key] for key in ("tool", "id", "summary", "result", "ok", "denied") if key in event}})
         if getattr(self, "capsule_runtime", None) is not None and event.get("type") == "model_usage":
@@ -788,8 +788,8 @@ class AgentCore:
         actually is. Strong self-identifying models broke through; compliant
         ones did not, which read as smart models "knowing" and others not.
         """
-        if self.provider == "chatgpt":
-            provider_label = str(self.config.get("chatgpt_account_label") or "ChatGPT plan")
+        if self.provider in {"chatgpt", "claude_plan"}:
+            provider_label = str(self.config.get(f"{self.provider}_account_label") or ("Claude plan" if self.provider == "claude_plan" else "ChatGPT plan"))
         elif self.provider == "remote":
             provider_label = (
                 str(self.config.get("remote_account_label") or "").strip()
@@ -957,7 +957,7 @@ class AgentCore:
 
     def ensure_model(self) -> str | None:
         """Pick a model if unset. Returns a warning or None. Raises OllamaError."""
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             return None
         names = [m.get("name") for m in self.client.list_models() if m.get("name")]
         if not names:
@@ -991,7 +991,7 @@ class AgentCore:
         endpoint that states its own window deserves a working meter just as
         much as a local model does.
         """
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             # App Server reports token activity, but does not expose a stable
             # context-window contract through account/model metadata.
             self.context_limit = 0
@@ -1539,6 +1539,36 @@ class AgentCore:
         self.reset_system_message()
         self._emit_info()
 
+    def use_claude_plan(self, *, account_id: str, model: str, account_label: str,
+                        manager: Any, reasoning_effort: str = "") -> None:
+        from .capabilities import enabled
+        if not enabled("claude_plan_v1"):
+            raise ValueError("Claude plan support is not enabled in this release.")
+        identity = manager.account().get("account")
+        if not identity or identity.get("type") != "claude_plan":
+            raise ValueError("Sign in with a Claude subscription before selecting this account.")
+        selected = model.strip() or "default"
+        if reasoning_effort and hasattr(manager, "models"):
+            row = next((row for row in manager.models() if (row.get("model") or row.get("id")) == selected), {})
+            supported = {option["effort"] for option in row.get("supportedReasoningEfforts", [])}
+            if reasoning_effort not in supported:
+                raise ValueError("The selected Claude model does not advertise that reasoning effort.")
+        changed = self.provider != "claude_plan" or self.account_id != account_id or self.model != selected
+        self.provider = "claude_plan"
+        self.host = "claude_plan://managed"
+        self.model = selected
+        self.codex_manager = manager
+        self.config.update(provider=self.provider, claude_plan_account_id=account_id,
+                           claude_plan_account_label=account_label.strip() or "Claude plan",
+                           claude_plan_model=selected, claude_plan_reasoning_effort=reasoning_effort,
+                           remote_api_key="")
+        if changed:
+            self._clear_chatgpt_thread()
+        self.refresh_context_limit()
+        save_config(self.config)
+        self.reset_system_message()
+        self._emit_info()
+
     def provider_state(self) -> dict[str, Any]:
         """Provider description for the UI. Never includes the key itself."""
         return {
@@ -1571,8 +1601,8 @@ class AgentCore:
     @property
     def account_label(self) -> str:
         """The app's name for the account in use, or "" for local Ollama."""
-        if self.provider == "chatgpt":
-            return str(self.config.get("chatgpt_account_label") or "ChatGPT plan")
+        if self.provider in {"chatgpt", "claude_plan"}:
+            return str(self.config.get(f"{self.provider}_account_label") or ("Claude plan" if self.provider == "claude_plan" else "ChatGPT plan"))
         if self.provider != "remote":
             return ""
         return str(self.config.get("remote_account_label") or "")
@@ -1580,8 +1610,8 @@ class AgentCore:
     @property
     def account_id(self) -> str:
         """The stable native account identifier for persisted background work."""
-        if self.provider == "chatgpt":
-            return str(self.config.get("chatgpt_account_id") or "")
+        if self.provider in {"chatgpt", "claude_plan"}:
+            return str(self.config.get(f"{self.provider}_account_id") or "")
         if self.provider != "remote":
             return ""
         return str(self.config.get("remote_account_id") or "")
@@ -1604,7 +1634,7 @@ class AgentCore:
         wanted = name.strip()
         if not wanted:
             return None
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             return wanted
         if self.provider == "remote" and not getattr(self.client, "lists_models", True):
             return wanted
@@ -1623,8 +1653,8 @@ class AgentCore:
         self.model = name
         # Each provider remembers its own model, so switching back and forth
         # does not clobber the other's choice.
-        if self.provider == "chatgpt":
-            self.config["chatgpt_model"] = name
+        if self.provider in {"chatgpt", "claude_plan"}:
+            self.config[f"{self.provider}_model"] = name
             self._clear_chatgpt_thread()
         elif self.provider == "remote":
             self.config["remote_model"] = name
@@ -2054,11 +2084,11 @@ class AgentCore:
         self._compaction_completion_pending = 0
         self._compaction_call_limit = model_call_limit
         self._context_preservation_error = ""
-        if self.identity_mode and self.provider == "chatgpt":
+        if self.identity_mode and self.provider in {"chatgpt", "claude_plan"}:
             self._emit({"type": "error", "message": "Private Identity tasks require a local model or an API provider. Managed ChatGPT retains provider-side thread context and cannot use private vault sources."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
             return
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             self._run_chatgpt_turn(
                 user_text,
                 decider,
@@ -2147,7 +2177,7 @@ class AgentCore:
             persist=persist_user_message,
         )
         parity = self.chatgpt_parity_active(allow_tools)
-        effort = str(self.config.get("chatgpt_reasoning_effort") or "")
+        effort = str(self.config.get(f"{self.provider}_reasoning_effort") or "")
         if parity:
             # Codex-native contract: the helper applies the model's own base
             # prompt, tools mirror the Codex surface, and the fingerprint
@@ -2187,6 +2217,9 @@ class AgentCore:
                     instructions += "\n\n" + extension_prompt
             thread_options = None
             fingerprint = hashlib.sha256(json.dumps({
+                "provider": self.provider,
+                "account_id": self.account_id,
+                "session_id": self.session.session_id if self.provider == "claude_plan" else None,
                 "cwd": self.cwd,
                 "model": self.model,
                 "instructions": instructions,
@@ -2194,6 +2227,8 @@ class AgentCore:
             }, sort_keys=True, default=str).encode()).hexdigest()
         manager = self.codex_manager
         def run_managed(**kwargs):
+            if self.provider == "claude_plan":
+                kwargs["max_turns"] = dynamic_call_limit
             if self._interrupt.is_set():
                 return {"status": "interrupted"}
             # Older in-process adapters predate correlated turn/start input.
@@ -2215,14 +2250,14 @@ class AgentCore:
             if isinstance(completed, dict):
                 if completed.get("status") == "failed":
                     failure = completed.get("error") or {}
-                    raise CodexAppServerError(str(failure.get("message") or "ChatGPT turn failed"))
+                    raise CodexAppServerError(str(failure.get("message") or "Subscription turn failed"))
                 if completed.get("status") == "interrupted":
                     self._interrupt.set()
             return completed
 
         if manager is None:
             reason = "error"
-            self._emit({"type": "error", "message": "The ChatGPT runtime is unavailable."})
+            self._emit({"type": "error", "message": "The selected subscription runtime is unavailable."})
         else:
             try:
                 # The account home's config.toml must agree with the thread
@@ -2254,6 +2289,8 @@ class AgentCore:
                             )
                             self._chatgpt_thread_needs_resume = False
                         except CodexAppServerError:
+                            if self.provider == "claude_plan":
+                                raise
                             # App Server may have lost or compacted the stored
                             # thread. The Locus transcript is authoritative, so
                             # rebuild below without changing provider routes.
@@ -2497,7 +2534,7 @@ class AgentCore:
                             self._interrupt.set()
                         elif completed.get("status") == "failed":
                             failure = completed.get("error") or {}
-                            raise CodexAppServerError(str(failure.get("message") or "ChatGPT turn failed"))
+                            raise CodexAppServerError(str(failure.get("message") or "Subscription turn failed"))
                     if method in {"item/started", "item/completed"}:
                         user_item = params.get("item") or {}
                         if user_item.get("type") == "userMessage":
@@ -2599,7 +2636,7 @@ class AgentCore:
                                 prompt = max(int(last.get("inputTokens") or 0), 0)
                                 completion = max(int(last.get("outputTokens") or 0), 0)
                                 if prompt or completion:
-                                    native_model_calls += 1
+                                    native_model_calls += max(int(candidate.get("modelCalls") or 1), 1)
                                     native_prompt_tokens += prompt
                                     native_completion_tokens += completion
                                     self._emit({"type": "model_usage", "model_calls": native_model_calls + self._compaction_calls_pending,
@@ -2611,7 +2648,7 @@ class AgentCore:
                                     # the window is carrying.
                                     self._measured_prompt_tokens = prompt
                     elif method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
-                        raise RuntimeError("ChatGPT helper requested a disabled native approval")
+                        raise RuntimeError("Subscription helper requested a disabled native approval")
 
                 def handle_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
                     nonlocal native_tool_steps, native_tool_requests
@@ -2835,8 +2872,9 @@ class AgentCore:
                 reason = "interrupted" if self._interrupt.is_set() else "error"
                 self._emit({"type": "error", "message": str(error)})
                 # A crashed or incompatible helper thread is never silently
-                # reused. The canonical Locus transcript remains untouched.
-                self._clear_chatgpt_thread()
+                # reused. Claude keeps an uncertainty marker to prevent replay.
+                if self.provider != "claude_plan":
+                    self._clear_chatgpt_thread()
         # A later transport or delivery error cannot erase metered calls that
         # were already observed. Successful turns may include a larger totals
         # delta; retain it without adding the per-call counters twice.
@@ -3179,7 +3217,7 @@ class AgentCore:
             self._emit({"type": "error", "message": "Nothing to regenerate yet."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
             return False
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             original = dict(self.messages[index])
             self.messages = self.messages[:index]
             self.session = self._new_session_store()
@@ -4061,6 +4099,10 @@ class AgentCore:
         execution_lock: Any | None = None,
         track_active: bool = True,
     ) -> str:
+        if (self.provider == "claude_plan" and self.agent_mode in {"plan", "grill"}
+                and tc.name not in {"ask_user_question", "submit_plan", "todo_write", "attach_output_parts", "get_goal"}
+                and not self.tool_registry.is_read_only_tool(tc.name)):
+            return "Error: Plan mode does not allow this tool to change files or external state."
         if tc.name == "attach_output_parts":
             if (self.identity_mode or not self._turn_allows_tools or self.agent_role_contract
                     or not track_active or getattr(self, "helper_allowed_tools", None) is not None):
@@ -4387,13 +4429,13 @@ class AgentCore:
         if capsule_action:
             self.capsule_runtime.action_finished(call_id, result)
         if goal_action:
-            if self.provider != "chatgpt" and self._in_tool_call and track_active and not getattr(self, "_verification_running", False):
+            if self.provider not in {"chatgpt", "claude_plan"} and self._in_tool_call and track_active and not getattr(self, "_verification_running", False):
                 self._goal_pending_actions[id(tc)] = (call_id, ok, result)
             else:
                 self.goal_runtime.finish_action(call_id, ok=ok, result=result)
         activity_label = self._verified_activity_label(tc, effects) if ok else ""
         if activity_label:
-            if self.provider == "chatgpt":
+            if self.provider in {"chatgpt", "claude_plan"}:
                 self._persist_display_message({"role": "tool", "name": tc.name, "content": result,
                                                "_display_only": True, "_item_id": call_id,
                                                "_activity_label": activity_label})
@@ -4741,7 +4783,7 @@ class AgentCore:
             elif record.get("type") in {"plan_ready", "task_plan"} and isinstance(record.get("plan"), dict):
                 self.tool_ctx.plan_document = record["plan"]
         self._clear_chatgpt_thread()
-        if self.provider == "chatgpt":
+        if self.provider in {"chatgpt", "claude_plan"}:
             marker = SessionStore.chatgpt_thread_state(path)
             if marker is not None:
                 self._chatgpt_thread_id = str(marker["thread_id"])

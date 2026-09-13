@@ -64,7 +64,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SparkTales Inc.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Locus uses your private network only when you enable Mobile Access and pair a phone.</string>
+	<string>Locus uses your private network to reach model servers you run yourself, such as Ollama on another machine, and when you enable Mobile Access and pair a phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Locus uses the microphone for dictation, voice conversations, and websites you explicitly allow.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

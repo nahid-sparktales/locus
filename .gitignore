@@ -31,6 +31,7 @@ WalletSignerCore/target/
 # Bundled agent runtime cache (downloaded standalone Python + deps)
 .agent-runtime/
 .codex-app-server/
+.claude-runtime/
 
 # Python (agent/)
 agent/.venv/

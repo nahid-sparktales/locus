@@ -195,8 +195,13 @@ def service_definition(info, root, package, port, label):
                    "OLLAMA_CODE_HOME": str(root / "profile"), "LOCUS_CODEX_HOME": str(root / "accounts"),
                    "LOCUS_CODEX_APP_SERVER_PATH": str(package / "codex-app-server"),
                    "LOCUS_CODEX_HELPER_KIND": "cli",
+                   "LOCUS_CAPABILITY_CLAUDE_PLAN_V1": "0",
                    "LOCUS_RUNTIME_PACKAGE_ID": package.name, "LOCUS_DOCUMENT_COORDINATOR": "1",
                    "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+    if (package / "claude-runtime").exists():
+        environment["LOCUS_CLAUDE_RUNTIME_PATH"] = str(package / "claude-runtime")
+        # Including the optional runtime is the release builder's explicit opt-in.
+        environment["LOCUS_CAPABILITY_CLAUDE_PLAN_V1"] = "1"
     arguments = [python, "-m", "ollama_code.runtime", "--home", str(root), "--port", str(port), "--cwd", str(root / "workspaces")]
     if info["system"] == "Linux":
         def quoted(value):
@@ -337,6 +342,10 @@ def install(header, data):
         helper = subprocess.run([str(package / "codex-app-server"), "--version"], capture_output=True, text=True, timeout=20)
         if helper.returncode or helper.stdout.strip() != "codex-cli 0.147.0":
             raise ValueError("The packaged ChatGPT helper does not match pinned version 0.147.0")
+        if (package / "claude-runtime").exists():
+            claude = subprocess.run([str(package / "claude-runtime"), "--version"], capture_output=True, text=True, timeout=20)
+            if claude.returncode or not claude.stdout.startswith("2.1.259 "):
+                raise ValueError("The packaged Claude runtime does not match pinned version 2.1.259")
         definition, environment = service_definition(info, root, package, port, label)
         with tempfile.TemporaryDirectory(prefix=".preflight-", dir=root) as temporary:
             check_environment = {**os.environ, **environment, "OLLAMA_CODE_HOME": str(Path(temporary) / "profile"),

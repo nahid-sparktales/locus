@@ -13,7 +13,7 @@ MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
 SCHEDULE_MODES = {"ask", "work", "plan", "grill", "build"}
 SCHEDULE_RUNNERS = {"solo", "solo_swarm", "team"}
 SCHEDULE_ENVIRONMENTS = {"local", "worktree"}
-SCHEDULE_PROVIDERS = {"ollama", "remote", "chatgpt"}
+SCHEDULE_PROVIDERS = {"ollama", "remote", "chatgpt", "claude_plan"}
 INTERVAL_UNITS = {
     "minutes": 60,
     "hours": 60 * 60,
@@ -92,7 +92,7 @@ def normalize_schedule(value: Any, *, now: float) -> dict[str, Any]:
         raise ScheduleValidationError("team_id is required for a team schedule")
     provider = str(value.get("provider") or "ollama").strip().lower()
     if provider not in SCHEDULE_PROVIDERS:
-        raise ScheduleValidationError("provider must be ollama, remote, or chatgpt")
+        raise ScheduleValidationError("provider must be ollama, remote, chatgpt, or claude_plan")
     provider_account_id = str(value.get("provider_account_id") or "").strip()[:160]
     if provider != "ollama" and not provider_account_id:
         raise ScheduleValidationError("provider_account_id is required for hosted schedules")

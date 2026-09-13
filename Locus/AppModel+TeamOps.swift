@@ -106,9 +106,9 @@ extension AppModel {
                 guard let account = providerAccounts.first(where: { $0.id == accountID }),
                       account.isCredentialReady(in: credentialStore)
                 else { return nil }
-                if account.kind == .chatGPT {
+                if account.kind.isManagedPlan {
                     route = [
-                        "provider": "chatgpt",
+                        "provider": account.kind.backendProvider,
                         "account_id": account.id.uuidString,
                         "codex_home_id": account.codexHomeIdentifier,
                         "account_label": account.displayName,
@@ -140,7 +140,7 @@ extension AppModel {
                 "access_ceiling": profile.accessCeiling.rawValue,
                 "timeout_seconds": profile.timeoutSeconds,
                 "token_limit": profile.tokenLimit,
-                "metering": route["provider"] as? String == "chatgpt"
+                "metering": ["chatgpt", "claude_plan"].contains(route["provider"] as? String ?? "")
                     ? AgentMetering.selfHosted.rawValue
                     : profile.metering.rawValue,
                 "route": route,

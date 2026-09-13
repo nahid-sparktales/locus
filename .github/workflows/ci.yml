@@ -212,6 +212,11 @@ jobs:
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
       - name: Design-system source audit
         run: Tools/AuditDesignSystem.sh
+      # The app disables App Transport Security so it can reach self-hosted
+      # model servers on plain HTTP. This is what enforces the rules ATS used
+      # to enforce for everything else.
+      - name: Transport-security audit
+        run: python3 Tools/AuditTransportSecurity.py
       - name: Protocol manifest is current
         run: python3 Tools/ProtocolManifest.py
       - name: Shared wire types still compile for iOS

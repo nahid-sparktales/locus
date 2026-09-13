@@ -238,7 +238,7 @@ extension AppModel {
             }
             body["workspace_root"] = workspace.path
             body["execution_environment"] = workspace.environment.rawValue
-            body["provider"] = account == nil ? "ollama" : (account!.kind == .chatGPT ? "chatgpt" : "remote")
+            body["provider"] = account == nil ? "ollama" : (account!.kind.backendProvider)
             body["provider_account_id"] = account?.id.uuidString ?? ""
             body["model"] = model
         } else {
