@@ -19,7 +19,10 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let destination = model.emptySidebarDestination {
+            if model.agentCrewChatPresented, model.sidebarDestination == .agents {
+                AgentCrewChatView(model: model.agentCrewChat, sidebarVisible: sidebarVisible, showSidebar: showSidebar)
+                    .id(model.agentCrewChat.workspace)
+            } else if let destination = model.emptySidebarDestination {
                 if !sidebarVisible {
                     HStack {
                         HeaderIconButton(symbol: "sidebar.left", label: "Show sidebar",
@@ -5341,7 +5344,7 @@ private struct TrailingFractionLayout: Layout {
     }
 }
 
-private struct MessageBlockView: View, Equatable {
+struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     @State private var responseCopied = false
@@ -5365,6 +5368,7 @@ private struct MessageBlockView: View, Equatable {
     let onRewind: () -> Void
     let onRegenerate: () -> Void
     let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
+    var showsConversationActions = true
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block
@@ -5377,6 +5381,7 @@ private struct MessageBlockView: View, Equatable {
             && lhs.showsAssistantMarker == rhs.showsAssistantMarker
             && lhs.showsAssistantActions == rhs.showsAssistantActions
             && lhs.accessibilityIdentifier == rhs.accessibilityIdentifier
+            && lhs.showsConversationActions == rhs.showsConversationActions
             // The store is a stable reference and deliberately not compared;
             // the row identity it is keyed by must be.
             && lhs.selectionRowID == rhs.selectionRowID
@@ -5587,7 +5592,7 @@ private struct MessageBlockView: View, Equatable {
             }
             .disabled(actionsDisabled)
         }
-        if block.kind == .user {
+        if block.kind == .user && showsConversationActions {
             actionButton("checkmark.shield", help: "Make reusable check", identifier: "makeReusableCheck", action: onMakeReusableCheck)
                 .disabled(actionsDisabled)
             actionButton("arrow.counterclockwise", help: "Rewind to this message", identifier: "rewind") {

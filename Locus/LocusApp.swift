@@ -1036,172 +1036,18 @@ struct RootView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(AppEdition.current.displayName) workspace")
-        .modifier(IdentityVaultPresentation(vault: model.identityVault))
-        .modifier(TaskCapsulePresentation(capsules: model.taskCapsules, openTask: { model.showTaskDetail(runID: $0) }, onDismiss: { model.completeCapsuleTaskDismissal() }))
-        .sheet(isPresented: $library.isPresented) {
-            if model.isUITesting, locusEnvironment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
-                LibraryUITestFixtureView().appFeatureEnvironment(from: model)
-            } else {
-                LibraryWorkspaceView().appFeatureEnvironment(from: model)
-            }
-        }
-        .sheet(isPresented: $onboarding.isPresented, onDismiss: {
-            onboarding.dismiss()
-            // Wait for the setup sheet to close before presenting its sibling.
-            if let run = onboarding.takeOutputRequest() {
-                model.openOutputsLibrary(workspace: run.workspace, sessionID: run.sessionID, runID: run.runID)
-            }
-            if onboarding.takeAgentSetupRequest() {
-                model.configureAgentPendingCreation = true
-                model.presentConfigureAgent(draftText: "")
-            }
-        }) {
-            OnboardingView().appFeatureEnvironment(from: model)
+        .modifier(LocusSharedPresentations(surface: .main, updates: updates))
+        .onAppear { model.appUpdates = updates }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window === LocusApplicationDelegate.mainWindow(in: NSApp.windows) else { return }
+            model.agentWorldOwnsPresentations = false
         }
         .task { onboarding.presentOnLaunchIfNeeded() }
-        .sheet(isPresented: $model.commandPalettePresented) {
-            CommandPaletteView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.checkpointPresented) {
-            CheckpointSheet()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.taskDetailPresented, onDismiss: { model.completeTaskDetailDismissal() }) {
-            TaskDetailView(sessionID: model.taskDetailSessionID).environmentObject(model)
-        }
-        .sheet(isPresented: $model.notebookPresented) {
-            NotebookSheet(notebook: model.notebook, availableSize: workspaceLayout.geometry.windowSize)
-                .onAppear {
-                    model.notebook.refresh(
-                        workspaces: model.workspaceProfiles,
-                        sessions: model.sessions
-                    )
-                }
-        }
-        .sheet(item: $model.fileViewerRequest) { request in
-            WorkspaceFileViewerSheet(request: request)
-                .environmentObject(model)
-        }
-        .sheet(isPresented: Binding(
-            get: { landingFlow.reviewAndLandPresented },
-            set: { landingFlow.reviewAndLandPresented = $0 }
-        )) {
-            ReviewAndLandView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: Binding(
-            get: { model.rememberConfirmationText != nil },
-            set: { if !$0 { model.rememberConfirmationText = nil } }
-        )) {
-            if let text = model.rememberConfirmationText {
-                RememberConfirmationView(initialText: text)
-                    .environmentObject(model)
-            }
-        }
-        .sheet(isPresented: $model.settingsPresented, onDismiss: {
-            model.completeSettingsDismissal()
-        }) {
-            SettingsView(presentationContext: .sheet, availableSize: workspaceLayout.geometry.windowSize)
-                .environmentObject(model)
-                .environmentObject(updates)
-        }
-        .sheet(isPresented: $model.usageDashboardPresented) {
-            UsageDashboardView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.modelLibraryPresented) {
-            ModelLibraryView()
-                .environmentObject(model)
-        }
-        .sheet(isPresented: $model.shortcutsPresented) {
-            ShortcutsSheet()
-        }
-        .sheet(item: $model.savedAgentEditor) { profile in
-            AgentProfileEditor(profile: profile,
-                isNew: !model.agentProfiles.contains(where: { $0.id == profile.id }),
-                existingProfiles: model.agentProfiles,
-                onSave: model.saveSidebarAgent)
-                .environmentObject(model)
-                .environmentObject(model.providerAccountsModel)
-        }
-        .sheet(isPresented: $model.configureAgentPresented, onDismiss: {
-            model.dismissConfigureAgent()
-        }) {
-            ConfigureAgentView(
-                automation: model.eventAutomations,
-                schedule: schedule
-            )
-            .environmentObject(model)
-        }
-        .sheet(item: Binding(
-            get: { extensionsModel.mcpInputRequest },
-            set: { value in
-                if value == nil, extensionsModel.mcpInputRequest != nil {
-                    extensionsModel.answerMCPInput(action: "cancel")
-                }
-            }
-        )) { request in
-            MCPInputRequestView(request: request)
-                .environmentObject(model)
-                .interactiveDismissDisabled()
-        }
-        .alert(model.automaticInspectorPrompt?.title ?? "Open request details automatically?", isPresented: Binding(
-            get: { model.automaticInspectorPrompt != nil },
-            set: { presented in
-                if !presented, model.automaticInspectorPrompt != nil {
-                    model.answerAutomaticInspectorPrompt(showEveryTime: false)
-                }
-            }
-        )) {
-            Button("Not Automatically", role: .cancel) {
-                model.answerAutomaticInspectorPrompt(showEveryTime: false)
-            }
-            .accessibilityIdentifier("inspector.automatic.never")
-            Button(model.automaticInspectorPrompt?.confirmationTitle ?? "Open Every Time") {
-                model.answerAutomaticInspectorPrompt(showEveryTime: true)
-            }
-            .accessibilityIdentifier("inspector.automatic.always")
-        } message: {
-            Text(model.automaticInspectorPrompt?.message ?? "")
-        }
-        .alert("Clear this chat?", isPresented: $model.clearChatConfirmationPresented) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear Chat") { model.clearChatConfirmed() }
-                .accessibilityIdentifier("clearChat.confirm")
-        } message: {
-            Text("The current conversation will remain available in Sessions. Locus will start a fresh chat with the same workspace, model, mode, context, and browser home.")
-        }
-        .alert("Clear saved sessions?", isPresented: $model.clearSessionsConfirmationPresented) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear Saved Sessions", role: .destructive) {
-                model.clearSavedSessionsConfirmed()
-            }
-            .accessibilityIdentifier("clearSessions.confirm")
-        } message: {
-            Text("Previous sessions will move to a recovery folder. The active session, current chat, connection, and any running job will remain untouched.")
-        }
-        .alert("New Chat Folder", isPresented: $model.globalNewFolderPresented) {
-            TextField("Folder name", text: $model.globalNewFolderName)
-                .accessibilityIdentifier("chatFolder.global.name")
-            Button("Cancel", role: .cancel) {}
-            Button("Create") {
-                model.createChatFolder(
-                    in: model.activeWorkspaceID,
-                    name: model.globalNewFolderName,
-                    parentID: nil
-                )
-            }
-            .disabled(model.globalNewFolderName
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("chatFolder.global.create")
-        } message: {
-            Text("Folders organize chats without changing where they run.")
-        }
     }
 }
 
-private struct RememberConfirmationView: View {
+struct RememberConfirmationView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var knowledge: WorkspaceKnowledgeModel
     @Environment(\.dismiss) private var dismiss
@@ -1272,7 +1118,7 @@ private struct RememberConfirmationView: View {
     }
 }
 
-private struct MCPInputRequestView: View {
+struct MCPInputRequestView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     let request: MCPInputRequest

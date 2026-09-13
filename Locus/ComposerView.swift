@@ -74,7 +74,7 @@ enum ComposerMetrics {
 
 private struct ComposerEditorLayout: Layout {
     let text: String
-    let draftRevision: UInt
+    let draftRevision: UInt?
     let isLiveResizing: Bool
     let typographyToken: Int
 
@@ -108,6 +108,72 @@ private struct ComposerEditorLayout: Layout {
             anchor: .topLeading,
             proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
         )
+    }
+}
+
+/// The same native text editor and card treatment serve ordinary and crew chats.
+struct ComposerTextInput: View {
+    @Binding var text: String
+    let placeholder: String
+    let focus: FocusState<Bool>.Binding
+    var draftRevision: UInt? = nil
+    var onUp: () -> KeyPress.Result = { .ignored }
+    var onDown: () -> KeyPress.Result = { .ignored }
+    let onReturn: (KeyPress) -> KeyPress.Result
+    var onTab: () -> KeyPress.Result = { .ignored }
+    var onEscape: () -> KeyPress.Result = { .ignored }
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        ComposerEditorLayout(text: text, draftRevision: draftRevision,
+                             isLiveResizing: isLiveResizing, typographyToken: dynamicTypeSize.hashValue) {
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.locus(size: 13))
+                        .foregroundStyle(LocusTheme.inkSoft.opacity(0.82))
+                        .padding(.horizontal, 12).padding(.top, 11)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("composer.placeholder")
+                }
+                TextEditor(text: $text)
+                    .foregroundStyle(LocusTheme.inkSoft).tint(LocusTheme.accentAction)
+                    .font(.locus(size: 13)).lineSpacing(5)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 7).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .focused(focus)
+                    .accessibilityLabel("Message Locus")
+                    .accessibilityIdentifier("composer.input")
+                    .onKeyPress(.upArrow, action: onUp)
+                    .onKeyPress(.downArrow, action: onDown)
+                    .onKeyPress(.return, phases: .down, action: onReturn)
+                    .onKeyPress(.tab, action: onTab)
+                    .onKeyPress(.escape, action: onEscape)
+            }
+        }
+    }
+}
+
+struct ComposerCardStyle: ViewModifier {
+    let focused: Bool
+    let accent: Color
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: 740)
+            .locusSurface(.floating, radius: 13)
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(focused ? accent.opacity(0.72) : LocusTheme.separator,
+                            lineWidth: focused ? 1.5 : 1)
+            }
+            .shadow(color: isLiveResizing ? .clear : (focused ? accent.opacity(0.1) : Color.black.opacity(0.08)),
+                    radius: isLiveResizing ? 0 : (focused ? 24 : 22), y: 9)
+            .animation(reduceMotion ? nil : LocusMotion.press, value: focused)
     }
 }
 
@@ -364,42 +430,17 @@ struct ComposerView: View {
                     // composer width. The field starts as one line, grows with
                     // the draft, then caps and scrolls internally so a long
                     // prompt never pushes the transcript away.
-                    ComposerEditorLayout(
-                        text: composerState.draftText,
+                    ComposerTextInput(
+                        text: $composerState.draftText,
+                        placeholder: placeholder,
+                        focus: $focused,
                         draftRevision: composerState.draftRevision,
-                        isLiveResizing: isLiveResizing,
-                        typographyToken: dynamicTypeSize.hashValue
-                    ) {
-                        ZStack(alignment: .topLeading) {
-                        if composerState.draftText.isEmpty {
-                            Text(placeholder)
-                                .font(.locus(size: 13))
-                                .foregroundStyle(LocusTheme.inkSoft.opacity(0.82))
-                                .padding(.horizontal, 12)
-                                .padding(.top, 11)
-                                .allowsHitTesting(false)
-                                .accessibilityIdentifier("composer.placeholder")
-                        }
-
-                        TextEditor(text: $composerState.draftText)
-                            .foregroundStyle(LocusTheme.inkSoft)
-                            .tint(LocusTheme.accentAction)
-                            .font(.locus(size: 13))
-                            .lineSpacing(5)
-                            .scrollContentBackground(.hidden)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 5)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .focused($focused)
-                            .accessibilityLabel("Message Locus")
-                            .accessibilityIdentifier("composer.input")
-                            .onKeyPress(.upArrow) { handleUpArrow() }
-                            .onKeyPress(.downArrow) { handleDownArrow() }
-                            .onKeyPress(.return, phases: .down) { press in handleReturn(press) }
-                            .onKeyPress(.tab) { handleTab() }
-                            .onKeyPress(.escape) { handleEscape() }
-                        }
-                    }
+                        onUp: handleUpArrow,
+                        onDown: handleDownArrow,
+                        onReturn: handleReturn,
+                        onTab: handleTab,
+                        onEscape: handleEscape
+                    )
 
                     if model.hasComposerContextChips {
                         attachmentChipsRow
@@ -424,28 +465,9 @@ struct ComposerView: View {
 
                     actionRow
                 }
-                .frame(maxWidth: 740)
-                .locusSurface(.floating, radius: 13)
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(
-                            focused
-                                ? accentAction.opacity(0.72)
-                                : LocusTheme.separator,
-                            lineWidth: focused ? 1.5 : 1
-                        )
-                }
+                .modifier(ComposerCardStyle(focused: focused, accent: accentAction))
                 .chatAttachmentDropTarget()
                 .chatPasteInterceptor(editorFocused: focused)
-                .shadow(
-                    color: isLiveResizing
-                        ? .clear
-                        : (focused ? accentAction.opacity(0.1) : Color.black.opacity(0.08)),
-                    radius: isLiveResizing ? 0 : (focused ? 24 : 22),
-                    y: 9
-                )
-                .animation(reduceMotion ? nil : LocusMotion.press, value: focused)
                 .transition(LocusMotion.transition(edge: .bottom, reduceMotion: reduceMotion))
             }
         }

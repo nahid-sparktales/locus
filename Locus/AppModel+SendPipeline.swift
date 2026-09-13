@@ -798,6 +798,10 @@ extension AppModel {
     }
 
     func submitDraft() {
+        if agentCrewChatPresented, sidebarDestination == .agents {
+            agentCrewChat.submit()
+            return
+        }
         guard admitTranscriptInput() else { return }
         if isBusy {
             queueDraft()
@@ -1080,7 +1084,13 @@ extension AppModel {
         }
     }
 
-    func stop() { stop(persistingGoalPause: true) }
+    func stop() {
+        if agentCrewChatPresented, sidebarDestination == .agents {
+            agentCrewChat.stopAllReplies()
+        } else {
+            stop(persistingGoalPause: true)
+        }
+    }
 
     func stop(persistingGoalPause: Bool) {
         guard admitTranscriptInput() else { return }

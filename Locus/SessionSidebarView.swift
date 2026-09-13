@@ -511,6 +511,7 @@ struct SessionSidebarView: View {
                     }
                     if model.sidebarDestination == .agents {
                         AgentSidebarSection(
+                            crew: model.agentCrewChat,
                             automation: model.eventAutomations,
                             snapshot: snapshot,
                             confirmDelete: { agentToDelete = $0 },
@@ -2609,6 +2610,7 @@ private struct AgentSidebarSection: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @ObservedObject var crew: AgentCrewChatModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var automation: EventAutomationModel
     let snapshot: SessionCatalogSnapshot
@@ -2623,7 +2625,7 @@ private struct AgentSidebarSection: View {
         AgentSidebarCatalog.groups(
             definitions: automation.triggers.map(AgentDefinition.trigger)
                 + schedule.scheduledTasks.map(AgentDefinition.schedule),
-            sessions: snapshot.sessions, query: snapshot.searchQuery,
+            sessions: snapshot.sessions.filter { crew.boundProfileID(for: $0.id) == nil }, query: snapshot.searchQuery,
             showArchived: snapshot.showArchivedSessions,
             runningSessionIDs: model.runningChatSessionIDs,
             connections: automation.connections, connectionsLoaded: automation.hasLoaded,
@@ -2635,6 +2637,7 @@ private struct AgentSidebarSection: View {
         let all = groups
         let visible = all.filter(filter.includes)
         LazyVStack(spacing: 3) {
+            CrewChatSidebarEntry(crew: crew).padding(.bottom, 6)
             if !all.isEmpty || filter != .all {
                 HStack {
                     Menu {
@@ -2718,8 +2721,8 @@ private struct AgentSidebarSection: View {
         return VStack(spacing: 1) {
             AgentGroupRow(
                 agent: agent, automation: automation, expanded: expanded,
-                selected: agent.profileID != nil ? agent.profileID == model.selectedSavedAgentProfile?.id
-                    : agent.reference != nil && model.inspectedAgentReference == agent.reference,
+                selected: !model.agentCrewChatPresented && crew.boundProfileID(for: model.currentSessionID) == nil && (agent.profileID != nil ? agent.profileID == model.selectedSavedAgentProfile?.id
+                    : agent.reference != nil && model.inspectedAgentReference == agent.reference),
                 toggle: {
                     withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         if expanded {

@@ -11,6 +11,7 @@ import UserNotifications
 extension AppModel {
     func handle(_ event: [String: Any], source: BackendService? = nil) {
         guard let type = event["type"] as? String else { return }
+        recordAgentWorldRequestOwner(event, source: source)
         if source == nil || source === backend {
             goals.handleEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID)
             let owner = event["session_id"] as? String ?? currentSessionID

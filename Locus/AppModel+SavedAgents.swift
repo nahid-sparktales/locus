@@ -39,6 +39,7 @@ extension AppModel {
     func savedAgentProfileID(for sessionID: String) -> UUID? {
         sessionCatalog.snapshot.sessionsByID[sessionID]?.savedAgentProfileID
             ?? agentWorld.boundProfileID(for: sessionID)
+            ?? agentCrewChat.boundProfileID(for: sessionID)
     }
 
     func newSavedAgentDraft() -> AgentProfile {
@@ -68,6 +69,7 @@ extension AppModel {
     }
 
     func selectSavedAgent(_ profile: AgentProfile) {
+        agentCrewChatPresented = false
         selectedSavedAgentID = profile.id
         selectedAgentID = nil
         agentInspector.clearAgentSelection()
@@ -83,6 +85,7 @@ extension AppModel {
     func savedAgentChats(_ profileID: UUID) -> [SessionSummary] {
         sessionCatalog.snapshot.sessions.filter {
             $0.savedAgentProfileID == profileID && !$0.isArchived
+                && agentCrewChat.boundProfileID(for: $0.id) == nil
         }.sorted { $0.mtime > $1.mtime }
     }
 

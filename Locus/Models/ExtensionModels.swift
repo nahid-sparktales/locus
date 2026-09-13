@@ -96,7 +96,7 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
             switch capability {
             case "agents.read": "Can read agent names, roles and activity."
             case "agents.interact": "Can select an agent in the native conversation panel."
-            case "world.preferences": "Can save the selected world theme."
+        case "world.preferences": "Can save the selected world theme and resident appearance."
             default: capability
             }
         }.joined(separator: " ")

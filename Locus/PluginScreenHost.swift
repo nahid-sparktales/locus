@@ -31,6 +31,11 @@ enum PluginScreenMessage: Equatable {
     case ready
     case selectAgent(String)
     case preferences(String)
+    case residentStyle(String)
+    case openAttention(String)
+    case openTransfer(String)
+    case openSharedChat
+    case openAgentControls(String?)
 
     static func decode(_ body: Any, screen: ExtensionPluginScreen) -> PluginScreenMessage? {
         guard screen.isSupported, let value = body as? [String: Any],
@@ -46,11 +51,28 @@ enum PluginScreenMessage: Equatable {
             guard keys == ["version", "type", "agentID"], screen.capabilities.contains("agents.interact"),
                   let id = value["agentID"] as? String, let uuid = UUID(uuidString: id) else { return nil }
             return .selectAgent(uuid.uuidString)
+        case "openAttention", "openTransfer":
+            let field = type == "openAttention" ? "requestID" : "transferID"
+            guard keys == ["version", "type", field], screen.capabilities.contains("agents.interact"),
+                  let id = value[field] as? String, let uuid = UUID(uuidString: id) else { return nil }
+            return type == "openAttention" ? .openAttention(uuid.uuidString) : .openTransfer(uuid.uuidString)
+        case "openSharedChat":
+            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
+            return .openSharedChat
+        case "openAgentControls":
+            guard screen.capabilities.contains("agents.interact") else { return nil }
+            if keys == ["version", "type"] { return .openAgentControls(nil) }
+            guard keys == ["version", "type", "agentID"], let id = value["agentID"] as? String,
+                  let uuid = UUID(uuidString: id) else { return nil }
+            return .openAgentControls(uuid.uuidString)
         case "preferences":
             guard keys == ["version", "type", "preferences"], screen.capabilities.contains("world.preferences"),
-                  let preferences = value["preferences"] as? [String: Any], Set(preferences.keys) == ["theme"],
-                  let theme = preferences["theme"] as? String, AgentWorldModel.isSafeThemeID(theme) else { return nil }
-            return .preferences(theme)
+                  let preferences = value["preferences"] as? [String: Any] else { return nil }
+            if Set(preferences.keys) == ["theme"], let theme = preferences["theme"] as? String,
+               AgentWorldModel.isSafeThemeID(theme) { return .preferences(theme) }
+            if Set(preferences.keys) == ["residentStyle"], let style = preferences["residentStyle"] as? String,
+               AgentWorldModel.isSafeResidentStyle(style) { return .residentStyle(style) }
+            return nil
         default: return nil
         }
     }
@@ -185,6 +207,11 @@ struct PluginScreenHost: NSViewRepresentable {
             case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
             case .selectAgent(let id): model?.select(id)
             case .preferences(let theme): model?.setTheme(theme)
+            case .residentStyle(let style): model?.setResidentStyle(style)
+            case .openAttention(let id): model?.openAttention(id)
+            case .openTransfer(let id): model?.openTransfer(id)
+            case .openSharedChat: model?.openSharedChat()
+            case .openAgentControls(let id): model?.openAgentControls(id)
             }
         }
         func sendSnapshot() {
