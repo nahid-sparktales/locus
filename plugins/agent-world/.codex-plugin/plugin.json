@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Agent World",
     "shortDescription": "A world for your agents in Locus.",
-    "longDescription": "Meet a mixed crew in the Orbital Locus Outpost or set sail in The Local Line, a One Piece-inspired world of AI-named ships and islands. Open real agent conversations in Captain\u2019s quarters, follow approval requests through Den Den Mushi, and watch courier skiffs carry actual handoffs and artifacts. Includes locally prepared scenery and no generation calls during use.",
+    "longDescription": "Meet a mixed crew in the Orbital Locus Outpost or set sail in The Local Line, a One Piece-inspired world of AI-named ships and islands. Open real agent conversations in Captain\u2019s quarters, follow approval requests through Ping Ping, and watch courier skiffs carry actual handoffs and artifacts. Includes locally prepared scenery and no generation calls during use.",
     "developerName": "SparkTales",
     "category": "Productivity",
     "capabilities": [],
