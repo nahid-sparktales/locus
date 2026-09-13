@@ -37,6 +37,8 @@ enum PluginScreenMessage: Equatable {
     case openSharedChat
     case openAgentControls(String?)
     case createAgent
+    case residentPlacements([AgentWorldResidentPlacement])
+    case setShipStyle(agentID: String, style: String?)
 
     static func decode(_ body: Any, screen: ExtensionPluginScreen) -> PluginScreenMessage? {
         guard screen.isSupported, let value = body as? [String: Any],
@@ -69,6 +71,29 @@ enum PluginScreenMessage: Equatable {
             guard keys == ["version", "type", "agentID"], let id = value["agentID"] as? String,
                   let uuid = UUID(uuidString: id) else { return nil }
             return .openAgentControls(uuid.uuidString)
+        case "setShipStyle":
+            guard keys == ["version", "type", "agentID", "shipStyle"], screen.capabilities.contains("world.preferences"),
+                  let rawID = value["agentID"] as? String, let id = UUID(uuidString: rawID)?.uuidString else { return nil }
+            if value["shipStyle"] is NSNull { return .setShipStyle(agentID: id, style: nil) }
+            guard let style = value["shipStyle"] as? String, AgentWorldShipStyle.isSupported(style) else { return nil }
+            return .setShipStyle(agentID: id, style: style)
+        case "residentPlacements":
+            guard keys == ["version", "type", "placements"], screen.capabilities.contains("agents.read"),
+                  let rows = value["placements"] as? [[String: Any]], rows.count <= 500 else { return nil }
+            var seen = Set<String>()
+            var placements: [AgentWorldResidentPlacement] = []
+            for row in rows {
+                guard Set(row.keys) == ["agentID", "ship", "home"],
+                      let rawID = row["agentID"] as? String, let id = UUID(uuidString: rawID)?.uuidString,
+                      seen.insert(id).inserted,
+                      let ship = row["ship"] as? String, let home = row["home"] as? String,
+                      [ship, home].allSatisfy({ text in
+                          !text.isEmpty && text.count <= 100
+                              && !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+                      }) else { return nil }
+                placements.append(.init(agentID: id, ship: ship, home: home))
+            }
+            return .residentPlacements(placements)
         case "preferences":
             guard keys == ["version", "type", "preferences"], screen.capabilities.contains("world.preferences"),
                   let preferences = value["preferences"] as? [String: Any] else { return nil }
@@ -217,6 +242,8 @@ struct PluginScreenHost: NSViewRepresentable {
             case .openSharedChat: model?.openSharedChat()
             case .openAgentControls(let id): model?.openAgentControls(id)
             case .createAgent: model?.createAgent()
+            case .residentPlacements(let placements): model?.receiveResidentPlacements(placements)
+            case .setShipStyle(let id, let style): model?.setShipStyle(agentID: id, style: style)
             }
         }
         func sendSnapshot() {

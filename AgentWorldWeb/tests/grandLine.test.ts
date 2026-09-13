@@ -2,7 +2,8 @@ import { shipBerthHeading } from '../src/islandBerths.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_THEME, SHIP_ASSET_TYPES, SHIP_NAMES, parseTheme, safeAssetPath } from '../src/theme.ts';
+import { gunzipSync } from 'node:zlib';
+import { DEFAULT_THEME, DEFAULT_SHIP_ASSET_TYPES, SHIP_ASSET_TYPES, SHIP_NAMES, parseTheme, safeAssetPath } from '../src/theme.ts';
 import {
   MAX_MOTION_DT, RESIDENT_RADIUS, createResidentMotion, findResidentArrival, findResidentPath,
   pointIsWalkable, resolveResidentSpacing, segmentIsWalkable, stationObstacle,
@@ -44,23 +45,25 @@ test('ocean berths remain open water while campus homes retain their console obs
   }
 });
 
-test('the shipped Local Line manifest packages twelve distinct named ships with usable local models', () => {
+test('the shipped Local Line manifest packages twelve automatic named ships with usable local models', () => {
   const theme = loadGrandLine();
   assert.equal(theme.id, 'grand-line', 'Display renames must preserve the saved theme identity');
   assert.equal(theme.name, 'The Local Line');
   assert.equal(SHIP_NAMES.ship_going_merry, 'Going Sherry');
   assert.equal(SHIP_NAMES.ship_thousand_sunny, 'Thousand Funny');
   assert.equal(theme.environment, 'ocean');
-  assert.equal(SHIP_ASSET_TYPES.length, 12);
+  assert.equal(DEFAULT_SHIP_ASSET_TYPES.length, 12);
+  assert.equal(SHIP_ASSET_TYPES.length, 15);
   assert.equal(theme.layout.stations.length, 12, 'Every ship in a full sector needs its own berth');
-  assert.equal(new Set(SHIP_ASSET_TYPES.map(ship => theme.assets[ship])).size, 12);
-  assert.equal(new Set(SHIP_ASSET_TYPES.map(ship => SHIP_NAMES[ship])).size, 12);
-  for (const ship of SHIP_ASSET_TYPES) {
+  assert.equal(new Set(DEFAULT_SHIP_ASSET_TYPES.map(ship => theme.assets[ship])).size, 12);
+  assert.equal(new Set(DEFAULT_SHIP_ASSET_TYPES.map(ship => SHIP_NAMES[ship])).size, 12);
+  for (const ship of DEFAULT_SHIP_ASSET_TYPES) {
     const asset = theme.assets[ship];
     assert.ok(asset && safeAssetPath(asset), `${SHIP_NAMES[ship]} needs a packaged local model`);
     assert.ok(theme.heights[ship] > 0 && Number.isFinite(theme.heights[ship]));
     assert.equal(theme.rotations[ship], -Math.PI / 2, `${SHIP_NAMES[ship]} must align its verified +X bow with forward +Z`);
-    const model = readFileSync(new URL(asset, manifestURL));
+    const packed = readFileSync(new URL(asset, manifestURL));
+    const model = asset.endsWith('.gz') ? gunzipSync(packed) : packed;
     assert.equal(model.toString('ascii', 0, 4), 'glTF', `${SHIP_NAMES[ship]} must be a GLB, not a download error`);
     assert.equal(model.readUInt32LE(4), 2);
     assert.equal(model.readUInt32LE(8), model.length, `${SHIP_NAMES[ship]} model must be complete`);
@@ -165,8 +168,12 @@ test('idle ships leave promptly and explore beyond their home islands with fleet
 
 test('adding a captain while a ship crosses its harbor keeps both moving without overlap', () => {
   const theme = loadGrandLine(), sea = themeNavigation(theme), homes = theme.layout.stations;
-  let survivor = { ...createResidentMotion('captain-0', homes[0]), speed: 0.52 };
-  for (let tick = 0; tick <= 3528; tick++) survivor = stepResidentMotion(survivor, { home: homes[0], status: 'idle', dt: MAX_MOTION_DT, rosterIDs: [survivor.id] }, sea);
+  // Deliberately cross the new berth: the regression must not depend on the
+  // number of seconds a random route took in an older island arrangement.
+  const crossingRoute = findResidentPath(homes[0], homes[1], sea);
+  assert.ok(crossingRoute);
+  let survivor = { ...createResidentMotion('captain-0', homes[0]), intent: 'wander' as const, route: crossingRoute, speed: 0.52, pauseRemaining: 0 };
+  for (let tick = 0; tick < 5000 && distance(survivor, homes[1]) > 0.5; tick++) survivor = stepResidentMotion(survivor, { home: homes[0], status: 'idle', dt: MAX_MOTION_DT, rosterIDs: [survivor.id] }, sea);
   const clearance = sea.bodyRadius * 2 + 0.08;
   assert.ok(distance(survivor, homes[1]) < clearance, 'The regression needs a ship crossing the new captain’s berth');
   const arrival = findResidentArrival(homes[1], sea, [survivor]);

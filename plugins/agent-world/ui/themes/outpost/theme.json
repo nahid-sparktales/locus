@@ -4,17 +4,17 @@
   "name": "Orbital Locus Outpost",
   "description": "A garden campus of workshops, planted paths, and places for your agents to unwind.",
   "assets": {
-    "resident": "assets/resident.glb",
-    "station": "assets/station.glb",
-    "beacon": "assets/beacon.glb",
-    "habitat": "assets/habitat.glb",
-    "crates": "assets/crates.glb",
-    "resident_explorer": "assets/resident_explorer.glb",
-    "resident_botanist": "assets/resident_botanist.glb",
-    "resident_engineer": "assets/resident_engineer.glb",
-    "planter": "assets/planter.glb",
-    "lounge": "assets/lounge.glb",
-    "server": "assets/server.glb"
+    "resident": "assets/resident.glb.gz",
+    "station": "assets/station.glb.gz",
+    "beacon": "assets/beacon.glb.gz",
+    "habitat": "assets/habitat.glb.gz",
+    "crates": "assets/crates.glb.gz",
+    "resident_explorer": "assets/resident_explorer.glb.gz",
+    "resident_botanist": "assets/resident_botanist.glb.gz",
+    "resident_engineer": "assets/resident_engineer.glb.gz",
+    "planter": "assets/planter.glb.gz",
+    "lounge": "assets/lounge.glb.gz",
+    "server": "assets/server.glb.gz"
   },
   "heights": {
     "resident": 1.8,

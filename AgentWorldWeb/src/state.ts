@@ -1,3 +1,6 @@
+import { SHIP_ASSET_TYPES } from './theme.ts';
+import type { ShipAssetType } from './theme.ts';
+
 export const AGENT_STATUSES = ['idle', 'working', 'needs_attention', 'completed', 'failed', 'queued'] as const;
 export type AgentStatus = typeof AGENT_STATUSES[number];
 export type Agent = { id: string; name: string; role: string; status: AgentStatus; detail?: string };
@@ -6,10 +9,11 @@ export type ResidentStyle = typeof RESIDENT_STYLES[number];
 export const isResidentStyle = (value: unknown): value is ResidentStyle => RESIDENT_STYLES.includes(value as ResidentStyle);
 export type AttentionRequest = { id: string; agentID: string; kind: 'approval' | 'input'; title: string };
 export type AgentTransfer = { id: string; fromAgentID: string; toAgentID: string; kind: 'handoff' | 'artifact'; title: string; occurredAt: number };
-export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; canCreateAgent?: boolean; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
+export type ShipStyles = Record<string, ShipAssetType>;
+export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; shipStyles?: ShipStyles; canCreateAgent?: boolean; activityCenterRequest?: number; nativeChrome?: boolean; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
 export type Visibility = { version: 1; type: 'visibility'; visible: boolean };
 export type HostMessage = Snapshot | Visibility;
-export type WorldMessage = { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'createAgent' } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
+export type WorldMessage = { version: 1; type: 'setShipStyle'; agentID: string; shipStyle: ShipAssetType | null } | { version: 1; type: 'residentPlacements'; placements: { agentID: string; ship: string; home: string }[] } | { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'createAgent' } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
 export type Point = { x: number; z: number };
 export type ScreenPoint = { x: number; y: number };
 export type ScreenRect = { left: number; top: number; right: number; bottom: number };
@@ -28,6 +32,22 @@ function boundedString(value: unknown, maximum: number): value is string { retur
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const safeThemeID = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
 
+/** Normalize UUID casing while rejecting stale identities and unshipped model choices. */
+export function parseShipStyles(value: unknown, agentIDs: readonly string[]): ShipStyles | null {
+  if (!record(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > 4096) return null;
+  const known = new Map(agentIDs.map(id => [id.toLowerCase(), id]));
+  const seen = new Set<string>();
+  const normalized: ShipStyles = {};
+  for (const [id, style] of entries) {
+    const canonical = known.get(id.toLowerCase());
+    if (!uuid.test(id) || !canonical || seen.has(id.toLowerCase()) || !(SHIP_ASSET_TYPES as readonly unknown[]).includes(style)) return null;
+    seen.add(id.toLowerCase()); normalized[canonical] = style as ShipAssetType;
+  }
+  return normalized;
+}
+
 /** Reject the whole message on malformed agents so a partial update cannot misroute selection. */
 export function parseHostMessage(value: unknown): HostMessage | null {
   if (!record(value) || value.version !== 1) return null;
@@ -35,12 +55,16 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (value.type !== 'snapshot' || !Array.isArray(value.agents) || value.agents.length > 4096 || !safeThemeID(value.theme) || !boundedString(value.projectName, 1024)) return null;
   if (value.residentStyle !== undefined && !isResidentStyle(value.residentStyle)) return null;
   if (value.canCreateAgent !== undefined && typeof value.canCreateAgent !== 'boolean') return null;
+  if (value.activityCenterRequest !== undefined && (typeof value.activityCenterRequest !== 'number' || !Number.isSafeInteger(value.activityCenterRequest) || value.activityCenterRequest < 0)) return null;
+  if (value.nativeChrome !== undefined && typeof value.nativeChrome !== 'boolean') return null;
   const ids = new Set<string>();
   for (const item of value.agents) {
     if (!record(item) || typeof item.id !== 'string' || !uuid.test(item.id) || ids.has(item.id.toLowerCase()) || !boundedString(item.name, 256) || !boundedString(item.role, 4096) || !AGENT_STATUSES.includes(item.status as AgentStatus) || (item.detail !== undefined && !boundedString(item.detail, 16384))) return null;
     ids.add(item.id.toLowerCase());
   }
   if (value.selectedAgentID !== undefined && (typeof value.selectedAgentID !== 'string' || !ids.has(value.selectedAgentID.toLowerCase()))) return null;
+  const shipStyles = value.shipStyles === undefined ? undefined : parseShipStyles(value.shipStyles, (value.agents as Agent[]).map(agent => agent.id));
+  if (shipStyles === null) return null;
   const activityIDs = new Set<string>();
   if (value.attentionRequests !== undefined) {
     if (!Array.isArray(value.attentionRequests) || value.attentionRequests.length > 256) return null;
@@ -57,7 +81,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       activityIDs.add(item.id.toLowerCase());
     }
   }
-  return value as Snapshot;
+  return (shipStyles === undefined ? value : { ...value, shipStyles }) as Snapshot;
 }
 
 export function agentSector(agents: readonly Agent[], agentID: string): number {

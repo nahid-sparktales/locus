@@ -15,10 +15,10 @@
       <div class="vignette" aria-hidden="true"></div>
       <header class="world-header">
         <div class="brand"><span class="brand-icon" aria-hidden="true"><svg class="outpost-mark" viewBox="0 0 32 32" width="32" height="32" fill="none" focusable="false"><path d="M9 24 17 8M17 24l8-16" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg><svg class="compass-mark" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="13"/><path d="M24 2v7M24 39v7M2 24h7M39 24h7M11 11l5 5M32 32l5 5M11 37l5-5M32 16l5-5"/><path class="compass-needle" d="M24 8l5 16-5 16-5-16z"/><path d="M8 24l16-5 16 5-16 5z"/><circle cx="24" cy="24" r="2"/></svg></span><div><span class="eyebrow">LOCUS / AGENT WORLD</span><h1>Orbital Locus Outpost<span class="demo-badge" id="demo-badge" hidden>DEMO</span></h1><p id="world-subtitle" class="world-subtitle" hidden>Every agent. Their own adventure.</p></div></div>
-        <button class="theme-button" id="theme-button" type="button" aria-label="Choose world theme" aria-expanded="false" aria-controls="theme-popover"><span class="planet-dot" aria-hidden="true"></span><span>Outpost</span><span class="chevron" aria-hidden="true">⌄</span></button>
+        <div class="world-header-actions"><button id="residents-button" class="standalone-residents-button" type="button" aria-expanded="false" aria-controls="resident-preview-panel" hidden><span aria-hidden="true">♙</span> Residents</button><button class="theme-button" id="theme-button" type="button" aria-label="Choose world theme" aria-expanded="false" aria-controls="theme-popover"><span class="planet-dot" aria-hidden="true"></span><span>Outpost</span><span class="chevron" aria-hidden="true">⌄</span></button></div>
         <div id="theme-popover" class="theme-popover" hidden><span class="eyebrow">WORLD THEME</span><button class="theme-choice" id="outpost-theme"><span class="planet-dot" aria-hidden="true"></span><span>Orbital Locus Outpost<small>Your agents, among the stars.</small></span><span aria-hidden="true">✓</span></button><p>Each world is a different home for the same agents.</p></div>
       </header>
-      <aside class="roster-panel" aria-label="Residents">
+      <aside id="resident-preview-panel" class="roster-panel" aria-label="Residents">
         <div class="roster-heading"><h2><span id="roster-title">Residents</span> <span id="resident-count">0</span></h2><button id="new-agent" class="new-agent-button" type="button" aria-label="New Agent"><span aria-hidden="true">+</span> New<span class="new-agent-word"> Agent</span></button><button id="roster-toggle" class="icon-button" aria-label="Collapse residents" aria-expanded="true" aria-controls="roster-body">−</button></div>
         <div id="roster-body">
           <p id="project-name" class="project-name">Connecting to your project…</p>
@@ -36,7 +36,6 @@
           <div class="world-actions" aria-label="Agent workspace actions">
             <button id="shared-chat" type="button">Shared chat</button>
             <button id="agent-controls" type="button"><strong id="agent-controls-title">Agent controls</strong><span id="agent-controls-name">Manage your agents</span></button>
-            <button id="activity-toggle" type="button" aria-expanded="false" aria-controls="fleet-activity" hidden>Ship signals <span id="activity-count">0</span></button>
           </div>
           <div class="roster-bottom"><span class="live-dot" aria-hidden="true"></span><span id="live-label">Connected to Locus</span><span id="sector-label" class="sector-label">01 / 01</span></div>
         </div>
@@ -56,30 +55,30 @@
         <p>A sea of possibilities.</p>
       </aside>
       <div class="right-hud" id="right-hud">
-        <aside id="snail-alert" class="snail-alert" aria-label="Agent requests" data-model-state="loading" hidden>
-          <div id="snail-alert-toolbar" class="snail-alert-toolbar"><button id="snail-alert-collapse" type="button" aria-label="Collapse Ping Ping" title="Collapse Ping Ping">−</button><button id="snail-alert-hide" type="button" aria-label="Hide Ping Ping" title="Hide Ping Ping">×</button></div>
-          <div id="snail-alert-compact" class="snail-alert-compact" hidden><button id="snail-alert-expand" type="button" aria-expanded="false"><span class="ping-ping-dot" aria-hidden="true"></span><strong id="snail-alert-compact-name">Ping Ping</strong><span id="snail-alert-compact-count"></span><span aria-hidden="true">⌄</span></button><button id="snail-alert-compact-hide" type="button" aria-label="Hide Ping Ping" title="Hide Ping Ping">×</button></div>
-          <button id="snail-alert-restore" class="snail-alert-restore" type="button" hidden>Show alerts</button>
-          <button id="snail-alert-open" class="snail-alert-open" type="button">
+        <aside id="snail-alert" class="snail-alert" aria-label="Outpost communications beacon" data-communicator="beacon" data-model-state="loading">
+          <button id="snail-alert-open" class="snail-alert-open" type="button" aria-expanded="false" aria-controls="fleet-activity">
             <span class="snail-alert-art" aria-hidden="true">
               <span class="snail-alert-halo"></span>
-              <svg class="snail-alert-placeholder" viewBox="0 0 120 120" fill="none"><ellipse cx="57" cy="91" rx="42" ry="10" fill="#c9f54a" opacity=".12"/><path d="M29 82c-9-15-6-34 8-43 17-11 40-1 42 18 2 14-10 26-26 26H29Z" fill="#b9d469"/><path d="M61 68c-17 13-30-9-17-15 8-4 13 2 9 7" stroke="#687d47" stroke-width="5" stroke-linecap="round"/><path d="M29 87h52c16 0 24-13 15-23-9-8-19 1-19 12H35" fill="#e2d9aa"/><path d="m88 68 3-19m9 20 7-17" stroke="#e2d9aa" stroke-width="5" stroke-linecap="round"/><circle cx="91" cy="47" r="7" fill="#fff2cd"/><circle cx="108" cy="49" r="7" fill="#fff2cd"/><circle cx="94" cy="48" r="3" fill="#234c50"/><circle cx="110" cy="50" r="3" fill="#234c50"/><path d="M33 40c-2-21 36-25 39-4" stroke="#39797e" stroke-width="9" stroke-linecap="round"/><path d="M29 39h8m30-3h8" stroke="#234c50" stroke-width="10" stroke-linecap="round"/></svg>
+              <svg class="snail-alert-placeholder snail-art-placeholder" viewBox="0 0 120 120" fill="none"><ellipse cx="57" cy="91" rx="42" ry="10" fill="#c9f54a" opacity=".12"/><path d="M29 82c-9-15-6-34 8-43 17-11 40-1 42 18 2 14-10 26-26 26H29Z" fill="#b9d469"/><path d="M61 68c-17 13-30-9-17-15 8-4 13 2 9 7" stroke="#687d47" stroke-width="5" stroke-linecap="round"/><path d="M29 87h52c16 0 24-13 15-23-9-8-19 1-19 12H35" fill="#e2d9aa"/><path d="m88 68 3-19m9 20 7-17" stroke="#e2d9aa" stroke-width="5" stroke-linecap="round"/><circle cx="91" cy="47" r="7" fill="#fff2cd"/><circle cx="108" cy="49" r="7" fill="#fff2cd"/><circle cx="94" cy="48" r="3" fill="#234c50"/><circle cx="110" cy="50" r="3" fill="#234c50"/><path d="M33 40c-2-21 36-25 39-4" stroke="#39797e" stroke-width="9" stroke-linecap="round"/><path d="M29 39h8m30-3h8" stroke="#234c50" stroke-width="10" stroke-linecap="round"/></svg>
+              <svg class="snail-alert-placeholder beacon-art-placeholder" viewBox="0 0 120 120" fill="none"><ellipse cx="60" cy="99" rx="31" ry="8" fill="#c9f54a" opacity=".13"/><path d="M46 93h28l-5-17H51z" fill="#9ea88f"/><path d="M53 74h14V38H53z" fill="#bdc9af"/><path d="M58 38h4V25h-4z" fill="#d7dfca"/><rect x="47" y="45" width="26" height="21" rx="5" fill="#63704a" stroke="#c9f54a" stroke-width="2"/><circle cx="60" cy="55" r="4" fill="#c9f54a"/><path d="M44 33a22 22 0 0 1 32 0M37 26a32 32 0 0 1 46 0" stroke="#c9f54a" stroke-width="2.5" stroke-linecap="round" opacity=".8"/><path d="M44 98h32" stroke="#d4dfc6" stroke-width="4" stroke-linecap="round"/></svg>
               <canvas id="snail-alert-canvas" width="128" height="136" aria-hidden="true"></canvas>
             </span>
-            <span class="snail-alert-copy"><span id="snail-alert-eyebrow" class="snail-alert-eyebrow">PING PING</span><strong id="snail-alert-name"></strong><span id="snail-alert-kind" class="snail-alert-kind"></span><span id="snail-alert-title" class="snail-alert-title"></span><span class="snail-alert-check">Check request <span aria-hidden="true">↗</span></span></span>
+            <span class="snail-alert-copy"><span id="snail-alert-eyebrow" class="snail-alert-eyebrow">COMMS BEACON</span><strong id="snail-alert-name">Mission Control</strong><span id="snail-alert-kind" class="snail-alert-kind">All systems clear</span></span>
+            <span id="snail-alert-badge" class="snail-alert-badge" hidden>0</span><span id="snail-alert-indicator" class="snail-alert-indicator" aria-hidden="true">⌄</span>
           </button>
-          <div id="snail-alert-navigation" class="snail-alert-navigation" hidden><button id="snail-alert-previous" type="button" aria-label="Previous request">‹</button><span id="snail-alert-count"></span><button id="snail-alert-next" type="button" aria-label="Next request">›</button></div>
           <span id="snail-alert-summary" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         </aside>
         <div id="asset-loading" class="asset-loading" role="status" hidden>Preparing world artwork…</div>
         <div id="asset-notice" class="asset-notice" role="status" hidden>Some artwork is unavailable. The outpost is using built-in models.</div>
-      <aside id="fleet-activity" class="fleet-activity" aria-labelledby="activity-title" hidden>
-        <div class="activity-heading"><h2 id="activity-title">Ship signals</h2><button id="activity-close" class="icon-button" type="button" aria-label="Close ship signals">×</button></div>
-        <p id="activity-caption">Calls need your input. Couriers show recent handoffs and artifacts.</p>
-        <div id="activity-list" class="activity-list"></div>
-        <p id="activity-empty">No pending calls or recent deliveries.</p>
-      </aside>
       </div>
+      <aside id="fleet-activity" class="fleet-activity" aria-labelledby="activity-title" hidden>
+        <div class="activity-heading"><div><span class="eyebrow" id="activity-eyebrow">OUTPOST COMMUNICATIONS</span><h2 id="activity-title">Mission Control</h2></div><button id="activity-close" class="icon-button" type="button" aria-label="Close Activity Center">×</button></div>
+        <p id="activity-caption" class="activity-caption">Your agents, connected and in view.</p>
+        <div class="activity-overview" aria-label="Crew status"><span><i class="activity-status-dot" aria-hidden="true"></i><strong id="activity-working">0</strong> <span id="activity-working-label">working</span></span><span><strong id="activity-waiting">0</strong> <span id="activity-waiting-label">available</span></span><span class="activity-connection"><i class="live-dot" aria-hidden="true"></i><span id="activity-connection">Live</span></span></div>
+        <div class="activity-tabs" role="tablist" aria-label="Activity Center view"><button id="attention-tab" type="button" role="tab" aria-selected="true" aria-controls="activity-content" tabindex="0">Attention <span id="attention-count">0</span></button><button id="activity-tab" type="button" role="tab" aria-selected="false" aria-controls="activity-content" tabindex="-1">Activity <span id="activity-count">0</span></button></div>
+        <div id="activity-content" class="activity-content" role="tabpanel" aria-labelledby="attention-tab" tabindex="0"><div id="activity-list" class="activity-list"></div><div id="activity-empty" class="activity-empty"><span class="activity-empty-mark" id="activity-empty-mark" aria-hidden="true">✓</span><h3 id="activity-empty-title">Nothing needs attention</h3><p id="activity-empty-copy">Your crew has the helm. We’ll ring when they need you.</p></div></div>
+        <div class="activity-footer"><span id="activity-footer-label">LOCUS COMMUNICATIONS</span><span><span id="activity-sound-label">Signal online</span> <i class="live-dot" aria-hidden="true"></i></span></div>
+      </aside>
       <div id="selection-note" class="selection-note" role="status" hidden></div>
       <div id="graphics-fallback" class="graphics-fallback" hidden><span class="fallback-icon" aria-hidden="true">◎</span><h2>Your agents are still here.</h2><p id="fallback-reason">3D graphics are unavailable on this device. Select a resident to open their conversation.</p></div>
       <div id="loading-indicator" class="loading-indicator" role="status"><span class="loading-orbit"></span><span id="loading-label">Arriving at your outpost</span></div>

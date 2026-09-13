@@ -52,7 +52,7 @@ struct WorkspaceView: View {
                 contentArea
             }
         }
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
     }
 
     private var contentArea: some View {
@@ -644,7 +644,7 @@ private struct BackgroundChatPane: View {
             transcript
             composer
         }
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
         .contentShape(Rectangle())
         .onTapGesture { model.focusChatPane(pane) }
         .onAppear { model.refreshSplitPane(session.id) }
@@ -764,7 +764,7 @@ private struct BackgroundChatPane: View {
             }
         }
         .padding(10)
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
         .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
     }
 
@@ -1087,7 +1087,7 @@ struct ReviewAndLandView: View {
             .padding(14)
         }
         .frame(minWidth: 760, idealWidth: 860, minHeight: 650, idealHeight: 760)
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
         .onAppear {
             commandsText = model.currentLandingCheckCommands.joined(separator: "\n")
             if let existing = model.activeTaskRecord?.branch { branchName = existing }
@@ -2460,7 +2460,7 @@ private struct ModelPickerPopover: View {
             .padding(10)
         }
         .frame(width: 380)
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
     }
 
     private func teamSection(_ team: AgentTeam) -> some View {
@@ -2799,7 +2799,7 @@ private struct WorkStatusStrip: View {
             .padding(.horizontal, 24)
             .frame(maxWidth: .infinity)
             .frame(height: 25)
-            .background(LocusTheme.panel)
+            .locusWorkspaceBackground()
         }
     }
 

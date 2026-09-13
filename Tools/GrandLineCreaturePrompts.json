@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "credit_ceiling": 78,
+  "assets": [
+    {
+      "asset": "creature_laboon",
+      "prompt": "Premium hand-painted stylized 3D game creature, Laboon the beloved island whale from One Piece. Compact full whale with an enormous rounded squared forehead covered in old pale crisscross scars, small expressive friendly eyes, deep navy blue smooth leathery skin with subtle mottling, pale underside, broad little side flippers and small tail flukes. Recognizable adorable earnest face. Whale body rising at a gentle upward angle as if surfacing, head clearly dominant. Detailed sculpted anatomy, crisp appealing silhouette, warm hand-painted PBR detail matching an intricate pirate island miniature map. Isolated complete creature in front three-quarter view, plain light gray background, fully visible, no water plane, no splash, no spout, no labels, no base, no rocks, no accessories."
+    },
+    {
+      "asset": "creature_sea_king",
+      "prompt": "Premium hand-painted stylized 3D game creature inspired by One Piece Sea Kings: an elegant jade emerald sea serpent with a long sinuous upright S-curved neck emerging from a compact loosely curled body, expressive mischievous large eyes, rounded dragon-like muzzle, pale cream throat and underside, small gold dorsal fin spines, two short flippers, swept-back small ear fins. Entire creature in a compact vertical silhouette, head held high and turned slightly to the side, friendly formidable guardian. Beautiful individually sculpted overlapping scales and ridged belly, rich layered green and turquoise PBR colors, refined anatomy, matching a detailed pirate island miniature world. Full creature visible in front three-quarter view, isolated on plain pale gray, no ocean or waves, no smoke, no rocks, no pedestal, no labels."
+    }
+  ]
+}

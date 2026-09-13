@@ -37,7 +37,7 @@ struct AgentCrewChatView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LocusTheme.panel)
+        .locusWorkspaceBackground()
         .foregroundStyle(LocusTheme.ink)
         .onAppear {
             model.refresh()

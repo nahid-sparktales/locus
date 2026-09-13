@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHostMessage, agentSector, clampSector, sectorAgents, searchAgents, isClickGesture, labelIsUnobscured, STATUS_META } from '../src/state.ts';
-import { safeAssetPath, parseTheme, parseCatalog, DEFAULT_THEME } from '../src/theme.ts';
+import { parseHostMessage, parseShipStyles, agentSector, clampSector, sectorAgents, searchAgents, isClickGesture, labelIsUnobscured, STATUS_META } from '../src/state.ts';
+import { safeAssetPath, parseTheme, parseCatalog, DEFAULT_THEME, SHIP_ASSET_TYPES } from '../src/theme.ts';
 
 const agents = Array.from({ length: 27 }, (_, index) => ({ id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, name: `Agent ${index}`, role: index === 24 ? 'Design researcher' : 'Engineer', status: 'idle' as const }));
 const snapshot = { version: 1, type: 'snapshot', agents, theme: 'outpost', projectName: 'Project' };
@@ -29,6 +29,42 @@ test('agent creation availability is supplied explicitly by the native host', ()
   for (const canCreateAgent of ['true', 1, null, [], {}]) {
     assert.equal(parseHostMessage({ ...snapshot, canCreateAgent }), null);
   }
+});
+test('native chrome and Activity Center nonce remain optional and reject invalid host control values', () => {
+  assert.ok(parseHostMessage(snapshot));
+  for (const activityCenterRequest of [0, 1, 42, Number.MAX_SAFE_INTEGER]) {
+    const parsed = parseHostMessage({ ...snapshot, activityCenterRequest, nativeChrome: true });
+    assert.ok(parsed && parsed.type === 'snapshot');
+    assert.equal(parsed.activityCenterRequest, activityCenterRequest);
+    assert.equal(parsed.nativeChrome, true);
+  }
+  for (const activityCenterRequest of [-1, 0.5, NaN, Infinity, '1', null, Number.MAX_SAFE_INTEGER + 1]) assert.equal(parseHostMessage({ ...snapshot, activityCenterRequest }), null);
+  for (const nativeChrome of [1, 'true', null]) assert.equal(parseHostMessage({ ...snapshot, nativeChrome }), null);
+});
+test('per-agent ship choices accept all 15 supported boats and retain exact native agent identity', () => {
+  assert.equal(SHIP_ASSET_TYPES.length, 15);
+  const agent = { ...agents[0], id: 'aabbccdd-0000-4000-8000-000000000001' };
+  for (const style of SHIP_ASSET_TYPES) {
+    const parsed = parseHostMessage({ ...snapshot, agents: [agent], shipStyles: { [agent.id.toUpperCase()]: style } });
+    assert.ok(parsed && parsed.type === 'snapshot');
+    assert.deepEqual(parsed.shipStyles, { [agent.id]: style });
+  }
+  assert.deepEqual(parseShipStyles({}, [agent.id]), {}, 'Automatic assignment is represented by an omitted override');
+  assert.ok(parseHostMessage(snapshot), 'Older hosts can omit ship styles');
+});
+test('ship preferences cannot reference stale agents, ambiguous IDs, or unsupported models', () => {
+  const agent = { ...agents[0], id: 'aabbccdd-0000-4000-8000-000000000001' };
+  const base = { ...snapshot, agents: [agent] };
+  const invalidMaps = [
+    null, [], 'ship_mihawk_coffin',
+    { [agent.id]: 'unknown-boat' }, { [agent.id]: '../assets/ship.glb' }, { [agent.id]: 1 }, { [agent.id]: null },
+    { 'aabbccdd-0000-4000-8000-000000000099': 'ship_garp_battleship' },
+    { [agent.id]: 'ship_marine_patrol', [agent.id.toUpperCase()]: 'ship_garp_battleship' },
+    JSON.parse('{"__proto__":"ship_mihawk_coffin"}'),
+  ];
+  for (const shipStyles of invalidMaps) assert.equal(parseHostMessage({ ...base, shipStyles }), null);
+  const removed = parseHostMessage({ ...base, agents: [], shipStyles: { [agent.id]: 'ship_mihawk_coffin' } });
+  assert.equal(removed, null);
 });
 test('appearance snapshots accept mixed crews, pandas and explorers while keeping older hosts compatible', () => {
   assert.ok(parseHostMessage(snapshot));

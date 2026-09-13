@@ -305,6 +305,18 @@ enum LocusBrandIcon {
     }
 }
 
+private struct LocusOceanThemeKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Scoped to the Agent World subtree; regular Locus windows retain their appearance.
+    var locusOceanTheme: Bool {
+        get { self[LocusOceanThemeKey.self] }
+        set { self[LocusOceanThemeKey.self] = newValue }
+    }
+}
+
 enum LocusTheme {
     struct Palette {
         let ink: NSColor
@@ -393,6 +405,30 @@ enum LocusTheme {
         successSoft: rgb(0x2A3226),
         codeKeyword: rgb(0xC1A4BD),
         codeType: rgb(0x92B9B5)
+    )
+
+    static let oceanPalette = Palette(
+        ink: rgb(0xF4EFDF),
+        inkSoft: rgb(0xD4E0DD),
+        paper: rgb(0x0B2633),
+        paperDeep: rgb(0x102F3D),
+        panel: rgb(0x0D2B39),
+        white: rgb(0x173C4A),
+        line: rgb(0x2B4B57),
+        lineStrong: rgb(0x729298),
+        muted: rgb(0xACC3C5),
+        signal: rgb(0xE8C381),
+        signalDeep: rgb(0xE8C381),
+        coral: rgb(0xE5AD97),
+        danger: rgb(0xF4A7A0),
+        blue: rgb(0xA5CEDD),
+        success: rgb(0xA2D7C2),
+        warning: rgb(0xE8C381),
+        permissionInk: rgb(0xF0D3A8),
+        permissionMuted: rgb(0xD0C6AA),
+        successSoft: rgb(0x244A45),
+        codeKeyword: rgb(0xD5B2D2),
+        codeType: rgb(0x9DD8D1)
     )
 
     static let ink = adaptive(\.ink)
@@ -504,9 +540,7 @@ enum LocusTheme {
     /// Artwork drawn on the chosen signal colour automatically uses whichever
     /// ink has stronger contrast, including for arbitrary custom colours.
     static var brandInk: Color {
-        accentAdaptive { selection, _ in
-            selection.brandInkNSColor()
-        }
+        accentAdaptive { selection, _ in selection.brandInkNSColor() }
     }
 
     static func palette(for appearance: NSAppearance) -> Palette {
@@ -704,6 +738,7 @@ enum LocusSurfaceKind {
 }
 
 private struct LocusSurfaceModifier: ViewModifier {
+    @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
@@ -712,7 +747,14 @@ private struct LocusSurfaceModifier: ViewModifier {
     let radius: CGFloat
 
     private var solidColor: Color {
-        switch kind {
+        if ocean {
+            switch kind {
+            case .structural: return Color(nsColor: LocusTheme.oceanPalette.paper)
+            case .toolbar: return Color(nsColor: LocusTheme.oceanPalette.panel)
+            case .floating: return Color(nsColor: LocusTheme.oceanPalette.white)
+            }
+        }
+        return switch kind {
         case .structural: LocusTheme.surfaceStructural
         case .toolbar: LocusTheme.surfacePanel
         case .floating: LocusTheme.surfaceCard
@@ -732,7 +774,7 @@ private struct LocusSurfaceModifier: ViewModifier {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Color.clear)
                 .background {
-                    if reduceTransparency || contrast == .increased || isLiveResizing {
+                    if ocean || reduceTransparency || contrast == .increased || isLiveResizing {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(solidColor)
                     } else {
@@ -750,12 +792,13 @@ private struct LocusSurfaceModifier: ViewModifier {
 }
 
 private struct LocusCardModifier: ViewModifier {
+    @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.colorSchemeContrast) private var contrast
     let radius: CGFloat
 
     func body(content: Content) -> some View {
         content
-            .background(LocusTheme.surfaceCard)
+            .background(ocean ? Color(nsColor: LocusTheme.oceanPalette.white) : LocusTheme.surfaceCard)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -769,6 +812,13 @@ private struct LocusCardModifier: ViewModifier {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
+    }
+}
+
+private struct LocusWorkspaceBackground: ViewModifier {
+    @Environment(\.locusOceanTheme) private var ocean
+    func body(content: Content) -> some View {
+        content.background(ocean ? Color(nsColor: LocusTheme.oceanPalette.panel) : LocusTheme.panel)
     }
 }
 
@@ -844,6 +894,10 @@ extension ButtonStyle where Self == LocusButtonStyle {
 }
 
 extension View {
+    func locusWorkspaceBackground() -> some View {
+        modifier(LocusWorkspaceBackground())
+    }
+
     func locusCard(radius: CGFloat = 10) -> some View {
         modifier(LocusCardModifier(radius: radius))
     }

@@ -75,13 +75,22 @@ extension AppModel {
 
     /// Shares the ordinary native chat lifecycle without moving keyboard focus
     /// to a different window. Its composer owns all approvals and tool access.
-    func activateAgentWorldConversation(_ sessionID: String, workspace: String, stillCurrent: () -> Bool = { true }) async throws {
+    func activateAgentWorldConversation(_ sessionID: String, workspace: String, expectedProfileID: UUID? = nil, stillCurrent: () -> Bool = { true }) async throws {
         let previousSessionID = currentSessionID
         if sessionCatalog.snapshot.sessionsByID[sessionID] == nil { await refreshMetadata() }
         try Task.checkCancellation()
         guard stillCurrent(), currentSessionID == previousSessionID || currentSessionID == sessionID else { throw CancellationError() }
-        guard let session = sessionCatalog.snapshot.sessionsByID[sessionID], !session.isArchived,
-              let sessionWorkspace = session.workspacePath,
+        guard let session = sessionCatalog.snapshot.sessionsByID[sessionID] else {
+            // A failed catalog refresh is not proof that a chat was deleted.
+            throw AgentWorldError.unavailable("This chat could not be found in the current history. Try again, or start a new chat.")
+        }
+        guard !session.isArchived else {
+            throw AgentWorldError.conversationUnavailable("This conversation is archived.")
+        }
+        if let expectedProfileID, (session.savedAgentProfileID ?? agentWorld.boundProfileID(for: sessionID)) != expectedProfileID {
+            throw AgentWorldError.unavailable("This chat belongs to another agent. Start a new chat for the selected resident.")
+        }
+        guard let sessionWorkspace = session.workspacePath,
               SessionSummary.canonicalWorkspacePath(sessionWorkspace) == SessionSummary.canonicalWorkspacePath(workspace) else {
             throw AgentWorldError.unavailable("This conversation is unavailable in this project.")
         }

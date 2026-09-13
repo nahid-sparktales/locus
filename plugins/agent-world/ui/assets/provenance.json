@@ -42,10 +42,25 @@
     }
   ],
   "reference": {
-    "path": "references/den-den-mushi.png",
+    "path": "references/den-den-mushi.jpg",
     "task_id": "01a0996d-ca8d-7715-8bec-e08624508786",
-    "sha256": "696983052de69818453f647089830486f7e935c5ba4d2f4bcf3cc52e6023d02d",
-    "prompt": "Premium 3D Den Den Mushi snail telephone from One Piece. Isolated full character, three-quarter front view, light gray background. Smiling cream yellow snail, thick tall eye stalks, big white eyes. Ochre foot, lime green spiral shell. Dark teal vintage telephone handset on brass cradle atop shell, short coiled wire, brass rotary dial on shell front, amber alert lamp. Polished hand-painted game prop, clear rounded shapes, teal lime ivory gold palette, soft even lighting. No text or pedestal."
+    "sha256": "fce6edfdf7c748ec83354a285adc93c41fc4586284810d9dee53b64377621e98",
+    "prompt": "Premium 3D Den Den Mushi snail telephone from One Piece. Isolated full character, three-quarter front view, light gray background. Smiling cream yellow snail, thick tall eye stalks, big white eyes. Ochre foot, lime green spiral shell. Dark teal vintage telephone handset on brass cradle atop shell, short coiled wire, brass rotary dial on shell front, amber alert lamp. Polished hand-painted game prop, clear rounded shapes, teal lime ivory gold palette, soft even lighting. No text or pedestal.",
+    "source_path": "references/den-den-mushi.png",
+    "source_sha256": "696983052de69818453f647089830486f7e935c5ba4d2f4bcf3cc52e6023d02d",
+    "source_bytes": 843493,
+    "bytes": 164050,
+    "dimensions": [
+      1024,
+      1024
+    ],
+    "encoding": {
+      "format": "JPEG",
+      "quality": 94,
+      "subsampling": 0,
+      "dimensions_unchanged": true,
+      "purpose": "reference_artwork"
+    }
   },
   "assets": {
     "den_den_mushi": {
