@@ -23,7 +23,7 @@ the separate **LocusX** edition.
 
 > [!NOTE]
 > [Download Locus 3.0.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v3.0.0/Locus-macOS.zip).
-> This wallet-free release adds Agent World, Claude plan accounts, and more reliable
+> This wallet-free release adds Agent World, a Claude plan account preview, and more reliable
 > background runtime updates. Install this download once if you use 2.6.0 or earlier;
 > existing chats, accounts, settings, and browser data stay in place. See the
 > [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v3.0.0).

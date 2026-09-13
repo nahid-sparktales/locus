@@ -2,20 +2,44 @@
 
 ## Unreleased
 
+## 3.0.0 — 2026-09-12
+
 ### Added
 
+- Agent World, an optional plugin with a separate 3D window for saved agents.
+  Available residents explore an orbital garden campus; active agents return
+  to their workstations. Click a resident to chat, assign work, or open its
+  persistent project conversation with the same account and permissions.
+- Four animated resident designs, included offline artwork, searchable access,
+  and a theme catalog for expanding Agent World.
+- Claude plan accounts in preview, separate from Claude API accounts, with a
+  managed helper, isolated account directories, and resumable conversations.
+- ChatGPT-account support for GPT Image 2 and OpenAI API options for GPT Image
+  2.5 Sunburst, Flare, and GPT Image 1.5, with model-aware quality and dimensions.
 - Portable runtime package builds for Linux x86-64/ARM64 and Apple Silicon Macs,
   with pinned Python and ChatGPT helpers, verified downloads, dependency hashes,
   bundled license notices, and isolated service validation in CI.
 
 ### Fixed
 
+- Work and Agent restore their own conversations and preserve drafts when
+  switching tabs. Account controls, voice settings, reasoning choices, and
+  automation navigation consistently reach their intended configuration.
+- Self-hosted model servers on private networks remain reachable without a
+  blanket transport-security exception.
 - Runtime updates block new work during installation and restore the previous
   service and databases if startup fails. Interrupted updates retain recovery
   records; successful updates keep the previous package and database backups.
 - Packaged ChatGPT helpers start with their correct app-server entry point.
 - Run-history operations close database connections promptly, preventing
   independent workers from exhausting the background service's file handles.
+- Remote packages without the optional Claude helper do not advertise Claude
+  plan support.
+
+Claude plan authentication and distribution approval remain documented preview
+limitations in `Docs/ClaudePlan.md`. Portable runtime archives remain candidate
+artifacts; live-host readiness requirements are recorded in
+`Docs/runtime/release-readiness.md`.
 
 ## 2.8.0 — 2026-09-09
 
