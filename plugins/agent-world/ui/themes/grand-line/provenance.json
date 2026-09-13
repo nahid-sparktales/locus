@@ -2,10 +2,9 @@
   "generator": "Meshy",
   "model": "meshy-7",
   "reference_model": "nano-banana-pro",
-  "credit_ceiling": 648,
-  "user_credit_ceiling_exclusive": 1000,
-  "reserved_credits": 648,
-  "reported_credits": 648,
+  "credit_ceiling": 1506,
+  "reserved_credits": 1506,
+  "reported_credits": 1506,
   "pricing_verified_on": "2026-09-13",
   "pricing_source": "Meshy MCP tool pricing and consumed_credits reports",
   "generation_settings": {
@@ -495,190 +494,5046 @@
         "material_count": 1
       },
       "downloaded": true
+    },
+    {
+      "asset": "island_alabasta",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca7-9821-73ab-ac23-a5c2a02bf755",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Alabasta from One Piece: sunlit sandstone island, ornate domed royal palace, elegant minarets, layered ochre cliffs, desert village, small pyramids and emerald palm oasis.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_alabasta",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cae-31e0-7483-9a9d-c06158d504cb",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca7-9821-73ab-ac23-a5c2a02bf755",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_drum",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca6-fcb6-745a-93a7-8808e4977207",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Drum Island from One Piece: towering rugged flat-topped snowy stone mountains, pink-roofed medieval castle on highest peak, evergreen forest, snowy foothill village and winding trail.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_drum",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cab-34f2-76ef-90d6-fc89406df1a8",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca6-fcb6-745a-93a7-8808e4977207",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_enies_lobby",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca7-d00c-7415-9fdb-fa383b68fb2e",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Enies Lobby from One Piece: magnificent ivory judicial fortress island, monumental courthouse with turquoise roof, ornate gates, crenellated towers, slender stone bridges and green lawns.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_enies_lobby",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cae-e2f1-718d-80ea-237a973dfb0b",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca7-d00c-7415-9fdb-fa383b68fb2e",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_jaya",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca9-73d2-71c3-bb4b-384b8a3142fb",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Jaya from One Piece: lush tropical pirate island, rustic weathered timber tavern village, red roofs, dense palms, ancient overgrown stone ruins and a rocky sunlit cove.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_jaya",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb1-901a-738d-990b-75fddf8bbdf3",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca9-73d2-71c3-bb4b-384b8a3142fb",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_laugh_tale",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca8-db0e-71ee-956b-a0f8055b2065",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Laugh Tale from One Piece: mysterious lush treasure island, weathered ancient stone ruins surrounding one carved dark red Poneglyph, tiny open gold-filled chest, tropical palms and worn stairs.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_laugh_tale",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09caf-5ae0-74cb-bb32-24466e5a73ab",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca8-db0e-71ee-956b-a0f8055b2065",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_little_garden",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca6-fa7a-74ea-b050-fdc19c9193e2",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Little Garden from One Piece: lush prehistoric jungle island, a craggy dormant volcano, enormous ferns, ancient trees, mossy boulders and one small friendly long-neck dinosaur.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_little_garden",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cab-2d1b-7032-9710-0e400eb6cab2",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca6-fa7a-74ea-b050-fdc19c9193e2",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_marineford",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca8-3b0d-7172-818e-369af1d3c70f",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Marineford from One Piece: imposing crescent-shaped white stone naval fortress island, layered dark teal Japanese castle, bastion walls, watchtowers, tiny gun emplacements and flagpoles.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_marineford",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09caf-451a-772e-a207-ed75229dbb31",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca8-3b0d-7172-818e-369af1d3c70f",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_sabaody",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca8-38d3-76c5-ad13-c9a917ec039f",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Sabaody Archipelago from One Piece: enormous graceful mangrove trees with arching buttress roots and dense emerald crowns, tiny colorful houses between roots, moss gardens and golden sandy coves.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_sabaody",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09caf-3c55-7397-8784-fc60cf5309e7",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca8-38d3-76c5-ad13-c9a917ec039f",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_skypiea",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca9-db0a-7305-a5ad-322277ba6ae4",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Skypiea from One Piece: floating heavenly island on voluminous sculpted white clouds, ancient ornate Shandora golden bell shrine, mossy stone ruins, palm trees and small turquoise pools.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_skypiea",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb2-09a1-710d-a726-a2936a3db04e",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca9-db0a-7305-a5ad-322277ba6ae4",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_twin_cape",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca6-f840-75e3-b147-b8f9b26f39ba",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Twin Cape from One Piece: weathered red-and-ivory striped lighthouse with glass lantern, tiny keeper cottage, windswept palms, winding stone path, rugged chalk coves and pale sand.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_twin_cape",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cab-24b4-75ca-b96f-c0aa3e110288",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca6-f840-75e3-b147-b8f9b26f39ba",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_wano",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca8-704d-74c6-a8de-45638287eddc",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Wano from One Piece: beautiful Japanese island, tall ornate teal-roofed red-and-ivory pagoda castle, pink cherry blossoms, curved bridge over narrow canal, torii gate, stone terraces and bamboo.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_wano",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09caf-4c1a-7566-b91c-bca7cd3ed1a7",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca8-704d-74c6-a8de-45638287eddc",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_water_seven",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca7-9a63-71c4-9d65-e739a8326bf5",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Water Seven from One Piece: rich circular terraced Venetian water city with pastel roofs, detailed stone houses, concentric blue canals, arched bridges, grand central fountain and waterfalls.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_water_seven",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cae-a29e-70b9-ace6-52f75680de22",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca7-9a63-71c4-9d65-e739a8326bf5",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_whole_cake",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ca8-d917-77f2-be9f-5833c023455c",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Whole Cake Island from One Piece: elaborate tiered pastel cake castle with turrets and creamy frosting, strawberry roofs, candy-cane trees, macaron houses, confection gardens and biscuit cliffs.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_whole_cake",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09caf-53b8-71a9-90d8-551e1fa003e5",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ca8-d917-77f2-be9f-5833c023455c",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "scenery_red_line",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09caa-1248-74b5-a049-02cacf70ef15",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Red Line from One Piece: a long narrow monumental ridge of rusty red sandstone cliffs, towering irregular crags, deeply eroded layered strata, natural buttresses, grass along the top. Solid continuous ridge, length three times width, height twice width.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "scenery_red_line",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb2-4c78-760d-a534-50cf7609af98",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09caa-1248-74b5-a049-02cacf70ef15",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "ship_garp_battleship",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cb3-cbe3-747b-ae7b-b6230297abbd",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Vice Admiral Garp's massive Marine battleship: unmistakable giant friendly dog-head figurehead holding a bone in its mouth at the bow, white armored hull with cobalt blue trim, rows of black broadside cannon ports, multiple tall masts and ivory sails with simple blue seagull emblems, layered naval command decks.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "ship_garp_battleship",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb5-d576-7741-af56-b582586b7c42",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cb3-cbe3-747b-ae7b-b6230297abbd",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "ship_marine_patrol",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cb3-cdd7-7614-b520-053844e6b131",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Standard Marine patrol sailing ship: crisp white and royal-blue wooden hull, three masts with cream square sails bearing simple blue seagull insignia, a conventional pointed navy bow, disciplined rows of dark cannon ports, aft quarterdeck, blue pennants, warm timber deck. Classic navy vessel, no animal figurehead.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "ship_marine_patrol",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb5-dcf4-7023-878a-eeee0c476670",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cb3-cdd7-7614-b520-053844e6b131",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "ship_mihawk_coffin",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cb3-c9f3-7459-8c7a-77004885c94c",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Dracule Mihawk's very small black coffin-shaped boat Hitsugibune: long narrow gothic coffin hull, ornate curved black trim, a single high-backed crimson velvet throne, tall black cross-shaped mast with tiny dark sail, green-flame candle lanterns on both sides. Intimate one-person craft, dramatic elegant gothic silhouette.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "ship_mihawk_coffin",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cb5-ceee-7451-86b3-30a11e351c59",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cb3-c9f3-7459-8c7a-77004885c94c",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "scenery_reverse_mountain",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cbb-5ca8-70a0-8c0d-6640cf5690a0",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted miniature 3D game terrain. Reverse Mountain from One Piece: one towering craggy red sandstone mountain with deeply carved strata, winding turquoise river channels converging near its summit, a beautiful broad whitewater waterfall cascading down the front rock face into a small rocky plunge basin. Lush moss and grass on ledges. Natural narrow irregular rock base; mountain height twice its width. Rich PBR textures, intricate sculpted geology, isolated whole object, front three-quarter view, plain pale gray. No ocean plane, no labels, no boats, no pedestal, no clouds.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "scenery_reverse_mountain",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cbf-033e-72f2-99b2-08af7d39959a",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cbb-5ca8-70a0-8c0d-6640cf5690a0",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "creature_laboon",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ce4-ba87-77c7-9358-6e92f25f7797",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted stylized 3D game creature, Laboon the beloved island whale from One Piece. Compact full whale with an enormous rounded squared forehead covered in old pale crisscross scars, small expressive friendly eyes, deep navy blue smooth leathery skin with subtle mottling, pale underside, broad little side flippers and small tail flukes. Recognizable adorable earnest face. Whale body rising at a gentle upward angle as if surfacing, head clearly dominant. Detailed sculpted anatomy, crisp appealing silhouette, warm hand-painted PBR detail matching an intricate pirate island miniature map. Isolated complete creature in front three-quarter view, plain light gray background, fully visible, no water plane, no splash, no spout, no labels, no base, no rocks, no accessories.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "creature_laboon",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09ce6-d4e0-74cc-aa49-553a2acf17d1",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ce4-ba87-77c7-9358-6e92f25f7797",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "creature_sea_king",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09ce4-bcc2-7339-8dca-3ea4dd309df8",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium hand-painted stylized 3D game creature inspired by One Piece Sea Kings: an elegant jade emerald sea serpent with a long sinuous upright S-curved neck emerging from a compact loosely curled body, expressive mischievous large eyes, rounded dragon-like muzzle, pale cream throat and underside, small gold dorsal fin spines, two short flippers, swept-back small ear fins. Entire creature in a compact vertical silhouette, head held high and turned slightly to the side, friendly formidable guardian. Beautiful individually sculpted overlapping scales and ridged belly, rich layered green and turquoise PBR colors, refined anatomy, matching a detailed pirate island miniature world. Full creature visible in front three-quarter view, isolated on plain pale gray, no ocean or waves, no smoke, no rocks, no pedestal, no labels.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "creature_sea_king",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09ce6-db29-7690-a8d5-591ea93e3ef0",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09ce4-bcc2-7339-8dca-3ea4dd309df8",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_egghead",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cef-17c3-7274-8281-1d110ed92d03",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium richly detailed hand-painted 3D game island diorama inspired by Egghead Island from One Piece, a brilliant futuristic tropical research island. A large gleaming white egg-shaped laboratory dome with turquoise glazing rises over a compact lush island, surrounded by elegant curved science towers, spherical satellite labs, looping orange-red transit tubes, antennae and small palm trees. One elevated ring walkway and intricate lower-level white futuristic buildings, very readable varied sci-fi silhouettes. Retro-futurist 1960s space-age design, coral accents and turquoise glass, weathered coastal rocks with tiny sandy coves, refined sculpted surfaces and polished PBR materials. Complete compact irregular island coastline in elevated three-quarter view, isolated against light gray, no surrounding sea or large water plane, no lettering or numbers, no people, no pedestal, no flat circular base. Match a beautiful high-quality colorful pirate adventure miniature map.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_egghead",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cf1-ee4b-72d3-8fb0-8701dab6f2ad",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cef-17c3-7274-8281-1d110ed92d03",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
+    },
+    {
+      "asset": "island_elbaf",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "id": "01a09cef-15b3-7454-ac2f-48cd19d74a82",
+      "ai_model": "nano-banana-pro",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "nano-banana-pro",
+        "prompt": "Premium richly detailed hand-painted 3D game island diorama inspired by Elbaf from One Piece, the home of giants. A monumental ancient world tree with a thick intricately twisted trunk, gigantic exposed roots and a broad layered emerald canopy towers over a rugged mossy Scandinavian island. Tiny beautiful Viking timber longhouses with curved carved roofs, a great carved stone stair, hanging rope bridges threaded among enormous roots, waterfalls over dark stone cliffs. Strong majestic vertical silhouette with visible village detail below the canopy. Warm wood and deep foliage, natural rock strata, polished sculpted PBR materials and exquisite miniature craftsmanship. Complete compact irregular oval island with self-contained rocky coastline, viewed from elevated three-quarter angle. Isolated on plain light gray, no surrounding sea or large water plane, no labels, no people, no pedestal, no flat circular base. Match a premium colorful pirate adventure tabletop map.",
+        "aspect_ratio": "1:1"
+      }
+    },
+    {
+      "asset": "island_elbaf",
+      "stage": "model",
+      "reserved_credits": 30,
+      "consumed_credits": 30,
+      "id": "01a09cf1-e647-74d6-97c7-008a779cac21",
+      "ai_model": "meshy-7",
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "model_type": "standard",
+        "input_task_id": "01a09cef-15b3-7454-ac2f-48cd19d74a82",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 40000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "symmetry_mode": "off",
+        "origin_at": "bottom"
+      }
     }
   ],
   "assets": {
     "ship_thousand_sunny": {
-      "sha256": "f275e260d4df694a068be7442b2d07b4f61fb013fffa0567c147dacd6c4e657d",
+      "sha256": "b25ae1a705a63810e0d5db543dc7faac76c75435421376e407c802ec0704f486",
       "source_task_id": "01a0991c-9efa-74d1-ac44-48892b6b8e73",
       "reference_task_id": "01a09916-8828-7233-b453-97544d3f137a",
-      "reference_image": "references/thousand_sunny.png",
+      "reference_image": "references/thousand_sunny.jpg",
       "prompt": "Use ONLY the ship at row 1 column 1, labelled Thousand Sunny, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including lion sun figurehead, wooden round hull, white skull sail, orange/yellow trim, aft green lawn, masts and flags. Preserve the silhouette and colors faithfully. Crisp clean geometry, rich hand-painted material details, neutral studio lighting, plain white background. No text labels, no other ships, no water, no base.",
-      "bytes": 6641580,
+      "bytes": 5468857,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5468857,
+      "geometry_sha256": "bc108d9b5283f7ae4775be18febdc5afd78011d50fc62f2840f910970ae99534",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/thousand_sunny.glb",
+        "source_sha256": "f275e260d4df694a068be7442b2d07b4f61fb013fffa0567c147dacd6c4e657d",
+        "source_bytes": 6641580,
+        "runtime_bytes": 6128676,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "53e6ea5211bd95f22307e5eb2eaa2a416363e7eca40a2118050649eea8788fce",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2269096,
+            "bytes": 2269096,
+            "encoded_sha256": "0d7b8f0fb32c1a682608c2772aab53b7d19a742f4752eebd9828e06010c4ed10"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "08f13c802c12bd757b15f9bd6db08756752f811cd4b69440939df5218e8bd337",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1172868,
+            "bytes": 918498,
+            "encoded_sha256": "5f402ee636b1fddd5ef58325b534cedb229d01ae9c32ff5720e910903bae8479"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "63068165c22fc7f72b750f8e48b46d4354d889c5007cd017dfe48f15a4492f8d",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1371468,
+            "bytes": 1112776,
+            "encoded_sha256": "7ec42721678b5f1d43c7d6d55a82deb079e8d3dfa629848d8c0ef252c977454a"
+          }
+        ]
+      },
+      "path": "assets/thousand_sunny.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/thousand_sunny.glb",
+        "source_sha256": "bca061801570ba1f5f9b0074980d5a5677d38c3d4f065915a6f72a78d851c2ca",
+        "source_bytes": 6128676,
+        "runtime_bytes": 5468857,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_going_merry": {
-      "sha256": "a576a30fdbb8268f682681d75496b9a1b8473ffcb2416ca0139a7dcec5ccbc20",
+      "sha256": "7275fa62e4e4b77cc5d16875f698c829b3e22f397166ea7a7dad363742bfe31f",
       "source_task_id": "01a0991e-a719-7037-87e7-dd03bc830df0",
       "reference_task_id": "01a09917-27d6-72a3-bd0b-23b643702d51",
-      "reference_image": "references/going_merry.png",
+      "reference_image": "references/going_merry.jpg",
       "prompt": "Use ONLY the ship at row 1 column 2, labelled Going Merry, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including sheep ram figurehead, caramel wood hull, white skull sail, tiny aft cabin, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6638612,
+      "bytes": 5433965,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5433965,
+      "geometry_sha256": "76062c6d387bc18f21318085fb94e1229ad7657d72ce0462f6935f085bf40a52",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/going_merry.glb",
+        "source_sha256": "a576a30fdbb8268f682681d75496b9a1b8473ffcb2416ca0139a7dcec5ccbc20",
+        "source_bytes": 6638612,
+        "runtime_bytes": 6094964,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "9fd8c1b18cf5117ce37e34eb9305cd9453a605443ef6f7a672f3f521c8c984bc",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2125469,
+            "bytes": 2125469,
+            "encoded_sha256": "ce5b0e72749098d9ae7916e4f1540f19a2dd1daa7becc647627ca8247519554b"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "feacb21c36fffd12dd50b35c595f3a574d1e62688bca519c91ad17418c1a463a",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1255304,
+            "bytes": 992440,
+            "encoded_sha256": "c5cd5e31c353d95bdfc1ec6d1d522578181c103fda7a67b706e5e3facd98863f"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "bcd38c0e844949716167d6aecfb0d26cb135b21c364526b77ab454a6e88a291b",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1442595,
+            "bytes": 1161658,
+            "encoded_sha256": "5e61325b72b38f9671411cd54e40f31e3e17d116610def832ab5ebaad0695d8e"
+          }
+        ]
+      },
+      "path": "assets/going_merry.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/going_merry.glb",
+        "source_sha256": "c6f7a6bd519ca954360d6d85118aa8864f6471ff0e0f30b4c6dd8ac53c7f9a7a",
+        "source_bytes": 6094964,
+        "runtime_bytes": 5433965,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_baratie": {
-      "sha256": "0cfcb74d06a770f370d82b327e32b56c322b9227430e06b64c49026aead7de5a",
+      "sha256": "924ac7f83c96cc454d0bb4bd1ab279251844e24f3880b7997c7c6f7c3a10ba79",
       "source_task_id": "01a0991e-ae67-731b-bae5-3d9bcbeb5cae",
       "reference_task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5",
-      "reference_image": "references/baratie.png",
+      "reference_image": "references/baratie.jpg",
       "prompt": "Use ONLY the ship at row 1 column 3, labelled Baratie, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including orange fish-shaped bow, broad green and red restaurant hull, tall yellow-white striped sails, stacked wooden decks. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6879936,
+      "bytes": 5640511,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5640511,
+      "geometry_sha256": "2e5915bc2763cb878ffd08f5c796cee01a6442066e0ded2b0b89471fbefa740b",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/baratie.glb",
+        "source_sha256": "0cfcb74d06a770f370d82b327e32b56c322b9227430e06b64c49026aead7de5a",
+        "source_bytes": 6879936,
+        "runtime_bytes": 6353700,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "62952b2df43177c941663b6c78f2f092c14c88b239ef126aa9885188d4c0927a",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2297692,
+            "bytes": 2297692,
+            "encoded_sha256": "1eda3c7ba341b249389048829ff51409a2a1d6f5d27d4cebc169754e9dbae9ba"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "81af2aa4b17c875049432928734eaf3ab1bc3494a0feebf9da666f13825eaf94",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1260619,
+            "bytes": 1001368,
+            "encoded_sha256": "64a136692ea6681aeb6bb1f12c5a91aceeba82841155c31642a86195d9112000"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "7f77083a6796a52ad2022eaa2ee0c5f204d25cff72f0be3215a9738810101e8e",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1404594,
+            "bytes": 1137460,
+            "encoded_sha256": "8ea1465031e836c329d6b25c762fc4da75011ec665023c9320d13855eacd3065"
+          }
+        ]
+      },
+      "path": "assets/baratie.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/baratie.glb",
+        "source_sha256": "2f68c75daa4d059405cc6caa5658882cf5ace5f915fdc7a9b87329aac1763a75",
+        "source_bytes": 6353700,
+        "runtime_bytes": 5640511,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_navy_h03": {
-      "sha256": "381f3b9db688c0fdda93a993e670decc839b1742ca16d2065639567f6ffe0d0c",
+      "sha256": "78a2eaab5732dc75b39d0f2b6202de7c4f029aa0f04e743555430d38a1a1653d",
       "source_task_id": "01a0991e-b530-71af-98ac-dfda771b502a",
       "reference_task_id": "01a09917-2a80-777f-a994-02de9de845c8",
-      "reference_image": "references/navy_h03.png",
+      "reference_image": "references/navy_h03.jpg",
       "prompt": "Use ONLY the ship at row 2 column 1, labelled Navy H03, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including turquoise hull, large clustered white sails covered in red markings, naval superstructure, curled dog-like bow. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6824856,
+      "bytes": 5623632,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5623632,
+      "geometry_sha256": "443dd35046baef82fc6a8295896c1306672de8abd9863288f7a5d8389eab8b8d",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/navy_h03.glb",
+        "source_sha256": "381f3b9db688c0fdda93a993e670decc839b1742ca16d2065639567f6ffe0d0c",
+        "source_bytes": 6824856,
+        "runtime_bytes": 6305008,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "2b2ff5d16a59b1638ae63f1df6c53bbdebfbdfef5390c4107cc1fc8eb5484de0",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2309897,
+            "bytes": 2309897,
+            "encoded_sha256": "8a70e15e3e89d8d640075101ca3b5d66139b0a6e8024e38fa65cc1240b2f2f21"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "2510a85bc6a2c5b1d5a9c2eb8fb3b012ed45e13d0061175df15ee1df1a34637f",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1167299,
+            "bytes": 906398,
+            "encoded_sha256": "551b02cdf1b4d41f4206c8a59d329fa734acf3c76666e67f3bb3813768e7b2e0"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "52d64501c19fc5797041fb72ff7ec4ba3e379867d387136dd7d23d5228cd75ae",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1487947,
+            "bytes": 1228842,
+            "encoded_sha256": "6323147bff52a657c057c23a35af0c0eda59809a4eeb11679071fa9dafea2225"
+          }
+        ]
+      },
+      "path": "assets/navy_h03.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/navy_h03.glb",
+        "source_sha256": "c5bd47f3785701eb606ac9ff86b36e4e02d66d0acfd5288756182df1e59abdac",
+        "source_bytes": 6305008,
+        "runtime_bytes": 5623632,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_polar_tang": {
-      "sha256": "8cfdb4420d81a804de5e0a92bab2d4423425a79c52333ea6d6efc547cdb7ffa2",
+      "sha256": "f4ab899f31fb1593b278d510c1fbef0fda62b0d3f15f8cd0b097902d93565e1f",
       "source_task_id": "01a0991e-bc04-74ee-81c7-0677c45d376c",
       "reference_task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9",
-      "reference_image": "references/polar_tang.png",
+      "reference_image": "references/polar_tang.jpg",
       "prompt": "Use ONLY the ship at row 2 column 2, labelled Polar Tang, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright yellow rounded submarine hull, circular portholes, orange tail fin, black-red sail, yellow conning tower. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 5277228,
+      "bytes": 4318747,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 4318747,
+      "geometry_sha256": "4fa440d8e930db3c08aa5a22a388b6fa6388bf0022b9e877214a704af31100cc",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/polar_tang.glb",
+        "source_sha256": "8cfdb4420d81a804de5e0a92bab2d4423425a79c52333ea6d6efc547cdb7ffa2",
+        "source_bytes": 5277228,
+        "runtime_bytes": 4757664,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "4c30725346c2236c94d3286c3fe0a299eb6f394d82c8252d415ad0bae8d1b968",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1759536,
+            "bytes": 1759536,
+            "encoded_sha256": "af8e5b553e6c36cf4b697b4e485b819714e6f8a92186934617e0a70d18dcb73d"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "015d06e7d57a2773862c621cef6ebd4fd9624e5e722a77bfb251a1149f46c2d3",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1032033,
+            "bytes": 798106,
+            "encoded_sha256": "66902e3049f376ebace7e60f2e2f2b1eb7907ceddd676a49da96eb27593c961d"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "5d9a8abc98ba14f5f7d8c683297068e79c4d354ca7f62cb6a91ccb123c3bd824",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1165701,
+            "bytes": 879914,
+            "encoded_sha256": "9cb351577990d8d9ddee0b7723cdcfd5ce6385bc0f3b3c8de16aeeda3c362570"
+          }
+        ]
+      },
+      "path": "assets/polar_tang.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/polar_tang.glb",
+        "source_sha256": "7dacaa79b81d6b9e04bfd02af1ff611275b890586dd9fbb70fe6f2afdf11daed",
+        "source_bytes": 4757664,
+        "runtime_bytes": 4318747,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_spade_pirates": {
-      "sha256": "800f92826121fb60b18fbe2700093db724f99828f47178496c0e59982e15d1b3",
+      "sha256": "98bb2857c08d03beaa474b198af664dc542581b2ef853fd67dcb13d68b640127",
       "source_task_id": "01a0991e-c217-7325-8798-d74ff3c0e52e",
       "reference_task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6",
-      "reference_image": "references/spade_pirates.png",
+      "reference_image": "references/spade_pirates.jpg",
       "prompt": "Use ONLY the ship at row 2 column 3, labelled Spade Pirates Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark wood hull, smiling orange bow figurehead, large black sails, white skull emblem, small cream sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6550788,
+      "bytes": 5282907,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5282907,
+      "geometry_sha256": "c3fb41477e8ab156e1a045d6b93658149363a36843a4e532130175cd52d59a6f",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/spade_pirates.glb",
+        "source_sha256": "800f92826121fb60b18fbe2700093db724f99828f47178496c0e59982e15d1b3",
+        "source_bytes": 6550788,
+        "runtime_bytes": 5999656,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "cbd4172e1e55bb81fd3a2cb9a6f11a55b26066613703b3a6cf83f662a4fe468a",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2069271,
+            "bytes": 2069271,
+            "encoded_sha256": "b0590c5f8c0810a6679de4a064634090af601d41593a5cebb3fc9a83d2be68f1"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "d9b4be06b021814e49c326098e3efb886bb6be96d94701e6ce3a5d0956d9f142",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1101205,
+            "bytes": 845100,
+            "encoded_sha256": "9d35fddb789b94ebcca94f679211ae3023131edc129886ac3e344b8197b4d6eb"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "a6fce06a38ae11bc671d45bb535cba105ed08fcf7c7e95075e7ed0cff1e841ca",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1466459,
+            "bytes": 1171282,
+            "encoded_sha256": "8c14b18ea8a8eba439bac87fe13fd4274bd4a839ad0f76263b95c0485be65aa1"
+          }
+        ]
+      },
+      "path": "assets/spade_pirates.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/spade_pirates.glb",
+        "source_sha256": "ce1e9a94626dcabf0ca97266d73aceeab86bba75c493edfe3029e9c0eef3a334",
+        "source_bytes": 5999656,
+        "runtime_bytes": 5282907,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_red_force": {
-      "sha256": "989c5d5846cb592bffbc74e0cb869d812ee289a808e5fb08ba3bd64ae57adc76",
+      "sha256": "15366ea65d5241216f591d5cf55df54fc461b0aa7d70df24f38e8a7c47683a44",
       "source_task_id": "01a0991e-c8d0-758c-a29b-155a0445d93e",
       "reference_task_id": "01a09917-2f2d-730e-9552-c79f43073178",
-      "reference_image": "references/red_force.png",
+      "reference_image": "references/red_force.jpg",
       "prompt": "Use ONLY the ship at row 3 column 1, labelled Red Force, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including red dragon figurehead, deep red brown wooden hull, multiple white sails, gold trim, broad aft deck. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 7382352,
+      "bytes": 5985825,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5985825,
+      "geometry_sha256": "e3409fadb8093090ec9b7d122257b255ed61a0f6751bdc8b7bc6771d4831d42a",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/red_force.glb",
+        "source_sha256": "989c5d5846cb592bffbc74e0cb869d812ee289a808e5fb08ba3bd64ae57adc76",
+        "source_bytes": 7382352,
+        "runtime_bytes": 6813032,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "517c964753271271b07a0f0c7a0ac6bc3710df608d99c92dd43572a16be0b338",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2375860,
+            "bytes": 2375860,
+            "encoded_sha256": "961a91e243e848bb64ef046a08794708744e19266825cb33c29aca19b8d53996"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "b4034d2a45def35c649fbf682c345f6a684767ae6e80dd8b08beaae75ac31a0b",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1410961,
+            "bytes": 1130330,
+            "encoded_sha256": "45e5dd93e3a452ac4cd0d70241716e687675f993230b42e911406c70e5c15a7d"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "916e9a4fac59a0f7b1e20a41e867e16da996a6579ecbd586a7ba6440fc5384a5",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1533443,
+            "bytes": 1244598,
+            "encoded_sha256": "4d7a7c06c2ddfb01aeaa5708d99b37e55b0f238e799b248c4174139615a2eb06"
+          }
+        ]
+      },
+      "path": "assets/red_force.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/red_force.glb",
+        "source_sha256": "6c8a3373c0c4176d55579f3c9ef50f0de15215c6e7cf9b0a1ede91d6d0841fd3",
+        "source_bytes": 6813032,
+        "runtime_bytes": 5985825,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_moby_dick": {
-      "sha256": "9b1b7f7e8b843fd5c93a11509208fe8c1a2ac8819087150c0cf8ea2ea37a4b4a",
+      "sha256": "0e623423bd8ab15f2df0330126d61c7acbda89ebf0651396a37a0478d652b276",
       "source_task_id": "01a0991e-d07a-7310-bc3e-6f2271630b54",
       "reference_task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e",
-      "reference_image": "references/moby_dick.png",
+      "reference_image": "references/moby_dick.jpg",
       "prompt": "Use ONLY the ship at row 3 column 2, labelled Moby Dick, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including huge rounded white whale bow, light-blue underside, multi-deck wooden stern, rows of white square sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6884476,
+      "bytes": 5512597,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5512597,
+      "geometry_sha256": "30ff5c4f0bffb3e6022dbb446ede6084bfe55ca7b49f21676ca789f84dcc0b23",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/moby_dick.glb",
+        "source_sha256": "9b1b7f7e8b843fd5c93a11509208fe8c1a2ac8819087150c0cf8ea2ea37a4b4a",
+        "source_bytes": 6884476,
+        "runtime_bytes": 6340788,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "3eb4051cf361d458401806c408c3ea34b731e8d3297d225d3aeafab962e4fb59",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2234890,
+            "bytes": 2234890,
+            "encoded_sha256": "9e24cedae97aa21b555907b14338f843d4fd70af9c1681481e99f99ec6136345"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "3be31e42aea48eb51fa8007953fe0f1ae187962b72bab5bb31a37e675566742d",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1071135,
+            "bytes": 818978,
+            "encoded_sha256": "944e25793c3b2aa7e5bec897b1d5c19d1f391e5bbf337aaad4cee48a71c30e3f"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "595d47c3c1415044698a65be8f17787864a08f8e40027ae24bd7f09ae8d86411",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1512853,
+            "bytes": 1221170,
+            "encoded_sha256": "709e1e57c926d1da115a85deffa750b4ac67aa42240875e99ec06cf4e5192449"
+          }
+        ]
+      },
+      "path": "assets/moby_dick.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/moby_dick.glb",
+        "source_sha256": "63117c6e9eff3b60dafe8ef133e7668bb09044ed6053288991dd6743baa0704f",
+        "source_bytes": 6340788,
+        "runtime_bytes": 5512597,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_perfume_yuda": {
-      "sha256": "d2261254513df337f885944378623d3204a6f1388f5a70b3e318ee600ce52e0f",
+      "sha256": "496e35f3dd2a778937d26896e49e2e40e0ff990232e2fbcadc5194b3b8aeacbf",
       "source_task_id": "01a0991e-d7b6-7307-afa4-0d58c7f8dc3c",
       "reference_task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6",
-      "reference_image": "references/perfume_yuda.png",
+      "reference_image": "references/perfume_yuda.jpg",
       "prompt": "Use ONLY the ship at row 3 column 3, labelled Perfume Yuda, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including black-red Chinese junk hull, enormous bright red battened sails, green curling serpent figureheads, gilded trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 7161456,
+      "bytes": 5865832,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5865832,
+      "geometry_sha256": "0d89cd0c2b3ff5fe0c1cf1b567e742a6a180618b63468cfab5eba12fe2164ea3",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/perfume_yuda.glb",
+        "source_sha256": "d2261254513df337f885944378623d3204a6f1388f5a70b3e318ee600ce52e0f",
+        "source_bytes": 7161456,
+        "runtime_bytes": 6585460,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "009b40fafb388014960f9bc1a4d3299ddbac928451868167fa1c513d9eb25b3a",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2398060,
+            "bytes": 2398060,
+            "encoded_sha256": "ceab07d08694234646e90483223f7fa58911370bc51e4f475aa3943cc96af0f5"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "1bfdb36621dd26e59c4a8fc671c94737595fe547353914cb627983cae5066b0f",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1431087,
+            "bytes": 1148292,
+            "encoded_sha256": "95303355cf00d2314ce16c2e9a120f645c0ca5ab5089856d8d285d28739411ff"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "dfc59ea94faca26946f2bdaf44ae31999d933616da096bf9125f7d79706e1d0a",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1423304,
+            "bytes": 1129952,
+            "encoded_sha256": "0bc2ebae08a0d86f5e860a72618fffbd5d76ae9ea0c32309355090fd0a2ce49f"
+          }
+        ]
+      },
+      "path": "assets/perfume_yuda.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/perfume_yuda.glb",
+        "source_sha256": "645ce929b740f0b0cbd16f78a10864e31dda7fa1855e97b78010bb5ebca8abf1",
+        "source_bytes": 6585460,
+        "runtime_bytes": 5865832,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_oro_jackson": {
-      "sha256": "a10da415df9cf15bbbc247cd5923068075a2a0ecffbaf7be4d1e0f63063f5b52",
+      "sha256": "de7e487b756fa7fd1ec3be97166ac994f3c5d54403da8280549d19bda9ad17a2",
       "source_task_id": "01a0991e-e01f-7731-8e9a-7dcc2c6fbbf2",
       "reference_task_id": "01a09917-3368-7698-9581-9fb024deb93a",
-      "reference_image": "references/oro_jackson.png",
+      "reference_image": "references/oro_jackson.jpg",
       "prompt": "Use ONLY the ship at row 4 column 1, labelled Oro Jackson, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark crimson sails with pale pirate emblems, warm wood hull, golden bow ornaments, crossed spars, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6640116,
+      "bytes": 5274721,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5274721,
+      "geometry_sha256": "b4ac4e00d22aeb857290fdad7ccdae7488b60add2a0ad6267ef073bb5b02d919",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/oro_jackson.glb",
+        "source_sha256": "a10da415df9cf15bbbc247cd5923068075a2a0ecffbaf7be4d1e0f63063f5b52",
+        "source_bytes": 6640116,
+        "runtime_bytes": 6081420,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "e33ee477c562fb3887265e831f603b1ef0db4ab5f7cea0d46336716108e13919",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1993471,
+            "bytes": 1993471,
+            "encoded_sha256": "3940af1d9a0b0dc9d6ac6ebe618d4d022a26b56d79339d7b6db7f0d3aa611359"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "ed1c4a692cc83e83755746dba845c52ce77f348a02f5f6ede32dca9e487d2ef7",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1214885,
+            "bytes": 951052,
+            "encoded_sha256": "6879934ffe187ec9ee4f908cd1a6c8c8acf820518f3cf7eac60c26135dd8c588"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "0db864ea8ddb94f76cfe619513d2785cb4a02ecc0f97be5b14b2367ee2e2f58c",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1373794,
+            "bytes": 1078778,
+            "encoded_sha256": "55e1377e51222b2ed8451175ce8534d68861922a51d1a31d7f148084af27a134"
+          }
+        ]
+      },
+      "path": "assets/oro_jackson.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/oro_jackson.glb",
+        "source_sha256": "1637c822c53a442840a4e0466a0d752ee2ed46eeb2b9abd7789affd75d98a1cd",
+        "source_bytes": 6081420,
+        "runtime_bytes": 5274721,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_queen_mama_chanter": {
-      "sha256": "ffc4c66e98f8eb8b0e289fe9ac6ba89464c36ad3088cb96a2cf0ac18e1b375ec",
+      "sha256": "0100f597ce9e3acb5411738a3665fc1011992802787dc8cbabe120926cfcf7d8",
       "source_task_id": "01a0991e-e78d-70b9-b018-4b2eb6fd2578",
       "reference_task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9",
-      "reference_image": "references/queen_mama_chanter.png",
+      "reference_image": "references/queen_mama_chanter.jpg",
       "prompt": "Use ONLY the ship at row 4 column 2, labelled Queen Mama Chanter, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright pink cream cake-like hull, yellow smiley face bow, tall stacked cream and pink sails, red candy trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6458036,
+      "bytes": 5223949,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5223949,
+      "geometry_sha256": "a56a73a2b9119f90bae55daf0dd6802c449e3d5ddecac0310dcd916577a184e8",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/queen_mama_chanter.glb",
+        "source_sha256": "ffc4c66e98f8eb8b0e289fe9ac6ba89464c36ad3088cb96a2cf0ac18e1b375ec",
+        "source_bytes": 6458036,
+        "runtime_bytes": 5928780,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "d74604057e350e21093253dc74958c323cdc96f47c6995913e2459a6ff5bc234",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2120833,
+            "bytes": 2120833,
+            "encoded_sha256": "b48549dd597931b4f6c7695eab61658f1f42587dc007e56dfeedc8ad728c9c47"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "1c1d609b97cf04bed74fe84251664562bbb0debda453840f6875a7d077f581c6",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1170267,
+            "bytes": 912388,
+            "encoded_sha256": "77b5fdb0e39d837fb8d142cd904f7966416b60fde225dcda4c39f41e26ff7b03"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "e2c4ed2abebc87ba8d40ccc4febe6e50de30d1e28d8f9efa2e1640f3dff62b42",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1270915,
+            "bytes": 999388,
+            "encoded_sha256": "f61aceb7aca65c91f4e41b603d3d62638d274e077c3faeec6f453eb4af23acfc"
+          }
+        ]
+      },
+      "path": "assets/queen_mama_chanter.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/queen_mama_chanter.glb",
+        "source_sha256": "f49a9c9916c1875c13e8fad254110bd8a5dd3c3615175d2111d264d7e5aefc0c",
+        "source_bytes": 5928780,
+        "runtime_bytes": 5223949,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "ship_dragons_ship": {
-      "sha256": "6965f3b4e2c00613a8f005a4ee4597f86a6df24827d44a39d4abc522e3e3abc9",
+      "sha256": "da9373e6e5e7fa93deaafd64c80ca61d4653a41889bd3202c125a9fc046233a4",
       "source_task_id": "01a09925-98f4-7370-aa0d-c47631f13194",
       "reference_task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e",
-      "reference_image": "references/dragons_ship.png",
+      "reference_image": "references/dragons_ship.jpg",
       "prompt": "Use ONLY the ship at row 4 column 3, labelled Dragon's Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark charcoal and red hull, black battened sails, tall red masts, gray carved dragon figurehead, moody pirate details. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
-      "bytes": 6736952,
+      "bytes": 5363208,
       "mesh_count": 1,
-      "material_count": 1
+      "material_count": 1,
+      "runtime_bytes": 5363208,
+      "geometry_sha256": "edad3910dca7180754473a52b21592d87bc147dadaf28f415706c2eae531eeeb",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/dragons_ship.glb",
+        "source_sha256": "6965f3b4e2c00613a8f005a4ee4597f86a6df24827d44a39d4abc522e3e3abc9",
+        "source_bytes": 6736952,
+        "runtime_bytes": 6161812,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "dcc0e5881e655860e08590880e6805b64a706f86947b0f6caee858d59e14d946",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2094099,
+            "bytes": 2094099,
+            "encoded_sha256": "019612cd28584347145090f934b719b3349e5cc4879da564d311f1e8b7e2f5f4"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "5b51d141df252662f764d8880f9eb53181196d3838cac450dfedc87079995143",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1220614,
+            "bytes": 949284,
+            "encoded_sha256": "7a1a85a9dcdcffd6c25fda7c30097c5bedaa9db5d3746788963ab348ca62903d"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "352dc058d608775ee84ae03c2b0e3bfae9dd3a5cffe69423bc69118ed67374c6",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1384656,
+            "bytes": 1080694,
+            "encoded_sha256": "4ae02766a5d28c2e2c8c55971c5a6868f46ae4691f5b967338508b681f59701d"
+          }
+        ]
+      },
+      "path": "assets/dragons_ship.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/dragons_ship.glb",
+        "source_sha256": "f03c5a0b0e6c554d2f88bd4a506296b980859a58bf462d97506e25e8d3b93b19",
+        "source_bytes": 6161812,
+        "runtime_bytes": 5363208,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_twin_cape": {
+      "path": "assets/island_twin_cape.glb.gz",
+      "source_task_id": "01a09cab-24b4-75ca-b96f-c0aa3e110288",
+      "reference_task_id": "01a09ca6-f840-75e3-b147-b8f9b26f39ba",
+      "source_sha256": "abab44728f6ae8219b2cc2a025d1c8d34bab1dc69fa2d816baba19b5332a5a39",
+      "sha256": "f3561cb7fd95796a9ea9c417d17fc92755a9c82e9a5cd30e798eb31110440b9c",
+      "source_bytes": 33661756,
+      "runtime_bytes": 6276562,
+      "geometry_sha256": "25278c74745fb4f2f1fa9c55081ad330ba5773cc97388d57bd5092c304c59ab5",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_twin_cape.glb",
+        "source_sha256": "fa0dbd89b21783fb62537446f1597cc6809b9937c712b140f49fdb6338255199",
+        "source_bytes": 7763556,
+        "runtime_bytes": 7145284,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "93188e06b4a9690e046923d3f646aaafee65a0fca7c1fd485dd5aa3d7503d392",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2498199,
+            "bytes": 2498199,
+            "encoded_sha256": "b52ff415f811941dd0d45c88f5cf460d92ccbb1307527e63bd8a5356af99732c"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "49eefcc36036af05544733b5e1274691f263f7abe6ad5959707bc04ee940a9a9",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1214459,
+            "bytes": 934878,
+            "encoded_sha256": "fd6a53b52a32df7ed6652f5922875171f5d4385164b2c93ca729a58382a646d2"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "354710c1b474ed6b1277e4cfd53bc6616f9abb5094ca7d640f31faa67a5a2164",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1644544,
+            "bytes": 1305698,
+            "encoded_sha256": "0e7199850eca217cff0c017a5647268ad3dddaf05f5f7617de52b944be1e4a26"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_twin_cape.glb",
+        "source_sha256": "69fb12b9bf1909409b26e8d9b7a46c8f85d0698252e514272ff89514b3a09839",
+        "source_bytes": 7145284,
+        "runtime_bytes": 6276562,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_drum": {
+      "path": "assets/island_drum.glb.gz",
+      "source_task_id": "01a09cab-34f2-76ef-90d6-fc89406df1a8",
+      "reference_task_id": "01a09ca6-fcb6-745a-93a7-8808e4977207",
+      "source_sha256": "cd89ab2a9f43828d1999802e8d4d1c2efe0d6de79ccf2322df683408a5a54f89",
+      "sha256": "09b1f23f06348c238035efbc34b50204ae4e4a892ba0d677248e789fc2c2dc67",
+      "source_bytes": 36252680,
+      "runtime_bytes": 6499790,
+      "geometry_sha256": "4c13ab4a3f22c6a9754f4858a666ecff038e1f65f6cf5a941d455f272ebdcf87",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_drum.glb",
+        "source_sha256": "1bb7edb8b9924ed48b2e87c809c93e49cf9819958596189827d306aa1531f66d",
+        "source_bytes": 7852508,
+        "runtime_bytes": 7258068,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "21b6b53575f3cc7e9055af4f72e180d4eff12368b3b512c679417984220f3c2c",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2731347,
+            "bytes": 2731347,
+            "encoded_sha256": "bc9a7f1f12b66d4f6b7be0b95f4170a4b1f1f10eadbc05623a6680b3a66f3ce8"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "980a19754c415098f650eb2036130d1b8e284d8138b09f464a8bf8c0777a0953",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1136772,
+            "bytes": 856732,
+            "encoded_sha256": "3f143b0445be6b32565a474b2e1b338c0f47324c89881bc9d707a0987ca95ed1"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "e949a1ba9b4d7b23def98fdd0c052966267ffec9d752ac4250ed760ed82d7f2b",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1811304,
+            "bytes": 1496750,
+            "encoded_sha256": "e600442d0c9a9562add90bf4265edef0e7348cb672005b07682412b4c40e091c"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_drum.glb",
+        "source_sha256": "b956d067473d5ba3e7dd4662e73ad5738b5794e01b1e6e21fd3e1e53c6a3c970",
+        "source_bytes": 7258068,
+        "runtime_bytes": 6499790,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_little_garden": {
+      "path": "assets/island_little_garden.glb.gz",
+      "source_task_id": "01a09cab-2d1b-7032-9710-0e400eb6cab2",
+      "reference_task_id": "01a09ca6-fa7a-74ea-b050-fdc19c9193e2",
+      "source_sha256": "f9ce625911913f3cd298bba182dd6c4b4bf5faafab078f63ba1d35860ebd6066",
+      "sha256": "ad77dfa78b38f06abf7829cfdae5049c78b5ed06756da084484f68e46a2e2cba",
+      "source_bytes": 32215036,
+      "runtime_bytes": 6034510,
+      "geometry_sha256": "6a6a49ebce9c5fb76abc0ac19d43a0cb064f7139a888a82749b1c3ca8a225b98",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_little_garden.glb",
+        "source_sha256": "877c0f7c8d23152095b3e75df0c2ad0f677203fb31f29d3f5ae4626b7bb1f094",
+        "source_bytes": 7761264,
+        "runtime_bytes": 7112216,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "fe748ef0b2aba61bbfe2c51ca6f50af85d34ba07949ce0c2572eb163a4cac424",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2323889,
+            "bytes": 2323889,
+            "encoded_sha256": "9e67f78a1873097708252cf377b890d7831a4e1339b43f69e471049dbf4cd481"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "9ca38c939a5599a6e94368d01098a3a77121c9cf44d7c9ead1467cd6a8545bcb",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1143418,
+            "bytes": 864526,
+            "encoded_sha256": "e8cce2842bca40845c8b682c28d4d57a411324f34f52e991035b5935d0842644"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "e9919e6789686383ca519b9bfaf75f7536309f2e1ae385afe606e77a9682de8b",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1544039,
+            "bytes": 1173730,
+            "encoded_sha256": "2c878830a7c7907e70672aa6d3c7b777ea25e05f8310ef74c880295c63da325a"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_little_garden.glb",
+        "source_sha256": "4977414a85c02f478d6e83f1e5f75dcd6a6ee8943244a601d7c636de2136154e",
+        "source_bytes": 7112216,
+        "runtime_bytes": 6034510,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_alabasta": {
+      "path": "assets/island_alabasta.glb.gz",
+      "source_task_id": "01a09cae-31e0-7483-9a9d-c06158d504cb",
+      "reference_task_id": "01a09ca7-9821-73ab-ac23-a5c2a02bf755",
+      "source_sha256": "bcf7b8a89a3c9b236e2bf929303c7e3d1368d2c88a0538fd9eb6c757a06b33dc",
+      "sha256": "c6abf81b9f9d8e22fb776a142b0690ab793efb4fced3ec3eefef94f3c6bfef75",
+      "source_bytes": 26620912,
+      "runtime_bytes": 5387407,
+      "geometry_sha256": "36b33ec770cf214c2fa6df91db3a075dfbf96a97c3223bad68bbad6ea26946d8",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_alabasta.glb",
+        "source_sha256": "a2e51a710c45f1b0833a69505803e9b3aa8ffaa3aff692766efa9e01e8db96d1",
+        "source_bytes": 6889320,
+        "runtime_bytes": 6327772,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "7eb6bb695a64337b264ffb067c014df9895543609e8202cf9def0f81a0161740",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2076207,
+            "bytes": 2076207,
+            "encoded_sha256": "480804c21b321090b57ba339a9cd0699408f31fe32d349c8add377d875772050"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "77eaf8b2621d0907f445268d12259250a7d134eba9b17869339f04ab93dc108d",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1014624,
+            "bytes": 768586,
+            "encoded_sha256": "e51f090030b79760bb9855d4a2f544a4dbf6db0f18825525caa3bf127974eaf2"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "24781ec80cc0211e35694244dfa7c9594997d4b91f8cc47705c1d952691cc8eb",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1319412,
+            "bytes": 1003748,
+            "encoded_sha256": "ec39e7c59a7345293af65ab5f1d3b2147f84411f47412bf993ab72ee9418fb7c"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_alabasta.glb",
+        "source_sha256": "9821de408b0af11e05f0e824d21db68d4d89d9af3ceb21a2b65782591eaef43a",
+        "source_bytes": 6327772,
+        "runtime_bytes": 5387407,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_water_seven": {
+      "path": "assets/island_water_seven.glb.gz",
+      "source_task_id": "01a09cae-a29e-70b9-ace6-52f75680de22",
+      "reference_task_id": "01a09ca7-9a63-71c4-9d65-e739a8326bf5",
+      "source_sha256": "da11a026a4073efe01b517c141cb13f6d6ae3ff8a1187c67ec1bed8f84a46fb6",
+      "sha256": "6020f21001f9d92cf3a65e6f4e0373cf0096a5fdf18c7f506ba2b12ba4ed852b",
+      "source_bytes": 34470140,
+      "runtime_bytes": 6371986,
+      "geometry_sha256": "3f5e664fce745d0d178baa1f5f4ca6724e3673c1cc939ef7af602f51faa5c6cf",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_water_seven.glb",
+        "source_sha256": "077a32d0516e8b52d99168b4f76c3d9549e24ab27df6effa6a605c799a36606b",
+        "source_bytes": 7834360,
+        "runtime_bytes": 7207320,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "4dd5227c14711a0c0c915e9f3975cc37a0db0e69798dd4dd556adaeb0704c0de",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2631147,
+            "bytes": 2631147,
+            "encoded_sha256": "09c2bc779519b69cc01909b7b720f11eefabe6218ece4a3eea5f697badb3acf6"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "ab65540332306d20b4b582222745c96758772e87bf646dcfd128439ff218a8fa",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1249442,
+            "bytes": 957424,
+            "encoded_sha256": "06c3a3e93c5e3e51ace4628f58cad395f7b0bf8313018e39eb76740098744964"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "1c72293d6188fc89829b7b8d4f92254ba5caa02ab8fd56c9df9086bd9b3e1609",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1637213,
+            "bytes": 1302040,
+            "encoded_sha256": "a28372191990bd4ad56ca0f8361b501a495b5e4321e6f565a906716406eb9ab1"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_water_seven.glb",
+        "source_sha256": "0ea191c7ad4b70db6a4b3bce2bbdded13dc0a125336f4e0c18816507735e9423",
+        "source_bytes": 7207320,
+        "runtime_bytes": 6371986,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_enies_lobby": {
+      "path": "assets/island_enies_lobby.glb.gz",
+      "source_task_id": "01a09cae-e2f1-718d-80ea-237a973dfb0b",
+      "reference_task_id": "01a09ca7-d00c-7415-9fdb-fa383b68fb2e",
+      "source_sha256": "f796f122e54ae48e6964afbd79c3eb926117a9ef0e5fef4ba1d309838f66f1c9",
+      "sha256": "fd7ad24d0e5229ac77bad6f3e9bf1e73b136681187b05cc57e3d551a343ef52f",
+      "source_bytes": 33558708,
+      "runtime_bytes": 6296936,
+      "geometry_sha256": "c17fba152acc5aa49b1f5808f5b1aed7f0530765367c932cf299827eb71384be",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_enies_lobby.glb",
+        "source_sha256": "fc8953f6fce9107a18aaa20687aca11def45b3cca63ee577170a3bef8414e823",
+        "source_bytes": 7763520,
+        "runtime_bytes": 7183108,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "b9e5975fed9271b4e6e0bd10606ebdfccf5d6fc79e419ac161e8e96ab5dc92e1",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2514508,
+            "bytes": 2514508,
+            "encoded_sha256": "aa6130e8f564b8de87086f1567ace6333befbdc03efe1a52b4e1ca57be4e5a09"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "cdd3c917b5eaf9a765a8a2b1ca57029dd313d6041cbe4a3dad9bd0377f772274",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1193976,
+            "bytes": 924494,
+            "encoded_sha256": "282c21ef1e883f9c7efe4bf239a4a471e3206032016e58b692db5a67cd3e6045"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "9cb46aedbd3412ea595c9eb5b8b3862e809771b5091dfeb73c33c660c2bd5299",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1613609,
+            "bytes": 1302524,
+            "encoded_sha256": "4387e07ec34397681ee6a3a6fa6e74023f1fcfe8126486c5e92af5b1e4934769"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_enies_lobby.glb",
+        "source_sha256": "f84f44d1feefe83e3feb1136375a17c4a4fe29fee21e60165e05148d25e92843",
+        "source_bytes": 7183108,
+        "runtime_bytes": 6296936,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_marineford": {
+      "path": "assets/island_marineford.glb.gz",
+      "source_task_id": "01a09caf-451a-772e-a207-ed75229dbb31",
+      "reference_task_id": "01a09ca8-3b0d-7172-818e-369af1d3c70f",
+      "source_sha256": "cfa25037c23a82d9705dc0846cbd300fec44cf293ba449a76b577c51fc88af7a",
+      "sha256": "fbe72942581905e9957596c02837c2b70997fc7acc257356586d3f3e3664caf0",
+      "source_bytes": 30300652,
+      "runtime_bytes": 5916649,
+      "geometry_sha256": "018089578639b0caecb674800f45e2d7b127eec9b762ed915c75610c46ca5d99",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_marineford.glb",
+        "source_sha256": "0d7eb7cab23e234d6c477b3dadc9a8af19472bddfcb874f71c82880d08f0489a",
+        "source_bytes": 7358512,
+        "runtime_bytes": 6768480,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "82750299670a96f7e3e321886a156a8abebf344c06187511235f6bbcdbdf5584",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2239658,
+            "bytes": 2239658,
+            "encoded_sha256": "e6030c46e59e66360df0637beebf4b47475d5f78eed7b70046b4dc3b9169a6d1"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "9f32968904bf4b6e4e6e8a7c75df501f78dcd71c6283964d0a02553c3eefe820",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1215595,
+            "bytes": 934306,
+            "encoded_sha256": "340db05b54cfa533a6728dff23e08fdf614b3be617194183ce5f029397da3205"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "27cdd2db9df812b8b7f1afdd17e750c4d7a4031b404588c4a8bb52aab6b429b5",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1564399,
+            "bytes": 1255500,
+            "encoded_sha256": "0883f26b32b9fe6574a976f65550e96dd4a0c875e27140c69d0e4509b17f86f6"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_marineford.glb",
+        "source_sha256": "2aa6c65daf512d1f0ed32bf0a687b80da473438ddfc1bcc71010b097c4456284",
+        "source_bytes": 6768480,
+        "runtime_bytes": 5916649,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_whole_cake": {
+      "path": "assets/island_whole_cake.glb.gz",
+      "source_task_id": "01a09caf-53b8-71a9-90d8-551e1fa003e5",
+      "reference_task_id": "01a09ca8-d917-77f2-be9f-5833c023455c",
+      "source_sha256": "a89fbdcdb1b9c70bca76075da6a9ab72f1a2dec742ad6cfc85a40ee8bd26f03f",
+      "sha256": "c58a7de23629a3253cb8f30c5329bbe50b7c2b18a343b3ce3d730ea16207b2f3",
+      "source_bytes": 27280264,
+      "runtime_bytes": 5588000,
+      "geometry_sha256": "cc604b352c2e6229b3ca3a48af644170bac142ef14baa4035baaeec41cdb9926",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_whole_cake.glb",
+        "source_sha256": "05b4ef5b9e3ce46e1ec1fe8d6808b30cdf773dac5e229369c2d529b4fed6b169",
+        "source_bytes": 6857884,
+        "runtime_bytes": 6305096,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "e376e9c7adbdaa84f1649b2972c0ec27219835e86f9f8c1d494f68ad65da17f1",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2215343,
+            "bytes": 2215343,
+            "encoded_sha256": "cf600f30259077218bd063dc43ab9e47022970265bc2ec446c4962d4a728df29"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "5b94d64f46182a11327df2683476c1551b30ed2e9ff4b897cdfc9c62daff40ea",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1181521,
+            "bytes": 910174,
+            "encoded_sha256": "44f7932c6d3dee4126483a469c7266ba9f1ec05b249b93c9e0bab3f0616991ef"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "dc8fe0cc83e5a1f22785a8cce504848bb56bdf6848dc26cae6eb1fc4ad12af7a",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1378235,
+            "bytes": 1096644,
+            "encoded_sha256": "b89d7d837072a035e937651d0b72b5f23ae86a3941a6324485560e51907dde05"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_whole_cake.glb",
+        "source_sha256": "fadeca6aab9a26606b023808d863d031f3a04233e8d2ccbd415623c66032a885",
+        "source_bytes": 6305096,
+        "runtime_bytes": 5588000,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_wano": {
+      "path": "assets/island_wano.glb.gz",
+      "source_task_id": "01a09caf-4c1a-7566-b91c-bca7cd3ed1a7",
+      "reference_task_id": "01a09ca8-704d-74c6-a8de-45638287eddc",
+      "source_sha256": "6bc681f90d2e9f8de89af0ed03bda79d1b11f0e6d5cc7a4b14f9271b187b45ef",
+      "sha256": "478df35b8f0190dddf24db87372c4ac00d8661dd711a65260d8be940349f9fcf",
+      "source_bytes": 35703160,
+      "runtime_bytes": 6926643,
+      "geometry_sha256": "ef14d55bb17ce8fa8ea2a3ded2583891ddff20bef8ce3213449bb39dbb7ea727",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_wano.glb",
+        "source_sha256": "13a77615994d48e12d21eabe57fef0d9b82ff676ea9f014734976e2154b5fa1a",
+        "source_bytes": 8586340,
+        "runtime_bytes": 7979024,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "e0ffb56d77fbfb18d8507de30488a5dac668e97d8bba9c6d134315b51d2a7c54",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2944253,
+            "bytes": 2944253,
+            "encoded_sha256": "2092d52f9fce2b3401f2488e2e021db4b779fbd5afdcfc27c391d96c87db5130"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "57ab44b0b1ef1d22bf406ebe7140ccd32daf0a18016457fa86733b3249341246",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1253881,
+            "bytes": 966524,
+            "encoded_sha256": "93fd0a3d0c87e5ed8eb31823e087b231ca4075cfb8da3d25deb4dc5a12f7fe48"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "8506448227ab6fcd322278ed40b2720592330fa8ffb75323117f0d2fdd90a1fe",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1676382,
+            "bytes": 1356272,
+            "encoded_sha256": "f75c32c1e447eef990d04bdbec1cc4bbf56dbdeff520d6ee9159003c1897e870"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_wano.glb",
+        "source_sha256": "07ded6c6bb3a273e9ad0f4fe4bf1ff842578cf849728ba446c185b10e52d44ca",
+        "source_bytes": 7979024,
+        "runtime_bytes": 6926643,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_laugh_tale": {
+      "path": "assets/island_laugh_tale.glb.gz",
+      "source_task_id": "01a09caf-5ae0-74cb-bb32-24466e5a73ab",
+      "reference_task_id": "01a09ca8-db0e-71ee-956b-a0f8055b2065",
+      "source_sha256": "4b7657b4f3b9a9905d0fb7d33eb6a417afcfe9524ad1d715bd2edbcfcf71bef5",
+      "sha256": "43a138fe104bda2d079f54bbdf9aca50e9732125020bcf270f2aa3c88494bb4f",
+      "source_bytes": 29068224,
+      "runtime_bytes": 5768659,
+      "geometry_sha256": "35ed7d67a8d04f8dd936bd68f5c807b789ebf227d686274b0c97d6ddd82ee832",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_laugh_tale.glb",
+        "source_sha256": "b3581c4c5d98b71e91324acdef60d5461980a15e91b97eba0cf95fa299dfba53",
+        "source_bytes": 7551136,
+        "runtime_bytes": 6941076,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "3180ccc023c62e24a84bcb5c8a634687564fc572843c8decd7841f76923e58cc",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2110408,
+            "bytes": 2110408,
+            "encoded_sha256": "38dd8cb16d6a81c078d678f3be513c981ec827f0a9a3d19d07876d9bc61a02a8"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "c983799da76996bfce397aac0124bad23f7c79104582adca67c0661a44411d0d",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1183625,
+            "bytes": 901588,
+            "encoded_sha256": "1d1c55e0f0ae3523d48fae9a5ce208003bdfa0f659986bab50622667f0e6e403"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "fa43dcc7b693c601f40d31d0c0ff49eb75154b492dfb700d425887f9020ab1e3",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1376731,
+            "bytes": 1048560,
+            "encoded_sha256": "28b33ea0070298c863250abf3d892cca76d499ae4264ec76ce7b67848b377655"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_laugh_tale.glb",
+        "source_sha256": "2bf10366298cf71b2051ad2af72762f01cbc8360f0af66c9fdd65fed02f81842",
+        "source_bytes": 6941076,
+        "runtime_bytes": 5768659,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_sabaody": {
+      "path": "assets/island_sabaody.glb.gz",
+      "source_task_id": "01a09caf-3c55-7397-8784-fc60cf5309e7",
+      "reference_task_id": "01a09ca8-38d3-76c5-ad13-c9a917ec039f",
+      "source_sha256": "81d3361594bd942f57e20e59ed108e82f6ad091a116dc809d58b7a54d285d41b",
+      "sha256": "24322b68ef28c6ac2908ccbbcf8de9ebe24c7fd62a089190b866e2c7ec26fc47",
+      "source_bytes": 28703128,
+      "runtime_bytes": 5821681,
+      "geometry_sha256": "63f2efe1e6a319f84f8af960ec142467614982f3a3f05eb5bc4e7d12b113e666",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_sabaody.glb",
+        "source_sha256": "37e1d34b8f4a3f0eb3e02c4f18ac6be5b25ac3aa54bf251c63fb837b21750351",
+        "source_bytes": 7600904,
+        "runtime_bytes": 7029804,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "73d5c23cab2d21b4db6f6cacdf369545ff8ea0a9ec521a60b3edfcc5f8257d60",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2162381,
+            "bytes": 2162381,
+            "encoded_sha256": "af6b2fb853a75057cb6b3ca482e943e70971415c544bce3dae6d76580458abb2"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "4c5faf3e0fea0d6cfd7d3678e0841d73ffdfefad758303172b2292da9bfa5813",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1036531,
+            "bytes": 787044,
+            "encoded_sha256": "8d246482b7c1ab9f9aff18a8ad84f3919026786e2782ab0357c6116d60608620"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "0311395f3c4f30d51aa1877f4c8d485f2f3387937861fc9a36e587ed6f303fe1",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1411318,
+            "bytes": 1089552,
+            "encoded_sha256": "10964bc45b12ec5fdf8db5d6126aea9bc17790c06cbdbd73c6348e68ccf31fb9"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_sabaody.glb",
+        "source_sha256": "77bba5f6217c410e6b91b958a36d31ec85642a1c6ac15f37ab79de5b135b22b0",
+        "source_bytes": 7029804,
+        "runtime_bytes": 5821681,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "scenery_red_line": {
+      "path": "assets/scenery_red_line.glb.gz",
+      "source_task_id": "01a09cb2-4c78-760d-a534-50cf7609af98",
+      "reference_task_id": "01a09caa-1248-74b5-a049-02cacf70ef15",
+      "source_sha256": "a69664dea7a92e9912c22a4f7a26b8960a6c619c96dd25778889feac490df69d",
+      "sha256": "f8a2111f6b54a9dac287fa8e7b59ce791e3522bd3dec380b3192da66148cb1fe",
+      "source_bytes": 30866168,
+      "runtime_bytes": 5605893,
+      "geometry_sha256": "8fd9b3eedb72ad99ca8f478e1815d7592a4dc43896d9314b8b7ca87a14f58dbc",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/scenery_red_line.glb",
+        "source_sha256": "899362bdafa06a9726456b609cd4c82cd4f635c4fe7d2d8d803839701baf6e4f",
+        "source_bytes": 6916216,
+        "runtime_bytes": 6291180,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "dc43191bf67c047baecce40b573e153bad305efb01ade89d40d902dfcb7230f7",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2266262,
+            "bytes": 2266262,
+            "encoded_sha256": "13eb3720ba8fdd6ed0e896458b8642009147c15d909f3407e2facae4b3da66b6"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "36611fdae3d958b566af8d830b62c543f14cfb8349c978f4864af00117aaeb3d",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1128270,
+            "bytes": 857064,
+            "encoded_sha256": "fd0269414d4de365547af4ffb0a2f4c7340d120f36476a545b3c5f52eeeb0cc9"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "2bf918eed86d52022ce1b30d4d73972a1022de7c478fec021f3dbd04b3980c6e",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1497467,
+            "bytes": 1143482,
+            "encoded_sha256": "798cdc168bc316441c21c2014dcf5787f409735221d30e94341de109edc14e16"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/scenery_red_line.glb",
+        "source_sha256": "ce14ae51ed9128f1b52e9bdc38e24dfa61e1b4b1ca0b0668c62912c8ea4cb22f",
+        "source_bytes": 6291180,
+        "runtime_bytes": 5605893,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_jaya": {
+      "path": "assets/island_jaya.glb.gz",
+      "source_task_id": "01a09cb1-901a-738d-990b-75fddf8bbdf3",
+      "reference_task_id": "01a09ca9-73d2-71c3-bb4b-384b8a3142fb",
+      "source_sha256": "7d2ad4ecc363e8323ce801a62a5c0aca67f80feb3f2bb94fd2f4ec46ba0475d5",
+      "sha256": "277ebef75b7165e35618f285b4fce50c8908da80d7bfbe0d7d31dc50979aa786",
+      "source_bytes": 29333944,
+      "runtime_bytes": 5754913,
+      "geometry_sha256": "bca891f8b35872cf1f820bf005776e1a316ea6f808fe9d412a6d2ddc1bd42786",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_jaya.glb",
+        "source_sha256": "906caa3803f6a1300a5d0ede9f948df3fa02aaac139793204f73baded1fc85ab",
+        "source_bytes": 7718364,
+        "runtime_bytes": 7069440,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "45ac3db4a41f4e5db9c207699e637518dfff091da25b4270fce616645695b0a5",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2091024,
+            "bytes": 2091024,
+            "encoded_sha256": "b991ab8fc0014a1a39045fb06ee254380390d7fbfaa0ffc0a7260d13ebd90ee3"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "e8e568b7d22f6384e1db0355b4ded8ba1318a7b2c4c0ce4a35c9078c2a929582",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1186552,
+            "bytes": 904210,
+            "encoded_sha256": "8cf74d12a1389fedf3ec03eeaad6ea5d94014e819db449db2f32e11f524016a0"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "17f29bc25db6c6a20c453baa62e7ee7da11984f049862f40336807ee497b6a4f",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1341641,
+            "bytes": 974906,
+            "encoded_sha256": "59c0f6924a74006ebb9a7bc751044db38ab2827ee974b148412f55749d4bec2a"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_jaya.glb",
+        "source_sha256": "264d9422ab2c4cf76ecc0113c73ed1851dfecad671098a9c1eeb7ce3ed77b17e",
+        "source_bytes": 7069440,
+        "runtime_bytes": 5754913,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_skypiea": {
+      "path": "assets/island_skypiea.glb.gz",
+      "source_task_id": "01a09cb2-09a1-710d-a726-a2936a3db04e",
+      "reference_task_id": "01a09ca9-db0a-7305-a5ad-322277ba6ae4",
+      "source_sha256": "0dde52ffd078c8f87b004b12df6c48369f7252e5ff1d09255be4069e06c5306d",
+      "sha256": "39be03a66aed5def328f5a6909a4adf6f1432d0e3bbaa1d49d899d485ee79945",
+      "source_bytes": 28281352,
+      "runtime_bytes": 5644891,
+      "geometry_sha256": "b1c4d5c779728d043bc5b73fdf09004d88f6df7193f1d9603fa0d618dc4f722a",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_skypiea.glb",
+        "source_sha256": "88577312a7f160dedb366a014f589b02ba9d12639e854a5541282e48434da782",
+        "source_bytes": 7031108,
+        "runtime_bytes": 6453652,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "a0cd7609c38f3cf80b9a460799cbff24e0571e3d67d347fdf9ab6bc51de624fe",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2115136,
+            "bytes": 2115136,
+            "encoded_sha256": "c51900a1d948c3222b6fc42415ac6cf84d9560a1062c3594c56ba3dc57b074e4"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "2583c5107515a9149aa67e4852daaefe9be99b74ebce032c384c597fe99540c6",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1239752,
+            "bytes": 972380,
+            "encoded_sha256": "30505d10630d126553a9306be0ef771ea773ae502732e32927c68efe4dc8440b"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "aee0b99120931d5c0b1ee5412b637e98c52b910f914f11b3800fa4fd6552d424",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1417405,
+            "bytes": 1107170,
+            "encoded_sha256": "135aebceaac53bd7e5e3d200265146d9ed978ea3cda11be64709e30c1a540f5e"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_skypiea.glb",
+        "source_sha256": "a3a947326529b5c61cf5e40b055726eb345867ed4e0a37fc0475db47c44f04fc",
+        "source_bytes": 6453652,
+        "runtime_bytes": 5644891,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "ship_garp_battleship": {
+      "path": "assets/ship_garp_battleship.glb.gz",
+      "source_task_id": "01a09cb5-d576-7741-af56-b582586b7c42",
+      "reference_task_id": "01a09cb3-cbe3-747b-ae7b-b6230297abbd",
+      "source_sha256": "0ec0707ce9ab4c9babdf7a187284e680298eed9e284224a44324b3aa3d96d292",
+      "sha256": "3669d6c499edc39b96968ca74dab4bdd4fbeb8034cb493e9be73cf85aa9483a2",
+      "source_bytes": 29724496,
+      "runtime_bytes": 6262384,
+      "geometry_sha256": "19aeff4903c5663146f9cf0746cde4aa794e8c795b15f7144cd6efbfdb6c7c8c",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/ship_garp_battleship.glb",
+        "source_sha256": "12f8b875fb3e673b02cc362bab817d3f2c3044e3441acafc93f27c026b9e74b5",
+        "source_bytes": 7862620,
+        "runtime_bytes": 7330056,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "d3b6807a04a1039f0b76cca5e5363ad8ebe7472ae12059068a99862b6ed809e8",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2281437,
+            "bytes": 2281437,
+            "encoded_sha256": "95cc29e1430b2b7ad96363b7acca8cd214d2e0ddd2d2995e127d89c030efa57c"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "73801859dda8892f04e991bb570069ca1cfcd5b208965ce941f6fbe1bfa28092",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1349652,
+            "bytes": 1074658,
+            "encoded_sha256": "355e0a5f46ac37d1e9ed692a9a728994e6d3cf893539bc75d51c0f63217ebdb6"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "58ef31bf1681a47572622fd81fb3b14b787c527952cd21572350309a56ec481f",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1510220,
+            "bytes": 1252496,
+            "encoded_sha256": "b8d0d55e982f21a23b807e3b9a01f4b052b3ab39503da447696cf5356c3d3d8f"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/ship_garp_battleship.glb",
+        "source_sha256": "4d7c2d7d5015b538be07dffd7cc128910fb7ffe0870e1337d25e1924d597f23f",
+        "source_bytes": 7330056,
+        "runtime_bytes": 6262384,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "ship_marine_patrol": {
+      "path": "assets/ship_marine_patrol.glb.gz",
+      "source_task_id": "01a09cb5-dcf4-7023-878a-eeee0c476670",
+      "reference_task_id": "01a09cb3-cdd7-7614-b520-053844e6b131",
+      "source_sha256": "104c022337e67f324c5df9f2bb673c8dd58e1375db9f28f1fd4a72c82c7738be",
+      "sha256": "2b2c3424017aa41a7a6c36e45c774bbfd1f61c8cbe536c172debbe2e7b7116b6",
+      "source_bytes": 29839004,
+      "runtime_bytes": 6176071,
+      "geometry_sha256": "09f0212689ca0c16b1e2e3530e480b8ad34797602f3b09ca8bf6696ae14e3603",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/ship_marine_patrol.glb",
+        "source_sha256": "1c16ed3d89ffe2799ababd3b530ace49b4a02b8a82b2837542ba32ae56dbd71c",
+        "source_bytes": 7729448,
+        "runtime_bytes": 7194788,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "acd50d986a1ca73ce01699d9c536e4e327c338b3eefdf234768eff5a30cf420d",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2352068,
+            "bytes": 2352068,
+            "encoded_sha256": "c87f6d21cb41627f6202279c0a2bd1bada73a9a3102f19de1b3652a019f9b787"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "654d5ae715ad73b9e6ec77d4b150714433e9aed3a0dbcd6621684bbe3320222e",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1206057,
+            "bytes": 942544,
+            "encoded_sha256": "a34f83c40418458b6c95b6b5c8c99d9cba7017594e49f7f5d851527165d60bfd"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "6a677a192bf3a1c6e5198d4679329731557030c69d2314ef8daea4dc2f5cad5b",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1514083,
+            "bytes": 1242788,
+            "encoded_sha256": "239504ef30cd33dcea94e34f9e3e85d579d55e18ac31e4d574bf78644d35b35b"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/ship_marine_patrol.glb",
+        "source_sha256": "8024e6b2d29bb6eb298e95b7d72f8d69328cbff03d25e7af1331331190c25e1e",
+        "source_bytes": 7194788,
+        "runtime_bytes": 6176071,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "ship_mihawk_coffin": {
+      "path": "assets/ship_mihawk_coffin.glb.gz",
+      "source_task_id": "01a09cb5-ceee-7451-86b3-30a11e351c59",
+      "reference_task_id": "01a09cb3-c9f3-7459-8c7a-77004885c94c",
+      "source_sha256": "f1d7e549340e2b60194865eb9a014f25bd405e680c9597c5d291d4652ad8f7b0",
+      "sha256": "11414ecf0aa57f9cbb7250a10ffd54043414cab81a3a9dee5daef53634d67fe0",
+      "source_bytes": 27083824,
+      "runtime_bytes": 5400641,
+      "geometry_sha256": "7b5b67f68386174494d80f050afa3bd471048805b126c3095313902fb3b78cf1",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/ship_mihawk_coffin.glb",
+        "source_sha256": "2b2dc70f46ea264e8746657c53f6b87ed1908682b9e680b8c075edf4c36ed3d2",
+        "source_bytes": 6638184,
+        "runtime_bytes": 6054268,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "405670b0cfcc185f0a19bb02fd76121deaeb337d12ba3ef077808d2b4a91155d",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1938208,
+            "bytes": 1938208,
+            "encoded_sha256": "6925f4d1929b0026d5a3e340da0196df85adda9089c852fa3809a408b78bd4fa"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "69cad24eead1dec8e4e3725f4f8da6ffd4bb6b95949711d22c2c97710e7fa604",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1305224,
+            "bytes": 1024882,
+            "encoded_sha256": "7ef315fbd3daee14a5dfdd7efa9f408b00c31f2c404658cc499771892cb7b87d"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "d20278b20745f3e57c5af0357a4d454061cd756f3947fa3cebfd83818965c43e",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1417401,
+            "bytes": 1113676,
+            "encoded_sha256": "da5de7bcd509a99449636811197fc61c5c56dd767e440817d25025ff5217e816"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/ship_mihawk_coffin.glb",
+        "source_sha256": "cd8c53446de4a4fbf84c1b42c52a2a5ea12622a2ae0e7c2473be5c8495d33ed4",
+        "source_bytes": 6054268,
+        "runtime_bytes": 5400641,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "scenery_reverse_mountain": {
+      "path": "assets/scenery_reverse_mountain.glb.gz",
+      "source_task_id": "01a09cbf-033e-72f2-99b2-08af7d39959a",
+      "reference_task_id": "01a09cbb-5ca8-70a0-8c0d-6640cf5690a0",
+      "source_sha256": "6b76574cf8ed92cc92b14dddc442e9ae058eecc6e1d6a1f627dc7e9ea5a9a85d",
+      "sha256": "db9d668f4f2b49497af5c308215db9915902bdb9ecfc4b44bc5393022a8120eb",
+      "source_bytes": 34542412,
+      "runtime_bytes": 6169337,
+      "geometry_sha256": "7e2c7822d976b2a03561fe529677c5afd9000f3ade8a6a532c7b650611c4f1ee",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/scenery_reverse_mountain.glb",
+        "source_sha256": "9046bb255fccc278f73ca88379c3e11fa1b97d71fb88203fe6877c7b4bf604fe",
+        "source_bytes": 7525484,
+        "runtime_bytes": 6891752,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "95f075a704a83465b92eb91214dcfabd427d7ef0086c059f0b0a7a41641084af",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2644235,
+            "bytes": 2644235,
+            "encoded_sha256": "191713e2566f119a97e5d8d9752eb48b62ed93dff28c4ae649600a760d5e1573"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "1c2f4c76506dcc2a0fa774a84b3d7e61b0a9c4749d8a9bafe9bc01d0f3879457",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1132516,
+            "bytes": 857316,
+            "encoded_sha256": "1038f7395f292f90abdb48daea784f77046f0f9ee466de604aa7edf4c9202923"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "e1df76dfbe91ae262bbfd59a5be133a7e9e9d46b903154e3059d8a7e182162da",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1628585,
+            "bytes": 1269902,
+            "encoded_sha256": "4a0660c8ebda7ff5f484a1ffa33d43b0c996afb2aed39341164f4067fad077a8"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/scenery_reverse_mountain.glb",
+        "source_sha256": "a0c6dd6b31c1af2a3a4ae6c44c4c1f058997fbbfc0695d03dd0607c6c20ddda6",
+        "source_bytes": 6891752,
+        "runtime_bytes": 6169337,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "creature_laboon": {
+      "path": "assets/creature_laboon.glb.gz",
+      "source_task_id": "01a09ce6-d4e0-74cc-aa49-553a2acf17d1",
+      "reference_task_id": "01a09ce4-ba87-77c7-9358-6e92f25f7797",
+      "source_sha256": "6534458d7c23ed1b00991be87c5e1c8aecdc713476e022d62d9088032c6013b4",
+      "sha256": "fc443bff716030d9f2f1aba013a2e3aa4dbb123044e0a401ba917be1613559a6",
+      "source_bytes": 20000492,
+      "runtime_bytes": 3548990,
+      "geometry_sha256": "7a3dea4ab2be85791d054c9b4a789a1cbddaef2d28738f30322255033e35c045",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/creature_laboon.glb",
+        "source_sha256": "43748e977b3a86a1704710c917e0c0323fe3bcc32d1fc431d334a04fcba2534a",
+        "source_bytes": 4531848,
+        "runtime_bytes": 4012556,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "a09ffb1c06308711f75c420f6f153a52732f13b54b60a2b41a1a66a5bd11cce2",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1253177,
+            "bytes": 1253177,
+            "encoded_sha256": "0b269ded10499df4ab7aaa0326ad7c756141da824b384b0d907834581719f134"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "fc151b27733ea34b8c04a622474cf4869a196a051079ecf3ab8848da319760b3",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 758600,
+            "bytes": 527354,
+            "encoded_sha256": "d4b5b2f14875c8cb2b5f6fed71d73a512b0374a7bbba661a794ece8bb783e44f"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "09de44d17671861d76078865af571f5d7949070707d1cbc979b4bc9fe2b133cb",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1072665,
+            "bytes": 784466,
+            "encoded_sha256": "2e0986f3d635ac212855c8538b7209f7e08889bacc67052e1c94400ae4bfff17"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/creature_laboon.glb",
+        "source_sha256": "25ee3727c30bcfb5366af252660e66925dc76d8eb417bf50fd6e4de38700ba74",
+        "source_bytes": 4012556,
+        "runtime_bytes": 3548990,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "creature_sea_king": {
+      "path": "assets/creature_sea_king.glb.gz",
+      "source_task_id": "01a09ce6-db29-7690-a8d5-591ea93e3ef0",
+      "reference_task_id": "01a09ce4-bcc2-7339-8dca-3ea4dd309df8",
+      "source_sha256": "14951c003f52aaa90914c7dbcab4c19b96417e1ad03d588854d75ff0d6fc4b13",
+      "sha256": "06ef6cbaa679c4d1522d9624c39e69498d11e83b5d2fb9d3899136d2252e1974",
+      "source_bytes": 22530188,
+      "runtime_bytes": 4427568,
+      "geometry_sha256": "1c8f09d6ada0786f4edf2f515411f38ff0ac727208b42862e7de4d1270d83838",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/creature_sea_king.glb",
+        "source_sha256": "aa3b00b29b564e1544ba25fcaf645f68346b0f218977e1f200437d8ec2cb3b39",
+        "source_bytes": 5490240,
+        "runtime_bytes": 4976924,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "75037efad8b28e8c048a6709f16d849b52f2373d913e16ce5bb49768d1f7e793",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1709036,
+            "bytes": 1709036,
+            "encoded_sha256": "3ff04caeb8c10b4bbb9af5ef7f8d0d573fc6d4a36f9e24475e7c368ba6fe5e33"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "56552b69bc0350a4a41793a40b5be7450e83c995ff90376a022f2df26ca412e8",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 892341,
+            "bytes": 679570,
+            "encoded_sha256": "3a5a60971c80386782abd334ca2435be3fc2a8a08851eddd922b5ae7cf132877"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "5a58bdbab3c3c04dfcbf9244a1adea1581690d0462c0de9d87603fe87e3ec023",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1221676,
+            "bytes": 920980,
+            "encoded_sha256": "5ff8ede1080be1474483bdac27b11f2ed81116e55c384884452a44557fbb1156"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/creature_sea_king.glb",
+        "source_sha256": "2b626128c7642a64c6b508805912bed8aa4e65eeb550303ba1cd296f4bc44fab",
+        "source_bytes": 4976924,
+        "runtime_bytes": 4427568,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_egghead": {
+      "path": "assets/island_egghead.glb.gz",
+      "source_task_id": "01a09cf1-ee4b-72d3-8fb0-8701dab6f2ad",
+      "reference_task_id": "01a09cef-17c3-7274-8281-1d110ed92d03",
+      "source_sha256": "48a50ed8d0227684a43d4d0ffb0462c706fe33079af47a883bfbe19880c50721",
+      "sha256": "a56015bac729513e21f692c5e0477126d9691e97dac6c531dde74faca48d840e",
+      "source_bytes": 32309540,
+      "runtime_bytes": 6550377,
+      "geometry_sha256": "a2d964a5f18181637f4fcc1d6c8fd07575552fdc03317a23edd8a9f7ae91ecd5",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_egghead.glb",
+        "source_sha256": "aa7d0fd79800a280de0ac56d29ec13a22398de9ea3cc8c5c8433fcba1c75b5e9",
+        "source_bytes": 7937944,
+        "runtime_bytes": 7370836,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "995b0a75c7ae84912961b1f42771df912d5ad720514b97953ab98e987b0e7ae7",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 2565220,
+            "bytes": 2565220,
+            "encoded_sha256": "7f13df2ebcc80cab4c01e968435045051e593e0bcc0c680389123eab587f986b"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "dd3859e6135339c4eecb46fef0bad98ffdec012414a50d5fa298cc7f4034b158",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1388791,
+            "bytes": 1105160,
+            "encoded_sha256": "99de6d3d878dda30f4d57d6ca11c8ed96a6911a1def08655419ee65d5d70db3f"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "ac293f6069e4b55eecaaa86cd2ec57b928908182f58a68bf07cafc708ada5d99",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1655863,
+            "bytes": 1372236,
+            "encoded_sha256": "4f88566f379840649b9be95df252f06a98d6d523745b45f17e454422c0aa87cf"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_egghead.glb",
+        "source_sha256": "43c1ec8fe336b1aac533720196e40ae766f8fb237353fb95506cd2d6988836ff",
+        "source_bytes": 7370836,
+        "runtime_bytes": 6550377,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
+    },
+    "island_elbaf": {
+      "path": "assets/island_elbaf.glb.gz",
+      "source_task_id": "01a09cf1-e647-74d6-97c7-008a779cac21",
+      "reference_task_id": "01a09cef-15b3-7454-ac2f-48cd19d74a82",
+      "source_sha256": "18e3197dad10dfe9eab157076fd21340826bfa6a587d0834a345e5740350c738",
+      "sha256": "250390d8e6365fcd22b1cad8b49dd2e34249c50d72a2e1ecb533b96d8c6652b4",
+      "source_bytes": 25558820,
+      "runtime_bytes": 5408349,
+      "geometry_sha256": "c517276831393b326bf2d27dcd37b9b2f26ee96a5d648fc22c15a7145c6038b4",
+      "geometry_unchanged": true,
+      "images": [
+        {
+          "index": 0,
+          "role": "base_color",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            2048,
+            2048
+          ],
+          "mime_type": "image/jpeg"
+        },
+        {
+          "index": 1,
+          "role": "pbr",
+          "source_size": [
+            2048,
+            2048
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        },
+        {
+          "index": 2,
+          "role": "pbr",
+          "source_size": [
+            4096,
+            4096
+          ],
+          "runtime_size": [
+            1024,
+            1024
+          ],
+          "mime_type": "image/webp"
+        }
+      ],
+      "source_texture_rgba_bytes": 150994944,
+      "runtime_texture_rgba_bytes": 25165824,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/island_elbaf.glb",
+        "source_sha256": "05d29155ead1ebb152e1fe62ffe87f4f04ed62c5310336a9f0d0e61e5fcc937e",
+        "source_bytes": 6928816,
+        "runtime_bytes": 6362516,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "182f19ade668a48afb4035e37a2daa135585b3a6d07e4673c8786e0013daa6d2",
+            "source_mime_type": "image/jpeg",
+            "mime_type": "image/jpeg",
+            "source_bytes": 1934805,
+            "bytes": 1934805,
+            "encoded_sha256": "7ca7e2d65105d4a1dbf086687f440bfa09c84fc581fc40860a57cdf99a422680"
+          },
+          {
+            "index": 1,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "5a249578477ae8b30838d563fc22e7e3010389204c8192386f2519b6ef966acc",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1114517,
+            "bytes": 848244,
+            "encoded_sha256": "5becdf49db7a9611cdf8b29179c5b735b6104d701ecde1f9459eb7d525d1b59a"
+          },
+          {
+            "index": 2,
+            "dimensions": [
+              1024,
+              1024
+            ],
+            "rgba_sha256": "2b5f80d82594d55617bf093eedf5dbc6a9b4184b1eee83fcbfe33d534b7cad1c",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 1308820,
+            "bytes": 1008642,
+            "encoded_sha256": "c1a2af293f5b22b68512422af7e3b48a89f24551b7491aa49b363ff0dc4b47f8"
+          }
+        ]
+      },
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/island_elbaf.glb",
+        "source_sha256": "f6f86b16b01997515ff628247d961d6d5efee7982e321d84d7433371e50dd6bb",
+        "source_bytes": 6362516,
+        "runtime_bytes": 5408349,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     }
   },
   "references": {
     "thousand_sunny": {
-      "path": "references/thousand_sunny.png",
-      "sha256": "bf709af95f0100bbf1b304818dd6c6737cd2c08b8db288bbacc4ef633b1bb848",
-      "task_id": "01a09916-8828-7233-b453-97544d3f137a"
+      "path": "references/thousand_sunny.jpg",
+      "sha256": "85bb008307bfa0a7609b45fca1f9028c968b709575621b09e95428a27d627164",
+      "task_id": "01a09916-8828-7233-b453-97544d3f137a",
+      "source_path": "references/thousand_sunny.png",
+      "source_sha256": "bf709af95f0100bbf1b304818dd6c6737cd2c08b8db288bbacc4ef633b1bb848",
+      "source_bytes": 877288,
+      "bytes": 226809,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "going_merry": {
-      "path": "references/going_merry.png",
-      "sha256": "f1b7225b6a925be85c79141c9a216b2cc6923ec7f8d41fbec59c7cd37fead4c2",
-      "task_id": "01a09917-27d6-72a3-bd0b-23b643702d51"
+      "path": "references/going_merry.jpg",
+      "sha256": "a21d155e30073aee50927087271e08f53a4c8c23a24f06c116e39275c1d33b7d",
+      "task_id": "01a09917-27d6-72a3-bd0b-23b643702d51",
+      "source_path": "references/going_merry.png",
+      "source_sha256": "f1b7225b6a925be85c79141c9a216b2cc6923ec7f8d41fbec59c7cd37fead4c2",
+      "source_bytes": 970550,
+      "bytes": 221784,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "baratie": {
-      "path": "references/baratie.png",
-      "sha256": "cc8e8e865c361e0a520287f0ee7d35c6734be7ae114f7e9def1e81cb88300cd3",
-      "task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5"
+      "path": "references/baratie.jpg",
+      "sha256": "b5024b873df027c926bd1bfe80a736bfece9705f194aa7619a3f365c5ce75d5d",
+      "task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5",
+      "source_path": "references/baratie.png",
+      "source_sha256": "cc8e8e865c361e0a520287f0ee7d35c6734be7ae114f7e9def1e81cb88300cd3",
+      "source_bytes": 890488,
+      "bytes": 236795,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "navy_h03": {
-      "path": "references/navy_h03.png",
-      "sha256": "09e54c37fa5c2339792d1470c80edaaba903e15000722817397a593c2849bb01",
-      "task_id": "01a09917-2a80-777f-a994-02de9de845c8"
+      "path": "references/navy_h03.jpg",
+      "sha256": "46034354ddfee1525266309102673943c73b6648d186789197da9339eaa3a5c0",
+      "task_id": "01a09917-2a80-777f-a994-02de9de845c8",
+      "source_path": "references/navy_h03.png",
+      "source_sha256": "09e54c37fa5c2339792d1470c80edaaba903e15000722817397a593c2849bb01",
+      "source_bytes": 929410,
+      "bytes": 239454,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "polar_tang": {
-      "path": "references/polar_tang.png",
-      "sha256": "b314aa1afa7f8ef2c9e4b24dc374980e959a5654afa91a01511f3aee1c72abb1",
-      "task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9"
+      "path": "references/polar_tang.jpg",
+      "sha256": "f9b58a2998d94f70fee12b158d523616751bc23d16904077e61f47d4fa2daa0a",
+      "task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9",
+      "source_path": "references/polar_tang.png",
+      "source_sha256": "b314aa1afa7f8ef2c9e4b24dc374980e959a5654afa91a01511f3aee1c72abb1",
+      "source_bytes": 618192,
+      "bytes": 151488,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "spade_pirates": {
-      "path": "references/spade_pirates.png",
-      "sha256": "dad5ca989a037b0d94ef52bd84536e4fc21111ebda1386a91811c48a0d26c0ff",
-      "task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6"
+      "path": "references/spade_pirates.jpg",
+      "sha256": "8b3ddd344bea4a881d0316f948f250d1b3457ce98fdd919105e96611f3c3d6cf",
+      "task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6",
+      "source_path": "references/spade_pirates.png",
+      "source_sha256": "dad5ca989a037b0d94ef52bd84536e4fc21111ebda1386a91811c48a0d26c0ff",
+      "source_bytes": 879518,
+      "bytes": 234749,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "red_force": {
-      "path": "references/red_force.png",
-      "sha256": "60ed0d63df7779fc2c74520e7c60159edbb624bbf44d60579b56481ba82ef732",
-      "task_id": "01a09917-2f2d-730e-9552-c79f43073178"
+      "path": "references/red_force.jpg",
+      "sha256": "28bfdb4f3fe07f0fa864432a529463b211345701ea18a64239eedcb5cffe7cd9",
+      "task_id": "01a09917-2f2d-730e-9552-c79f43073178",
+      "source_path": "references/red_force.png",
+      "source_sha256": "60ed0d63df7779fc2c74520e7c60159edbb624bbf44d60579b56481ba82ef732",
+      "source_bytes": 1083613,
+      "bytes": 302072,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "moby_dick": {
-      "path": "references/moby_dick.png",
-      "sha256": "8f79e573bdfbcaca6996be3088ab5af5a2160e8b8d118200ee7a06baeb3fb5c7",
-      "task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e"
+      "path": "references/moby_dick.jpg",
+      "sha256": "5c7afec044a1b7decf33405724c0a9bfd5e75db2ebde6773eb4e6c1c933ebb90",
+      "task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e",
+      "source_path": "references/moby_dick.png",
+      "source_sha256": "8f79e573bdfbcaca6996be3088ab5af5a2160e8b8d118200ee7a06baeb3fb5c7",
+      "source_bytes": 1012695,
+      "bytes": 270776,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "perfume_yuda": {
-      "path": "references/perfume_yuda.png",
-      "sha256": "00ad4fe843de079f1957e1a5f541f001707b8a08b7d0ea8962b62fadb1c56acf",
-      "task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6"
+      "path": "references/perfume_yuda.jpg",
+      "sha256": "68337a40496c82d800d1d5580cfcc64b97e2e14c528c2f0e89315da996f3ab04",
+      "task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6",
+      "source_path": "references/perfume_yuda.png",
+      "source_sha256": "00ad4fe843de079f1957e1a5f541f001707b8a08b7d0ea8962b62fadb1c56acf",
+      "source_bytes": 1352872,
+      "bytes": 272460,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "oro_jackson": {
-      "path": "references/oro_jackson.png",
-      "sha256": "9fc41fafa6e1b37fd8fdd614290e0ea4d71efb9468928dfb2e7fd283165a9319",
-      "task_id": "01a09917-3368-7698-9581-9fb024deb93a"
+      "path": "references/oro_jackson.jpg",
+      "sha256": "1838fcc58ab2747476d585e96b8ce5e5067447adabf91385d46ea60c5ae62910",
+      "task_id": "01a09917-3368-7698-9581-9fb024deb93a",
+      "source_path": "references/oro_jackson.png",
+      "source_sha256": "9fc41fafa6e1b37fd8fdd614290e0ea4d71efb9468928dfb2e7fd283165a9319",
+      "source_bytes": 1063901,
+      "bytes": 261708,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "queen_mama_chanter": {
-      "path": "references/queen_mama_chanter.png",
-      "sha256": "77793ac87826dec4525b0caf7ae082052067c1da2f4e5b841d46c648ceb6a241",
-      "task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9"
+      "path": "references/queen_mama_chanter.jpg",
+      "sha256": "6724f148859c86a77d250b0dbbc6c8225d28b81ec957971af5488a9bfbe61440",
+      "task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9",
+      "source_path": "references/queen_mama_chanter.png",
+      "source_sha256": "77793ac87826dec4525b0caf7ae082052067c1da2f4e5b841d46c648ceb6a241",
+      "source_bytes": 971216,
+      "bytes": 220022,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     },
     "dragons_ship": {
-      "path": "references/dragons_ship.png",
-      "sha256": "3c64908cb04231a198c73a5cf6e7db6268e2fbae7fa99435252bd66f756509a6",
-      "task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e"
+      "path": "references/dragons_ship.jpg",
+      "sha256": "cafd6eb54973b656853dcb40731237b9fe096c26769743635be69eea7c7a1860",
+      "task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e",
+      "source_path": "references/dragons_ship.png",
+      "source_sha256": "3c64908cb04231a198c73a5cf6e7db6268e2fbae7fa99435252bd66f756509a6",
+      "source_bytes": 1225396,
+      "bytes": 291045,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_twin_cape": {
+      "path": "references/island_twin_cape.jpg",
+      "sha256": "6301adad62db8e8795f9d017201a2bace597beb1d85339e6bb76afcb5780fa01",
+      "task_id": "01a09ca6-f840-75e3-b147-b8f9b26f39ba",
+      "source_path": "references/island_twin_cape.png",
+      "source_sha256": "24f929dcef5a85e015a61fb2bd00de6b3a3f2adb2627efd58c5e0048399b992a",
+      "source_bytes": 1540391,
+      "bytes": 343844,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_drum": {
+      "path": "references/island_drum.jpg",
+      "sha256": "852abf9ba9e3ca50afa260327ace21757d75bd3de2f7799e07244d19670523ac",
+      "task_id": "01a09ca6-fcb6-745a-93a7-8808e4977207",
+      "source_path": "references/island_drum.png",
+      "source_sha256": "e02856d0e8781b1ddbe0ed79dbfa6779715701f325915dae0552face4bf8544a",
+      "source_bytes": 1600583,
+      "bytes": 360529,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_little_garden": {
+      "path": "references/island_little_garden.jpg",
+      "sha256": "6c26ee24cfd667cbd0af4a92aa4d32aa003568f0e8234607b1100a513f5fe8fd",
+      "task_id": "01a09ca6-fa7a-74ea-b050-fdc19c9193e2",
+      "source_path": "references/island_little_garden.png",
+      "source_sha256": "a29af1fac6888cc2dd7fbfc642bf42f4d366b8f689dddd5b32bc70b1bb32de9f",
+      "source_bytes": 1586901,
+      "bytes": 413223,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_alabasta": {
+      "path": "references/island_alabasta.jpg",
+      "sha256": "2da3e2fb1dacbe71b6d5aa69c724c1f376825d2d754c6342f81041269d655171",
+      "task_id": "01a09ca7-9821-73ab-ac23-a5c2a02bf755",
+      "source_path": "references/island_alabasta.png",
+      "source_sha256": "71f8206c4a04c65432751526b6f646d7cd2064d73155a68af1c8511a28af7c02",
+      "source_bytes": 953655,
+      "bytes": 227290,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_water_seven": {
+      "path": "references/island_water_seven.jpg",
+      "sha256": "ca2a2f3b8cdf0cf367bd84c33f616280882ab9421e1a6497f1311202ed2f2488",
+      "task_id": "01a09ca7-9a63-71c4-9d65-e739a8326bf5",
+      "source_path": "references/island_water_seven.png",
+      "source_sha256": "7d2c23dc49441e30c97d02d0c400ba011e876056bd163b5080487d30e252eca4",
+      "source_bytes": 1723856,
+      "bytes": 449672,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_enies_lobby": {
+      "path": "references/island_enies_lobby.jpg",
+      "sha256": "3fe4e8eca77075518e3d7211014b24e283dd8bad6b7290adeee2da71ab7da053",
+      "task_id": "01a09ca7-d00c-7415-9fdb-fa383b68fb2e",
+      "source_path": "references/island_enies_lobby.png",
+      "source_sha256": "f8606dc788addf58f3f70c472ad4bd4e6d80db379e73b5b0bf90b5ae18b5f639",
+      "source_bytes": 1149088,
+      "bytes": 297808,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_marineford": {
+      "path": "references/island_marineford.jpg",
+      "sha256": "42ae03d111ef00979c988a18e73bc3177ef29adf294f1b301f90216aa5ec3997",
+      "task_id": "01a09ca8-3b0d-7172-818e-369af1d3c70f",
+      "source_path": "references/island_marineford.png",
+      "source_sha256": "7fd9d41be22f7b3d96f003b9958db95286e81f475ed6f8e7886c9257790530fd",
+      "source_bytes": 1146280,
+      "bytes": 268605,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_whole_cake": {
+      "path": "references/island_whole_cake.jpg",
+      "sha256": "1439ab0c32a3162d45324901d21673944547ac039c32f6d7637f6e77b0907c7a",
+      "task_id": "01a09ca8-d917-77f2-be9f-5833c023455c",
+      "source_path": "references/island_whole_cake.png",
+      "source_sha256": "9258d32291ba803b3d0b9b1aa659d814b20ba523483b3f7f2233bad1081b5983",
+      "source_bytes": 1389938,
+      "bytes": 316743,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_wano": {
+      "path": "references/island_wano.jpg",
+      "sha256": "df12ccd441705bbe56d4543960ff806616ce23c6b91a961feccfcd722e20f775",
+      "task_id": "01a09ca8-704d-74c6-a8de-45638287eddc",
+      "source_path": "references/island_wano.png",
+      "source_sha256": "283fffa42d7564244aa963425b0e752736dcc9f373c7b88017a74e720398c5c5",
+      "source_bytes": 1621855,
+      "bytes": 424644,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_laugh_tale": {
+      "path": "references/island_laugh_tale.jpg",
+      "sha256": "b7469bfa1d1baab839b2d289ac435a96527e1d134c62e68d1458eef9e2c82e17",
+      "task_id": "01a09ca8-db0e-71ee-956b-a0f8055b2065",
+      "source_path": "references/island_laugh_tale.png",
+      "source_sha256": "6212f4a57e62d2798e56610354462a24efb4b25f191ec6d25da11daee53473ae",
+      "source_bytes": 1406826,
+      "bytes": 387444,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_sabaody": {
+      "path": "references/island_sabaody.jpg",
+      "sha256": "cb5626ee6eb58b86c3b21a4cc593f4879c9b8e5a16348e42ea3e4d14b4955121",
+      "task_id": "01a09ca8-38d3-76c5-ad13-c9a917ec039f",
+      "source_path": "references/island_sabaody.png",
+      "source_sha256": "835ed498f553a27e4987754a020c5f031c92384748ad15c156bb0c781d712510",
+      "source_bytes": 1282374,
+      "bytes": 347888,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "scenery_red_line": {
+      "path": "references/scenery_red_line.jpg",
+      "sha256": "40cc52529d3c38242c62b415e7aa5a8a60ebc0b45218160c727a623700a292ae",
+      "task_id": "01a09caa-1248-74b5-a049-02cacf70ef15",
+      "source_path": "references/scenery_red_line.png",
+      "source_sha256": "9a03fa43c3e45f1292c5a8b80c8a44c2b40f423ce525b8c7aae752707ae45ff2",
+      "source_bytes": 1626049,
+      "bytes": 381706,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_jaya": {
+      "path": "references/island_jaya.jpg",
+      "sha256": "6a44482dcce6296a08b6f2c0579e34db0e7bb410f7397605eea39f7352ec246c",
+      "task_id": "01a09ca9-73d2-71c3-bb4b-384b8a3142fb",
+      "source_path": "references/island_jaya.png",
+      "source_sha256": "dd19818a0623a0340b6f8ad8f0c650c6bec8f3b55ea6cb19cb70625dc98272b9",
+      "source_bytes": 1081814,
+      "bytes": 298882,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_skypiea": {
+      "path": "references/island_skypiea.jpg",
+      "sha256": "506eae8b7e47144a72b212241abe262bfbf8d2034aafba909a14de78636e9999",
+      "task_id": "01a09ca9-db0a-7305-a5ad-322277ba6ae4",
+      "source_path": "references/island_skypiea.png",
+      "source_sha256": "8d4abb1b5f2e5ce5a2abdd9c5a54352e308c11c493e2e34fcc19e61198c9ca69",
+      "source_bytes": 910673,
+      "bytes": 228218,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "ship_garp_battleship": {
+      "path": "references/ship_garp_battleship.jpg",
+      "sha256": "68d0e64e7554793ec98b1283e32c4fdb3377d94b1f5a3f9205c28f8cc637ccb7",
+      "task_id": "01a09cb3-cbe3-747b-ae7b-b6230297abbd",
+      "source_path": "references/ship_garp_battleship.png",
+      "source_sha256": "c52fbb6f50c2c5c269d74c958bc1bd140fb842496452331e329ad2f87c261f4b",
+      "source_bytes": 1363757,
+      "bytes": 301883,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "ship_marine_patrol": {
+      "path": "references/ship_marine_patrol.jpg",
+      "sha256": "719929ddeda440a9808b86fe932b6680f1d0753cad7ea302c784ae78ef4dbfed",
+      "task_id": "01a09cb3-cdd7-7614-b520-053844e6b131",
+      "source_path": "references/ship_marine_patrol.png",
+      "source_sha256": "a5f40b4f017531fb6a82645f4a4bd0d59194b9f0547084fd20562999df18acd3",
+      "source_bytes": 1207103,
+      "bytes": 282692,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "ship_mihawk_coffin": {
+      "path": "references/ship_mihawk_coffin.jpg",
+      "sha256": "0d214dd888fe77a3eb0f0195ea8e601e914d4d77b61abe4ac60205e4eff4e45f",
+      "task_id": "01a09cb3-c9f3-7459-8c7a-77004885c94c",
+      "source_path": "references/ship_mihawk_coffin.png",
+      "source_sha256": "ee8cf4add7081731c5e186e81175d5fc888dc1aaa4e5a73cb4332fec6fa91d4a",
+      "source_bytes": 1114596,
+      "bytes": 215412,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "scenery_reverse_mountain": {
+      "path": "references/scenery_reverse_mountain.jpg",
+      "sha256": "9a22a49f7ae8e5649bc6184719490a5c53384b40da5be4c1ed6bd0b766860672",
+      "task_id": "01a09cbb-5ca8-70a0-8c0d-6640cf5690a0",
+      "source_path": "references/scenery_reverse_mountain.png",
+      "source_sha256": "ab5a9fd3f8fcdb1706e5fad80456e507d60c15058c2bec91ee04da1b3524d26b",
+      "source_bytes": 1699334,
+      "bytes": 422798,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "creature_laboon": {
+      "path": "references/creature_laboon.jpg",
+      "sha256": "a306df6ed70d039f997b9396a5814c3dd461db32354a994bee89d2cde15eadf3",
+      "task_id": "01a09ce4-ba87-77c7-9358-6e92f25f7797",
+      "source_path": "references/creature_laboon.png",
+      "source_sha256": "4b389bd689b03928350e87b6ddd016e9d3b97ddcfc0483aa4e94bb9e5f8bebe4",
+      "source_bytes": 792864,
+      "bytes": 154701,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "creature_sea_king": {
+      "path": "references/creature_sea_king.jpg",
+      "sha256": "3e2ca1b886bdf8d7aff669068d1c48d5075a4a86caeb73b4dc70b4557ac5ce97",
+      "task_id": "01a09ce4-bcc2-7339-8dca-3ea4dd309df8",
+      "source_path": "references/creature_sea_king.png",
+      "source_sha256": "b7ad8b3b28a01506cf52273836f568310498b186546b3feba1ac52e9ceabc072",
+      "source_bytes": 783532,
+      "bytes": 160421,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_egghead": {
+      "path": "references/island_egghead.jpg",
+      "sha256": "ec07ea1176c58c1a88d5d9cb2fd3a7e2e6bd3acae5bf2e82b60f686151f6acd0",
+      "task_id": "01a09cef-17c3-7274-8281-1d110ed92d03",
+      "source_path": "references/island_egghead.png",
+      "source_sha256": "f9f73876a43b772190b506cdc2a33b57a904acaa038978068d1ef030a0247cb4",
+      "source_bytes": 1253553,
+      "bytes": 340610,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
+    },
+    "island_elbaf": {
+      "path": "references/island_elbaf.jpg",
+      "sha256": "c86fea0b5e8a0facf97059fc75a4d9690434a1cec9c2627fca34c5ff3acb41d1",
+      "task_id": "01a09cef-15b3-7454-ac2f-48cd19d74a82",
+      "source_path": "references/island_elbaf.png",
+      "source_sha256": "811cf45618b1868580ed2a72eb7181b74fdb888e2fb0bb05d304cd028479954b",
+      "source_bytes": 1115013,
+      "bytes": 280213,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "encoding": {
+        "format": "JPEG",
+        "quality": 94,
+        "subsampling": 0,
+        "dimensions_unchanged": true,
+        "purpose": "reference_artwork"
+      }
     }
   },
   "packaging": {
@@ -1309,5 +6164,101 @@
     "source_texture_rgba_with_mipmaps_estimate_bytes": 2415919104,
     "runtime_texture_rgba_bytes": 301989888,
     "runtime_texture_rgba_with_mipmaps_estimate_bytes": 402653184
+  },
+  "campaigns": [
+    {
+      "name": "ship_references_and_two_model_passes",
+      "reserved_credits": 648,
+      "reported_credits": 648
+    },
+    {
+      "name": "islands_and_cliffs",
+      "approved_credits": 546,
+      "reserved_credits": 546,
+      "reported_credits": 546
+    },
+    {
+      "name": "extra_ships",
+      "approved_credits": 117,
+      "reserved_credits": 117,
+      "reported_credits": 117
+    },
+    {
+      "name": "reverse_mountain",
+      "approved_credits": 39,
+      "reserved_credits": 39,
+      "reported_credits": 39
+    },
+    {
+      "name": "sea_creatures",
+      "approved_credits": 78,
+      "reserved_credits": 78,
+      "reported_credits": 78
+    },
+    {
+      "name": "new_world_islands",
+      "approved_credits": 78,
+      "reserved_credits": 78,
+      "reported_credits": 78
+    }
+  ],
+  "island_packaging": {
+    "geometry_unchanged": true,
+    "base_color_max_dimension": 2048,
+    "pbr_max_dimension": 1024,
+    "runtime_bytes": 83894520,
+    "source_bytes": 436316124
+  },
+  "campaign_packaging": {
+    "islands_and_cliffs": {
+      "geometry_unchanged": true,
+      "base_color_max_dimension": 2048,
+      "pbr_max_dimension": 1024,
+      "runtime_bytes": 83894520,
+      "source_bytes": 436316124
+    },
+    "extra_ships": {
+      "geometry_unchanged": true,
+      "base_color_max_dimension": 2048,
+      "pbr_max_dimension": 1024,
+      "runtime_bytes": 17839096,
+      "source_bytes": 86647324
+    },
+    "reverse_mountain": {
+      "geometry_unchanged": true,
+      "base_color_max_dimension": 2048,
+      "pbr_max_dimension": 1024,
+      "runtime_bytes": 6169337,
+      "source_bytes": 34542412
+    },
+    "sea_creatures": {
+      "geometry_unchanged": true,
+      "base_color_max_dimension": 2048,
+      "pbr_max_dimension": 1024,
+      "runtime_bytes": 7976558,
+      "source_bytes": 42530680
+    },
+    "new_world_islands": {
+      "geometry_unchanged": true,
+      "base_color_max_dimension": 2048,
+      "pbr_max_dimension": 1024,
+      "runtime_bytes": 11958726,
+      "source_bytes": 57868360
+    }
+  },
+  "lossless_packaging": {
+    "operation": "lossless_png_to_webp",
+    "meshy_credits": 0,
+    "geometry_unchanged": true,
+    "decoded_pixels_unchanged": true,
+    "source_bytes": 240205964,
+    "runtime_bytes": 194607614
+  },
+  "container_packaging": {
+    "format": "gzip",
+    "meshy_credits": 0,
+    "decoded_model_bytes_unchanged": true,
+    "source_bytes": 220816176,
+    "runtime_bytes": 192832988
   }
 }

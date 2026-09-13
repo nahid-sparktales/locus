@@ -294,76 +294,367 @@
   "assets": {
     "resident": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly bipedal humanoid service robot, full body, two clearly separated arms and legs, hands with simple fingers, articulated elbows and knees, A pose. Pearl ceramic armor, dark navy flexible joints, oval black glass face with two cyan glowing eyes, small orange chest accent. Warm approachable proportions, elegant compact silhouette, practical space station assistant. No weapons, no accessories held in hands.",
-      "sha256": "091b1adb142626715f47fe1556f8078b5c8df6227ad6e708aef901f7ccd8667c",
+      "sha256": "4dc10832458cc844bb37a42094abdb2db8a7de8bb0fa327e904602c8ccc1a2db",
       "source_campaign": "original",
       "animations": [
         "Idle",
         "Casual_Walk"
-      ]
+      ],
+      "runtime_bytes": 5047074,
+      "geometry_sha256": "adf56ab58922344ab045153379f5f76163f353867681bc0de9bb9a0cdd918f18",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/resident.glb",
+        "source_sha256": "091b1adb142626715f47fe1556f8078b5c8df6227ad6e708aef901f7ccd8667c",
+        "source_bytes": 7296584,
+        "runtime_bytes": 5217304,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "31fc7d2621fe3d46047e308ad41dbb878cf6c9f2efb3454225233e32e6e6ae33",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 6835002,
+            "bytes": 4755586,
+            "encoded_sha256": "8bb72ecaac56c84137c89fb75b2db0fdf05209d898bafad66d0a6efadc1e2bea"
+          }
+        ]
+      },
+      "path": "assets/resident.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/resident.glb",
+        "source_sha256": "19ad471fbb90a0877b014a328b9a9d31739aa8e764938b1e4cf043dbfbc3e454",
+        "source_bytes": 5217304,
+        "runtime_bytes": 5047074,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "station": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Freestanding futuristic workstation console for one standing humanoid, waist height, compact wide desk with angled inset cyan display, ivory ceramic panels, navy metal frame, orange corner accents, thick single central pedestal and stable base. Screen is part of the desk, no chair, no wires, no person. Designed for a peaceful orbital research outpost.",
-      "sha256": "fb858cab7b3b9c1bab81704b94ded8b84960f630504ba88afd2dfe83db469fa3",
-      "source_campaign": "original"
+      "sha256": "dc3db2eb41a442ebb5ea1d33182a9a7392e518649118821b5dd9bd9f6ef8124f",
+      "source_campaign": "original",
+      "path": "assets/station.glb.gz",
+      "runtime_bytes": 2940520,
+      "geometry_sha256": "699bd8f05393366adc5eb7766151d55009940d7cf4414fd637d64f2ad36f60b3",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/station.glb",
+        "source_sha256": "fb858cab7b3b9c1bab81704b94ded8b84960f630504ba88afd2dfe83db469fa3",
+        "source_bytes": 2993468,
+        "runtime_bytes": 2940520,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "beacon": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Elegant space outpost navigation beacon tower, tapered dark navy base, stacked ivory ceramic rings, luminous turquoise central energy core, small orange bands. Freestanding compact sci-fi monument with clean strong silhouette, no cables, no people. Solarpunk optimistic futuristic industrial design.",
-      "sha256": "18091f3bf61a53b6706e8a8fcc88ec801be6dd2a8a819dde04b2b124b902b803",
-      "source_campaign": "original"
+      "sha256": "f26c77612b7a5abd943e4e05466357870f80486a999a58c19ad718cfa652ccf4",
+      "source_campaign": "original",
+      "path": "assets/beacon.glb.gz",
+      "runtime_bytes": 2772212,
+      "geometry_sha256": "f2b7643862844125620be119ca9361713667017551bfaf771b3a3643db4fa91e",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/beacon.glb",
+        "source_sha256": "18091f3bf61a53b6706e8a8fcc88ec801be6dd2a8a819dde04b2b124b902b803",
+        "source_bytes": 2819692,
+        "runtime_bytes": 2772212,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "habitat": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Small single modular science fiction habitat building, rounded rectangular ivory pod on short dark navy legs, one closed sliding door in front with orange frame, blue panoramic side windows, dark navy roof with small antenna. Peaceful lunar research station, compact one story architectural prop, no terrain, no people, no separate objects.",
-      "sha256": "2ab1f2176c38ce232555d0097e95263c1110b2ff8e1d1ba1ccab5843df1e16ed",
-      "source_campaign": "original"
+      "sha256": "db7cde1585b280e63670e3fc5c695df4b03b3f3254ca8ededde9b944724122f4",
+      "source_campaign": "original",
+      "path": "assets/habitat.glb.gz",
+      "runtime_bytes": 2331122,
+      "geometry_sha256": "47b216e5c84dc6c174b4ff064b869ace5c5c09e71dbad3670c96574f06e1b0d0",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/habitat.glb",
+        "source_sha256": "2ab1f2176c38ce232555d0097e95263c1110b2ff8e1d1ba1ccab5843df1e16ed",
+        "source_bytes": 2379504,
+        "runtime_bytes": 2331122,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "crates": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single compact futuristic cargo container, rounded rectangular dark navy storage box, ivory reinforcement corners, orange locking bands, recessed cyan small indicator, bevelled edges, sturdy feet. Peaceful space outpost supply crate, no text, closed lid, no other objects.",
-      "sha256": "1b6b229432efc355011e3d4a5eeb21c1da7dc46f9e97ed970500b941d66851f6",
-      "source_campaign": "original"
+      "sha256": "862bdc3653aca7bfb8079dbb7d55d24676cf1cb2e4cbdecb8450d4602f8a7cc1",
+      "source_campaign": "original",
+      "path": "assets/crates.glb.gz",
+      "runtime_bytes": 3015554,
+      "geometry_sha256": "bc9524ed5785c7fc40fc916a916c5586ab63522f5ee59efb18e44e1449e1b1cb",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/crates.glb",
+        "source_sha256": "1b6b229432efc355011e3d4a5eeb21c1da7dc46f9e97ed970500b941d66851f6",
+        "source_bytes": 3076992,
+        "runtime_bytes": 3015554,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "resident_explorer": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Full body humanoid astronaut explorer in A pose, clearly separated arms and legs, hands with simple fingers. Compact rounded helmet with dark blue glass visor, warm orange and ivory space suit, navy flexible joints, small backpack, sturdy boots. Friendly stylized game character, clean readable silhouette, no weapons, no objects in hands.",
-      "sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd",
+      "sha256": "a79bbd0874b197698f09750cf4c3cfc768b32b2f605a2085e0aeb7bcc62ebecd",
       "source_asset": "player",
       "source_campaign": "original",
       "source_commit": "5ca03779",
       "animations": [
         "Idle",
         "Casual_Walk"
-      ]
+      ],
+      "runtime_bytes": 5219381,
+      "geometry_sha256": "4463ea2682bb99a44c99871ffb4a1372ed23407c1df83146f9a915c05de1c519",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/resident_explorer.glb",
+        "source_sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd",
+        "source_bytes": 7338388,
+        "runtime_bytes": 5384920,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "cfdfea02e65daa10c15df2fb111a12f6d4fdecd93c1ddda5ee703c32c489ac7c",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 6885873,
+            "bytes": 4932270,
+            "encoded_sha256": "a9e8f634255cb807b41ef9983b1129993465970b796d14333e24f5c75cc71218"
+          }
+        ]
+      },
+      "path": "assets/resident_explorer.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/resident_explorer.glb",
+        "source_sha256": "e3adfb3bc49a09522576c3d36f8bc00c709543ede95e351208f7de41478d073d",
+        "source_bytes": 5384920,
+        "runtime_bytes": 5219381,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "resident_botanist": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly bipedal humanoid botanical research specialist robot, full body in A pose, two clearly separated arms and legs, simple fingers, visible articulated elbows and knees. Slender graceful proportions, rounded pearl cream ceramic body, sage green shoulders and boots, dark navy flexible joints, oval turquoise glass face with two warm cyan eyes, tiny coral chest accent. Compact leaf shaped chest panel, practical fitted botanical work suit silhouette. Optimistic retro science fiction, peaceful garden caretaker. No leaves protruding from body, no weapons, no tools or objects in hands.",
-      "sha256": "d30cf76b0afbfba933aa7e3d7cb493e54d66871e68fbd077001f9a1732a8a107",
+      "sha256": "797a52330ba9cc57967a9d07dbb696eca190acea090e1a7a4325dd0465f780a9",
       "source_campaign": "commons",
       "animations": [
         "Idle",
         "Casual_Walk"
-      ]
+      ],
+      "runtime_bytes": 5285292,
+      "geometry_sha256": "601ef66b43dd06e0e064677ad0346d067b40b9077cd06082df59778090303db0",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/resident_botanist.glb",
+        "source_sha256": "d30cf76b0afbfba933aa7e3d7cb493e54d66871e68fbd077001f9a1732a8a107",
+        "source_bytes": 7477168,
+        "runtime_bytes": 5471892,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "c38c56818974e91b781d837fe79a78a486528a0e89997377e0116f7a3a4f4b21",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 7022889,
+            "bytes": 5017478,
+            "encoded_sha256": "81e1c653912b21c5bccdd814244c1357e9d7214f74bf01544d0aa1b6653343ad"
+          }
+        ]
+      },
+      "path": "assets/resident_botanist.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/resident_botanist.glb",
+        "source_sha256": "cc2adcd26cf9c18f32477cf9eba6581b9fd9be7b96a03a8fc9a56f758b3c9819",
+        "source_bytes": 5471892,
+        "runtime_bytes": 5285292,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "resident_engineer": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Friendly stocky bipedal humanoid engineer service robot, full body in A pose, two clearly separated arms and legs, simple fingers, visible articulated elbows and knees. Broad rounded chest and sturdy short boots, warm coral orange and ivory ceramic armor, dark navy flexible joints, small round helmet with black glass face and two luminous turquoise eyes. Helpful approachable workshop mechanic, substantial but agile proportions, clean readable silhouette, peaceful retro futuristic research station. No weapons, no tools or objects in hands.",
-      "sha256": "ad13fc0816073de5c632c9718edbc90d0d5e34454e23045e056202fd79c164ba",
+      "sha256": "b05acdf232f773d37fcdfb596a0dc6527ea4e8f68962a490e63984f3c451c6bc",
       "source_campaign": "commons",
       "animations": [
         "Idle",
         "Casual_Walk"
-      ]
+      ],
+      "runtime_bytes": 5435944,
+      "geometry_sha256": "5f299094e453dd75db90ec86477f40b37381b4cae8c71d74124ac21f43f7163a",
+      "geometry_unchanged": true,
+      "texture_encoding": {
+        "operation": "lossless_png_to_webp",
+        "meshy_credits": 0,
+        "source_path": "assets/resident_engineer.glb",
+        "source_sha256": "ad13fc0816073de5c632c9718edbc90d0d5e34454e23045e056202fd79c164ba",
+        "source_bytes": 7451744,
+        "runtime_bytes": 5639984,
+        "geometry_unchanged": true,
+        "decoded_pixels_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "dimensions": [
+              2048,
+              2048
+            ],
+            "rgba_sha256": "268cf9f4c6d700f917c4b64531be5e3a214bc3e128fd8ff4e9112799fe0067de",
+            "source_mime_type": "image/png",
+            "mime_type": "image/webp",
+            "source_bytes": 6935139,
+            "bytes": 5123244,
+            "encoded_sha256": "308606aa4f1cc9c78b277d58429549035f4ce1d167103e4905eae0aa391c7a33"
+          }
+        ]
+      },
+      "path": "assets/resident_engineer.glb.gz",
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/resident_engineer.glb",
+        "source_sha256": "b60c1a75cf20465ae5bdded9e66f3fb81adb2ab6048cc93e62ab9d76c5f93571",
+        "source_bytes": 5639984,
+        "runtime_bytes": 5435944,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "planter": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single lush hydroponic garden planter for a peaceful orbital research station. Wide low rounded rectangular pearl ivory ceramic trough on a dark navy base, turquoise inset light strip and small warm coral corner accents. Dense attractive broad sage and emerald green leaves growing upright from a recessed soil bed, several small pale yellow flowers, compact well-contained foliage. Polished optimistic solarpunk indoor furniture prop, no people, no pipes outside the planter, no scattered objects.",
-      "sha256": "ab79504525a180f82e990c985b616421e31131bc976bd65138d59c92d6e176f0",
-      "source_campaign": "commons"
+      "sha256": "f3f7bda16e7f945f5188e6c76b29cb60a144bbb59853acb2dc59bfef67f74a04",
+      "source_campaign": "commons",
+      "path": "assets/planter.glb.gz",
+      "runtime_bytes": 3522293,
+      "geometry_sha256": "3da11382d5f5ecfbd96b364c2c32e1ec7907cfb43abd9e069289ae83c33acb2c",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/planter.glb",
+        "source_sha256": "ab79504525a180f82e990c985b616421e31131bc976bd65138d59c92d6e176f0",
+        "source_bytes": 3587572,
+        "runtime_bytes": 3522293,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "lounge": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single cohesive futuristic lounge seating furniture assembly: a curved crescent shaped low upholstered bench with a small low round coffee table nested within the curve, both connected by one compact rounded dark navy platform base. Pearl ivory bench shell, muted sage teal upholstered cushions, warm coral end accents, ivory tabletop. Peaceful orbital research station lounge, comfortable rounded shapes, clean readable game prop, no people, no objects on table, no room or floor.",
-      "sha256": "2747e55a8e74b63ce9b2b2a461c53401bdc06266deaf71dc131f534db6a964a4",
-      "source_campaign": "commons"
+      "sha256": "7b9c36318ac00f27180876d1c1d59d6d0231fb94e8c038bb9c26d7d48f6ffb65",
+      "source_campaign": "commons",
+      "path": "assets/lounge.glb.gz",
+      "runtime_bytes": 2148072,
+      "geometry_sha256": "69afef0061aa4e3d2c35d4fed7185eb4f910d60ca28c22eaff9fb7a6c5fed3b5",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/lounge.glb",
+        "source_sha256": "2747e55a8e74b63ce9b2b2a461c53401bdc06266deaf71dc131f534db6a964a4",
+        "source_bytes": 2205092,
+        "runtime_bytes": 2148072,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     },
     "server": {
       "prompt": "Stylized premium indie science fiction game asset, clean rounded hard surface forms, no text, no logos, no ground plane, isolated single object. Single compact freestanding research computation rack workstation, tall rounded rectangular ivory cabinet with dark navy inset equipment panels, rows of soft turquoise indicator lights, integrated small angled touchscreen at waist height, warm coral side trim. Closed solid back, stable small dark pedestal feet, orderly polished retro science fiction laboratory equipment. Optimistic peaceful orbital research station, no exposed cables, no people, no text, no separate objects.",
-      "sha256": "adc18322c8f5a6cdec27732f874b738698465b4cbf4a13727f2b9c50bc5f9c8b",
-      "source_campaign": "commons"
+      "sha256": "53dbda42227007ff2d476578763353892807389a1a6520145384267c5fc1d801",
+      "source_campaign": "commons",
+      "path": "assets/server.glb.gz",
+      "runtime_bytes": 2510483,
+      "geometry_sha256": "48369d39d80ad0de3cc6c1cf2bc9c13199ea636d0eb31102cc82558fb582cfb5",
+      "geometry_unchanged": true,
+      "container_encoding": {
+        "format": "gzip",
+        "compression_level": 9,
+        "meshy_credits": 0,
+        "source_path": "assets/server.glb",
+        "source_sha256": "adc18322c8f5a6cdec27732f874b738698465b4cbf4a13727f2b9c50bc5f9c8b",
+        "source_bytes": 2557164,
+        "runtime_bytes": 2510483,
+        "geometry_unchanged": true,
+        "materials_unchanged": true,
+        "decoded_pixels_unchanged": true
+      }
     }
+  },
+  "lossless_packaging": {
+    "operation": "lossless_png_to_webp",
+    "meshy_credits": 0,
+    "geometry_unchanged": true,
+    "decoded_pixels_unchanged": true,
+    "source_bytes": 29563884,
+    "runtime_bytes": 40227947
+  },
+  "container_packaging": {
+    "format": "gzip",
+    "meshy_credits": 0,
+    "decoded_model_bytes_unchanged": true,
+    "source_bytes": 41333584,
+    "runtime_bytes": 40227947
   }
 }

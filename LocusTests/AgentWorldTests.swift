@@ -24,6 +24,64 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertFalse(unknown.isSupported)
     }
 
+    func testResidentPlacementsAreBoundedDisplayMetadata() {
+        let id = UUID().uuidString
+        let row: [String: Any] = ["agentID": id.lowercased(), "ship": "Going Sherry", "home": "Twin Cache"]
+        let payload: [String: Any] = ["version": 1, "type": "residentPlacements", "placements": [row]]
+        XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen),
+                       .residentPlacements([.init(agentID: id, ship: "Going Sherry", home: "Twin Cache")]))
+        let noRoster = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
+                                            version: 1, capabilities: ["world.preferences"])
+        XCTAssertNil(PluginScreenMessage.decode(payload, screen: noRoster))
+        for rows in [[row, row], Array(repeating: row, count: 501)] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "residentPlacements", "placements": rows], screen: screen))
+        }
+        for replacement: [String: Any] in [
+            ["agentID": "not-an-agent", "ship": "Ship", "home": "Port"],
+            ["agentID": id, "ship": "Ship", "home": "Port", "sessionID": "private"],
+            ["agentID": id, "ship": String(repeating: "a", count: 101), "home": "Port"],
+            ["agentID": id, "ship": "Ship", "home": "Port\nspoofed"],
+        ] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "residentPlacements", "placements": [replacement]], screen: screen))
+        }
+    }
+
+    func testNativeWorldCatalogReadsOnlyBoundedConfinedMetadata() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui/themes"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = AgentWorldModel.AvailableScreen(pluginID: "test", pluginName: "Test", digest: nil, root: root.path, screen: screen)
+        let file = root.appendingPathComponent("ui/themes/catalog.json")
+        XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), AgentWorldThemeOption.builtIn)
+        try Data(#"{"version":1,"themes":[{"id":"forest","name":"The Forest"}]}"#.utf8).write(to: file)
+        XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), [.init(id: "forest", name: "The Forest")])
+        for text in [
+            #"{"version":1,"themes":[{"id":"../escape","name":"Forest"}]}"#,
+            #"{"version":1,"themes":[{"id":"forest","name":"Forest"},{"id":"forest","name":"Duplicate"}]}"#,
+            String(repeating: " ", count: 32_769),
+        ] {
+            try Data(text.utf8).write(to: file)
+            XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), AgentWorldThemeOption.builtIn)
+        }
+    }
+
+    func testShipStyleBridgeAcceptsKnownShipsAndExplicitAutomaticOnly() {
+        let id = UUID().uuidString
+        for style in AgentWorldShipStyle.all {
+            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id.lowercased(), "shipStyle": style.id], screen: screen),
+                           .setShipStyle(agentID: id, style: style.id))
+        }
+        XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": NSNull()], screen: screen),
+                       .setShipStyle(agentID: id, style: nil))
+        for invalid: Any in ["automatic", "../ship.glb", "ship_unknown", true, 1] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": invalid], screen: screen))
+        }
+        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
+                                            version: 1, capabilities: ["agents.read"])
+        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": "ship_going_merry"], screen: readOnly))
+        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id], screen: screen))
+    }
+
     func testThemeIDsPermitPluginUpdatesWithoutPathsOrScripts() {
         for value in ["outpost", "forest-v2", "underwater"] {
             XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["theme": value]], screen: screen), .preferences(value))
@@ -196,13 +254,20 @@ final class AgentWorldTests: XCTestCase {
                                                    mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
         let key = "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + first.id
         defaults.set("unrecognized-style", forKey: key)
+        let captain = AgentProfile(name: "Ship Captain", model: "Fixture model")
         let model = AgentWorldModel()
-        model.configure(extensions: extensions, profiles: { [] }, workspace: { root.path }, availability: { _ in nil },
+        model.configure(extensions: extensions, profiles: { [captain] }, workspace: { root.path }, availability: { _ in nil },
                         state: { _ in .init() }, create: { _, _ in XCTFail("Appearance changes must not create a conversation"); return "unused" },
                         load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("Appearance changes must not dispatch work") },
                         stop: { _ in }, open: { _ in }, manage: {}, defaults: defaults)
         model.open(pluginID: pluginID, screenID: first.id)
         XCTAssertEqual(model.residentStyle, "mixed", "Unrecognized saved styles must use the mixed crew default")
+        model.setShipStyle(agentID: UUID().uuidString, style: "ship_garp_battleship")
+        XCTAssertTrue(model.shipStyles.isEmpty, "Unknown captains cannot acquire style preferences")
+        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_garp_battleship")
+        model.setShipStyle(agentID: captain.id.uuidString, style: "../invalid.glb")
+        XCTAssertEqual(model.shipStyles[captain.id.uuidString], "ship_garp_battleship")
+        XCTAssertEqual((model.snapshot["shipStyles"] as? [String: String])?[captain.id.uuidString], "ship_garp_battleship")
         model.setResidentStyle("pandas")
         XCTAssertEqual(model.residentStyle, "pandas")
         XCTAssertEqual(model.snapshot["residentStyle"] as? String, "pandas")
@@ -212,12 +277,17 @@ final class AgentWorldTests: XCTestCase {
         model.setTheme("grand-line")
         XCTAssertEqual(model.residentStyle, "pandas", "Changing worlds must preserve the campus appearance preference")
         model.open(pluginID: pluginID, screenID: second.id)
+        XCTAssertTrue(model.shipStyles.isEmpty, "Ship styles are scoped to their world screen")
+        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_mihawk_coffin")
         XCTAssertEqual(model.residentStyle, "mixed", "An unconfigured screen uses the mixed crew default")
         model.setResidentStyle("explorers")
         XCTAssertEqual(defaults.string(forKey: key), "pandas")
         model.open(pluginID: pluginID, screenID: first.id)
         XCTAssertEqual(model.residentStyle, "pandas")
         XCTAssertEqual(model.theme, "grand-line")
+        XCTAssertEqual(model.shipStyles[captain.id.uuidString], "ship_garp_battleship", "Each captain’s ship survives closing and reopening the world")
+        model.setShipStyle(agentID: captain.id.uuidString, style: nil)
+        XCTAssertNil(model.shipStyles[captain.id.uuidString], "Automatic clears the explicit override")
         model.open(pluginID: pluginID, screenID: second.id)
         XCTAssertEqual(model.residentStyle, "explorers", "Explicit saved explorer choices survive the new mixed default")
         model.setResidentStyle("mixed")
@@ -228,6 +298,8 @@ final class AgentWorldTests: XCTestCase {
         model.open(pluginID: pluginID, screenID: second.id)
         XCTAssertEqual(model.residentStyle, "mixed", "Mixed crew choices restore through the same preference bridge")
         model.open(pluginID: pluginID, screenID: readOnly.id)
+        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_garp_battleship")
+        XCTAssertTrue(model.shipStyles.isEmpty, "A screen without world preferences cannot change ship styles")
         model.setResidentStyle("pandas")
         XCTAssertEqual(model.residentStyle, "mixed")
         XCTAssertNil(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + readOnly.id))
@@ -418,6 +490,161 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertFalse(model.pendingRetry)
         XCTAssertFalse(model.isBusy)
         XCTAssertTrue(model.toastMessage?.contains("saved profile") == true)
+    }
+
+    func testCorruptCurrentBindingCannotBorrowAnotherResidentsChat() async throws {
+        let suiteName = "AgentWorldOwnershipTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let jinbei = AgentProfile(name: "Jinbei", model: "fixture")
+        let luffy = AgentProfile(name: "Luffy", model: "fixture")
+        let key = AgentWorldModel.bindingKey(workspace: "/tmp/world", profileID: jinbei.id.uuidString)
+        defaults.set(try JSONEncoder().encode([key: "luffy-session"]), forKey: "Locus.AgentWorld.conversations.v1")
+        defaults.set(try JSONEncoder().encode(["luffy-session": luffy.id.uuidString]), forKey: "Locus.AgentWorld.profileHistory.v1")
+        let world = AgentWorldModel()
+        world.configure(extensions: ExtensionsModel(), profiles: { [jinbei, luffy] }, workspace: { "/tmp/world" },
+                        availability: { _ in nil }, state: { _ in .init() },
+                        create: { _, _ in XCTFail("A corrupt binding must require explicit recovery"); return "unexpected" },
+                        load: { _ in }, dispatch: { _, _, _, _, _ in }, stop: { _ in }, open: { _ in }, manage: {}, defaults: defaults)
+        do {
+            _ = try await world.conversation(workspace: "/tmp/world", profile: jinbei)
+            XCTFail("The saved ownership conflict must be rejected")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("another agent")) }
+        XCTAssertEqual(world.boundProfileID(for: "luffy-session"), luffy.id)
+        XCTAssertTrue(world.resetCurrentConversation(workspace: "/tmp/world", profileID: jinbei.id))
+        XCTAssertEqual(world.boundProfileID(for: "luffy-session"), luffy.id, "Recovery preserves the original owner's restrictions")
+    }
+
+    func testMissingResidentChatRecoversExplicitlyWithoutAdoptingAnotherAgent() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let app = AppModel(startImmediately: false)
+        app.currentSessionID = "luffy-foreground"
+        app.selectedSavedAgentID = fixture.profiles[1].id
+        app.agentProfiles = fixture.profiles
+        let world = app.agentWorld
+        var createdFor: [UUID] = []
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { _ in .init() }, create: { _, profile in
+            createdFor.append(profile.id); return "replacement-jinbei"
+        }, load: { id in
+            if id == "missing-jinbei" { throw NSError(domain: "Locus.Backend", code: 404, userInfo: [NSLocalizedDescriptionKey: "No stored session"]) }
+            throw NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+        }, dispatch: { _, _, _, _, _ in XCTFail("Recovery must not dispatch a turn") }, stop: { _ in XCTFail("Recovery must not stop work") },
+                        open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.select(fixture.profiles[0].id.uuidString)
+        await waitForConversationPreparation(world)
+        XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[0].id)
+        XCTAssertNil(world.selectedSessionID, "Only a confirmed missing binding is cleared")
+        XCTAssertTrue(world.error?.contains("Start a new chat") == true)
+        XCTAssertTrue(world.canStartConversation(for: fixture.profiles[0].id.uuidString))
+        XCTAssertTrue(createdFor.isEmpty, "Missing history never silently creates or borrows a chat")
+        XCTAssertEqual(world.boundProfileID(for: "missing-jinbei"), fixture.profiles[0].id)
+        XCTAssertEqual(app.currentSessionID, "luffy-foreground")
+
+        world.openAgentProfile()
+        world.adoptForegroundConversation()
+        XCTAssertTrue(world.profilePresented)
+        XCTAssertEqual(world.selectedProfile?.name, "Jinbei")
+        XCTAssertEqual(app.selectedSavedAgentID, fixture.profiles[1].id, "The Vivre card uses its own selected profile")
+        XCTAssertEqual(app.currentSessionID, "luffy-foreground")
+        XCTAssertTrue(createdFor.isEmpty)
+
+        world.newConversation(for: fixture.profiles[0].id.uuidString)
+        await waitForConversationPreparation(world)
+        XCTAssertEqual(createdFor, [fixture.profiles[0].id])
+        XCTAssertEqual(world.selectedSessionID, "replacement-jinbei", "A network failure must retain the replacement for retry")
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertEqual(world.boundProfileID(for: "replacement-jinbei"), fixture.profiles[0].id)
+        XCTAssertEqual(world.boundProfileID(for: "missing-jinbei"), fixture.profiles[0].id)
+        XCTAssertEqual(app.currentSessionID, "luffy-foreground")
+        let untouched = try await world.conversation(workspace: fixture.root.path, profile: fixture.profiles[1])
+        XCTAssertEqual(untouched, "luffy-foreground")
+    }
+
+    func testOpeningVivreCardCancelsStaleRecoveryAndProtectsBusyResident() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let world = AgentWorldModel()
+        var loads = 0
+        var continuation: CheckedContinuation<Void, Never>?
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { id in .init(busy: id == "luffy-foreground") },
+                        create: { _, _ in XCTFail("Profile inspection must not create chats"); return "unexpected" },
+                        load: { _ in
+            loads += 1
+            await withCheckedContinuation { continuation = $0 }
+            throw NSError(domain: "Locus.Backend", code: 404)
+        }, dispatch: { _, _, _, _, _ in }, stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.select(fixture.profiles[0].id.uuidString)
+        for _ in 0..<100 where continuation == nil { await Task.yield() }
+        XCTAssertNotNil(continuation)
+        world.openAgentProfile(fixture.profiles[1].id.uuidString)
+        continuation?.resume()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(loads, 1)
+        XCTAssertTrue(world.profilePresented)
+        XCTAssertFalse(world.preparingConversation)
+        XCTAssertEqual(world.selectedProfile?.name, "Luffy")
+        XCTAssertEqual(world.selectedSessionID, "luffy-foreground")
+        XCTAssertNil(world.error, "A previous resident's delayed failure cannot replace the current profile")
+        XCTAssertFalse(world.canStartConversation(for: fixture.profiles[1].id.uuidString))
+        world.newConversation(for: fixture.profiles[1].id.uuidString)
+        XCTAssertTrue(world.profilePresented, "Busy resident actions must not switch the panel")
+        XCTAssertFalse(world.canStartConversation(for: UUID().uuidString))
+        let previous = try await world.conversation(workspace: fixture.root.path, profile: fixture.profiles[0])
+        XCTAssertEqual(previous, "missing-jinbei", "Cancelled loads do not invalidate unseen bindings")
+    }
+
+    private func waitForConversationPreparation(_ world: AgentWorldModel) async {
+        for _ in 0..<200 {
+            if !world.preparingConversation { break }
+            await Task.yield()
+        }
+        XCTAssertFalse(world.preparingConversation, "Conversation preparation should have completed")
+    }
+
+    private struct ConversationFixture {
+        let root: URL
+        let defaults: UserDefaults
+        let suiteName: String
+        let pluginID: String
+        let title: String
+        let profiles: [AgentProfile]
+        let extensions: ExtensionsModel
+        @MainActor func close() {
+            for window in NSApp.windows where window.title.hasPrefix(title) { window.close() }
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    private func conversationFixture() throws -> ConversationFixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let title = "Agent World Conversation Recovery " + UUID().uuidString
+        let suiteName = "AgentWorldRecoveryTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let profiles = [AgentProfile(name: "Jinbei", model: "fixture"), AgentProfile(name: "Luffy", model: "fixture")]
+        let bindings = [AgentWorldModel.bindingKey(workspace: root.path, profileID: profiles[0].id.uuidString): "missing-jinbei",
+                        AgentWorldModel.bindingKey(workspace: root.path, profileID: profiles[1].id.uuidString): "luffy-foreground"]
+        defaults.set(try JSONEncoder().encode(bindings), forKey: "Locus.AgentWorld.conversations.v1")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
+        try Data("<!doctype html><html><body>Conversation recovery fixture</body></html>".utf8).write(to: root.appendingPathComponent("ui/index.html"))
+        let pluginID = "recovery-fixture"
+        var plugin = ExtensionPlugin(id: pluginID, name: pluginID, displayName: title, description: nil,
+                                     version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
+                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
+                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
+        plugin.root = root.path
+        plugin.screens = [ExtensionPluginScreen(id: "recovery", title: title, entrypoint: "ui/index.html", version: 1,
+                                               capabilities: ["agents.read", "agents.interact", "world.preferences"])]
+        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
+        let extensions = ExtensionsModel()
+        extensions.extensions = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
+                                                   mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
+        return ConversationFixture(root: root, defaults: defaults, suiteName: suiteName, pluginID: pluginID, title: title, profiles: profiles, extensions: extensions)
     }
 
 }

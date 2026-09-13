@@ -5,18 +5,40 @@
   "description": "A One Piece-inspired voyage with local-AI wordplay. Twelve playful ships, open-weight islands, and an ocean of adventure for your agents.",
   "environment": "ocean",
   "assets": {
-    "ship_thousand_sunny": "assets/thousand_sunny.glb",
-    "ship_going_merry": "assets/going_merry.glb",
-    "ship_baratie": "assets/baratie.glb",
-    "ship_navy_h03": "assets/navy_h03.glb",
-    "ship_polar_tang": "assets/polar_tang.glb",
-    "ship_spade_pirates": "assets/spade_pirates.glb",
-    "ship_red_force": "assets/red_force.glb",
-    "ship_moby_dick": "assets/moby_dick.glb",
-    "ship_perfume_yuda": "assets/perfume_yuda.glb",
-    "ship_oro_jackson": "assets/oro_jackson.glb",
-    "ship_queen_mama_chanter": "assets/queen_mama_chanter.glb",
-    "ship_dragons_ship": "assets/dragons_ship.glb"
+    "ship_thousand_sunny": "assets/thousand_sunny.glb.gz",
+    "ship_going_merry": "assets/going_merry.glb.gz",
+    "ship_baratie": "assets/baratie.glb.gz",
+    "ship_navy_h03": "assets/navy_h03.glb.gz",
+    "ship_polar_tang": "assets/polar_tang.glb.gz",
+    "ship_spade_pirates": "assets/spade_pirates.glb.gz",
+    "ship_red_force": "assets/red_force.glb.gz",
+    "ship_moby_dick": "assets/moby_dick.glb.gz",
+    "ship_perfume_yuda": "assets/perfume_yuda.glb.gz",
+    "ship_oro_jackson": "assets/oro_jackson.glb.gz",
+    "ship_queen_mama_chanter": "assets/queen_mama_chanter.glb.gz",
+    "ship_dragons_ship": "assets/dragons_ship.glb.gz",
+    "island_twin_cape": "assets/island_twin_cape.glb.gz",
+    "island_drum": "assets/island_drum.glb.gz",
+    "island_little_garden": "assets/island_little_garden.glb.gz",
+    "island_alabasta": "assets/island_alabasta.glb.gz",
+    "island_water_seven": "assets/island_water_seven.glb.gz",
+    "island_enies_lobby": "assets/island_enies_lobby.glb.gz",
+    "island_marineford": "assets/island_marineford.glb.gz",
+    "island_whole_cake": "assets/island_whole_cake.glb.gz",
+    "island_wano": "assets/island_wano.glb.gz",
+    "island_laugh_tale": "assets/island_laugh_tale.glb.gz",
+    "island_sabaody": "assets/island_sabaody.glb.gz",
+    "scenery_red_line": "assets/scenery_red_line.glb.gz",
+    "island_jaya": "assets/island_jaya.glb.gz",
+    "island_skypiea": "assets/island_skypiea.glb.gz",
+    "ship_garp_battleship": "assets/ship_garp_battleship.glb.gz",
+    "ship_marine_patrol": "assets/ship_marine_patrol.glb.gz",
+    "ship_mihawk_coffin": "assets/ship_mihawk_coffin.glb.gz",
+    "scenery_reverse_mountain": "assets/scenery_reverse_mountain.glb.gz",
+    "creature_laboon": "assets/creature_laboon.glb.gz",
+    "creature_sea_king": "assets/creature_sea_king.glb.gz",
+    "island_egghead": "assets/island_egghead.glb.gz",
+    "island_elbaf": "assets/island_elbaf.glb.gz"
   },
   "heights": {
     "ship_thousand_sunny": 3.2,
@@ -30,7 +52,11 @@
     "ship_perfume_yuda": 3.2,
     "ship_oro_jackson": 3.4,
     "ship_queen_mama_chanter": 3.5,
-    "ship_dragons_ship": 3.3
+    "ship_dragons_ship": 3.3,
+    "creature_laboon": 1.8,
+    "creature_sea_king": 3.4,
+    "island_elbaf": 7.5,
+    "island_egghead": 5
   },
   "rotations": {
     "ship_thousand_sunny": -1.5707963267948966,
@@ -44,7 +70,10 @@
     "ship_perfume_yuda": -1.5707963267948966,
     "ship_oro_jackson": -1.5707963267948966,
     "ship_queen_mama_chanter": -1.5707963267948966,
-    "ship_dragons_ship": -1.5707963267948966
+    "ship_dragons_ship": -1.5707963267948966,
+    "ship_mihawk_coffin": -1.5707963267948966,
+    "ship_garp_battleship": -1.5707963267948966,
+    "ship_marine_patrol": -1.5707963267948966
   },
   "palette": {
     "ground": "#138fa2",
@@ -55,59 +84,59 @@
     "radius": 34,
     "stations": [
       {
-        "x": -23.46,
-        "z": -6.4,
-        "rotation": -3.141592653589793
+        "x": -18.85,
+        "z": -12,
+        "rotation": -1.5707963267948966
       },
       {
-        "x": -17.94,
-        "z": 7.65,
+        "x": -18.5,
+        "z": 3.15,
         "rotation": 0
       },
       {
         "x": -13.8,
-        "z": -9.2,
+        "z": -1.15,
         "rotation": -3.141592653589793
       },
       {
-        "x": -5.52,
-        "z": 8.8,
+        "x": -3.25,
+        "z": 18,
+        "rotation": -1.5707963267948966
+      },
+      {
+        "x": -3,
+        "z": -11.45,
         "rotation": 0
       },
       {
-        "x": -2.76,
-        "z": -8.325,
-        "rotation": -3.141592653589793
+        "x": 9.05,
+        "z": -14,
+        "rotation": -1.5707963267948966
       },
       {
-        "x": 6.9,
-        "z": -12.9,
-        "rotation": -3.141592653589793
-      },
-      {
-        "x": 6.9,
-        "z": 9,
+        "x": 5.5,
+        "z": 3.35,
         "rotation": 0
       },
       {
-        "x": 16.56,
-        "z": -9.2,
-        "rotation": -3.141592653589793
-      },
-      {
-        "x": 19.32,
-        "z": 6.675,
-        "rotation": 0
-      },
-      {
-        "x": 21.37,
-        "z": -3.1,
+        "x": 9.15,
+        "z": -4.2,
         "rotation": 1.5707963267948966
       },
       {
-        "x": 27.6,
-        "z": 8.75,
-        "rotation": 0
+        "x": 13.45,
+        "z": 14.5,
+        "rotation": 1.5707963267948966
+      },
+      {
+        "x": 26,
+        "z": -3.05,
+        "rotation": -3.141592653589793
+      },
+      {
+        "x": 24.45,
+        "z": 4.5,
+        "rotation": 1.5707963267948966
       },
       {
         "x": -6.6,
@@ -118,59 +147,59 @@
     "props": [],
     "obstacles": [
       {
-        "x": -23.46,
-        "z": -10.85,
-        "radius": 2.2800000000000002
-      },
-      {
-        "x": -17.94,
-        "z": 12.4,
-        "radius": 2.58
-      },
-      {
-        "x": -13.8,
-        "z": -13.95,
-        "radius": 2.58
-      },
-      {
-        "x": -5.52,
-        "z": 13.95,
-        "radius": 2.98
-      },
-      {
-        "x": -2.76,
-        "z": -13.175,
-        "radius": 2.68
-      },
-      {
-        "x": 6.9,
-        "z": -17.05,
+        "x": -23,
+        "z": -12,
         "radius": 1.98
       },
       {
-        "x": 6.9,
-        "z": 13.95,
-        "radius": 2.7800000000000002
+        "x": -18.5,
+        "z": 7.5,
+        "radius": 2.18
       },
       {
-        "x": 16.56,
-        "z": -13.95,
-        "radius": 2.58
+        "x": -13.8,
+        "z": -5.8,
+        "radius": 2.48
       },
       {
-        "x": 19.32,
-        "z": 11.625,
-        "radius": 2.7800000000000002
+        "x": -8.8,
+        "z": 18,
+        "radius": 3.3800000000000003
       },
       {
-        "x": 26.22,
-        "z": -3.1,
+        "x": -3,
+        "z": -6,
+        "radius": 3.2800000000000002
+      },
+      {
+        "x": 5,
+        "z": -14,
+        "radius": 1.88
+      },
+      {
+        "x": 5.5,
+        "z": 8.5,
+        "radius": 2.98
+      },
+      {
+        "x": 14,
+        "z": -4.2,
         "radius": 2.68
       },
       {
-        "x": 27.6,
-        "z": 12.4,
-        "radius": 1.48
+        "x": 19,
+        "z": 14.5,
+        "radius": 3.3800000000000003
+      },
+      {
+        "x": 26,
+        "z": -8,
+        "radius": 2.7800000000000002
+      },
+      {
+        "x": 28,
+        "z": 4.5,
+        "radius": 1.38
       },
       {
         "x": -6.6,
@@ -178,237 +207,353 @@
         "radius": 1.78
       },
       {
-        "x": -24.84,
-        "z": -15.81,
+        "x": 0.5,
+        "z": 24,
+        "radius": 3.68
+      },
+      {
+        "x": 12,
+        "z": -22,
+        "radius": 3.18
+      },
+      {
+        "x": -24.38,
+        "z": -16.96,
         "radius": 1.05
       },
       {
-        "x": -29,
-        "z": -37,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
-        "z": -33,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
-        "z": -29,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
+        "x": -16.56,
         "z": -25,
-        "radius": 2.25
+        "radius": 1.3
       },
       {
-        "x": -29,
-        "z": -21,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
-        "z": -17,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
-        "z": -13,
-        "radius": 2.25
-      },
-      {
-        "x": -29,
-        "z": -9,
-        "radius": 2.25
+        "x": 16.56,
+        "z": 25.2,
+        "radius": 1.3
       },
       {
         "x": -29,
         "z": -6.3,
-        "radius": 2.25
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -8.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -11.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -13.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -16.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -18.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -21.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -23.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -26.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -28.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -31.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -33.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -36.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -38.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": -41.3,
+        "radius": 2.5
       },
       {
         "x": -29,
         "z": 6.3,
-        "radius": 2.25
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 9,
-        "radius": 2.25
+        "z": 8.8,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 13,
-        "radius": 2.25
+        "z": 11.3,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 17,
-        "radius": 2.25
+        "z": 13.8,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 21,
-        "radius": 2.25
+        "z": 16.3,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 25,
-        "radius": 2.25
+        "z": 18.8,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 29,
-        "radius": 2.25
+        "z": 21.3,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 33,
-        "radius": 2.25
+        "z": 23.8,
+        "radius": 2.5
       },
       {
         "x": -29,
-        "z": 37,
-        "radius": 2.25
+        "z": 26.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 28.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 31.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 33.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 36.3,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 38.8,
+        "radius": 2.5
+      },
+      {
+        "x": -29,
+        "z": 41.3,
+        "radius": 2.5
       }
     ],
     "wanderPoints": [
       {
-        "x": -25.521496599160614,
-        "z": -3.952505000689637
+        "x": -16.402505000689636,
+        "z": -9.938503400839389
       },
       {
-        "x": -23.46,
-        "z": -3.2
+        "x": -15.650000000000002,
+        "z": -12
       },
       {
-        "x": -21.398503400839388,
-        "z": -3.952505000689637
+        "x": -16.402505000689636,
+        "z": -14.061496599160613
       },
       {
-        "x": -15.878503400839389,
-        "z": 5.202505000689637
+        "x": -16.438503400839387,
+        "z": 0.7025050006896372
       },
       {
-        "x": -17.94,
-        "z": 4.45
+        "x": -18.5,
+        "z": -0.050000000000000266
       },
       {
-        "x": -20.001496599160614,
-        "z": 5.202505000689637
+        "x": -20.561496599160613,
+        "z": 0.7025050006896367
       },
       {
         "x": -15.861496599160612,
-        "z": -6.752505000689636
+        "z": 1.2974949993103633
       },
       {
         "x": -13.8,
-        "z": -5.999999999999999
+        "z": 2.0500000000000003
       },
       {
         "x": -11.73850340083939,
-        "z": -6.752505000689636
+        "z": 1.2974949993103633
       },
       {
-        "x": -3.4585034008393873,
-        "z": 6.3525050006896375
+        "x": -0.04999999999999982,
+        "z": 18
       },
       {
-        "x": -5.52,
-        "z": 5.6000000000000005
+        "x": -0.8025050006896368,
+        "z": 15.938503400839387
       },
       {
-        "x": -7.581496599160611,
-        "z": 6.3525050006896375
+        "x": -0.9385034008393878,
+        "z": -13.897494999310362
       },
       {
-        "x": -4.821496599160611,
-        "z": -5.877505000689636
+        "x": -2.9999999999999996,
+        "z": -14.649999999999999
       },
       {
-        "x": -2.76,
-        "z": -5.124999999999999
+        "x": -5.061496599160612,
+        "z": -13.897494999310362
       },
       {
-        "x": -0.6985034008393884,
-        "z": -5.877505000689636
+        "x": 11.497494999310364,
+        "z": -11.938503400839389
       },
       {
-        "x": 4.8385034008393895,
-        "z": -10.452505000689637
+        "x": 12.25,
+        "z": -14
       },
       {
-        "x": 6.9,
-        "z": -9.7
+        "x": 11.497494999310364,
+        "z": -16.061496599160613
       },
       {
-        "x": 8.961496599160611,
-        "z": -10.452505000689637
+        "x": 7.561496599160613,
+        "z": 0.9025050006896373
       },
       {
-        "x": 8.961496599160613,
-        "z": 6.552505000689637
+        "x": 5.5,
+        "z": 0.1499999999999999
       },
       {
-        "x": 6.9,
-        "z": 5.8
+        "x": 3.438503400839388,
+        "z": 0.9025050006896369
       },
       {
-        "x": 4.838503400839389,
-        "z": 6.552505000689637
+        "x": 6.702505000689638,
+        "z": -6.261496599160612
       },
       {
-        "x": 14.498503400839388,
-        "z": -6.752505000689636
+        "x": 5.95,
+        "z": -4.200000000000001
       },
       {
-        "x": 16.56,
-        "z": -5.999999999999999
+        "x": 6.702505000689637,
+        "z": -2.138503400839389
       },
       {
-        "x": 18.62149659916061,
-        "z": -6.752505000689636
+        "x": 11.002505000689638,
+        "z": 12.438503400839387
       },
       {
-        "x": 21.381496599160613,
-        "z": 4.2275050006896375
+        "x": 10.25,
+        "z": 14.5
       },
       {
-        "x": 19.32,
-        "z": 3.4749999999999996
+        "x": 11.002505000689636,
+        "z": 16.561496599160613
       },
       {
-        "x": 17.258503400839388,
-        "z": 4.227505000689637
+        "x": 23.938503400839387,
+        "z": -0.6025050006896366
       },
       {
-        "x": 18.92250500068964,
-        "z": -5.161496599160612
+        "x": 26,
+        "z": 0.15000000000000036
       },
       {
-        "x": 18.17,
-        "z": -3.1000000000000005
+        "x": 28.061496599160613,
+        "z": -0.6025050006896366
       },
       {
-        "x": 18.92250500068964,
-        "z": -1.0385034008393887
+        "x": 22.002505000689638,
+        "z": 2.4385034008393878
       },
       {
-        "x": 29.661496599160614,
-        "z": 6.302505000689637
+        "x": 21.25,
+        "z": 4.499999999999999
       },
       {
-        "x": 27.6,
-        "z": 5.55
-      },
-      {
-        "x": 25.53850340083939,
-        "z": 6.302505000689637
+        "x": 22.002505000689638,
+        "z": 6.561496599160611
       },
       {
         "x": -8.66149659916061,
         "z": -15.102505000689638
+      },
+      {
+        "x": -6.6,
+        "z": -14.350000000000001
+      },
+      {
+        "x": -4.538503400839389,
+        "z": -15.102505000689638
+      },
+      {
+        "x": 2.5614965991606122,
+        "z": 15.702505000689635
+      },
+      {
+        "x": 0.5000000000000004,
+        "z": 14.95
+      },
+      {
+        "x": -1.5614965991606118,
+        "z": 15.702505000689635
+      },
+      {
+        "x": 9.938503400839389,
+        "z": -14.202505000689635
+      },
+      {
+        "x": 12,
+        "z": -13.45
+      },
+      {
+        "x": 14.061496599160611,
+        "z": -14.202505000689635
+      },
+      {
+        "x": 0.5,
+        "z": 18.15
+      },
+      {
+        "x": 12,
+        "z": -16.65
       }
     ]
   }

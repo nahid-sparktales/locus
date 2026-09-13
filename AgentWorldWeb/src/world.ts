@@ -1,3 +1,5 @@
+import { fetchCompressedModel } from './assetBytes';
+import { createNewsCoo } from './newsCoo';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
@@ -22,10 +24,15 @@ import { STATUS_META, isClickGesture, labelIsUnobscured } from './state';
 import type { Agent, AgentTransfer, AttentionRequest, Point, ResidentStyle, ScreenPoint } from './state';
 import { createDenDenMushi, createCourierBoat } from './seaSignals';
 import { courierPose, courierRouteLength } from './fleetActivity';
-import { RESIDENT_ASSET_TYPES, HUMANOID_ASSET_TYPES, SHIP_ASSET_TYPES, SHIP_NAMES, DEFAULT_STATIONS } from './theme';
-import { buildGrandLineScenery, GRAND_LINE_HOME_NAMES, GRAND_LINE_CREW_PLAZAS } from './grandLineScenery';
+import { ShipEncounterState } from './shipEncounters';
+import type { EncounterShip } from './shipEncounters';
+import { createShipEncounterVisuals } from './shipEncounterVisuals';
+import { createIslandWorkSignals } from './islandWorkSignals';
+import { RESIDENT_ASSET_TYPES, HUMANOID_ASSET_TYPES, SHIP_ASSET_TYPES, DEFAULT_SHIP_ASSET_TYPES, SHIP_NAMES, DEFAULT_STATIONS } from './theme';
+import { SCENERY_ASSET_TYPES, type SceneryAssetType } from './theme';
+import { buildGrandLineScenery, GRAND_LINE_HOME_NAMES, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_LANDMARKS } from './grandLineScenery';
 import { assignHarbors } from './harborAssignments';
-import { createShipFallback, createShipWake } from './ships';
+import { createShipFallback, replaceShipFallback, createShipWake, fitShipModel } from './ships';
 import { createPanda } from './pandas';
 import { createPerson } from './people';
 import { createIslandCrew } from './islandCrew';
@@ -52,6 +59,7 @@ export class OutpostWorld {
   private containers = new Map<AssetType, AssetContainer>();
   private materials = new Map<string, StandardMaterial>();
   private appearanceAssignments = new Map<string, ResidentAssetType>();
+  private shipStyles = new Map<string, ShipAssetType>();
   private crewAssignments = new Map<string, ResidentKind>();
   private harborAssignments = new Map<string, number>();
   private navigation: NavigationMap;
@@ -73,6 +81,10 @@ export class OutpostWorld {
   private snails = new Map<string, ReturnType<typeof createDenDenMushi>>();
   private couriers = new Map<string, Courier>();
   private courierNavigation?: NavigationMap;
+  private newsCoo?: ReturnType<typeof createNewsCoo>;
+  private encounters = new ShipEncounterState();
+  private encounterVisuals?: ReturnType<typeof createShipEncounterVisuals>;
+  private islandWorkSignals?: ReturnType<typeof createIslandWorkSignals>;
 
   constructor(private canvas: HTMLCanvasElement, private theme: Theme, private callbacks: Callbacks, private residentStyle: ResidentStyle = 'mixed') {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'low-power', audioEngine: false });
@@ -127,6 +139,10 @@ export class OutpostWorld {
     sun.position = new Vector3(14, 24, -17);
     sun.intensity = 1.0;
     sun.diffuse = theme.environment === 'ocean' ? new Color3(1, 0.9, 0.74) : new Color3(1, 0.96, 0.88);
+    if (theme.environment === 'ocean') {
+      const seaFill = new DirectionalLight('ocean-bounce-fill', new Vector3(0.6, -0.45, -0.35), this.scene);
+      seaFill.intensity = 0.32; seaFill.diffuse = new Color3(0.80, 0.92, 1);
+    }
     this.shadow = new ShadowGenerator(Math.min(theme.environment === 'ocean' ? 4096 : 2048, this.engine.getCaps().maxTextureSize), sun);
     this.shadow.usePercentageCloserFiltering = true;
     this.shadow.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
@@ -135,6 +151,11 @@ export class OutpostWorld {
     this.shadow.setDarkness(0.28);
 
     this.buildMap();
+    this.newsCoo = createNewsCoo(this.scene, this.mapRoot, theme.environment === 'ocean');
+    if (theme.environment === 'ocean') {
+      this.encounterVisuals = createShipEncounterVisuals(this.scene, this.mapRoot);
+      this.islandWorkSignals = createIslandWorkSignals(this.scene, this.mapRoot, GRAND_LINE_LANDMARKS.map((island, index) => ({ ...island, marker: GRAND_LINE_CREW_PLAZAS[index] })));
+    }
     this.buildInput();
     this.engine.runRenderLoop(this.render);
     void this.loadAssets();
@@ -184,7 +205,7 @@ export class OutpostWorld {
 
   private buildMap(): void {
     if (this.theme.environment === 'ocean') {
-      this.ocean = buildGrandLineScenery(this.scene, this.shadow, this.mapRoot);
+      this.ocean = buildGrandLineScenery(this.scene, this.shadow, this.mapRoot, this.theme);
       return;
     }
     const radius = this.theme.layout.radius;
@@ -497,16 +518,15 @@ export class OutpostWorld {
     const bounds = normalized.getHierarchyBoundingVectors(true);
     const height = bounds.max.y - bounds.min.y;
     const ship = SHIP_ASSET_TYPES.includes(type as ShipAssetType);
-    const horizontal = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
-    // Ship silhouettes vary greatly; cap the beam/length as well as the mast
-    // height so submarines cannot engulf neighbouring boats or shorelines.
-    const scale = height > 0.0001 ? Math.min(this.theme.heights[type] / height, ship && horizontal > 0 ? 3.35 / horizontal : Infinity) : 1;
+    const shipFit = ship ? fitShipModel(type as ShipAssetType, bounds, this.theme.heights[type], this.theme.rotations[type]) : undefined;
+    const scale = shipFit?.scale ?? (height > 0.0001 ? this.theme.heights[type] / height : 1);
     normalized.scaling.setAll(scale);
-    normalized.position.set(-(bounds.min.x + bounds.max.x) / 2 * scale, -bounds.min.y * scale, -(bounds.min.z + bounds.max.z) / 2 * scale);
+    if (shipFit) normalized.position.copyFrom(shipFit.offset);
+    else normalized.position.set(-(bounds.min.x + bounds.max.x) / 2 * scale, -bounds.min.y * scale, -(bounds.min.z + bounds.max.z) / 2 * scale);
     normalized.parent = pivot;
     pivot.parent = parent;
-    pivot.rotation.y = this.theme.rotations[type] || 0;
-    if (ship) pivot.position.y = -0.12;
+    pivot.rotation.y = shipFit?.rotation ?? this.theme.rotations[type] ?? 0;
+    if (shipFit) pivot.position.y = shipFit.waterline;
     for (const mesh of pivot.getChildMeshes()) {
       mesh.isPickable = isResident;
       mesh.metadata = { actorID: isResident ? parent.name : undefined };
@@ -535,8 +555,10 @@ export class OutpostWorld {
     } catch { this.callbacks.onAssetFailure(); }
   }
 
+  private readonly assetRequests = new AbortController();
+
   private async loadAssets(): Promise<void> {
-    const entries = Object.entries(this.theme.assets) as [AssetType, string][];
+    const entries = (Object.entries(this.theme.assets) as [AssetType, string][]).sort(([a], [b]) => Number(SCENERY_ASSET_TYPES.includes(b as SceneryAssetType)) - Number(SCENERY_ASSET_TYPES.includes(a as SceneryAssetType)));
     let completed = 0;
     this.callbacks.onAssetProgress(0, entries.length);
     // Two at once keeps texture upload from monopolizing the native window.
@@ -544,14 +566,17 @@ export class OutpostWorld {
       await Promise.all(entries.slice(index, index + 2).map(async ([type, path]) => {
         try {
           const url = new URL(`./themes/${this.theme.id}/${path}`, document.baseURI).href;
-          const container = await LoadAssetContainerAsync(url, this.scene, { pluginExtension: '.glb' });
+          const source = path.endsWith('.glb.gz') ? await fetchCompressedModel(url, this.assetRequests.signal) : url;
+          if (this.disposed) return;
+          const container = await LoadAssetContainerAsync(source, this.scene, { pluginExtension: '.glb', name: path.replace(/\.gz$/, '') });
           if (this.disposed) { container.dispose(); return; }
           if (this.theme.environment !== 'ocean') applyLocusSceneryTint(container);
           for (const texture of container.textures) texture.anisotropicFilteringLevel = 16;
           this.containers.set(type, container);
           if (RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType)) for (const resident of this.residents) this.upgradeActor(resident.actor);
           if (type === 'station') this.rebuildStations();
-          if (!RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType) && type !== 'station') {
+          if (SCENERY_ASSET_TYPES.includes(type as SceneryAssetType)) this.ocean?.installAsset(type as SceneryAssetType, container);
+          if (!RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType) && !SCENERY_ASSET_TYPES.includes(type as SceneryAssetType) && type !== 'station') {
             for (const node of [...this.scene.transformNodes]) {
               if (node.metadata?.assetType === type && node.metadata?.propFallback) {
                 for (const mesh of [...node.getChildMeshes()]) mesh.dispose();
@@ -597,13 +622,14 @@ export class OutpostWorld {
       return;
     }
     this.clearCouriers();
+    this.encounters.clear();
     for (const snail of this.snails.values()) snail.dispose();
     this.snails.clear();
     for (const resident of this.residents) { resident.crew?.dispose(); resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.wake?.dispose(); resident.label.remove(); }
     if (this.theme.environment !== 'ocean') {
       for (const [id, kind] of assignCrewKinds(agents.map(agent => agent.id), this.crewAssignments)) this.crewAssignments.set(id, kind);
     }
-    const candidates: readonly ResidentAssetType[] = this.theme.environment === 'ocean' ? SHIP_ASSET_TYPES : HUMANOID_ASSET_TYPES;
+    const candidates: readonly ResidentAssetType[] = this.theme.environment === 'ocean' ? DEFAULT_SHIP_ASSET_TYPES : HUMANOID_ASSET_TYPES;
     const appearances = candidates.filter(type => !!this.theme.assets[type]);
     if (!appearances.length) appearances.push(this.theme.environment === 'ocean' ? 'ship_thousand_sunny' : 'resident');
     // Balance the initial campus while preserving every existing profile's look
@@ -642,7 +668,7 @@ export class OutpostWorld {
         motion.heading = shipBerthHeading(placement);
         occupied.push(motion);
       }
-      const appearance = this.appearanceAssignments.get(agent.id)!;
+      const appearance = this.theme.environment === 'ocean' ? this.shipStyles.get(agent.id.toLowerCase()) ?? this.appearanceAssignments.get(agent.id)! : this.appearanceAssignments.get(agent.id)!;
       const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][residentSeed(agent.id) % 4], appearance);
       // Adding a captain must not send the rest of the fleet back to port.
       actor.root.position.set(motion.x, 0.075, motion.z);
@@ -712,6 +738,8 @@ export class OutpostWorld {
     this.engine.setHardwareScalingLevel(1 / pixelRatio);
   }
 
+  handleCreatureKey(key: string, repeat = false): boolean { return this.ocean?.handleCreatureKey(key, repeat) ?? false; }
+
   private buildInput(): void {
     const listen = <K extends keyof WindowEventMap>(type: K, listener: (event: WindowEventMap[K]) => void) => { window.addEventListener(type, listener); this.cleanups.push(() => window.removeEventListener(type, listener)); };
     listen('resize', () => this.resizeRenderer());
@@ -730,9 +758,9 @@ export class OutpostWorld {
     this.cleanups.push(() => motionPreference.removeEventListener('change', motionPreferenceChanged));
     let pointerStart: ScreenPoint | undefined;
     let dragged = false;
-    const pick = (event: PointerEvent): { actorID?: string; attentionID?: string; transferID?: string } | undefined => {
+    const pick = (event: PointerEvent): { actorID?: string; attentionID?: string; transferID?: string; creatureID?: string } | undefined => {
       const rect = this.canvas.getBoundingClientRect();
-      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string'))?.pickedMesh?.metadata;
+      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string' || typeof mesh.metadata?.creatureID === 'string'))?.pickedMesh?.metadata;
     };
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -747,7 +775,7 @@ export class OutpostWorld {
       }
       const target = pick(event);
       this.setHovered(target?.actorID);
-      if (target?.transferID || target?.attentionID) this.canvas.style.cursor = 'pointer';
+      if (target?.transferID || target?.attentionID || target?.creatureID) this.canvas.style.cursor = 'pointer';
     };
     const up = (event: PointerEvent) => {
       const click = pointerStart && !dragged && isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
@@ -755,7 +783,8 @@ export class OutpostWorld {
       dragged = false;
       const target = pick(event);
       this.setHovered(target?.actorID);
-      if (click && target?.attentionID) this.callbacks.onAttention?.(target.attentionID);
+      if (click && target?.creatureID) this.ocean?.selectCreature(target.creatureID);
+      else if (click && target?.attentionID) this.callbacks.onAttention?.(target.attentionID);
       else if (click && target?.transferID) this.callbacks.onTransfer?.(target.transferID);
       else if (click && target?.actorID) this.callbacks.onSelect(target.actorID);
     };
@@ -781,11 +810,18 @@ export class OutpostWorld {
     const dt = Math.min((now - (this.lastFrame || now)) / 1000, 0.05);
     this.lastFrame = now;
     this.elapsed += dt;
+    this.newsCoo?.update(this.elapsed, this.reducedMotion);
     this.ocean?.update(this.elapsed, this.reducedMotion);
     const rosterIDs = this.residents.map(resident => resident.id);
     const pausedIDs = new Set(this.residents.filter(resident => statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID)).map(resident => resident.id));
+    if (this.theme.environment === 'ocean') this.encounters.updateIdle(this.encounterShips(), this.navigation, this.elapsed, this.reducedMotion, this.encounterHeldIDs());
+    const destinations = this.theme.environment === 'ocean'
+      ? this.encounters.destinations(this.encounterShips(), this.elapsed, this.reducedMotion, this.encounterHeldIDs()) : new Map<string, Placement>();
     const previous = this.residents.map(resident => resident.motion);
-    const proposed = this.residents.map(resident => stepResidentMotion(resident.motion, { status: resident.agent.status, home: resident.home, dt, rosterIDs, visible: this.visible, paused: pausedIDs.has(resident.id), reducedMotion: this.reducedMotion }, this.navigation));
+    const proposed = this.residents.map(resident => {
+      const rendezvous = destinations.get(resident.id);
+      return stepResidentMotion(resident.motion, { status: rendezvous ? 'working' : resident.agent.status, home: rendezvous ?? resident.home, dt, rosterIDs, visible: this.visible, paused: pausedIDs.has(resident.id), reducedMotion: this.reducedMotion }, this.navigation);
+    });
     const motions = resolveResidentSpacing(proposed, previous, this.navigation, pausedIDs);
     for (let index = 0; index < this.residents.length; index++) {
       const resident = this.residents[index];
@@ -835,6 +871,8 @@ export class OutpostWorld {
       }
     }
     this.updateSeaActivity();
+    this.updateShipEncounters();
+    this.updateIslandWorkSignals();
     this.scene.render();
     this.updateLabels();
   };
@@ -891,6 +929,7 @@ export class OutpostWorld {
     this.attentionRequests = requests;
     this.updateSeaAlerts();
     if (!this.courierNavigation || this.theme.environment !== 'ocean') return;
+    this.encounters.addTransfers(transfers, this.encounterShips(), this.navigation, this.elapsed, Date.now() / 1000, this.reducedMotion);
     for (const event of transfers) {
       if (this.couriers.has(event.id) || this.couriers.size >= 8) continue;
       const from = this.residents.find(resident => resident.id.toLowerCase() === event.fromAgentID.toLowerCase());
@@ -954,6 +993,34 @@ export class OutpostWorld {
     }
   }
 
+  private encounterShips(): EncounterShip[] {
+    return this.residents.map(resident => ({ id: resident.id, agent: resident.agent, position: resident.motion, home: resident.home,
+      heading: resident.motion.heading, walking: resident.motion.walking, speed: resident.motion.speed }));
+  }
+
+  private encounterHeldIDs(): Set<string> {
+    const held = this.residents.filter(resident => statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID)).map(resident => resident.id);
+    return new Set([...held, ...this.attentionRequests.map(request => request.agentID)].map(id => id.toLowerCase()));
+  }
+
+  private updateShipEncounters(): void {
+    if (!this.encounterVisuals) return;
+    const descriptions = this.encounterVisuals.update(this.encounterShips(), [...this.encounters.alliances.values()], this.elapsed, this.reducedMotion, this.encounterHeldIDs(), [...this.encounters.idleEncounters.values()]);
+    for (const resident of this.residents) {
+      const description = descriptions.get(resident.id) ?? '';
+      resident.label.dataset.encounter = description;
+      const port = resident.label.querySelector('.agent-label-port');
+      if (description && port) port.textContent = `${description} · ${this.getAgentHome(resident.id) ?? 'Home island'}`;
+    }
+  }
+
+  private updateIslandWorkSignals(): void {
+    if (!this.islandWorkSignals) return;
+    const active = this.islandWorkSignals.update(this.residents.map(resident => ({ id: resident.id, status: resident.agent.status,
+      motion: resident.motion, home: resident.home, harbor: this.harborAssignments.get(resident.id) })), this.elapsed, this.reducedMotion);
+    for (const resident of this.residents) resident.label.dataset.workIsland = active.has(resident.id) ? String(active.get(resident.id)) : '';
+  }
+
   private syncIslandCrew(resident: Resident): void {
     if (this.theme.environment !== 'ocean') return;
     const activity = islandCrewActivity(resident.agent.status, resident.motion, resident.home);
@@ -995,6 +1062,27 @@ export class OutpostWorld {
     this.camera.radius = Math.min(this.camera.radius, this.theme.environment === 'ocean' ? 16 : 14);
   }
 
+  /** A paint/ship preference changes only artwork. The resident, berth, motion,
+   * current work, selection, landing party and live Den Den signals stay put. */
+  setShipStyles(styles: Readonly<Record<string, ShipAssetType>>): void {
+    this.shipStyles = new Map(Object.entries(styles).filter(([, style]) => (SHIP_ASSET_TYPES as readonly string[]).includes(style)).map(([id, style]) => [id.toLowerCase(), style]));
+    if (this.theme.environment !== 'ocean') return;
+    for (const resident of this.residents) {
+      const appearance = this.shipStyles.get(resident.id.toLowerCase()) ?? this.appearanceAssignments.get(resident.id) as ShipAssetType | undefined;
+      if (!appearance || resident.actor.appearance === appearance) continue;
+      const actor = resident.actor;
+      // Keep the owning root: attention markers are parented to this exact node.
+      actor.idle?.stop(); actor.walk?.stop(); actor.model?.dispose();
+      actor.fallback = replaceShipFallback(this.scene, this.shadow, actor.root, appearance);
+      actor.appearance = appearance; actor.model = undefined;
+      actor.loadedAppearance = undefined; actor.idle = undefined; actor.walk = undefined;
+      this.upgradeActor(actor);
+      this.setActorWalking(actor, resident.motion.walking, true);
+      resident.label.dataset.appearance = appearance;
+      this.updateLabel(resident);
+    }
+  }
+
   setResidentStyle(style: ResidentStyle): void {
     if (this.residentStyle === style) return;
     this.residentStyle = style;
@@ -1027,7 +1115,7 @@ export class OutpostWorld {
     return this.theme.environment === 'ocean' ? 'ship' : this.residentKind(id, appearance);
   }
 
-  getAgentAppearance(id: string): ResidentAssetType | undefined { return this.appearanceAssignments.get(id); }
+  getAgentAppearance(id: string): ResidentAssetType | undefined { return (this.theme.environment === 'ocean' ? this.shipStyles.get(id.toLowerCase()) : undefined) ?? this.appearanceAssignments.get(id); }
 
   getAgentHome(id: string): string | undefined {
     const index = this.harborAssignments.get(id);
@@ -1061,7 +1149,7 @@ export class OutpostWorld {
     this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -2.5 : 0, 0.9, -0.4));
     this.camera.alpha = this.theme.environment === 'ocean' ? -Math.PI / 2 : Math.PI / 2 - 0.3;
     this.camera.beta = this.theme.environment === 'ocean' ? 0.74 : 1.01;
-    this.camera.radius = this.theme.environment === 'ocean' ? 76 : 33;
+    this.camera.radius = this.theme.environment === 'ocean' ? 68 : 33;
   }
 
   setVisible(visible: boolean): void {
@@ -1073,11 +1161,16 @@ export class OutpostWorld {
   }
 
   dispose(): void {
+    this.assetRequests.abort();
     if (this.disposed) return;
     this.disposed = true;
     for (const cleanup of this.cleanups) cleanup();
     this.engine.stopRenderLoop();
     this.clearCouriers();
+    this.encounters.clear();
+    this.encounterVisuals?.dispose();
+    this.islandWorkSignals?.dispose();
+    this.newsCoo?.dispose();
     for (const resident of this.residents) resident.crew?.dispose();
     for (const snail of this.snails.values()) snail.dispose();
     this.snails.clear();

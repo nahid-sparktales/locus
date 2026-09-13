@@ -1,15 +1,18 @@
+import { GRAND_LINE_LANDMARKS } from './grandLineGeography';
 import { OutpostWorld } from './world';
 import { SnailAlert } from './snailAlert';
+import { centerEntries } from './snailAlertState';
+import type { ActivityTab, CenterEntry } from './snailAlertState';
 import { unseenRecentTransfers } from './fleetActivity';
 import { DEFAULT_THEME, SHIP_ASSET_TYPES, SHIP_NAMES, parseTheme, parseCatalog } from './theme';
 import type { ShipAssetType, ThemeChoice } from './theme';
-import { STATUS_META, SECTOR_SIZE, agentSector, clampSector, isResidentStyle, parseHostMessage, searchAgents, sectorAgents } from './state';
+import { STATUS_META, SECTOR_SIZE, agentSector, clampSector, isResidentStyle, parseHostMessage, parseShipStyles, searchAgents, sectorAgents } from './state';
 import type { Agent, ResidentStyle, Snapshot, WorldMessage } from './state';
 
 declare global {
   interface Window {
     webkit?: { messageHandlers?: { locusScreen?: { postMessage: (message: WorldMessage) => void } } };
-    locusAgentWorld: { receive: (message: unknown) => void };
+    locusAgentWorld: { receive: (message: unknown) => void; toggleActivityCenter: () => void };
   }
 }
 
@@ -17,9 +20,12 @@ const el = <T extends HTMLElement = HTMLElement>(id: string): T => document.getE
 const bridge = window.webkit?.messageHandlers?.locusScreen;
 const demo = !bridge;
 document.body.dataset.demo = String(demo);
+document.body.dataset.nativeChrome = String(!demo);
+el('theme-button').hidden = !demo;
 const seenTransfers = new Set<string>();
 const activityButtons = new Map<string, HTMLButtonElement>();
-const rosterButtons = new Map<string, HTMLButtonElement>();
+const rosterCards = new Map<string, { element: HTMLDivElement; button: HTMLButtonElement; picker: HTMLSelectElement }>();
+const SHIP_STYLE_PREFERENCE = 'locus.agentWorld.demoShipStyles.v1';
 let snapshot: Snapshot = { version: 1, type: 'snapshot', agents: [], theme: 'outpost', projectName: '' };
 let world: OutpostWorld | undefined;
 let sector = 0;
@@ -33,7 +39,11 @@ let loadingTheme: string | undefined;
 let themeGeneration = 0;
 let noteTimer: ReturnType<typeof setTimeout> | undefined;
 let disposed = false;
-const snailAlert = new SnailAlert(el('snail-alert'), openAttention);
+let activityTab: ActivityTab = 'attention';
+let standaloneResidentsOpen = false;
+let lastPlacements = '';
+const knownPlacements = new Map<string, { agentID: string; ship: string; home: string }>();
+const snailAlert = new SnailAlert(el('snail-alert'), toggleActivityCenter);
 
 const send = (message: WorldMessage): void => { try { bridge?.postMessage(message); } catch { el('live-label').textContent = 'Connection unavailable'; } };
 const announce = (message: string): void => { el('screen-reader-status').textContent = message; };
@@ -58,7 +68,7 @@ function applyActivity(): void {
 function openAttention(requestID: string): void {
   const request = snapshot.attentionRequests?.find(item => item.id === requestID);
   if (!request) return;
-  if (demo) { showNote('Demo Ping Ping. In Locus, this opens the exact approval or input request in the captain’s quarters. No request was sent.'); return; }
+  if (demo) { showNote(`Demo request. In Locus, this opens the exact approval or input request in the ${ocean ? 'captain’s quarters' : 'agent workspace'}. No request was sent.`); return; }
   send({ version: 1, type: 'openAttention', requestID });
 }
 function openTransfer(transferID: string): void {
@@ -67,46 +77,126 @@ function openTransfer(transferID: string): void {
   if (demo) { showNote('This courier illustrates a sample handoff. In Locus, it opens the actual handoff or artifact details. No task is running.'); return; }
   send({ version: 1, type: 'openTransfer', transferID });
 }
+function setActivityCenterOpen(open: boolean, focus = true): void {
+  if (open && ocean && standaloneResidentsOpen) {
+    standaloneResidentsOpen = false;
+    el('resident-preview-panel').hidden = true;
+    el('residents-button').setAttribute('aria-expanded', 'false');
+  }
+  el('fleet-activity').hidden = !open;
+  document.body.dataset.activityCenter = String(open);
+  snailAlert.setExpanded(open);
+  if (focus) {
+    if (open) el(activityTab === 'attention' ? 'attention-tab' : 'activity-tab').focus();
+    else snailAlert.focus();
+  }
+}
+function toggleActivityCenter(): void { setActivityCenterOpen(el('fleet-activity').hidden); }
+function selectActivityTab(tab: ActivityTab, focus = false): void {
+  activityTab = tab;
+  renderActivity();
+  if (focus) el(tab === 'attention' ? 'attention-tab' : 'activity-tab').focus();
+}
+function openCenterEntry(entry: CenterEntry): void {
+  if (entry.target.kind === 'request') openAttention(entry.target.id);
+  else if (entry.target.kind === 'transfer') openTransfer(entry.target.id);
+  else selectAgent(entry.target.id);
+}
 function renderActivity(): void {
   const requests = snapshot.attentionRequests ?? [], transfers = snapshot.transfers ?? [];
-  snailAlert.update(requests, snapshot.agents, demo);
+  const attention = centerEntries(snapshot.agents, requests, transfers, 'attention', ocean);
+  const activity = centerEntries(snapshot.agents, requests, transfers, 'activity', ocean);
+  const working = snapshot.agents.filter(agent => agent.status === 'working').length;
+  snailAlert.update(attention.length, working, demo);
   el<HTMLButtonElement>('new-agent').disabled = !demo && snapshot.canCreateAgent !== true;
   el('new-agent').title = demo ? 'Agent creation is available in Locus' : snapshot.canCreateAgent ? 'Create an agent in this world' : 'Agent creation is unavailable in this world';
   el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
   el('agent-controls-title').textContent = ocean ? 'Captain’s quarters' : 'Agent controls';
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
   el('agent-controls-name').textContent = selected?.name ?? (ocean ? 'Choose a captain or manage your fleet' : 'Manage your agents');
-  el('activity-toggle').hidden = !ocean;
-  el('activity-count').textContent = String(requests.length + transfers.length);
-  el('activity-title').textContent = demo ? 'Sample signals' : 'Ship signals';
-  if (!ocean) { el('fleet-activity').hidden = true; el('activity-toggle').setAttribute('aria-expanded', 'false'); }
+  el('attention-count').textContent = String(attention.length);
+  el('activity-count').textContent = String(activity.length);
+  el('activity-working').textContent = String(working);
+  el('activity-waiting').textContent = String(snapshot.agents.filter(agent => agent.status === 'idle').length);
+  el('activity-connection').textContent = demo ? 'Demo' : 'Live';
+  const centerTitle = ocean ? 'Activity Center' : 'Mission Control';
+  el('activity-title').textContent = centerTitle;
+  el('activity-close').setAttribute('aria-label', `Close ${centerTitle}`);
+  el('activity-eyebrow').textContent = ocean ? 'THE CREW’S COMMUNICATIONS' : 'OUTPOST COMMUNICATIONS';
+  el('activity-working-label').textContent = 'working';
+  el('activity-waiting-label').textContent = 'available';
+  el('activity-sound-label').textContent = ocean ? 'Pururururu…' : 'Signal online';
+  document.querySelector('.activity-overview')!.setAttribute('aria-label', ocean ? 'Crew status' : 'Agent status');
+  document.querySelector('.activity-tabs')!.setAttribute('aria-label', `${centerTitle} view`);
+  el('activity-caption').textContent = demo ? `Sample ${ocean ? 'crew' : 'agent'} activity. No tasks are running.` : ocean ? 'Your crew, on the same wavelength.' : 'Your agents, connected and in view.';
+  el('activity-footer-label').textContent = demo ? 'DEMO FREQUENCY' : ocean ? 'DEN DEN NETWORK' : 'LOCUS COMMUNICATIONS';
+  for (const tab of ['attention', 'activity'] as const) {
+    el(`${tab}-tab`).setAttribute('aria-selected', String(tab === activityTab));
+    el(`${tab}-tab`).tabIndex = tab === activityTab ? 0 : -1;
+  }
+  el('activity-content').setAttribute('aria-labelledby', `${activityTab}-tab`);
+  const entries = activityTab === 'attention' ? attention : activity;
   const list = el('activity-list');
-  const activityIDs = new Set([...requests.map(item => `request:${item.id}`), ...transfers.map(item => `transfer:${item.id}`)]);
-  for (const [id, button] of activityButtons) if (!activityIDs.has(id)) { button.remove(); activityButtons.delete(id); }
-  let itemIndex = 0;
-  const activityButton = (id: string, className: string, action: () => void): HTMLButtonElement => {
-    let button = activityButtons.get(id);
+  const entryIDs = new Set(entries.map(entry => entry.id));
+  for (const [id, button] of activityButtons) if (!entryIDs.has(id)) { button.remove(); activityButtons.delete(id); }
+  const icons: Record<CenterEntry['kind'], string> = { approval: '!', input: '?', handoff: '⇄', artifact: '◇', idle: '⚓', working: '≈', queued: '◷', completed: '✓', failed: '!', needs_attention: '!' };
+  entries.forEach((entry, index) => {
+    let button = activityButtons.get(entry.id);
     if (!button) {
-      button = document.createElement('button'); button.type = 'button'; button.className = `activity-item ${className}`;
-      button.append(document.createElement('strong'), document.createElement('span'));
-      button.addEventListener('click', action); activityButtons.set(id, button);
+      button = document.createElement('button'); button.type = 'button'; button.className = 'activity-item';
+      const icon = document.createElement('span'); icon.className = 'activity-item-icon'; icon.setAttribute('aria-hidden', 'true');
+      const content = document.createElement('span'); content.className = 'activity-item-content';
+      const meta = document.createElement('span'); meta.className = 'activity-item-meta';
+      const label = document.createElement('span'); label.className = 'activity-item-label';
+      const time = document.createElement('time'); time.className = 'activity-item-time';
+      meta.append(label, time);
+      const title = document.createElement('strong'); title.className = 'activity-item-title';
+      const detail = document.createElement('span'); detail.className = 'activity-item-detail';
+      content.append(meta, title, detail);
+      const arrow = document.createElement('span'); arrow.className = 'activity-item-arrow'; arrow.textContent = '↗'; arrow.setAttribute('aria-hidden', 'true');
+      button.append(icon, content, arrow);
+      button.addEventListener('click', () => openCenterEntry(entry)); activityButtons.set(entry.id, button);
     }
-    if (list.children[itemIndex] !== button) list.insertBefore(button, list.children[itemIndex] ?? null);
-    itemIndex++; return button;
-  };
-  const nameFor = (id: string): string => snapshot.agents.find(agent => agent.id.toLowerCase() === id.toLowerCase())?.name ?? 'Agent';
-  for (const request of requests) {
-    const button = activityButton(`request:${request.id}`, 'request-item', () => openAttention(request.id)); button.dataset.requestId = request.id;
-    button.querySelector('strong')!.textContent = `${nameFor(request.agentID)} · ${request.kind === 'approval' ? 'Approval' : 'Needs your input'}`;
-    button.querySelector('span')!.textContent = request.title;
+    button.dataset.kind = entry.kind;
+    button.dataset.targetKind = entry.target.kind;
+    button.dataset.targetId = entry.target.id;
+    button.querySelector('.activity-item-icon')!.textContent = icons[entry.kind];
+    button.querySelector('.activity-item-label')!.textContent = entry.label;
+    button.querySelector('.activity-item-title')!.textContent = entry.title;
+    button.querySelector('.activity-item-detail')!.textContent = entry.detail;
+    const time = button.querySelector('time')!;
+    time.hidden = entry.occurredAt === undefined;
+    if (entry.occurredAt !== undefined) {
+      const date = new Date(entry.occurredAt * 1000);
+      time.dateTime = date.toISOString();
+      time.textContent = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      time.title = date.toLocaleString();
+    }
+    button.setAttribute('aria-label', `${entry.label}. ${entry.title}. ${entry.detail}. Open ${entry.target.kind === 'agent' ? ocean ? 'captain’s quarters' : 'agent workspace' : entry.target.kind === 'request' ? 'request' : 'delivery'}.`);
+    if (list.children[index] !== button) list.insertBefore(button, list.children[index] ?? null);
+  });
+  el('activity-empty').hidden = entries.length > 0;
+  el('activity-empty-mark').textContent = activityTab === 'attention' ? '✓' : '≈';
+  el('activity-empty-title').textContent = activityTab === 'attention' ? 'Nothing needs attention' : ocean ? 'A quiet moment at sea' : 'All systems calm';
+  el('activity-empty-copy').textContent = activityTab === 'attention' ? ocean ? 'Your crew has the helm. We’ll ring when they need you.' : 'Your agents are all set. We’ll signal when they need you.' : ocean ? 'Work in progress, completed voyages, and crew deliveries appear here.' : 'Work in progress, completed tasks, handoffs, and artifacts appear here.';
+}
+
+function publishResidentPlacements(): void {
+  if (demo || !world || loadedTheme !== snapshot.theme) return;
+  const validIDs = new Set(snapshot.agents.map(agent => agent.id));
+  for (const id of knownPlacements.keys()) if (!validIDs.has(id) || !ocean) knownPlacements.delete(id);
+  if (ocean) for (const agent of snapshot.agents) {
+    const appearance = world?.getAgentAppearance(agent.id);
+    const ship = appearance && (SHIP_ASSET_TYPES as readonly string[]).includes(appearance) ? SHIP_NAMES[appearance as ShipAssetType] : undefined;
+    const home = world?.getAgentHome(agent.id);
+    if (ship && home) knownPlacements.set(agent.id, { agentID: agent.id, ship, home });
   }
-  for (const transfer of [...transfers].sort((a, b) => b.occurredAt - a.occurredAt)) {
-    const button = activityButton(`transfer:${transfer.id}`, 'transfer-item', () => openTransfer(transfer.id)); button.dataset.transferId = transfer.id;
-    button.querySelector('strong')!.textContent = `${nameFor(transfer.fromAgentID)} → ${nameFor(transfer.toAgentID)}`;
-    button.querySelector('span')!.textContent = `${transfer.kind === 'artifact' ? 'Artifact' : 'Handoff'} · ${transfer.title}`;
-  }
-  el('activity-empty').hidden = requests.length + transfers.length > 0;
-  el('activity-caption').textContent = demo ? 'Examples only. No calls or tasks are running.' : 'Calls need your input. Couriers show recent handoffs and artifacts.';
+  const visibleIDs = new Set(sectorAgents(snapshot.agents, sector).map(agent => agent.id));
+  const placements = [...knownPlacements.values()].sort((a, b) => Number(visibleIDs.has(b.agentID)) - Number(visibleIDs.has(a.agentID))).slice(0, 500);
+  const fingerprint = JSON.stringify(placements);
+  if (fingerprint === lastPlacements) return;
+  lastPlacements = fingerprint;
+  send({ version: 1, type: 'residentPlacements', placements });
 }
 
 function selectAgent(id: string): void {
@@ -115,13 +205,36 @@ function selectAgent(id: string): void {
   const nextSector = agentSector(snapshot.agents, id);
   sector = nextSector;
   snapshot = { ...snapshot, selectedAgentID: id };
-  world?.setAgents(sectorAgents(snapshot.agents, sector), id);
+  updateWorldAgents();
   world?.focusResident(id);
   applyActivity();
   renderRoster();
   send({ version: 1, type: 'selectAgent', agentID: id });
   announce(`${agent.name} selected. ${STATUS_META[agent.status].label}.`);
   if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. In Locus, this opens their real conversation beside the world.`);
+}
+
+function updateWorldAgents(): void {
+  world?.setShipStyles(snapshot.shipStyles ?? {});
+  world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+}
+
+function setAgentShipStyle(agentID: string, style: string): void {
+  const agent = snapshot.agents.find(item => item.id === agentID);
+  if (!agent || (style && !(SHIP_ASSET_TYPES as readonly string[]).includes(style))) return;
+  if (!demo) {
+    send({ version: 1, type: 'setShipStyle', agentID, shipStyle: style ? style as ShipAssetType : null });
+    renderRoster();
+    return;
+  }
+  const shipStyles = { ...snapshot.shipStyles };
+  if (style) shipStyles[agentID] = style as ShipAssetType;
+  else delete shipStyles[agentID];
+  snapshot = { ...snapshot, shipStyles };
+  updateWorldAgents();
+  renderRoster();
+  try { localStorage.setItem(SHIP_STYLE_PREFERENCE, JSON.stringify(shipStyles)); } catch { /* Preview preferences are optional. */ }
+  announce(`${agent.name} ${style ? `now sails aboard ${SHIP_NAMES[style as ShipAssetType]}` : 'now uses their automatically assigned boat'}.`);
 }
 
 function renderRoster(): void {
@@ -138,12 +251,13 @@ function renderRoster(): void {
   const list = el('resident-list');
   const filtered = searchAgents(snapshot.agents, el<HTMLInputElement>('resident-search').value);
   const displayed = new Set(filtered.map(agent => agent.id));
-  for (const [id, button] of rosterButtons) if (!displayed.has(id)) { button.remove(); rosterButtons.delete(id); }
+  for (const [id, card] of rosterCards) if (!displayed.has(id)) { card.element.remove(); rosterCards.delete(id); }
   const oldEmpty = list.querySelector('.search-empty'); oldEmpty?.remove();
   filtered.forEach((agent, index) => {
-    let button = rosterButtons.get(agent.id);
-    if (!button) {
-      button = document.createElement('button'); button.className = 'resident-row'; button.type = 'button'; button.dataset.agentId = agent.id;
+    let card = rosterCards.get(agent.id);
+    if (!card) {
+      const element = document.createElement('div'); element.className = 'resident-card';
+      const button = document.createElement('button'); button.className = 'resident-row'; button.type = 'button'; button.dataset.agentId = agent.id;
       const avatar = document.createElement('span'); avatar.className = `resident-avatar variant-${snapshot.agents.indexOf(agent) % 4}`; avatar.setAttribute('aria-hidden', 'true');
       const text = document.createElement('span'); text.className = 'resident-text';
       const name = document.createElement('span'); name.className = 'resident-name';
@@ -151,8 +265,19 @@ function renderRoster(): void {
       const state = document.createElement('span'); state.className = 'resident-state'; state.setAttribute('aria-hidden', 'true');
       text.append(name, role); button.append(avatar, text, state);
       button.addEventListener('click', () => selectAgent(agent.id));
-      rosterButtons.set(agent.id, button);
+      const shipControl = document.createElement('label'); shipControl.className = 'resident-ship-picker';
+      const pickerLabel = document.createElement('span'); pickerLabel.textContent = 'Boat';
+      const picker = document.createElement('select'); picker.setAttribute('aria-label', `Boat style for ${agent.name}`);
+      const automatic = document.createElement('option'); automatic.value = ''; automatic.textContent = 'Automatic assignment'; picker.append(automatic);
+      for (const style of SHIP_ASSET_TYPES) { const option = document.createElement('option'); option.value = style; option.textContent = SHIP_NAMES[style]; picker.append(option); }
+      picker.addEventListener('change', () => setAgentShipStyle(agent.id, picker.value));
+      shipControl.append(pickerLabel, picker); element.append(button, shipControl);
+      card = { element, button, picker }; rosterCards.set(agent.id, card);
     }
+    const { button, picker } = card;
+    picker.parentElement!.hidden = !ocean || !demo;
+    picker.setAttribute('aria-label', `Boat style for ${agent.name}`);
+    picker.value = snapshot.shipStyles?.[agent.id] ?? '';
     const avatar = button.querySelector<HTMLElement>('.resident-avatar')!;
     const appearance = ocean ? world?.getAgentAppearance(agent.id) : undefined;
     const ship = appearance && (SHIP_ASSET_TYPES as readonly string[]).includes(appearance) ? appearance as ShipAssetType : undefined;
@@ -169,11 +294,12 @@ function renderRoster(): void {
     button.setAttribute('aria-pressed', String(agent.id === snapshot.selectedAgentID));
     button.setAttribute('aria-label', `${agent.name}${ship ? ` aboard ${SHIP_NAMES[ship]}` : ''}${home ? `, home island ${home}` : ''}, ${agent.role || 'Agent'}, ${STATUS_META[agent.status].label}${agent.detail ? `. ${agent.detail}` : ''}`);
     button.title = `${agent.role || 'Agent'} · ${STATUS_META[agent.status].label}${agent.detail ? ` · ${agent.detail}` : ''}`;
-    if (list.children[index] !== button) list.insertBefore(button, list.children[index] || null);
+    if (list.children[index] !== card.element) list.insertBefore(card.element, list.children[index] || null);
   });
   if (!filtered.length && snapshot.agents.length) { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.textContent = `No ${ocean ? 'captains' : 'residents'} match your search.`; list.append(empty); }
   el('empty-state').hidden = snapshot.agents.length > 0;
   renderActivity();
+  publishResidentPlacements();
 }
 
 function renderNavigation(): void {
@@ -181,7 +307,7 @@ function renderNavigation(): void {
   el('mode-orbit').setAttribute('aria-pressed', String(navigationMode === 'orbit'));
   el('mode-pan').setAttribute('aria-pressed', String(navigationMode === 'pan'));
   el('drag-hint').textContent = navigationMode === 'pan' ? 'Drag to move map' : 'Drag to rotate';
-  el('world').setAttribute('aria-label', `3D ${ocean ? 'Local Line ocean world. Each agent has their own ship' : 'outpost overview'}. Click ${ocean ? 'a ship' : 'an agent'} to interact. Drag to ${navigationMode === 'pan' ? 'move the map' : 'rotate the view'}, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the ${ocean ? 'Fleet' : 'Residents'} list to select agents with the keyboard.`);
+  el('world').setAttribute('aria-label', `3D ${ocean ? 'Local Line ocean world. Each agent has their own ship' : 'outpost overview'}. Click ${ocean ? 'a ship' : 'an agent'} to interact. Drag to ${navigationMode === 'pan' ? 'move the map' : 'rotate the view'}, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the Residents tab to select agents with the keyboard.`);
 }
 
 function setNavigationMode(mode: 'orbit' | 'pan'): void {
@@ -215,18 +341,23 @@ function setResidentStyle(style: ResidentStyle): void {
 
 function applyThemePresentation(isOcean: boolean): void {
   ocean = isOcean;
+  snailAlert.setTheme(isOcean);
   document.body.dataset.environment = isOcean ? 'ocean' : 'campus';
   renderResidentStyle();
   el('world-subtitle').hidden = !isOcean;
   el('voyage-chart').hidden = !isOcean;
-  el('roster-title').textContent = isOcean ? 'Your fleet' : 'Residents';
+  document.querySelector<HTMLElement>('.roster-panel')!.hidden = isOcean && !standaloneResidentsOpen;
+  el('residents-button').hidden = !demo || !isOcean;
+  el('theme-button').hidden = !demo;
+  if (!demo) { el('theme-popover').hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); }
+  el('roster-title').textContent = 'Residents';
   document.querySelector('.roster-panel')!.setAttribute('aria-label', isOcean ? 'Fleet manifest' : 'Residents');
   const rosterHidden = el('roster-body').hidden;
   el('roster-toggle').setAttribute('aria-label', `${rosterHidden ? 'Expand' : 'Collapse'} ${isOcean ? 'fleet' : 'residents'}`);
   el('resident-search').setAttribute('aria-label', isOcean ? 'Search fleet' : 'Search residents');
   el<HTMLInputElement>('resident-search').placeholder = isOcean ? 'Find your captain' : 'Find an agent';
   el('empty-title').textContent = isOcean ? 'Your adventure begins here' : 'No residents yet';
-  el('empty-description').textContent = isOcean ? 'Choose New Agent to welcome a captain and launch their ship.' : 'Choose New Agent to give your first agent a home here.';
+  el('empty-description').textContent = isOcean ? 'Open Residents to welcome a captain and launch their ship.' : 'Choose New Agent to give your first agent a home here.';
   el('coordinate-region').textContent = isOcean ? 'THE AGE OF LOCAL MINDS' : 'LYRA SYSTEM';
   el('coordinate-unit').textContent = isOcean ? 'FLEET' : 'SECTOR';
   el('coordinate-detail').textContent = isOcean ? ' · LOCAL LINE' : ' · 04.28 N / 78.16 E';
@@ -234,11 +365,28 @@ function applyThemePresentation(isOcean: boolean): void {
   el('world-version').textContent = isOcean ? 'SET SAIL' : 'OUTPOST 01';
   el('loading-label').textContent = isOcean ? 'Setting sail for the Local Line' : 'Arriving at your outpost';
   el('asset-notice').textContent = isOcean ? 'Some artwork is unavailable. Your fleet is using built-in ships.' : 'Some artwork is unavailable. The outpost is using built-in models.';
-  el('fallback-reason').textContent = `3D graphics are unavailable on this device. Select ${isOcean ? 'a captain from your fleet' : 'a resident'} to open their conversation.`;
+  el('fallback-reason').textContent = `3D graphics are unavailable on this device. Select ${isOcean ? 'a captain in the Residents tab' : 'a resident'} to open their conversation.`;
   renderNavigation();
   renderRoster();
   renderThemes();
 }
+
+function renderVoyageChart(): void {
+  const chart = document.querySelector<SVGSVGElement>('#voyage-chart svg');
+  if (!chart) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  chart.setAttribute('aria-label', 'Island positions and relative sizes across the Local Line archipelago.');
+  chart.replaceChildren();
+  const cliffs = document.createElementNS(ns, 'path');
+  cliffs.setAttribute('class', 'chart-land'); cliffs.setAttribute('d', 'M12 0h8v39h-8zM12 55h8v39h-8z'); chart.append(cliffs);
+  for (const island of GRAND_LINE_LANDMARKS) {
+    const port = document.createElementNS(ns, 'ellipse'); port.setAttribute('class', 'chart-port');
+    port.setAttribute('cx', String((island.x + 34) / 68 * 192)); port.setAttribute('cy', String((34 - island.z) / 68 * 94));
+    port.setAttribute('rx', String(island.radius / 68 * 192)); port.setAttribute('ry', String(island.radius / 68 * 94));
+    const title = document.createElementNS(ns, 'title'); title.textContent = island.name; port.append(title); chart.append(port);
+  }
+}
+renderVoyageChart();
 
 function assetProgress(completed: number, total: number): void {
   el('asset-loading').hidden = completed >= total;
@@ -272,6 +420,7 @@ async function loadTheme(id: string): Promise<void> {
     const theme = parseTheme(await response.json());
     if (generation !== themeGeneration || disposed) return;
     if (theme.id !== id) throw new Error('Theme identity does not match its catalog entry');
+    knownPlacements.clear(); lastPlacements = '';
     world?.dispose(); world = undefined;
     loadedTheme = id;
     applyThemePresentation(theme.environment === 'ocean');
@@ -286,7 +435,7 @@ async function loadTheme(id: string): Promise<void> {
     el('theme-button').children[1].textContent = allowed.name.replace(/^Orbital /, '');
     world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
     world.setNavigationMode(navigationMode);
-    world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+    updateWorldAgents();
     applyActivity();
     renderRoster();
     renderThemes();
@@ -301,7 +450,7 @@ async function loadTheme(id: string): Promise<void> {
       try {
         world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
         world.setNavigationMode(navigationMode);
-        world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+        updateWorldAgents();
         applyActivity();
         world.setVisible(nativeVisible && !document.hidden);
         loadedTheme = id;
@@ -322,19 +471,22 @@ function receive(message: unknown): void {
   if (parsed.type === 'visibility') { nativeVisible = parsed.visible; world?.setVisible(nativeVisible && !document.hidden); snailAlert.setVisible(nativeVisible && !document.hidden); return; }
   const projectChanged = parsed.projectName !== snapshot.projectName;
   const selectionChanged = parsed.selectedAgentID !== snapshot.selectedAgentID;
+  const activityRequested = (parsed.activityCenterRequest ?? 0) > 0 && parsed.activityCenterRequest !== snapshot.activityCenterRequest;
   snapshot = parsed;
+  if (projectChanged) { setActivityCenterOpen(false, false); knownPlacements.clear(); lastPlacements = ''; }
+  if (activityRequested) toggleActivityCenter();
   if (parsed.residentStyle && residentStyle !== parsed.residentStyle) {
     residentStyle = parsed.residentStyle;
     world?.setResidentStyle(residentStyle);
     renderResidentStyle();
   }
   sector = selectionChanged && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
-  world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+  updateWorldAgents();
   applyActivity();
   renderRoster();
   void loadTheme(snapshot.theme);
 }
-window.locusAgentWorld = { receive };
+window.locusAgentWorld = { receive, toggleActivityCenter };
 
 el('new-agent').addEventListener('click', () => {
   if (demo) showNote('Open Agent World in Locus to create an agent. This preview does not save agent profiles.');
@@ -345,16 +497,26 @@ el('shared-chat').addEventListener('click', () => {
   else send({ version: 1, type: 'openSharedChat' });
 });
 el('agent-controls').addEventListener('click', () => {
-  if (demo) showNote('In Locus, the captain’s quarters contains the selected agent’s conversation, tools and controls.');
+  if (demo) showNote(`In Locus, the ${ocean ? 'captain’s quarters' : 'agent workspace'} contains the selected agent’s conversation, tools and controls.`);
   else send({ version: 1, type: 'openAgentControls', ...(snapshot.selectedAgentID ? { agentID: snapshot.selectedAgentID } : {}) });
 });
-el('activity-toggle').addEventListener('click', () => {
-  const panel = el('fleet-activity'); panel.hidden = !panel.hidden;
-  el('activity-toggle').setAttribute('aria-expanded', String(!panel.hidden));
+el('activity-close').addEventListener('click', () => setActivityCenterOpen(false));
+el('attention-tab').addEventListener('click', () => selectActivityTab('attention'));
+el('activity-tab').addEventListener('click', () => selectActivityTab('activity'));
+for (const tab of ['attention-tab', 'activity-tab']) el(tab).addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  selectActivityTab(event.key === 'Home' ? 'attention' : event.key === 'End' ? 'activity' : activityTab === 'attention' ? 'activity' : 'attention', true);
 });
-el('activity-close').addEventListener('click', () => { el('fleet-activity').hidden = true; el('activity-toggle').setAttribute('aria-expanded', 'false'); el('activity-toggle').focus(); });
 
 el<HTMLInputElement>('resident-search').addEventListener('input', renderRoster);
+el('residents-button').addEventListener('click', () => {
+  standaloneResidentsOpen = !standaloneResidentsOpen;
+  if (standaloneResidentsOpen) setActivityCenterOpen(false, false);
+  el('resident-preview-panel').hidden = !standaloneResidentsOpen;
+  el('residents-button').setAttribute('aria-expanded', String(standaloneResidentsOpen));
+  if (standaloneResidentsOpen) el('resident-search').focus();
+});
 el('appearance-mixed').addEventListener('click', () => setResidentStyle('mixed'));
 el('appearance-pandas').addEventListener('click', () => setResidentStyle('pandas'));
 el('appearance-explorers').addEventListener('click', () => setResidentStyle('explorers'));
@@ -371,11 +533,18 @@ el('roster-toggle').addEventListener('click', () => {
 const themePopover = el('theme-popover');
 el('theme-button').addEventListener('click', () => { themePopover.hidden = !themePopover.hidden; el('theme-button').setAttribute('aria-expanded', String(!themePopover.hidden)); });
 document.addEventListener('pointerdown', event => { if (!(event.target instanceof Element) || event.target.closest('#theme-button, #theme-popover')) return; themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.target instanceof HTMLSelectElement) return;
+  if (world?.handleCreatureKey(event.key, event.repeat)) { event.preventDefault(); return; }
+  if (!themePopover.hidden) { themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); el('theme-button').focus(); }
+  else if (!el('fleet-activity').hidden) setActivityCenterOpen(false);
+  else if (ocean && standaloneResidentsOpen) { standaloneResidentsOpen = false; el('resident-preview-panel').hidden = true; el('residents-button').setAttribute('aria-expanded', 'false'); el('residents-button').focus(); }
+});
 document.addEventListener('keydown', event => {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !world || disposed || document.hidden || !themePopover.hidden) return;
   const target = event.target;
-  if (target instanceof Element && target.closest('input, textarea, select, [contenteditable], [role="textbox"], #resident-list, #theme-popover, #fleet-activity, #snail-alert, .world-actions')) return;
+  if (target instanceof Element && target.closest('button, a[href], input, textarea, select, [contenteditable], [role="button"], [role="textbox"], #resident-list, #theme-popover, #fleet-activity, #snail-alert, .world-actions')) return;
+  if (world.handleCreatureKey(event.key, event.repeat)) { event.preventDefault(); return; }
   const directions: Record<string, 'left' | 'right' | 'up' | 'down'> = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down' };
   const direction = directions[event.key.toLowerCase()];
   if (!direction) return;
@@ -395,6 +564,7 @@ function renderThemes(): void {
     button.append(planet, label);
     button.addEventListener('click', () => {
       themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false');
+      el('theme-button').focus();
       send({ version: 1, type: 'preferences', preferences: { theme: choice.id } });
       if (demo) { snapshot = { ...snapshot, theme: choice.id }; void loadTheme(choice.id); }
     });
@@ -415,6 +585,10 @@ async function start(): Promise<void> {
     const requestedStyle = new URLSearchParams(window.location.search).get('residentStyle');
     residentStyle = isResidentStyle(requestedStyle) ? requestedStyle : isResidentStyle(savedStyle) ? savedStyle : 'mixed';
     snapshot.residentStyle = residentStyle;
+    try {
+      const savedStyles = localStorage.getItem(SHIP_STYLE_PREFERENCE);
+      if (savedStyles) snapshot.shipStyles = parseShipStyles(JSON.parse(savedStyles), snapshot.agents.map(agent => agent.id)) ?? {};
+    } catch { /* Ignore invalid or unavailable preview preferences. */ }
   }
   renderThemes();
   renderRoster();

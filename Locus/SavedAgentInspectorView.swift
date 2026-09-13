@@ -4,6 +4,10 @@ struct SavedAgentInspectorView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     let profile: AgentProfile
+    var workspace: String? = nil
+    var newChat: (() -> Void)? = nil
+    var openChat: ((SessionSummary) -> Void)? = nil
+    var newChatDisabled: Bool? = nil
 
     var body: some View {
         ScrollView {
@@ -14,9 +18,9 @@ struct SavedAgentInspectorView: View {
                         .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
                 }
                 HStack {
-                    Button("New chat") { model.newSavedAgentChat(profile) }
+                    Button("New chat") { if let newChat { newChat() } else { model.newSavedAgentChat(profile) } }
                         .buttonStyle(.borderedProminent)
-                        .disabled(model.chatNavigationDisabled || model.creatingSavedAgentChatIDs.contains(profile.id))
+                        .disabled(newChatDisabled ?? (model.chatNavigationDisabled || model.creatingSavedAgentChatIDs.contains(profile.id)))
                         .accessibilityIdentifier("savedAgent.newChat")
                     Button("Manage Agent…") { model.manageSavedAgent(profile) }
                         .accessibilityIdentifier("savedAgent.manage")
@@ -30,9 +34,10 @@ struct SavedAgentInspectorView: View {
                 Divider()
                 Text("Chats").font(.locus(size: 12, weight: .semibold))
                 ForEach(sessionCatalog.snapshot.sessions.filter {
-                    $0.savedAgentProfileID == profile.id && !$0.isArchived
+                    model.savedAgentProfileID(for: $0.id) == profile.id && !$0.isArchived
+                        && (workspace == nil || $0.workspacePath.map(SessionSummary.canonicalWorkspacePath) == workspace)
                 }.sorted { $0.mtime > $1.mtime }) { session in
-                    Button { model.resume(session) } label: {
+                    Button { if let openChat { openChat(session) } else { model.resume(session) } } label: {
                         Label(session.displayTitle, systemImage: session.isAgentEventChat ? "bolt" : "bubble.left")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.locus())

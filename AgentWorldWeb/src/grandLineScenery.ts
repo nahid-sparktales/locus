@@ -6,76 +6,33 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
-import type { CircleObstacle, Placement } from './theme';
+import type { CircleObstacle, Placement, SceneryAssetType, Theme } from './theme';
+import type { AssetContainer } from '@babylonjs/core/assetContainer';
+import { GrandLineModels } from './grandLineModels';
+import { createWaterfallMist } from './waterfallMist';
+import { createOceanWater } from './oceanWater';
+import { LaboonCompanion } from './laboonInteraction';
 import type { Point } from './state';
 
-/** Every agent has a separate island harbor rather than a shared fleet row. */
-export const GRAND_LINE_LANDMARKS = [
-  { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -23.46, z: -10.85, radius: 2.1 },
-  { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -17.94, z: 12.4, radius: 2.4 },
-  { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -13.8, z: -13.95, radius: 2.4 },
-  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -5.52, z: 13.95, radius: 2.8 },
-  { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -2.76, z: -13.175, radius: 2.5 },
-  { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: 6.9, z: -17.05, radius: 1.8 },
-  { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: 6.9, z: 13.95, radius: 2.6 },
-  { id: 'marineford', name: 'Machineford', subtitle: 'LOCAL INFERENCE HEADQUARTERS', x: 16.56, z: -13.95, radius: 2.4 },
-  { id: 'wano', name: 'Wano Weights', subtitle: 'LAND OF OPEN WEIGHTS', x: 19.32, z: 11.625, radius: 2.6 },
-  { id: 'whole-cake', name: 'Whole Cache', subtitle: 'SWEET TOKENS, FRESHLY CACHED', x: 26.22, z: -3.1, radius: 2.5 },
-  { id: 'laugh-tale', name: 'LoRA Tale', subtitle: 'THE LAST TOKEN IS A TREASURE', x: 27.6, z: 12.4, radius: 1.3 },
-  { id: 'jaya', name: 'JAXa', subtitle: 'WHERE IDEAS COMPILE', x: -6.6, z: -21.5, radius: 1.6 },
-] as const;
-export const GRAND_LINE_HARBORS = GRAND_LINE_LANDMARKS.map(landmark => {
-  const westFacingHarbor = landmark.id === 'whole-cake';
-  const direction = westFacingHarbor ? { x: -1, z: 0 } : { x: 0, z: landmark.z > 0 ? -1 : 1 };
-  return {
-    id: landmark.id, name: landmark.name,
-    x: Number((landmark.x + direction.x * (landmark.radius + 2.35)).toFixed(4)),
-    z: Number((landmark.z + direction.z * (landmark.radius + 2.35)).toFixed(4)),
-    rotation: Math.atan2(-direction.x, -direction.z),
-    direction,
-  };
-});
-/** Flat shore work plazas provide verified footing clear of island buildings. */
-export const GRAND_LINE_CREW_PLAZAS = GRAND_LINE_LANDMARKS.map((landmark, index) => {
-  const direction = GRAND_LINE_HARBORS[index].direction;
-  const shoreDistance = landmark.radius * (direction.x ? 1 : 0.80);
-  const distance = shoreDistance + (landmark.id === 'water-seven' ? 0.15 : -0.10);
-  return {
-    x: landmark.x + direction.x * distance, z: landmark.z + direction.z * distance,
-    y: landmark.id === 'water-seven' ? 1.07 : landmark.id === 'marineford' ? 1.10 : 0.69,
-    rotation: Math.atan2(direction.x, direction.z), width: 1.50, depth: 0.82,
-  };
-});
-export const GRAND_LINE_HOME_NAMES: readonly string[] = GRAND_LINE_HARBORS.map(harbor => harbor.name);
-export const GRAND_LINE_STATIONS: readonly Placement[] = GRAND_LINE_HARBORS.map(({ x, z, rotation }) => ({ x, z, rotation }));
-export const GRAND_LINE_OBSTACLES: readonly CircleObstacle[] = [
-  ...GRAND_LINE_LANDMARKS.map(({ x, z, radius }) => ({ x, z, radius: radius + 0.18 })),
-  { x: -24.84, z: -15.81, radius: 1.05 },
-  ...[-37, -33, -29, -25, -21, -17, -13, -9, -6.3, 6.3, 9, 13, 17, 21, 25, 29, 33, 37].map(z => ({ x: -29, z, radius: 2.25 })),
-];
-export const GRAND_LINE_WANDER_POINTS: readonly Point[] = GRAND_LINE_HARBORS.flatMap(harbor => {
-  const offshore = (harbor.rotation ?? 0) + Math.PI;
-  return [-0.7, 0, 0.7].map(offset => ({
-    x: harbor.x + Math.sin(offshore + offset) * 3.2,
-    z: harbor.z + Math.cos(offshore + offset) * 3.2,
-  }));
-}).filter(point => Math.hypot(point.x, point.z) < 32.57 && GRAND_LINE_OBSTACLES.every(obstacle =>
-  Math.hypot(point.x - obstacle.x, point.z - obstacle.z) > obstacle.radius + 1.41));
+import { GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
+export { GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
 
 type XYZ = [number, number, number];
-type Scenery = { update: (elapsed: number, reducedMotion: boolean) => void; dispose: () => void };
+type Scenery = { selectCreature: (id: string) => boolean; handleCreatureKey: (key: string, repeat?: boolean) => boolean; installAsset: (type: SceneryAssetType, container: AssetContainer) => void; update: (elapsed: number, reducedMotion: boolean) => void; dispose: () => void };
 const TAU = Math.PI * 2;
 const coastPhase = (index: number): number => index * 2.3999632297 + 0.73;
 // The ocean uses the same contour to blend its sandy shallows into the sculpted shore.
 const coastContour = (angle: number, phase: number): number =>
   1 + Math.sin(angle * 3 + phase) * 0.065 + Math.cos(angle * 5 - phase) * 0.035 + Math.sin(angle * 9 + phase * 2) * 0.012;
 
-export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, parent: TransformNode): Scenery {
+export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, parent: TransformNode, theme: Theme): Scenery {
   const root = new TransformNode('grand-line-archipelago', scene);
   root.parent = parent;
+  const models = new GrandLineModels(scene, shadow, theme);
+  let laboon: LaboonCompanion | undefined;
+  const waterfallMist = models.has('scenery_reverse_mountain') ? createWaterfallMist(scene, root) : undefined;
   const materials = new Map<string, StandardMaterial>();
   const staticMeshes: Mesh[] = [];
   const textures: DynamicTexture[] = [];
@@ -157,82 +114,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     plane.renderingGroupId = 1;
   };
 
-  // The ocean is a continuous surface: broad swells, wind ripples, moving caustics and calm belts.
-  const ocean = MeshBuilder.CreateGround('endless-grand-line-ocean', { width: 260, height: 260, subdivisions: 150 }, scene);
-  ocean.parent = root; ocean.position.y = -0.19; ocean.isPickable = false;
-  const water = new ShaderMaterial('grand-line-living-ocean', scene, {
-    vertexSource: `precision highp float;
-      attribute vec3 position; attribute vec3 normal; attribute vec2 uv;
-      uniform mat4 worldViewProjection; uniform mat4 world; uniform float time;
-      varying vec3 vPosition; varying vec3 vWorld; varying float vWave;
-      void main(void) {
-        vec3 p = position;
-        float calm = 1.0 - 0.72 * smoothstep(20.8, 23.0, abs(p.z)) * (1.0 - smoothstep(25.0, 27.2, abs(p.z)));
-        float w = (sin(p.x * 0.68 + p.z * 0.37 + time * 0.56) * 0.047 + sin(p.z * 1.02 - p.x * 0.28 + time * 0.4) * 0.024) * calm;
-        p.y += w; vPosition = p; vWorld = (world * vec4(p, 1.0)).xyz; vWave = w;
-        gl_Position = worldViewProjection * vec4(p, 1.0);
-      }`,
-    fragmentSource: `precision highp float;
-      varying vec3 vPosition; varying vec3 vWorld; varying float vWave;
-      uniform float time; uniform vec3 cameraPosition;
-      uniform vec4 islandCoasts[${GRAND_LINE_LANDMARKS.length}];
-      float wave(vec2 p) {
-        return sin(p.x * 2.6 + p.y * 1.5 + time * 0.66) + sin(p.x * -1.8 + p.y * 2.1 - time * 0.44) * 0.61 + sin(p.x * 6.6 + p.y * 3.7 + time * 0.9) * 0.19;
-      }
-      float distanceToShore(vec2 p) {
-        float shore = 100.0;
-        for (int i = 0; i < ${GRAND_LINE_LANDMARKS.length}; i++) {
-          vec4 island = islandCoasts[i];
-          vec2 local = (p - island.xy) * vec2(1.0, 1.25);
-          float range = island.z * 1.2 + 2.4;
-          // Only nearby islands need the more expensive organic contour calculation.
-          if (dot(local,local) < range * range) {
-            float radial = length(local);
-            float a = atan(local.y, local.x);
-            float contour = 1.0 + sin(a * 3.0 + island.w) * 0.065 + cos(a * 5.0 - island.w) * 0.035 + sin(a * 9.0 + island.w * 2.0) * 0.012;
-            shore = min(shore, radial - island.z * 1.07 * contour);
-          }
-        }
-        return shore;
-      }
-      void main(void) {
-        vec2 p = vPosition.xz;
-        float depth = smoothstep(16.0, 73.0, length(p * vec2(0.75, 1.0)));
-        vec3 color = mix(vec3(0.025,0.44,0.54), vec3(0.028,0.27,0.38), depth);
-        float swell = sin(p.x*0.11+p.y*0.17) * 0.5 + 0.5;
-        color += vec3(0.012,0.085,0.05) * swell;
-        float calm = smoothstep(20.8,23.0,abs(p.y)) * (1.0 - smoothstep(25.0,27.2,abs(p.y)));
-        color = mix(color,vec3(0.19,0.59,0.50),calm*0.42);
-        float shore = distanceToShore(p);
-        float shelf = 1.0 - smoothstep(0.0,2.25,shore);
-        float shallows = 1.0 - smoothstep(-0.12,0.88,shore);
-        color = mix(color,vec3(0.12,0.65,0.64),shelf*0.79);
-        color = mix(color,vec3(0.43,0.77,0.65),shallows*0.77);
-        float caustic = sin(p.x*9.0+sin(p.y*6.0+time*0.25)) + sin(p.y*8.0-sin(p.x*5.0-time*0.3));
-        color += vec3(0.12,0.20,0.10) * pow(max(0.0,1.0-abs(caustic)*1.4),6.0) * shelf * 0.15;
-        float w = wave(p);
-        float hairline = pow(max(0.0, 1.0 - abs(w) * 1.13), 18.0);
-        float wavePatch = smoothstep(0.1,0.78,sin(p.x*0.44+p.y*0.19)*sin(p.y*0.39-p.x*0.11));
-        color += vec3(0.33,0.59,0.51) * hairline * (0.025+wavePatch*0.10) * (1.0-calm*0.72);
-        float wx = wave(p + vec2(0.015,0.0)) - w;
-        float wz = wave(p + vec2(0.0,0.015)) - w;
-        vec3 n = normalize(vec3(-wx*2.6,1.0,-wz*2.6));
-        vec3 light = normalize(vec3(-0.5,1.0,0.6));
-        vec3 view = normalize(cameraPosition-vWorld);
-        float spec = pow(max(0.0,dot(n,normalize(light+view))),96.0);
-        color += vec3(0.82,0.95,0.75) * spec * (0.045+wavePatch*0.07);
-        float crest = smoothstep(1.49,1.76,w) * wavePatch;
-        color = mix(color,vec3(0.60,0.88,0.78),crest*0.26*(1.0-calm));
-        float surfPatch = smoothstep(-0.25,0.55,sin(p.x*2.1+p.y*1.7)+sin(p.y*3.1-p.x*0.8)*0.5);
-        float surf = pow(max(0.0,sin(shore*9.0-time*0.68+sin(p.x*1.8+p.y*2.3)*0.28)),12.0);
-        surf *= smoothstep(-0.06,0.06,shore) * (1.0-smoothstep(0.18,0.78,shore)) * surfPatch;
-        color = mix(color,vec3(0.82,0.94,0.81),surf*0.64);
-        gl_FragColor = vec4(color,1.0);
-      }`,
-  }, { attributes: ['position', 'normal', 'uv'], uniforms: ['worldViewProjection', 'world', 'time', 'cameraPosition', 'islandCoasts'] });
-  water.setFloat('time', 0); water.setVector3('cameraPosition', new Vector3(0, 30, 40));
-  water.setArray4('islandCoasts', GRAND_LINE_LANDMARKS.flatMap((island, index) => [island.x, island.z, island.radius, coastPhase(index)]));
-  ocean.material = water;
+  const oceanWater = createOceanWater(scene, root, GRAND_LINE_LANDMARKS);
 
   function island(index: number, grassColor: string, sandColor: string): TransformNode {
     const { x, z, radius, id } = GRAND_LINE_LANDMARKS[index];
@@ -399,7 +281,13 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   // The Thread Line follows the reference geography and leaves a true sea passage beneath the mountain.
   const cliff = mat('red-line-rock', '#be694b'), cliffLight = mat('red-line-sunlit', '#d48a5d'), cliffDark = mat('red-line-strata', '#914c42');
   for (const sign of [-1, 1]) {
-    for (let n = 0; n < 15; n++) {
+    if (models.has('scenery_red_line')) {
+      for (let n = 0; n < 4; n++) {
+        const ridge = new TransformNode(`thread-line-ridge-${sign}-${n}`, scene);
+        ridge.parent = root; ridge.position.set(-29, 0, sign * (9.7 + n * 9.4));
+        models.add('scenery_red_line', { parent: ridge, width: 4.2, depth: 10.4, height: 6.5 + (n % 2) * 0.4, floor: -0.36, rotation: n % 2 ? Math.PI : 0 });
+      }
+    } else for (let n = 0; n < 15; n++) {
       const z = sign * (6.3 + n * 2.3), height = 3.4 + random() * 2.0 + (n < 2 ? 1.4 : 0);
       const rock = cylinder('red-line-cliff', 4.7, 2.5 + random() * 0.9, height, [-29 + Math.sin(n * 0.8) * 0.55, height / 2 - 0.14, z], n % 3 ? cliff : cliffLight, 7);
       rock.scaling.z = 0.76; rock.rotation.y = n * 0.71; rock.convertToFlatShadedMesh();
@@ -407,8 +295,15 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       ledge.scaling.z = 0.76; ledge.rotation.y = n * 0.71;
       const cap = cylinder('red-line-grass-crown', 2.62, 2.4, 0.15, [-29 + Math.sin(n * 0.8) * 0.55, height - 0.16, z], leafLight, 7); cap.scaling.z = 0.76;
     }
-    tube('reverse-mountain-river', [[-33.67, -0.01, sign * 12.4], [-31.88, 1.8, sign * 7.75], [-29.12, 5.2, sign * 5.89], [-26.50, 2.6, sign * 3.88], [-25.53, 0.08, sign * 1.55]], 0.25, turquoise, root, 10);
-    tube('reverse-mountain-whitewater', [[-29.12, 5.3, sign * 5.89], [-26.50, 2.75, sign * 3.88], [-25.53, 0.14, sign * 1.55]], 0.055, foam, root, 7);
+    if (models.has('scenery_reverse_mountain')) {
+      const mountain = new TransformNode(`recurse-mountain-${sign}`, scene);
+      mountain.parent = root; mountain.position.set(-29, 0, sign * 6.3);
+      models.add('scenery_reverse_mountain', { parent: mountain, width: 5.2, depth: 5.0, height: 8,
+        footprintRadius: 2.5, floor: -0.20, rotation: sign > 0 ? Math.PI : 0 });
+    } else {
+      tube('reverse-mountain-river', [[-33.67, -0.01, sign * 12.4], [-31.88, 1.8, sign * 7.75], [-29.12, 5.2, sign * 5.89], [-26.50, 2.6, sign * 3.88], [-25.53, 0.08, sign * 1.55]], 0.25, turquoise, root, 10);
+      tube('reverse-mountain-whitewater', [[-29.12, 5.3, sign * 5.89], [-26.50, 2.75, sign * 3.88], [-25.53, 0.14, sign * 1.55]], 0.055, foam, root, 7);
+    }
   }
   label('Recurse Mountain', 'ENTER THE LOCAL LINE', [-29, 0.05, 1.90], 5.6);
   label('Thread Line', 'ONE THREAD CONNECTS EVERY PORT', [-33.5, 0.02, -20], 6.6, true);
@@ -418,8 +313,27 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
 
   for (const landmark of GRAND_LINE_LANDMARKS) {
     const desert = landmark.id === 'alabasta', snowy = landmark.id === 'drum';
-    const owner = island(GRAND_LINE_LANDMARKS.indexOf(landmark), desert ? '#e4bd72' : snowy ? '#d8eeee' : '#76ac62', desert ? '#f1d299' : snowy ? '#d9eeee' : '#ecd49d');
+    const type = GRAND_LINE_ISLAND_MODELS[landmark.id];
+    const detailed = models.has(type);
+    const owner = detailed ? new TransformNode(landmark.id, scene) : island(GRAND_LINE_LANDMARKS.indexOf(landmark), desert ? '#e4bd72' : snowy ? '#d8eeee' : '#76ac62', desert ? '#f1d299' : snowy ? '#d9eeee' : '#ecd49d');
     owner.name = landmark.id;
+    if (detailed) {
+      owner.parent = root; owner.position.set(landmark.x, 0, landmark.z);
+      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: -0.12 });
+    }
+    if (landmark.id === 'twin-cape') {
+      const whale = new TransformNode('laboon', scene); whale.parent = root;
+      whale.position.set(GRAND_LINE_LABOON_POSITION.x, 0, GRAND_LINE_LABOON_POSITION.z);
+      if (models.has('creature_laboon')) {
+        models.add('creature_laboon', { parent: whale, width: 2.1, depth: 2.0, height: 1.8,
+          footprintRadius: 0.96, floor: -0.25, rotation: -Math.PI / 4, animated: true, interactionID: 'laboon' });
+      } else {
+        const head = sphere('laboon-head', [1.6, 1.05, 1.7], [0, 0.12, 0], mat('laboon-blue', '#354f68'), whale, true);
+        head.isPickable = true; head.metadata = { creatureID: 'laboon' };
+      }
+      laboon = new LaboonCompanion(scene, whale);
+    }
+    if (!detailed) {
     if (landmark.id === 'twin-cape') {
       cylinder('lighthouse-foot', 1.05, 0.98, 0.24, [-0.15, 0.66, -0.2], white, 24, owner);
       for (let level = 0; level < 7; level++) cylinder('twin-cape-lighthouse-stripe', 0.65 - level * 0.036, 0.61 - level * 0.036, 0.34, [-0.15, 0.95 + level * 0.34, -0.2], level % 2 ? red : white, 20, owner);
@@ -428,16 +342,6 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       cylinder('lighthouse-cap', 0.81, 0, 0.38, [-0.15, 3.84, -0.2], red, 20, owner);
       house(owner, 0.95, 0.1, 0.70, 0.54);
       palm(owner, -0.8, 0.48, 1.0, -0.15);
-      // Llamoon's rounded head, crossed scars and bright eye sit beside the cape.
-      const whale = new TransformNode('laboon', scene); whale.parent = root; whale.position.set(-24.84, 0, -15.81);
-      const whaleMat = mat('laboon-blue', '#354f68');
-      sphere('laboon-head', [1.60, 1.05, 1.85], [0, 0.12, 0], whaleMat, whale);
-      sphere('laboon-flipper', [0.52, 0.16, 0.90], [0.85, -0.02, 0.2], whaleMat, whale).rotation.y = -0.6;
-      sphere('laboon-eye', [0.12, 0.12, 0.065], [0.53, 0.48, 0.63], snow, whale);
-      sphere('laboon-eye-pupil', [0.06, 0.07, 0.035], [0.53, 0.48, 0.668], navy, whale);
-      tube('laboon-scar', [[-0.28, 0.66, 0.54], [0.05, 0.54, 0.79], [0.23, 0.42, 0.85]], 0.025, sand, whale);
-      tube('laboon-scar-cross', [[-0.03, 0.70, 0.54], [-0.10, 0.42, 0.86]], 0.02, sand, whale);
-      for (const side of [-1, 1]) tube('laboon-water-spout', [[0, 0.76, -0.12], [0, 1.62, -0.12], [0.25 * side, 1.85, -0.12], [0.45 * side, 1.70, -0.12]], 0.04, foam, whale);
     } else if (landmark.id === 'little-garden') {
       for (let n = 0; n < 7; n++) { const a = n * TAU / 7; palm(owner, Math.cos(a) * 1.3, Math.sin(a) * 0.85, 1.35 + random() * 0.65, Math.cos(a) * 0.22); }
       const dino = mat('dinosaur', '#609d62');
@@ -510,13 +414,6 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
         sphere('mangrove-canopy', [2.1, 1.02, 1.85], [x, h + 0.65, z], leafLight, owner);
         sphere('mangrove-canopy', [1.47, 0.91, 1.4], [x - 0.3, h + 1.02, z + 0.12], leaf, owner);
       }
-      const bubbleMat = mat('sabaody-bubble', '#b8f8e9', 0.30, 0.24); bubbleMat.specularColor = Color3.White(); bubbleMat.specularPower = 128;
-      for (let n = 0; n < 13; n++) {
-        const x = (random() - 0.5) * 5, z = (random() - 0.5) * 3.5, y = 1.1 + random() * 4.6, size = 0.24 + random() * 0.52;
-        const bubble = sphere('floating-resin-bubble', [size, size, size], [x, y, z], bubbleMat, owner, true);
-        drifting.push({ node: bubble, y, phase: random() * TAU, amount: 0.16 });
-        sphere('bubble-highlight', [0.15, 0.23, 0.09], [-0.25, 0.24, 0.33], snow, bubble, true);
-      }
       house(owner, -0.15, 0.90, 0.61, 0.64, white, red);
     } else if (landmark.id === 'marineford') {
       cylinder('marineford-fortress-island', 3.52, 3.25, 0.60, [0, 0.75, 0], white, 32, owner);
@@ -568,6 +465,16 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       }
       palm(owner, -0.68, -0.16, 1.45, -0.21); palm(owner, 0.65, -0.40, 1.25, 0.16);
     }
+    }
+    if (landmark.id === 'sabaody') {
+      const bubbleMat = mat('sabaody-bubble', '#b8f8e9', 0.30, 0.24); bubbleMat.specularColor = Color3.White(); bubbleMat.specularPower = 128;
+      for (let n = 0; n < 13; n++) {
+        const x = (random() - 0.5) * 5, z = (random() - 0.5) * 3.5, y = 1.1 + random() * 4.6, size = 0.24 + random() * 0.52;
+        const bubble = sphere('floating-resin-bubble', [size, size, size], [x, y, z], bubbleMat, owner, true);
+        drifting.push({ node: bubble, y, phase: random() * TAU, amount: 0.16 });
+        sphere('bubble-highlight', [0.15, 0.23, 0.09], [-0.25, 0.24, 0.33], snow, bubble, true);
+      }
+    }
     const harbor = GRAND_LINE_HARBORS.find(item => item.id === landmark.id)!;
     const pier = new TransformNode(`${landmark.id}-harbor-pier`, scene); pier.parent = owner;
     const shoreDistance = landmark.radius * (harbor.direction.x ? 1 : 0.80);
@@ -603,6 +510,9 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
 
   // JAXa's impossible upward current leads to the sky island and Shandora's golden bell.
   const sky = new TransformNode('skypiea-cloud-island', scene); sky.parent = root; sky.position.set(-6.624, 6.0, -22.01);
+  if (models.has('island_skypiea')) {
+    models.add('island_skypiea', { parent: sky, width: 4.1, depth: 3.1, height: 4.2, floor: -0.50 });
+  } else {
   cloud(sky, 0, 0, 0, 1.55);
   cloud(sky, -0.45, 0.20, 0.65, 1.10);
   const skyLand = cylinder('skypiea-island', 2.1, 2.1, 0.16, [0, 0.34, 0], sand, 32, sky); skyLand.scaling.z = 0.75;
@@ -612,18 +522,21 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   cylinder('golden-bell-rim', 0.68, 0.68, 0.07, [0, 0.92, 0], gold, 24, sky);
   sphere('golden-bell-clapper', [0.10, 0.16, 0.10], [0, 0.88, 0], navy, sky);
   palm(sky, 0.80, -0.17, 1.22, 0.15);
+  }
   tube('knock-up-stream', [[-6.624, -0.05, -22.01], [-6.574, 2, -21.91], [-6.774, 3.8, -22.01], [-6.624, 6, -22.01]], 0.20, mat('knock-up-stream-water', '#96e8e1', 0.2, 0.50));
   label('SkypiAI', 'LOCAL DREAMS, SKY-HIGH IDEAS', [-6.624, 6.40, -23.71], 4.3);
 
   // Two Seed Kings guard the windless waters; their silhouettes never enter the shipping lanes.
   for (const [x, z, sign] of [[-16.56, -25, 1], [16.56, 25.2, -1]]) {
-    const monster = mat('sea-king-jade', '#588e68');
-    tube('sea-king-neck', [[x, -0.18, z], [x + 0.5, 0.4, z], [x + 0.65, 1.5, z], [x + 1.00, 2.25, z]], 0.28, monster);
-    sphere('sea-king-head', [1.03, 0.65, 0.62], [x + 1.28, 2.28, z], monster);
-    sphere('sea-king-muzzle', [0.60, 0.33, 0.56], [x + 1.77, 2.18, z], sand);
-    sphere('sea-king-eye', [0.14, 0.14, 0.05], [x + 1.29, 2.48, z + sign * 0.30], snow);
-    sphere('sea-king-pupil', [0.066, 0.09, 0.026], [x + 1.32, 2.48, z + sign * 0.33], navy);
-    for (let n = 0; n < 4; n++) { const spike = cylinder('sea-king-spine', 0.21, 0, 0.38, [x + 0.43, 0.68 + n * 0.37, z], gold, 4); spike.rotation.z = -0.6; }
+    if (models.has('creature_sea_king')) {
+      const guardian = new TransformNode(`sea-king-${sign}`, scene); guardian.parent = root; guardian.position.set(x, 0, z);
+      models.add('creature_sea_king', { parent: guardian, width: 2.4, depth: 2.0, height: 3.4,
+        footprintRadius: 1.2, floor: -0.40, rotation: sign > 0 ? 0.5 : Math.PI + 0.5 });
+    } else {
+      const monster = mat('sea-king-jade', '#588e68');
+      tube('sea-king-neck', [[x, -0.18, z], [x + 0.3, 0.4, z], [x + 0.45, 1.5, z], [x + 0.6, 2.25, z]], 0.28, monster);
+      sphere('sea-king-head', [0.9, 0.65, 0.62], [x + 0.68, 2.28, z], monster);
+    }
     for (let n = 0; n < 3; n++) {
       const loop = ring('sea-king-wake', 0.65 + n * 0.32, -0.01, foam); loop.position.x = x; loop.position.z = z; loop.scaling.z = 0.5;
     }
@@ -632,10 +545,6 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   for (const [x, y, z, s] of [[-19.32, 7.6, -28.36, 1.7], [11.73, 7.8, -27.59, 1.3], [30.36, 6.4, -19.22, 1.8]]) {
     const puff = new TransformNode('slow-drifting-cloud', scene); puff.parent = root; puff.position.set(x, y, z);
     cloud(puff, 0, 0, 0, s, true); drifting.push({ node: puff, y, phase: random() * TAU, amount: 0.12 });
-  }
-  for (let n = 0; n < 9; n++) {
-    const x = -20.7 + random() * 42.78, z = -18.6 + random() * 26.35, y = 4.6 + random() * 1.5;
-    tube('gull-wing', [[x - 0.21, y, z], [x - 0.08, y + 0.10, z], [x, y, z], [x + 0.08, y + 0.10, z], [x + 0.21, y, z]], 0.018, snow);
   }
   // Fine log-pose route marks are part of the cartography, beneath the animated vessels.
   const routeMat = mat('log-pose-route', '#a4e2c7', 0.08, 0.37); routeMat.disableLighting = true;
@@ -677,13 +586,18 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     }
   }
   return {
+    selectCreature: id => { if (id !== 'laboon' || !laboon) return false; laboon.select(); return true; },
+    handleCreatureKey: (key, repeat) => laboon?.handleKey(key, repeat) ?? false,
+    installAsset: (type, container) => models.install(type, container),
     update(elapsed, reducedMotion) {
-      water.setFloat('time', reducedMotion ? 0 : elapsed);
-      if (scene.activeCamera) water.setVector3('cameraPosition', scene.activeCamera.globalPosition);
+      models.update(elapsed, reducedMotion);
+      laboon?.update(elapsed, reducedMotion);
+      waterfallMist?.update(elapsed, reducedMotion);
+      oceanWater.update(elapsed, reducedMotion);
       for (const item of drifting) item.node.position.y = item.y + (reducedMotion ? 0 : Math.sin(elapsed * 0.34 + item.phase) * item.amount);
     },
     dispose() {
-      root.dispose(false, false); water.dispose();
+      laboon?.dispose(); waterfallMist?.dispose(); models.dispose(); oceanWater.dispose(); root.dispose(false, false);
       for (const texture of textures) texture.dispose();
       for (const material of materials.values()) material.dispose();
     },

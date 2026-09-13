@@ -22,7 +22,7 @@ extension AppModel {
             load: { [weak self] id in
                 guard let self else { throw CancellationError() }
                 let detail = try await self.backend.get("/api/sessions/\(id)", as: SessionDetailResponse.self)
-                guard detail.archived != true else { throw AgentWorldError.unavailable("This conversation is archived.") }
+                guard detail.archived != true else { throw AgentWorldError.conversationUnavailable("This conversation is archived.") }
                 self.splitPaneBlocks[id] = ChatTranscriptBuilder.blocks(from: detail.messages)
             },
             activity: { [weak self] profile, workspace in

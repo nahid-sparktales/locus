@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "credit_ceiling": 39,
+  "assets": [
+    {
+      "asset": "scenery_reverse_mountain",
+      "prompt": "Premium hand-painted miniature 3D game terrain. Reverse Mountain from One Piece: one towering craggy red sandstone mountain with deeply carved strata, winding turquoise river channels converging near its summit, a beautiful broad whitewater waterfall cascading down the front rock face into a small rocky plunge basin. Lush moss and grass on ledges. Natural narrow irregular rock base; mountain height twice its width. Rich PBR textures, intricate sculpted geology, isolated whole object, front three-quarter view, plain pale gray. No ocean plane, no labels, no boats, no pedestal, no clouds."
+    }
+  ]
+}

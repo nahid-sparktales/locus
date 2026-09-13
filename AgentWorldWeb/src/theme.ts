@@ -2,19 +2,33 @@ import { safeThemeID } from './state.ts';
 import type { Point } from './state.ts';
 
 export const HUMANOID_ASSET_TYPES = ['resident', 'resident_explorer', 'resident_botanist', 'resident_engineer'] as const;
-export const SHIP_ASSET_TYPES = ['ship_thousand_sunny', 'ship_going_merry', 'ship_baratie', 'ship_navy_h03', 'ship_polar_tang', 'ship_spade_pirates', 'ship_red_force', 'ship_moby_dick', 'ship_perfume_yuda', 'ship_oro_jackson', 'ship_queen_mama_chanter', 'ship_dragons_ship'] as const;
+export const DEFAULT_SHIP_ASSET_TYPES = ['ship_thousand_sunny', 'ship_going_merry', 'ship_baratie', 'ship_navy_h03', 'ship_polar_tang', 'ship_spade_pirates', 'ship_red_force', 'ship_moby_dick', 'ship_perfume_yuda', 'ship_oro_jackson', 'ship_queen_mama_chanter', 'ship_dragons_ship'] as const;
+export const SHIP_ASSET_TYPES = [...DEFAULT_SHIP_ASSET_TYPES, 'ship_mihawk_coffin', 'ship_garp_battleship', 'ship_marine_patrol'] as const;
 export type ShipAssetType = typeof SHIP_ASSET_TYPES[number];
+/** Visually calibrated against the packaged GLBs: after Babylon's glTF
+ * handedness conversion, each bow points along +X. Residents move along +Z.
+ * Keep this explicit so a new model requires its own facing calibration. */
+export const SHIP_MODEL_ROTATIONS: Readonly<Record<ShipAssetType, number>> = {
+  ship_thousand_sunny: -Math.PI / 2, ship_going_merry: -Math.PI / 2, ship_baratie: -Math.PI / 2,
+  ship_navy_h03: -Math.PI / 2, ship_polar_tang: -Math.PI / 2, ship_spade_pirates: -Math.PI / 2,
+  ship_red_force: -Math.PI / 2, ship_moby_dick: -Math.PI / 2, ship_perfume_yuda: -Math.PI / 2,
+  ship_oro_jackson: -Math.PI / 2, ship_queen_mama_chanter: -Math.PI / 2, ship_dragons_ship: -Math.PI / 2,
+  ship_mihawk_coffin: -Math.PI / 2, ship_garp_battleship: -Math.PI / 2, ship_marine_patrol: -Math.PI / 2,
+};
 export const SHIP_NAMES: Record<ShipAssetType, string> = {
   ship_thousand_sunny: 'Thousand Funny', ship_going_merry: 'Going Sherry', ship_baratie: 'BaratAI',
   ship_navy_h03: 'Navy Q4', ship_polar_tang: 'Polar Tensor', ship_spade_pirates: "Spade Prompters’ Ship",
   ship_red_force: 'Thread Force', ship_moby_dick: 'Moby Disk', ship_perfume_yuda: 'Perfume CUDA',
   ship_oro_jackson: 'Oro JSON', ship_queen_mama_chanter: 'Queen Llama Chanter', ship_dragons_ship: "Dragon’s Chip",
+  ship_mihawk_coffin: "Mihawk’s Coffin Boat", ship_garp_battleship: "Garp’s Battleship", ship_marine_patrol: 'Marine Patrol',
 };
 export const RESIDENT_ASSET_TYPES = [...HUMANOID_ASSET_TYPES, ...SHIP_ASSET_TYPES] as const;
 export type ResidentAssetType = typeof RESIDENT_ASSET_TYPES[number];
 export const PROP_ASSET_TYPES = ['beacon', 'habitat', 'crates', 'planter', 'lounge', 'server'] as const;
 export type PropAssetType = typeof PROP_ASSET_TYPES[number];
-export const ASSET_TYPES = [...RESIDENT_ASSET_TYPES, 'station', ...PROP_ASSET_TYPES] as const;
+export const SCENERY_ASSET_TYPES = ['island_twin_cape', 'island_little_garden', 'island_drum', 'island_alabasta', 'island_water_seven', 'island_enies_lobby', 'island_sabaody', 'island_marineford', 'island_wano', 'island_whole_cake', 'island_laugh_tale', 'island_jaya', 'island_skypiea', 'scenery_red_line', 'scenery_reverse_mountain', 'creature_laboon', 'creature_sea_king', 'island_elbaf', 'island_egghead'] as const;
+export type SceneryAssetType = typeof SCENERY_ASSET_TYPES[number];
+export const ASSET_TYPES = [...RESIDENT_ASSET_TYPES, 'station', ...PROP_ASSET_TYPES, ...SCENERY_ASSET_TYPES] as const;
 export type AssetType = typeof ASSET_TYPES[number];
 export type Placement = Point & { rotation?: number };
 export type CircleObstacle = Point & { radius: number };
@@ -72,13 +86,17 @@ export const DEFAULT_THEME: Theme = {
   version: 1, id: 'outpost', name: 'Orbital Locus Outpost', description: 'A living campus for your agents.', environment: 'campus',
   assets: {},
   heights: { resident: 1.8, resident_explorer: 1.8, resident_botanist: 1.8, resident_engineer: 1.8, station: 1.25, beacon: 3.5, habitat: 4, crates: 1.2, planter: 1.15, lounge: 0.9, server: 1.9,
-    ship_thousand_sunny: 3.2, ship_going_merry: 2.9, ship_baratie: 3.2, ship_navy_h03: 3.1, ship_polar_tang: 2.1, ship_spade_pirates: 3.2, ship_red_force: 3.4, ship_moby_dick: 3.3, ship_perfume_yuda: 3.2, ship_oro_jackson: 3.4, ship_queen_mama_chanter: 3.5, ship_dragons_ship: 3.3 },
-  rotations: {}, palette: { ground: '#46613E', accent: '#C9F54A', sky: '#171713' },
+    ship_thousand_sunny: 3.2, ship_going_merry: 2.9, ship_baratie: 3.2, ship_navy_h03: 3.1, ship_polar_tang: 2.1, ship_spade_pirates: 3.2, ship_red_force: 3.4, ship_moby_dick: 3.3, ship_perfume_yuda: 3.2, ship_oro_jackson: 3.4, ship_queen_mama_chanter: 3.5, ship_dragons_ship: 3.3,
+    ship_mihawk_coffin: 2.7, ship_garp_battleship: 3.4, ship_marine_patrol: 3.0,
+    island_twin_cape: 4.8, island_little_garden: 4.5, island_drum: 6, island_alabasta: 4.2,
+    island_water_seven: 4.4, island_enies_lobby: 4.6, island_sabaody: 5.5, island_marineford: 4.7,
+    island_wano: 5, island_whole_cake: 5, island_laugh_tale: 3.2, island_jaya: 3.6, island_skypiea: 4.4, scenery_red_line: 7, scenery_reverse_mountain: 8, creature_laboon: 1.8, creature_sea_king: 3.4, island_elbaf: 7.5, island_egghead: 5 },
+  rotations: { ...SHIP_MODEL_ROTATIONS }, palette: { ground: '#46613E', accent: '#C9F54A', sky: '#171713' },
   layout: campusLayout(),
 };
 
 export function safeAssetPath(value: unknown): value is string {
-  return typeof value === 'string' && /^assets\/[a-zA-Z0-9_./-]+\.glb$/.test(value) && !value.split('/').some(segment => segment === '..' || segment === '.') && !value.includes('//');
+  return typeof value === 'string' && /^assets\/[a-zA-Z0-9_./-]+\.glb(?:\.gz)?$/.test(value) && !value.split('/').some(segment => segment === '..' || segment === '.') && !value.includes('//');
 }
 function placement(p: unknown): p is Placement {
   return !!p && typeof p === 'object' && typeof (p as Placement).x === 'number' && Number.isFinite((p as Placement).x) && Math.abs((p as Placement).x) <= 48
@@ -90,7 +108,7 @@ export function parseTheme(input: unknown): Theme {
   if (!input || typeof input !== 'object') return DEFAULT_THEME;
   const value = input as Record<string, unknown>;
   if (value.version !== 1 || !safeThemeID(value.id)) return DEFAULT_THEME;
-  const result: Theme = { ...DEFAULT_THEME, assets: {}, heights: { ...DEFAULT_THEME.heights }, rotations: {}, palette: { ...DEFAULT_THEME.palette }, layout: campusLayout() };
+  const result: Theme = { ...DEFAULT_THEME, assets: {}, heights: { ...DEFAULT_THEME.heights }, rotations: { ...SHIP_MODEL_ROTATIONS }, palette: { ...DEFAULT_THEME.palette }, layout: campusLayout() };
   result.id = value.id;
   result.environment = value.environment === 'ocean' ? 'ocean' : 'campus';
   if (typeof value.name === 'string' && value.name.length <= 100) result.name = value.name;
@@ -116,7 +134,7 @@ export function parseTheme(input: unknown): Theme {
     if (Array.isArray(layout.props) && layout.props.length <= 32 && layout.props.every(p => placement(p) && PROP_ASSET_TYPES.includes((p as PropPlacement).asset) && ((p as PropPlacement).radius === undefined || boundedRadius((p as PropPlacement).radius)))) {
       result.layout.props = layout.props.map(p => ({ asset: p.asset, x: p.x, z: p.z, ...(p.rotation === undefined ? {} : { rotation: p.rotation }), ...(p.radius === undefined ? {} : { radius: p.radius }) }));
     }
-    if (Array.isArray(layout.obstacles) && layout.obstacles.length <= 32 && layout.obstacles.every(p => placement(p) && boundedRadius((p as CircleObstacle).radius))) {
+    if (Array.isArray(layout.obstacles) && layout.obstacles.length <= (result.environment === 'ocean' ? 64 : 32) && layout.obstacles.every(p => placement(p) && boundedRadius((p as CircleObstacle).radius))) {
       result.layout.obstacles = layout.obstacles.map(p => ({ x: p.x, z: p.z, radius: p.radius }));
     }
     if (Array.isArray(layout.wanderPoints) && layout.wanderPoints.length <= 64 && layout.wanderPoints.every(p => placement(p) && Math.hypot(p.x, p.z) < result.layout.radius - 0.5)) {

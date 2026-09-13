@@ -336,6 +336,9 @@ struct ComposerActionLayout: Layout {
 }
 
 struct ComposerView: View {
+    @Environment(\.locusOceanTheme) private var oceanTheme
+    private var composerPanel: Color { oceanTheme ? Color(nsColor: LocusTheme.oceanPalette.panel) : LocusTheme.panel }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var composerState: ComposerStateModel
     @EnvironmentObject private var voiceControl: VoiceControlModel
@@ -479,7 +482,7 @@ struct ComposerView: View {
         .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
-                colors: [LocusTheme.panel.opacity(0), LocusTheme.panel],
+                colors: [composerPanel.opacity(0), composerPanel],
                 startPoint: .top,
                 endPoint: .bottom
             )

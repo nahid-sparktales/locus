@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "credit_ceiling": 78,
+  "assets": [
+    {
+      "asset": "island_elbaf",
+      "prompt": "Premium richly detailed hand-painted 3D game island diorama inspired by Elbaf from One Piece, the home of giants. A monumental ancient world tree with a thick intricately twisted trunk, gigantic exposed roots and a broad layered emerald canopy towers over a rugged mossy Scandinavian island. Tiny beautiful Viking timber longhouses with curved carved roofs, a great carved stone stair, hanging rope bridges threaded among enormous roots, waterfalls over dark stone cliffs. Strong majestic vertical silhouette with visible village detail below the canopy. Warm wood and deep foliage, natural rock strata, polished sculpted PBR materials and exquisite miniature craftsmanship. Complete compact irregular oval island with self-contained rocky coastline, viewed from elevated three-quarter angle. Isolated on plain light gray, no surrounding sea or large water plane, no labels, no people, no pedestal, no flat circular base. Match a premium colorful pirate adventure tabletop map."
+    },
+    {
+      "asset": "island_egghead",
+      "prompt": "Premium richly detailed hand-painted 3D game island diorama inspired by Egghead Island from One Piece, a brilliant futuristic tropical research island. A large gleaming white egg-shaped laboratory dome with turquoise glazing rises over a compact lush island, surrounded by elegant curved science towers, spherical satellite labs, looping orange-red transit tubes, antennae and small palm trees. One elevated ring walkway and intricate lower-level white futuristic buildings, very readable varied sci-fi silhouettes. Retro-futurist 1960s space-age design, coral accents and turquoise glass, weathered coastal rocks with tiny sandy coves, refined sculpted surfaces and polished PBR materials. Complete compact irregular island coastline in elevated three-quarter view, isolated against light gray, no surrounding sea or large water plane, no lettering or numbers, no people, no pedestal, no flat circular base. Match a beautiful high-quality colorful pirate adventure miniature map."
+    }
+  ]
+}

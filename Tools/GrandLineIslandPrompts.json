@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "credit_ceiling": 546,
+  "assets": [
+    {
+      "asset": "island_twin_cape",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Twin Cape from One Piece: weathered red-and-ivory striped lighthouse with glass lantern, tiny keeper cottage, windswept palms, winding stone path, rugged chalk coves and pale sand."
+    },
+    {
+      "asset": "island_little_garden",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Little Garden from One Piece: lush prehistoric jungle island, a craggy dormant volcano, enormous ferns, ancient trees, mossy boulders and one small friendly long-neck dinosaur."
+    },
+    {
+      "asset": "island_drum",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Drum Island from One Piece: towering rugged flat-topped snowy stone mountains, pink-roofed medieval castle on highest peak, evergreen forest, snowy foothill village and winding trail."
+    },
+    {
+      "asset": "island_alabasta",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Alabasta from One Piece: sunlit sandstone island, ornate domed royal palace, elegant minarets, layered ochre cliffs, desert village, small pyramids and emerald palm oasis."
+    },
+    {
+      "asset": "island_water_seven",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Water Seven from One Piece: rich circular terraced Venetian water city with pastel roofs, detailed stone houses, concentric blue canals, arched bridges, grand central fountain and waterfalls."
+    },
+    {
+      "asset": "island_enies_lobby",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Enies Lobby from One Piece: magnificent ivory judicial fortress island, monumental courthouse with turquoise roof, ornate gates, crenellated towers, slender stone bridges and green lawns."
+    },
+    {
+      "asset": "island_sabaody",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Sabaody Archipelago from One Piece: enormous graceful mangrove trees with arching buttress roots and dense emerald crowns, tiny colorful houses between roots, moss gardens and golden sandy coves."
+    },
+    {
+      "asset": "island_marineford",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Marineford from One Piece: imposing crescent-shaped white stone naval fortress island, layered dark teal Japanese castle, bastion walls, watchtowers, tiny gun emplacements and flagpoles."
+    },
+    {
+      "asset": "island_wano",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Wano from One Piece: beautiful Japanese island, tall ornate teal-roofed red-and-ivory pagoda castle, pink cherry blossoms, curved bridge over narrow canal, torii gate, stone terraces and bamboo."
+    },
+    {
+      "asset": "island_whole_cake",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Whole Cake Island from One Piece: elaborate tiered pastel cake castle with turrets and creamy frosting, strawberry roofs, candy-cane trees, macaron houses, confection gardens and biscuit cliffs."
+    },
+    {
+      "asset": "island_laugh_tale",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Laugh Tale from One Piece: mysterious lush treasure island, weathered ancient stone ruins surrounding one carved dark red Poneglyph, tiny open gold-filled chest, tropical palms and worn stairs."
+    },
+    {
+      "asset": "island_jaya",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Jaya from One Piece: lush tropical pirate island, rustic weathered timber tavern village, red roofs, dense palms, ancient overgrown stone ruins and a rocky sunlit cove."
+    },
+    {
+      "asset": "island_skypiea",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Skypiea from One Piece: floating heavenly island on voluminous sculpted white clouds, ancient ornate Shandora golden bell shrine, mossy stone ruins, palm trees and small turquoise pools."
+    },
+    {
+      "asset": "scenery_red_line",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate sculpted geometry, beautiful rich PBR colors. High three-quarter isometric view, entire isolated object centered on plain pale gray. Natural irregular land base with shallow rocky edges; no ocean, no pedestal, no labels, no people, no boats or piers. Red Line from One Piece: a long narrow monumental ridge of rusty red sandstone cliffs, towering irregular crags, deeply eroded layered strata, natural buttresses, grass along the top. Solid continuous ridge, length three times width, height twice width."
+    }
+  ]
+}

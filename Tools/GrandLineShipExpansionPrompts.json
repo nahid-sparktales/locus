@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "credit_ceiling": 117,
+  "assets": [
+    {
+      "asset": "ship_mihawk_coffin",
+      "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Dracule Mihawk's very small black coffin-shaped boat Hitsugibune: long narrow gothic coffin hull, ornate curved black trim, a single high-backed crimson velvet throne, tall black cross-shaped mast with tiny dark sail, green-flame candle lanterns on both sides. Intimate one-person craft, dramatic elegant gothic silhouette."
+    },
+    {
+      "asset": "ship_garp_battleship",
+      "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Vice Admiral Garp's massive Marine battleship: unmistakable giant friendly dog-head figurehead holding a bone in its mouth at the bow, white armored hull with cobalt blue trim, rows of black broadside cannon ports, multiple tall masts and ivory sails with simple blue seagull emblems, layered naval command decks."
+    },
+    {
+      "asset": "ship_marine_patrol",
+      "prompt": "Premium hand-painted 3D game miniature of one One Piece ship. Intricate sculpted hull, crisp rigging, rich PBR colors, large front-left three-quarter view. Entire ship isolated on plain pale gray, no ocean, no pedestal, no labels, no people. Standard Marine patrol sailing ship: crisp white and royal-blue wooden hull, three masts with cream square sails bearing simple blue seagull insignia, a conventional pointed navy bow, disciplined rows of dark cannon ports, aft quarterdeck, blue pennants, warm timber deck. Classic navy vessel, no animal figurehead."
+    }
+  ]
+}
