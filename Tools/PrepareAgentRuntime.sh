@@ -93,7 +93,11 @@ fi
 "${workdir}/python/bin/python3" -m compileall -q -j 0 \
     "${workdir}/python/lib" "${workdir}/site-packages"
 
-/bin/rm -rf "${cache}"
+# Keep the cache directory itself: Finder can recreate .DS_Store while a
+# recursive removal is running, causing rm to fail with "Directory not empty".
+# Invalidate the stamp before replacing only the runtime-owned contents.
+/bin/rm -f "${stamp_file}"
+/bin/rm -rf "${cache}/cpython" "${cache}/site-packages"
 /bin/mkdir -p "${cache}"
 /usr/bin/ditto "${workdir}/python" "${cache}/cpython"
 /usr/bin/ditto "${workdir}/site-packages" "${cache}/site-packages"
