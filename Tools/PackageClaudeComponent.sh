@@ -15,7 +15,7 @@ for name in claude LICENSE NOTICE PROVENANCE; do
     ditto --norsrc --noextattr --noqtn "${cache}/${name}" "${staging}/${name}"
 done
 codesign --force --timestamp --options runtime --entitlements "${repo_root}/Config/CodexCodeModeHost.entitlements" --identifier io.sparktales.locus.claude --sign "${identity}" "${staging}/claude"
-codesign --verify --strict -R='=identifier "io.sparktales.locus.claude" and anchor apple generic and certificate leaf[subject.OU] = "4X4RJA7GMD"' "${staging}/claude"
+codesign --verify --strict -R='identifier "io.sparktales.locus.claude" and anchor apple generic and certificate leaf[subject.OU] = "4X4RJA7GMD"' "${staging}/claude"
 python3 - "${staging}" "${out_dir}" "${arch}" "${repo_root}" <<'PY'
 import hashlib, json, os, subprocess, sys
 from pathlib import Path
