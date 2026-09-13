@@ -390,6 +390,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.simulatorControl)
 #if !LOCUS_APP_STORE
             .environmentObject(model.codexComponent)
+            .environmentObject(model.claudeComponent)
 #endif
     }
 }

@@ -41,15 +41,15 @@ enum ClaudeComponent: PlanComponentDescriptor {
 
 #if !LOCUS_APP_STORE
 struct ClaudeComponentDownloadView: View {
-    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var claudeComponent: ClaudeComponentInstaller
     let account: ProviderAccount
     var body: some View {
-        ClaudeComponentInstallControls(installer: model.claudeComponent, account: account)
+        ClaudeComponentInstallControls(installer: claudeComponent, account: account)
     }
 }
 
 private struct ClaudeComponentInstallControls: View {
-    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @ObservedObject var installer: ClaudeComponentInstaller
     let account: ProviderAccount
     var body: some View {
@@ -64,7 +64,7 @@ private struct ClaudeComponentInstallControls: View {
                     Task {
                         installer.install()
                         await installer.waitForCompletion()
-                        await model.providerAccountsModel.refreshChatGPTAccount(for: account)
+                        await providerAccounts.refreshChatGPTAccount(for: account)
                     }
                 }
                 .accessibilityIdentifier("accountEditor.claude.downloadComponent")
