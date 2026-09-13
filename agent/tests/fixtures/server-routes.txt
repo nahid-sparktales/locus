@@ -82,6 +82,7 @@ DELETE /api/chat-folders/{folder_id}
 GET /api/sessions/search
 POST /api/sessions/new
 POST /api/sessions/detached
+POST /api/sessions/agent-profile/{profile_id}/cleanup
 DELETE /api/sessions
 DELETE /api/sessions/{session_id}
 POST /api/sessions/restore

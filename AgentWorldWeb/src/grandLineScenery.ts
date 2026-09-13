@@ -1,6 +1,6 @@
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
+import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
@@ -68,6 +68,10 @@ export const GRAND_LINE_WANDER_POINTS: readonly Point[] = GRAND_LINE_HARBORS.fla
 type XYZ = [number, number, number];
 type Scenery = { update: (elapsed: number, reducedMotion: boolean) => void; dispose: () => void };
 const TAU = Math.PI * 2;
+const coastPhase = (index: number): number => index * 2.3999632297 + 0.73;
+// The ocean uses the same contour to blend its sandy shallows into the sculpted shore.
+const coastContour = (angle: number, phase: number): number =>
+  1 + Math.sin(angle * 3 + phase) * 0.065 + Math.cos(angle * 5 - phase) * 0.035 + Math.sin(angle * 9 + phase * 2) * 0.012;
 
 export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, parent: TransformNode): Scenery {
   const root = new TransformNode('grand-line-archipelago', scene);
@@ -83,7 +87,8 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     const found = materials.get(key); if (found) return found;
     const material = new StandardMaterial(`grand-line-${name}`, scene);
     material.diffuseColor = Color3.FromHexString(hex);
-    material.specularColor = new Color3(0.12, 0.16, 0.14);
+    material.specularColor = new Color3(0.055, 0.065, 0.055);
+    material.specularPower = 48;
     material.emissiveColor = material.diffuseColor.scale(emission);
     material.alpha = alpha;
     materials.set(key, material); return material;
@@ -102,6 +107,10 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   const foam = mat('sea-foam', '#d0ffec', 0.2, 0.69);
   foam.disableLighting = true;
   const terrain = mat('terrain-vertex-color', '#ffffff');
+  terrain.specularColor = Color3.Black();
+  const rock = mat('shore-rock', '#a5a38a'), rockLight = mat('shore-rock-highlight', '#c9c7ab');
+  const trim = mat('painted-trim', '#f6dfb7');
+  const leafShade = mat('deep-leaves', '#286846');
   const finish = (mesh: Mesh, material: StandardMaterial, position: XYZ, owner: TransformNode = root, animated = false): Mesh => {
     mesh.position.set(...position); mesh.parent = owner; mesh.material = material;
     mesh.isPickable = false; mesh.receiveShadows = true;
@@ -113,7 +122,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   const cylinder = (name: string, bottom: number, top: number, height: number, position: XYZ, material: StandardMaterial, sides = 24, owner = root): Mesh =>
     finish(MeshBuilder.CreateCylinder(name, { diameterBottom: bottom, diameterTop: top, height, tessellation: sides }, scene), material, position, owner);
   const sphere = (name: string, size: XYZ, position: XYZ, material: StandardMaterial, owner = root, animated = false): Mesh => {
-    const mesh = finish(MeshBuilder.CreateSphere(name, { diameter: 1, segments: 8 }, scene), material, position, owner, animated);
+    const mesh = finish(MeshBuilder.CreateSphere(name, { diameter: 1, segments: 12 }, scene), material, position, owner, animated);
     mesh.scaling.set(...size); return mesh;
   };
   const tube = (name: string, path: XYZ[], radius: number, material: StandardMaterial, owner = root, sides = 8): Mesh =>
@@ -122,18 +131,19 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     return finish(MeshBuilder.CreateTorus(name, { diameter: radius * 2, thickness, tessellation: 48 }, scene), material, [0, height, 0], owner);
   };
   const label = (title: string, subtitle: string, position: XYZ, width = 4.3, isSea = false): void => {
-    const texture = new DynamicTexture(`map-label-${title}`, { width: 1024, height: 192 }, scene, false);
+    const texture = new DynamicTexture(`map-label-${title}`, { width: 1024, height: 192 }, scene, true);
+    texture.anisotropicFilteringLevel = 8;
     const context = texture.getContext() as CanvasRenderingContext2D;
     context.clearRect(0, 0, 1024, 192);
     context.textAlign = 'center'; context.textBaseline = 'middle';
     context.font = `600 ${isSea ? 63 : 57}px Georgia, serif`;
-    context.strokeStyle = isSea ? 'rgba(213,255,239,0.46)' : 'rgba(238,255,244,0.94)';
-    context.lineWidth = isSea ? 2 : 6;
+    context.strokeStyle = 'rgba(12,59,66,0.56)';
+    context.lineWidth = isSea ? 1 : 3;
     context.strokeText(title.toUpperCase(), 512, 74);
-    context.fillStyle = isSea ? 'rgba(13,101,122,0.7)' : '#174b53';
+    context.fillStyle = isSea ? 'rgba(205,236,211,0.34)' : '#d9ead2';
     context.fillText(title.toUpperCase(), 512, 74);
     context.font = '500 25px Georgia, serif';
-    context.fillStyle = isSea ? 'rgba(22,99,110,0.75)' : '#276c72';
+    context.fillStyle = isSea ? 'rgba(205,236,211,0.30)' : '#c3dbc7';
     context.fillText(subtitle, 512, 131);
     texture.update(); texture.hasAlpha = true; textures.push(texture);
     const material = new StandardMaterial(`map-label-${title}`, scene);
@@ -157,7 +167,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       varying vec3 vPosition; varying vec3 vWorld; varying float vWave;
       void main(void) {
         vec3 p = position;
-        float calm = 1.0 - 0.72 * smoothstep(21.5, 22.5, abs(p.z)) * (1.0 - smoothstep(25.5, 26.5, abs(p.z)));
+        float calm = 1.0 - 0.72 * smoothstep(20.8, 23.0, abs(p.z)) * (1.0 - smoothstep(25.0, 27.2, abs(p.z)));
         float w = (sin(p.x * 0.68 + p.z * 0.37 + time * 0.56) * 0.047 + sin(p.z * 1.02 - p.x * 0.28 + time * 0.4) * 0.024) * calm;
         p.y += w; vPosition = p; vWorld = (world * vec4(p, 1.0)).xyz; vWave = w;
         gl_Position = worldViewProjection * vec4(p, 1.0);
@@ -165,57 +175,91 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     fragmentSource: `precision highp float;
       varying vec3 vPosition; varying vec3 vWorld; varying float vWave;
       uniform float time; uniform vec3 cameraPosition;
+      uniform vec4 islandCoasts[${GRAND_LINE_LANDMARKS.length}];
       float wave(vec2 p) {
         return sin(p.x * 2.6 + p.y * 1.5 + time * 0.66) + sin(p.x * -1.8 + p.y * 2.1 - time * 0.44) * 0.61 + sin(p.x * 6.6 + p.y * 3.7 + time * 0.9) * 0.19;
+      }
+      float distanceToShore(vec2 p) {
+        float shore = 100.0;
+        for (int i = 0; i < ${GRAND_LINE_LANDMARKS.length}; i++) {
+          vec4 island = islandCoasts[i];
+          vec2 local = (p - island.xy) * vec2(1.0, 1.25);
+          float range = island.z * 1.2 + 2.4;
+          // Only nearby islands need the more expensive organic contour calculation.
+          if (dot(local,local) < range * range) {
+            float radial = length(local);
+            float a = atan(local.y, local.x);
+            float contour = 1.0 + sin(a * 3.0 + island.w) * 0.065 + cos(a * 5.0 - island.w) * 0.035 + sin(a * 9.0 + island.w * 2.0) * 0.012;
+            shore = min(shore, radial - island.z * 1.07 * contour);
+          }
+        }
+        return shore;
       }
       void main(void) {
         vec2 p = vPosition.xz;
         float depth = smoothstep(16.0, 73.0, length(p * vec2(0.75, 1.0)));
-        vec3 color = mix(vec3(0.025,0.48,0.60), vec3(0.037,0.31,0.43), depth);
+        vec3 color = mix(vec3(0.025,0.44,0.54), vec3(0.028,0.27,0.38), depth);
         float swell = sin(p.x*0.11+p.y*0.17) * 0.5 + 0.5;
         color += vec3(0.012,0.085,0.05) * swell;
-        float calm = smoothstep(21.5,22.5,abs(p.y)) * (1.0 - smoothstep(25.5,26.5,abs(p.y)));
-        color = mix(color,vec3(0.23,0.65,0.52),calm*0.66);
+        float calm = smoothstep(20.8,23.0,abs(p.y)) * (1.0 - smoothstep(25.0,27.2,abs(p.y)));
+        color = mix(color,vec3(0.19,0.59,0.50),calm*0.42);
+        float shore = distanceToShore(p);
+        float shelf = 1.0 - smoothstep(0.0,2.25,shore);
+        float shallows = 1.0 - smoothstep(-0.12,0.88,shore);
+        color = mix(color,vec3(0.12,0.65,0.64),shelf*0.79);
+        color = mix(color,vec3(0.43,0.77,0.65),shallows*0.77);
+        float caustic = sin(p.x*9.0+sin(p.y*6.0+time*0.25)) + sin(p.y*8.0-sin(p.x*5.0-time*0.3));
+        color += vec3(0.12,0.20,0.10) * pow(max(0.0,1.0-abs(caustic)*1.4),6.0) * shelf * 0.15;
         float w = wave(p);
         float hairline = pow(max(0.0, 1.0 - abs(w) * 1.13), 18.0);
         float wavePatch = smoothstep(0.1,0.78,sin(p.x*0.44+p.y*0.19)*sin(p.y*0.39-p.x*0.11));
-        color += vec3(0.33,0.59,0.51) * hairline * (0.045+wavePatch*0.16) * (1.0-calm*0.72);
+        color += vec3(0.33,0.59,0.51) * hairline * (0.025+wavePatch*0.10) * (1.0-calm*0.72);
         float wx = wave(p + vec2(0.015,0.0)) - w;
         float wz = wave(p + vec2(0.0,0.015)) - w;
-        vec3 n = normalize(vec3(-wx*0.76,1.0,-wz*0.76));
+        vec3 n = normalize(vec3(-wx*2.6,1.0,-wz*2.6));
         vec3 light = normalize(vec3(-0.5,1.0,0.6));
         vec3 view = normalize(cameraPosition-vWorld);
-        float spec = pow(max(0.0,dot(n,normalize(light+view))),140.0);
-        color += vec3(0.82,0.95,0.75) * spec * 0.32;
+        float spec = pow(max(0.0,dot(n,normalize(light+view))),96.0);
+        color += vec3(0.82,0.95,0.75) * spec * (0.045+wavePatch*0.07);
         float crest = smoothstep(1.49,1.76,w) * wavePatch;
         color = mix(color,vec3(0.60,0.88,0.78),crest*0.26*(1.0-calm));
+        float surfPatch = smoothstep(-0.25,0.55,sin(p.x*2.1+p.y*1.7)+sin(p.y*3.1-p.x*0.8)*0.5);
+        float surf = pow(max(0.0,sin(shore*9.0-time*0.68+sin(p.x*1.8+p.y*2.3)*0.28)),12.0);
+        surf *= smoothstep(-0.06,0.06,shore) * (1.0-smoothstep(0.18,0.78,shore)) * surfPatch;
+        color = mix(color,vec3(0.82,0.94,0.81),surf*0.64);
         gl_FragColor = vec4(color,1.0);
       }`,
-  }, { attributes: ['position', 'normal', 'uv'], uniforms: ['worldViewProjection', 'world', 'time', 'cameraPosition'] });
+  }, { attributes: ['position', 'normal', 'uv'], uniforms: ['worldViewProjection', 'world', 'time', 'cameraPosition', 'islandCoasts'] });
   water.setFloat('time', 0); water.setVector3('cameraPosition', new Vector3(0, 30, 40));
+  water.setArray4('islandCoasts', GRAND_LINE_LANDMARKS.flatMap((island, index) => [island.x, island.z, island.radius, coastPhase(index)]));
   ocean.material = water;
 
-  function island(x: number, z: number, radius: number, grassColor = '#6aa65d', sandColor = '#ecd099'): TransformNode {
+  function island(index: number, grassColor: string, sandColor: string): TransformNode {
+    const { x, z, radius, id } = GRAND_LINE_LANDMARKS[index];
     const owner = new TransformNode('island', scene); owner.parent = root; owner.position.set(x, 0, z);
-    const reef = cylinder('turquoise-shallows', radius * 2.62, radius * 2.62, 0.016, [0, -0.075, 0], mat('lagoon-shelf', '#2fbdba', 0.12), 56, owner);
-    reef.scaling.z = 0.82;
-    const innerReef = cylinder('shallow-water', radius * 2.32, radius * 2.32, 0.02, [0, -0.05, 0], mat('lagoon-shallows', '#67d6be', 0.08), 56, owner);
-    innerReef.scaling.z = 0.81;
-    const segments = 38, positions: number[] = [], colors: number[] = [], indices: number[] = [], normals: number[] = [];
-    const phase = random() * TAU;
+    const segments = 80, positions: number[] = [], colors: number[] = [], indices: number[] = [], normals: number[] = [];
+    const phase = coastPhase(index), snowy = id === 'drum', desert = id === 'alabasta';
+    const grassBase = Color3.FromHexString(grassColor), sandBase = Color3.FromHexString(sandColor);
     const rings = [
-      { r: 0.005, y: 0.60, c: grassColor }, { r: 0.65, y: 0.61, c: grassColor },
-      { r: 0.83, y: 0.46, c: grassColor }, { r: 0.92, y: 0.17, c: sandColor },
-      { r: 1.05, y: 0.025, c: sandColor }, { r: 1.075, y: -0.16, c: '#a69b78' },
+      { r: 0, y: 0.60, c: grassBase }, { r: 0.30, y: 0.61, c: grassBase },
+      { r: 0.57, y: 0.61, c: grassBase }, { r: 0.72, y: 0.57, c: grassBase },
+      { r: 0.82, y: 0.46, c: grassBase.scale(0.94) },
+      { r: 0.875, y: 0.28, c: Color3.Lerp(grassBase, sandBase, 0.72) },
+      { r: 0.92, y: 0.17, c: sandBase }, { r: 0.99, y: 0.065, c: sandBase },
+      { r: 1.04, y: -0.015, c: Color3.Lerp(sandBase, Color3.FromHexString('#a2b59a'), 0.26) },
+      { r: 1.075, y: -0.17, c: Color3.FromHexString(snowy ? '#a6c5c7' : '#9da58b') },
+      { r: 1.10, y: -0.32, c: Color3.FromHexString('#6d9485') },
     ];
     for (const layer of rings) {
-      const color = Color4.FromColor3(Color3.FromHexString(layer.c), 1);
       for (let n = 0; n < segments; n++) {
         const angle = n / segments * TAU;
-        const contour = 1 + Math.sin(angle * 3 + phase) * 0.075 + Math.cos(angle * 5 - phase) * 0.035;
-        positions.push(Math.cos(angle) * radius * layer.r * contour, layer.y + (layer.r < 0.85 ? Math.sin(angle * 4) * 0.035 : 0), Math.sin(angle) * radius * layer.r * contour * 0.80);
-        const shade = 0.98 + Math.sin(angle * 2 + phase) * 0.025;
-        colors.push(color.r * shade, color.g * shade, color.b * shade, 1);
+        const contour = coastContour(angle, phase);
+        const px = Math.cos(angle) * radius * layer.r * contour, pz = Math.sin(angle) * radius * layer.r * contour * 0.80;
+        // Fine surface relief fades out at the center; established buildings keep their footing.
+        const relief = layer.r < 0.85 ? (Math.sin(px * 4 + phase) * Math.cos(pz * 3 - phase) * 0.022 + Math.sin(angle * 4 + phase) * 0.022) * Math.min(layer.r * 3, 1) : 0;
+        positions.push(px, layer.y + relief, pz);
+        const shade = 0.97 + Math.sin(px * 5.3 + phase) * Math.cos(pz * 4.7) * (layer.r < 0.88 ? 0.045 : 0.019) + Math.sin(angle * 2 + phase) * 0.025;
+        colors.push(layer.c.r * shade, layer.c.g * shade, layer.c.b * shade, 1);
       }
     }
     for (let r = 0; r < rings.length - 1; r++) for (let n = 0; n < segments; n++) {
@@ -226,55 +270,122 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     const mesh = new Mesh('sculpted-island-coastline', scene);
     const data = new VertexData(); data.positions = positions; data.indices = indices; data.normals = normals; data.colors = colors; data.applyToMesh(mesh);
     finish(mesh, terrain, [0, 0, 0], owner); mesh.material!.backFaceCulling = false;
-    for (const offset of [1.105, 1.22]) {
-      const path: XYZ[] = [];
-      for (let n = 0; n <= 72; n++) {
-        const angle = n / 72 * TAU;
-        const r = radius * offset * (1 + Math.sin(angle * 3 + phase) * 0.055 + Math.cos(angle * 5 - phase) * 0.025);
-        path.push([Math.cos(angle) * r, -0.018 + (offset > 1.2 ? -0.006 : 0), Math.sin(angle) * r * 0.80]);
+    const direction = GRAND_LINE_HARBORS[index].direction;
+    for (let n = 0; n < 14; n++) {
+      const angle = n * TAU / 14 + phase;
+      // The harbor approach and the crew plaza remain a clear, open beach.
+      if (Math.cos(angle) * direction.x + Math.sin(angle) * direction.z > 0.40) continue;
+      const r = radius * (0.88 + random() * 0.035) * coastContour(angle, phase);
+      const px = Math.cos(angle) * r, pz = Math.sin(angle) * r * 0.80;
+      const size = 0.16 + random() * 0.20;
+      const stone = sphere('weathered-coastal-boulder', [size * 1.35, size * 0.78, size], [px, 0.23, pz], snowy ? snow : desert ? sand : n % 3 ? rock : rockLight, owner);
+      stone.rotation.set(random() * 0.22, angle, random() * 0.18);
+      if (n % 3 === 0) sphere('coastal-pebble', [size * 0.53, size * 0.30, size * 0.60], [px + size * 0.65, 0.19, pz + size * 0.14], snowy ? snow : rockLight, owner);
+      if (!snowy && !desert && n % 2 === 0) {
+        const tuftX = px * 0.85, tuftZ = pz * 0.85;
+        for (let blade = 0; blade < 3; blade++) {
+          const grass = cylinder('coastal-grass', 0.07, 0, 0.18 + blade * 0.035, [tuftX + (blade - 1) * 0.045, 0.62, tuftZ], n % 4 ? leafLight : leaf, 4, owner);
+          grass.rotation.z = (blade - 1) * 0.3;
+        }
       }
-      tube('shore-break', path, offset > 1.2 ? 0.013 : 0.027, foam, owner, 5);
     }
     return owner;
   }
   function palm(owner: TransformNode, x: number, z: number, height = 1.55, lean = 0.28): void {
-    tube('curved-palm-trunk', [[x, 0.59, z], [x + lean * 0.35, height * 0.5 + 0.5, z], [x + lean, height + 0.5, z + 0.10]], 0.07, wood, owner, 7);
+    tube('curved-palm-trunk', [[x, 0.59, z], [x + lean * 0.12, height * 0.27 + 0.5, z], [x + lean * 0.35, height * 0.5 + 0.5, z], [x + lean * 0.65, height * 0.76 + 0.5, z + 0.05], [x + lean, height + 0.5, z + 0.10]], 0.068, wood, owner, 9);
+    for (let n = 1; n < 7; n++) {
+      const t = n / 7;
+      cylinder('palm-trunk-ring', 0.144, 0.139, 0.027, [x + lean * t * t, 0.50 + height * t, z + Math.max(0, t - 0.5) * 0.20], mat('palm-bark-ring', '#b58b60'), 9, owner);
+    }
     const center = new Vector3(x + lean, height + 0.5, z + 0.10);
-    for (let n = 0; n < 7; n++) {
-      const angle = TAU * n / 7 + random() * 0.2;
-      const length = 0.8 + random() * 0.25, positions: number[] = [], indices: number[] = [], normals: number[] = [];
+    for (let n = 0; n < 9; n++) {
+      const angle = TAU * n / 9 + random() * 0.16;
+      const length = 0.80 + random() * 0.30, positions: number[] = [], indices: number[] = [], normals: number[] = [];
       const side = new Vector3(-Math.sin(angle), 0, Math.cos(angle));
-      for (let i = 0; i <= 5; i++) {
-        const f = i / 5, breadth = Math.sin(f * Math.PI) * 0.18;
-        const p = center.add(new Vector3(Math.cos(angle) * length * f, Math.sin(f * Math.PI) * 0.28 - f * 0.23, Math.sin(angle) * length * f));
-        for (const sign of [-1, 1]) { const v = p.add(side.scale(breadth * sign)); positions.push(v.x, v.y, v.z); }
-        if (i < 5) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      for (let i = 0; i <= 10; i++) {
+        const f = i / 10, breadth = Math.sin(f * Math.PI) * (i % 2 ? 0.125 : 0.18);
+        const p = center.add(new Vector3(Math.cos(angle) * length * f, Math.sin(f * Math.PI) * 0.31 - f * 0.30, Math.sin(angle) * length * f));
+        for (const sign of [-1, 0, 1]) {
+          const v = p.add(side.scale(breadth * sign));
+          positions.push(v.x, v.y + (sign === 0 ? Math.sin(f * Math.PI) * 0.045 : 0), v.z);
+        }
+        if (i < 10) for (let side = 0; side < 2; side++) {
+          const a = i * 3 + side; indices.push(a, a + 1, a + 3, a + 1, a + 4, a + 3);
+        }
       }
       VertexData.ComputeNormals(positions, indices, normals);
       const mesh = new Mesh('palm-frond', scene), data = new VertexData(); data.positions = positions; data.indices = indices; data.normals = normals; data.applyToMesh(mesh);
       const material = n % 2 ? leaf : leafLight; material.backFaceCulling = false;
       finish(mesh, material, [0, 0, 0], owner);
     }
-    sphere('coconut-cluster', [0.25, 0.22, 0.25], [center.x, center.y - 0.08, center.z], wood, owner);
+    for (let n = 0; n < 3; n++) sphere('coconut-cluster', [0.13, 0.17, 0.14], [center.x + Math.cos(n * TAU / 3) * 0.085, center.y - 0.10, center.z + Math.sin(n * TAU / 3) * 0.085], wood, owner);
   }
   function broadTree(owner: TransformNode, x: number, z: number, height: number, color = leafLight): void {
     cylinder('tree-trunk', 0.21, 0.13, height, [x, 0.56 + height / 2, z], wood, 8, owner);
-    sphere('rounded-tree-crown', [height * 0.95, height * 0.8, height * 0.85], [x, height + 0.55, z], color, owner);
-    sphere('rounded-tree-crown', [height * 0.70, height * 0.62, height * 0.64], [x + height * 0.28, height + 0.45, z + 0.14], color, owner);
+    const highlight = color === pink ? mat('sunlit-blossom', '#ffc5d5') : leafLight;
+    const shade = color === pink ? mat('blossom-shadow', '#d681a9') : leafShade;
+    sphere('tree-canopy-understory', [height * 0.92, height * 0.50, height * 0.81], [x, height + 0.33, z], shade, owner);
+    for (let n = 0; n < 5; n++) {
+      const a = n * TAU / 5 + 0.3, cx = x + Math.cos(a) * height * 0.25, cz = z + Math.sin(a) * height * 0.22;
+      tube('tree-branch', [[x, 0.56 + height * 0.65, z], [cx, height + 0.45, cz]], 0.040, wood, owner, 6);
+      sphere('rounded-tree-crown', [height * 0.64, height * 0.60, height * 0.60], [cx, height + 0.56 + (n % 2) * height * 0.09, cz], n % 3 === 0 ? highlight : color, owner);
+    }
+    sphere('tree-canopy-crown', [height * 0.65, height * 0.51, height * 0.63], [x - height * 0.07, height + 0.87, z], highlight, owner);
   }
   function house(owner: TransformNode, x: number, z: number, w: number, h: number, body = white, roofMat = red, y = 0.58): void {
+    box('house-stone-foundation', [w * 1.07, h * 0.11, w * 0.78], [x, y + h * 0.045, z], trim, owner);
     box('island-house', [w, h, w * 0.72], [x, y + h / 2, z], body, owner);
+    box('house-roof-eaves', [w * 1.16, w * 0.055, w * 0.87], [x, y + h, z], wood, owner);
     const roof = cylinder('pitched-roof', w * 1.60, 0, w * 0.38, [x, y + h + w * 0.19, z], roofMat, 4, owner); roof.rotation.y = Math.PI / 4; roof.scaling.z = 0.80;
-    for (const side of [-1, 1]) box('window', [0.12, 0.2, 0.025], [x + side * w * 0.22, y + h * 0.60, z + w * 0.365], navy, owner);
-    box('door', [0.17, h * 0.48, 0.025], [x, y + h * 0.24, z + w * 0.365], wood, owner);
+    for (const side of [-1, 1]) {
+      box('window-surround', [w * 0.20, h * 0.34, 0.028], [x + side * w * 0.28, y + h * 0.60, z + w * 0.366], trim, owner);
+      box('window', [w * 0.14, h * 0.25, 0.032], [x + side * w * 0.28, y + h * 0.60, z + w * 0.371], navy, owner);
+      box('window-sill', [w * 0.24, h * 0.045, w * 0.06], [x + side * w * 0.28, y + h * 0.43, z + w * 0.38], trim, owner);
+      box('window-shutter', [w * 0.062, h * 0.27, 0.035], [x + side * w * 0.40, y + h * 0.60, z + w * 0.365], roofMat, owner);
+    }
+    box('door-frame', [w * 0.26, h * 0.52, 0.027], [x, y + h * 0.26, z + w * 0.366], trim, owner);
+    box('door', [w * 0.19, h * 0.46, 0.034], [x, y + h * 0.23, z + w * 0.371], wood, owner);
+    sphere('door-handle', [w * 0.022, w * 0.022, w * 0.022], [x + w * 0.052, y + h * 0.23, z + w * 0.371 + 0.018], gold, owner);
+    box('house-chimney', [w * 0.13, w * 0.30, w * 0.13], [x + w * 0.28, y + h + w * 0.26, z - w * 0.12], body, owner);
+    box('house-chimney-cap', [w * 0.17, w * 0.045, w * 0.17], [x + w * 0.28, y + h + w * 0.42, z - w * 0.12], trim, owner);
   }
   function pagoda(owner: TransformNode, x: number, z: number, baseY = 0.62, scale = 1, levels = 3): void {
     for (let level = 0; level < levels; level++) {
       const width = (1.7 - level * 0.32) * scale, y = baseY + level * 0.71 * scale;
       box('pagoda-plaster', [width * 0.70, 0.55 * scale, width * 0.61], [x, y + 0.27 * scale, z], white, owner);
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) box('pagoda-red-column', [0.075 * scale, 0.60 * scale, 0.075 * scale], [x + sx * width * 0.34, y + 0.27 * scale, z + sz * width * 0.29], red, owner);
-      const roof = cylinder('pagoda-sweeping-roof', width * 1.53, width * 0.45, 0.35 * scale, [x, y + 0.62 * scale, z], mat('pagoda-roof', '#275462'), 4, owner); roof.rotation.y = Math.PI / 4;
-      for (const sign of [-1, 1]) tube('pagoda-upturned-eave', [[x + sign * width * 0.70, y + 0.62 * scale, z - width * 0.48], [x + sign * width * 0.78, y + 0.78 * scale, z - width * 0.48]], 0.045 * scale, gold, owner);
+      for (const sign of [-1, 1]) {
+        box('pagoda-window', [width * 0.14, 0.25 * scale, 0.022], [x + sign * width * 0.18, y + 0.29 * scale, z + width * 0.312], navy, owner);
+        box('pagoda-window-mullion', [0.018 * scale, 0.27 * scale, 0.025], [x + sign * width * 0.18, y + 0.29 * scale, z + width * 0.318], red, owner);
+      }
+      const extent = width * 0.60, divisions = 10;
+      const roofPoint = (u: number, v: number): XYZ => {
+        const edge = Math.max(Math.abs(u), Math.abs(v));
+        const rise = 0.53 + 0.30 * Math.pow(1 - edge, 1.4) + 0.13 * Math.pow(edge, 7) * (0.55 + 0.45 * Math.abs(u * v));
+        return [x + u * extent, y + rise * scale, z + v * extent];
+      };
+      const positions: number[] = [], indices: number[] = [], normals: number[] = [];
+      for (let row = 0; row <= divisions; row++) for (let col = 0; col <= divisions; col++) {
+        positions.push(...roofPoint(col / divisions * 2 - 1, row / divisions * 2 - 1));
+        if (row < divisions && col < divisions) {
+          const a = row * (divisions + 1) + col, b = a + divisions + 1;
+          indices.push(a, b, a + 1, a + 1, b, b + 1);
+        }
+      }
+      VertexData.ComputeNormals(positions, indices, normals);
+      const roof = new Mesh('pagoda-sweeping-roof', scene), data = new VertexData();
+      data.positions = positions; data.indices = indices; data.normals = normals; data.applyToMesh(roof);
+      const roofMaterial = mat('pagoda-roof', '#275462'); roofMaterial.backFaceCulling = false;
+      finish(roof, roofMaterial, [0, 0, 0], owner);
+      for (const sign of [-1, 1]) {
+        const front: XYZ[] = [], side: XYZ[] = [];
+        for (let n = 0; n <= divisions; n++) {
+          const t = n / divisions * 2 - 1;
+          front.push(roofPoint(t, sign)); side.push(roofPoint(sign, t));
+        }
+        tube('pagoda-upturned-eave', front, 0.022 * scale, gold, owner, 6);
+        tube('pagoda-upturned-eave', side, 0.022 * scale, gold, owner, 6);
+      }
     }
     cylinder('pagoda-golden-spire', 0.12 * scale, 0, 0.50 * scale, [x, baseY + levels * 0.71 * scale + 0.20 * scale, z], gold, 8, owner);
   }
@@ -307,7 +418,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
 
   for (const landmark of GRAND_LINE_LANDMARKS) {
     const desert = landmark.id === 'alabasta', snowy = landmark.id === 'drum';
-    const owner = island(landmark.x, landmark.z, landmark.radius, desert ? '#e4bd72' : snowy ? '#d8eeee' : '#76ac62', desert ? '#f1d299' : snowy ? '#d9eeee' : '#ecd49d');
+    const owner = island(GRAND_LINE_LANDMARKS.indexOf(landmark), desert ? '#e4bd72' : snowy ? '#d8eeee' : '#76ac62', desert ? '#f1d299' : snowy ? '#d9eeee' : '#ecd49d');
     owner.name = landmark.id;
     if (landmark.id === 'twin-cape') {
       cylinder('lighthouse-foot', 1.05, 0.98, 0.24, [-0.15, 0.66, -0.2], white, 24, owner);
@@ -532,7 +643,8 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     const x = -25 + n * 0.72, z = Math.sin((x + 25) * 0.11) * 0.67 - 0.40;
     const dash = box('log-pose-route-dash', [0.25, 0.01, 0.027], [x, -0.037, z], routeMat); dash.rotation.y = -Math.cos((x + 25) * 0.11) * 0.075;
   }
-  const compass = new DynamicTexture('grand-line-compass', { width: 512, height: 512 }, scene, false);
+  const compass = new DynamicTexture('grand-line-compass', { width: 512, height: 512 }, scene, true);
+  compass.anisotropicFilteringLevel = 8;
   const ctx = compass.getContext() as CanvasRenderingContext2D; ctx.clearRect(0, 0, 512, 512); ctx.translate(256, 256);
   ctx.strokeStyle = 'rgba(194,239,207,0.46)'; ctx.fillStyle = 'rgba(194,239,207,0.46)'; ctx.lineWidth = 2;
   for (const r of [133, 145]) { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke(); }

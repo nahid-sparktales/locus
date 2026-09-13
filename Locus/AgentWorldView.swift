@@ -30,6 +30,14 @@ struct AgentWorldView: View {
         .sheet(item: $model.selectedTransfer) { transfer in
             AgentWorldTransferDetail(world: model, transfer: transfer)
         }
+        .sheet(item: $model.newAgentDraft) { profile in
+            if let appModel = model.appModel {
+                AgentProfileEditor(profile: profile, isNew: true,
+                    existingProfiles: appModel.agentProfiles, onSave: model.saveNewAgent)
+                    .environmentObject(appModel)
+                    .appFeatureEnvironment(from: appModel)
+            }
+        }
         .accessibilityIdentifier("agentWorld.window")
     }
 }
@@ -102,6 +110,9 @@ private struct AgentWorldSurface: View {
                     .help(showsWorld ? "Give the native workspace the full window" : "Show the world beside your workspace")
                     .accessibilityIdentifier("agentWorld.toggleWorld")
                 }
+                Button(action: model.createAgent) { Label("New Agent", systemImage: "plus") }
+                    .disabled(!model.canCreateAgent)
+                    .accessibilityIdentifier("agentWorld.newAgent")
                 Button(action: model.openSharedChat) { Label("Crew Chat", systemImage: "bubble.left.and.bubble.right") }
                     .disabled(!model.canInteract || appModel == nil)
                     .accessibilityIdentifier("agentWorld.crewChat")
@@ -153,8 +164,10 @@ private struct AgentWorldSurface: View {
             }.padding(16)
             TextField("Find an agent", text: $search).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 10)
             if model.residents.isEmpty {
-                ContentUnavailableView("No saved agents", systemImage: "person.crop.square.badge.plus", description: Text("Create agent profiles to meet them here."))
-                Button("Manage agents", action: model.manageAgents).padding()
+                ContentUnavailableView("No saved agents", systemImage: "person.crop.square.badge.plus", description: Text("Create an agent to give it a home in this world."))
+                Button("Create an agent", action: model.createAgent)
+                    .disabled(!model.canCreateAgent).padding()
+                    .accessibilityIdentifier("agentWorld.empty.newAgent")
             } else {
                 List(filteredResidents) { resident in
                     Button { model.select(resident.id) } label: {

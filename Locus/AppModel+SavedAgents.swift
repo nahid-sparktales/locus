@@ -1,6 +1,153 @@
 import Foundation
 
+private struct SavedAgentCleanupResponse: Decodable {
+    let ok: Bool
+    let sessionIDs: [String]
+    let count: Int
+    let deletedActive: Bool
+    let replacementSessionInfo: SessionInfo?
+    let trashBatch: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, count, error
+        case sessionIDs = "session_ids"
+        case deletedActive = "deleted_active"
+        case replacementSessionInfo = "replacement_session_info"
+        case trashBatch = "trash_batch"
+    }
+}
+
 extension AppModel {
+    /// Keep the chat history when removing a configured profile. The backend
+    /// resolves every owned session before the profile disappears, including
+    /// archived chats and chats outside the sidebar's search and result limit.
+    func removeSavedAgent(_ profile: AgentProfile) async throws {
+        guard agentProfiles.contains(where: { $0.id == profile.id }) else {
+            throw AgentWorldError.unavailable("This saved agent was already removed.")
+        }
+        try beginSavedAgentRemoval(profile.id)
+        defer { removingSavedAgentIDs.remove(profile.id) }
+        _ = try await cleanupSavedAgentConversations(profileID: profile.id, action: "archive")
+        guard agentTeamsModel.removeAgentProfile(profile) else {
+            throw AgentWorldError.unavailable("The chats were archived, but a run started before the agent could be removed. Stop the run and try again.")
+        }
+        clearRemovedSavedAgentSelection(profile.id)
+        await refreshMetadata()
+        showToast("Removed \(profile.name). Chats are kept in archived history.")
+    }
+
+    /// An unavailable group has no profile to delete. Remove the exact owner's
+    /// chats as one recovery batch, preserving their identity for Undo.
+    func deleteUnavailableSavedAgent(profileID: UUID) async throws {
+        guard !agentProfiles.contains(where: { $0.id == profileID }) else {
+            throw AgentWorldError.unavailable("This agent is available again. Remove it from its agent menu.")
+        }
+        try beginSavedAgentRemoval(profileID)
+        defer { removingSavedAgentIDs.remove(profileID) }
+        let representative = sessions.first { $0.id == currentSessionID && $0.savedAgentProfileID == profileID }
+            ?? sessions.first { $0.savedAgentProfileID == profileID }
+        let response = try await cleanupSavedAgentConversations(profileID: profileID, action: "delete")
+        clearRemovedSavedAgentSelection(profileID)
+        await refreshMetadata()
+        if let batch = response.trashBatch, let representative {
+            pendingDeletedChat = DeletedChatUndo(session: representative, trashBatch: batch,
+                                                 wasActive: response.deletedActive)
+            showToast("Removed unavailable agent and moved \(response.count) \(response.count == 1 ? "chat" : "chats") to recovery",
+                      actionTitle: "Undo", duration: 7)
+        } else {
+            showToast("Removed unavailable agent")
+        }
+    }
+
+    private func beginSavedAgentRemoval(_ profileID: UUID) throws {
+        guard removingSavedAgentIDs.isEmpty else {
+            throw AgentWorldError.unavailable("Wait for the current agent removal to finish.")
+        }
+        guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
+            throw AgentWorldError.unavailable("Finish or stop the active run before removing an agent.")
+        }
+        guard !creatingSavedAgentChatIDs.contains(profileID),
+              savedAgentConversationCreationCounts[profileID, default: 0] == 0,
+              !agentWorld.hasPendingWork(profileID: profileID),
+              !agentCrewChat.hasPendingReplies(profileID: profileID) else {
+            throw AgentWorldError.unavailable("Wait for this agent's chat or queued reply to finish before removing it.")
+        }
+        let ownedIDs = Set(sessions.filter { $0.savedAgentProfileID == profileID }.map(\.id))
+            .union(taskWorkers.keys.filter { savedAgentProfileID(for: $0) == profileID })
+            .union(pendingChatTurns.keys.filter { savedAgentProfileID(for: $0) == profileID })
+            .union(taskConversationStates.keys.filter { savedAgentProfileID(for: $0) == profileID })
+        guard !ownedIDs.contains(where: {
+                  agentWorldConversationState($0).busy || taskConversationStates[$0].map { !$0.state.isTerminal } == true
+              }),
+              !teamRunLive.agentActivities.contains(where: {
+                  UUID(uuidString: $0.id) == profileID && !$0.state.isTerminal
+              }) else {
+            throw AgentWorldError.unavailable("Finish or stop this agent's runs before removing it.")
+        }
+        if let session = sessions.first(where: {
+            $0.savedAgentProfileID == profileID && agentOwningEventChat($0) != nil
+        }), let owner = agentOwningEventChat(session) {
+            throw AgentWorldError.unavailable("This agent has a chat that receives \(owner.name)'s runs. Remove that automation first.")
+        }
+        removingSavedAgentIDs.insert(profileID)
+    }
+
+    private func cleanupSavedAgentConversations(profileID: UUID, action: String) async throws -> SavedAgentCleanupResponse {
+        let wasActive = savedAgentProfileID(for: currentSessionID) == profileID
+        let ownership: TranscriptSessionLoadToken
+        if wasActive {
+            ownership = beginTranscriptTransition(source: backend, reasons: ["deleted_active"],
+                                                   acceptsSocketAcknowledgement: false)
+            pendingSessionReset = true
+            // The bounded HTTP operation owns this reset. Large histories
+            // and worktree snapshots can exceed the ordinary reset watchdog.
+        } else {
+            ownership = transcriptPresentation.sessionOwnershipToken
+        }
+        do {
+            let response = try await backend.post(
+                "/api/sessions/agent-profile/\(profileID.uuidString)/cleanup",
+                body: ["action": action], timeout: 120, as: SavedAgentCleanupResponse.self)
+            if transcriptPresentation.ownsSessionLoad(ownership), let replacement = response.replacementSessionInfo {
+                applySessionStarted(replacement, reason: "deleted_active")
+            } else if wasActive, transcriptPresentation.ownsSessionLoad(ownership) {
+                invalidatePendingTranscriptTransition()
+            }
+            guard response.ok else {
+                throw AgentWorldError.unavailable(response.error ?? "The agent's chats could not all be removed. Try again.")
+            }
+            let removedIDs = Set(response.sessionIDs)
+            sessions.removeAll { removedIDs.contains($0.id) }
+            if action == "delete" {
+                for sessionID in response.sessionIDs { browser.closeTabs(ownedBy: sessionID) }
+            }
+            return response
+        } catch {
+            if wasActive, transcriptPresentation.ownsSessionLoad(ownership) {
+                // A transport failure can lose the replacement response after
+                // the backend has already opened a fresh conversation.
+                let state = try? await backend.get("/api/config", as: ConfigStateResponse.self)
+                if transcriptPresentation.ownsSessionLoad(ownership),
+                   let replacement = state?.sessionInfo, replacement.sessionID != currentSessionID {
+                    applySessionStarted(replacement, reason: "deleted_active")
+                } else if transcriptPresentation.ownsSessionLoad(ownership) {
+                    invalidatePendingTranscriptTransition()
+                }
+            }
+            await refreshMetadata()
+            throw error
+        }
+    }
+
+    private func clearRemovedSavedAgentSelection(_ profileID: UUID) {
+        if selectedSavedAgentID == profileID { selectedSavedAgentID = nil }
+        if configureAgentProfileID == profileID {
+            configureAgentProfileID = nil
+            configureAgentPresented = false
+        }
+    }
+
     func syncSavedAgentsToRuntime() async throws {
         guard RuntimeInstallation.enabled, !isUITesting else { return }
         savedAgentRuntimeSyncPending = true
@@ -116,9 +263,12 @@ extension AppModel {
     }
 
     func createSavedAgentConversation(_ profile: AgentProfile, workspace: String) async throws -> SessionSummary {
-        guard agentProfiles.contains(where: { $0.id == profile.id }) else {
+        guard agentProfiles.contains(where: { $0.id == profile.id }),
+              !removingSavedAgentIDs.contains(profile.id) else {
             throw AgentWorldError.unavailable("This saved agent was removed.")
         }
+        savedAgentConversationCreationCounts[profile.id, default: 0] += 1
+        defer { savedAgentConversationCreationCounts[profile.id, default: 0] -= 1 }
         struct Created: Decodable { let session_id: String }
         let count = sessionCatalog.snapshot.sessions.filter { $0.savedAgentProfileID == profile.id }.count
         let response = try await backend.post("/api/sessions/detached", body: [

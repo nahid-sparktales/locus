@@ -13,9 +13,12 @@ extension AppModel {
             },
             state: { [weak self] id in self?.agentWorldConversationState(id) ?? .init() },
             create: { [weak self] workspace, profile in
-                guard let self, self.agentProfiles.contains(where: { $0.id == profile.id }) else {
+                guard let self, self.agentProfiles.contains(where: { $0.id == profile.id }),
+                      !self.removingSavedAgentIDs.contains(profile.id) else {
                     throw AgentWorldError.unavailable("This agent was removed from the crew.")
                 }
+                self.savedAgentConversationCreationCounts[profile.id, default: 0] += 1
+                defer { self.savedAgentConversationCreationCounts[profile.id, default: 0] -= 1 }
                 struct Created: Decodable { let session_id: String }
                 let result = try await self.backend.post("/api/sessions/detached", body: [
                     "cwd": workspace, "title": "Crew Chat · \(profile.name)",

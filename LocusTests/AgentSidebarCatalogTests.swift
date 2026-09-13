@@ -57,6 +57,45 @@ final class AgentSidebarCatalogTests: XCTestCase {
         XCTAssertEqual(groups.first?.statusTitle, "Needs attention")
     }
 
+    func testUnavailableSavedAgentRetainsExactCleanupIdentityWhenSearchHidesChats() throws {
+        let missingID = UUID()
+        let live = AgentProfile(name: "Live agent", model: "fixture")
+        let sessions = [
+            SessionSummary(id: "match", name: "match", preview: "", mtime: 3, size: 0,
+                           title: "Test chat", agentProfileID: missingID.uuidString.lowercased()),
+            SessionSummary(id: "hidden", name: "hidden", preview: "", mtime: 2, size: 0,
+                           title: "Earlier chat", agentProfileID: missingID.uuidString),
+            SessionSummary(id: "live", name: "live", preview: "", mtime: 1, size: 0,
+                           title: "Live chat", agentProfileID: live.id.uuidString),
+        ]
+        let groups = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "Test chat",
+            showArchived: false, runningSessionIDs: [], profiles: [live])
+        let orphan = try XCTUnwrap(groups.first)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertTrue(orphan.isUnavailableSavedAgent)
+        XCTAssertEqual(orphan.profileID, missingID)
+        XCTAssertEqual(orphan.tasks.map(\.id), ["match"])
+        XCTAssertEqual(orphan.totalChatCount, 2, "Search must not redefine the agent's ownership")
+
+        let all = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "",
+            showArchived: false, runningSessionIDs: [], profiles: [live])
+        XCTAssertFalse(try XCTUnwrap(all.first { $0.profileID == live.id }).isUnavailableSavedAgent)
+    }
+
+    func testArchivedChatsOfRemovedProfileLeaveActiveListButRemainDiscoverableInArchive() throws {
+        let missingID = UUID()
+        let archived = SessionSummary(id: "old", name: "old", preview: "", mtime: 1, size: 0,
+                                      archived: true, agentProfileID: missingID.uuidString)
+        let active = AgentSidebarCatalog.groups(definitions: [], sessions: [archived], query: "",
+            showArchived: false, runningSessionIDs: [], profiles: [])
+        XCTAssertTrue(active.isEmpty)
+        let history = AgentSidebarCatalog.groups(definitions: [], sessions: [archived], query: "",
+            showArchived: true, runningSessionIDs: [], profiles: [])
+        XCTAssertTrue(try XCTUnwrap(history.first).isUnavailableSavedAgent)
+        XCTAssertEqual(history.first?.profileID, missingID)
+        XCTAssertEqual(history.first?.tasks.map(\.id), ["old"])
+    }
+
     func testRunningStateIncludesConversationsHiddenByTheCurrentSearch() {
         let groups = project(
             [.trigger(trigger())],

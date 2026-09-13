@@ -19,6 +19,17 @@ test('the resident list can find and navigate to agents beyond the first sector'
   assert.equal(clampSector(2, 3), 0);
   assert.equal(clampSector(1, 0), 0);
 });
+test('agent creation availability is supplied explicitly by the native host', () => {
+  for (const canCreateAgent of [true, false]) {
+    const parsed = parseHostMessage({ ...snapshot, canCreateAgent });
+    assert.ok(parsed && parsed.type === 'snapshot');
+    assert.equal(parsed.canCreateAgent, canCreateAgent);
+  }
+  assert.ok(parseHostMessage(snapshot), 'Older snapshots remain compatible without exposing creation');
+  for (const canCreateAgent of ['true', 1, null, [], {}]) {
+    assert.equal(parseHostMessage({ ...snapshot, canCreateAgent }), null);
+  }
+});
 test('appearance snapshots accept mixed crews, pandas and explorers while keeping older hosts compatible', () => {
   assert.ok(parseHostMessage(snapshot));
   for (const residentStyle of ['mixed', 'pandas', 'explorers']) {

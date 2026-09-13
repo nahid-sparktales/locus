@@ -6,10 +6,10 @@ export type ResidentStyle = typeof RESIDENT_STYLES[number];
 export const isResidentStyle = (value: unknown): value is ResidentStyle => RESIDENT_STYLES.includes(value as ResidentStyle);
 export type AttentionRequest = { id: string; agentID: string; kind: 'approval' | 'input'; title: string };
 export type AgentTransfer = { id: string; fromAgentID: string; toAgentID: string; kind: 'handoff' | 'artifact'; title: string; occurredAt: number };
-export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
+export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; canCreateAgent?: boolean; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
 export type Visibility = { version: 1; type: 'visibility'; visible: boolean };
 export type HostMessage = Snapshot | Visibility;
-export type WorldMessage = { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
+export type WorldMessage = { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'createAgent' } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
 export type Point = { x: number; z: number };
 export type ScreenPoint = { x: number; y: number };
 export type ScreenRect = { left: number; top: number; right: number; bottom: number };
@@ -34,6 +34,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (value.type === 'visibility') return typeof value.visible === 'boolean' ? { version: 1, type: 'visibility', visible: value.visible } : null;
   if (value.type !== 'snapshot' || !Array.isArray(value.agents) || value.agents.length > 4096 || !safeThemeID(value.theme) || !boundedString(value.projectName, 1024)) return null;
   if (value.residentStyle !== undefined && !isResidentStyle(value.residentStyle)) return null;
+  if (value.canCreateAgent !== undefined && typeof value.canCreateAgent !== 'boolean') return null;
   const ids = new Set<string>();
   for (const item of value.agents) {
     if (!record(item) || typeof item.id !== 'string' || !uuid.test(item.id) || ids.has(item.id.toLowerCase()) || !boundedString(item.name, 256) || !boundedString(item.role, 4096) || !AGENT_STATUSES.includes(item.status as AgentStatus) || (item.detail !== undefined && !boundedString(item.detail, 16384))) return null;

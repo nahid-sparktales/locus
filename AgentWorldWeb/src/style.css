@@ -238,6 +238,13 @@ body[data-environment=campus] .resident-avatar[data-resident-kind=person]:after{
 .world-actions button strong{display:block;font-size:10px;font-weight:600}
 .world-actions button span{display:block;font-size:8px;color:var(--quiet);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .world-actions #shared-chat{color:var(--mint);font-weight:600}
+.roster-heading{gap:5px}.roster-heading h2{flex:1;min-width:0;white-space:nowrap}.roster-heading .icon-button{flex-shrink:0}
+.new-agent-button{flex-shrink:0;white-space:nowrap;color:var(--mint);background:#a4d4b619;border:1px solid #a4d4b647;border-radius:5px;padding:5px 6px;font-size:9px;line-height:1.3;font-weight:600}
+.new-agent-button:hover{background:#a4d4b62b;border-color:#a4d4b673}.new-agent-button:disabled{opacity:.45;cursor:default}
+body[data-environment=campus] .new-agent-button{color:var(--locus-accent);background:#c9f54a12;border-color:#c9f54a36}
+body[data-environment=campus] .new-agent-button:hover{background:#c9f54a21}
+body[data-environment=ocean] .new-agent-button{color:#f1d296;background:#d2c49912;border-color:#d6c39747}
+@media(max-width:800px){.new-agent-word{display:none}}
 .world-actions #activity-toggle{display:flex;align-items:center;justify-content:space-between;padding-block:7px}
 .world-actions #activity-count{margin:0;color:inherit;border-radius:4px;background:#c1d9c414;padding:2px 5px;min-width:18px;text-align:center}
 .fleet-activity{position:absolute;right:30px;top:150px;width:248px;z-index:5;border:1px solid #d5c3923d;border-radius:11px;background:#0d2b40f5;box-shadow:0 12px 40px #03192933;padding:12px;color:#e6dfcc;backdrop-filter:blur(20px)}

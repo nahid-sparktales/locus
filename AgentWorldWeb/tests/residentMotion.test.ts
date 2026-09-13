@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THEME, DEFAULT_STATIONS, DEFAULT_WANDER_POINTS, parseTheme } from '../src/theme.ts';
-import { createNavigation, createResidentMotion, findResidentPath, MAX_MOTION_DT, pointIsWalkable, residentAssetForID, residentSeed, residentWanderTargetIndex, RESIDENT_RADIUS, resolveResidentSpacing, segmentIsWalkable, stationObstacle, stationObstacles, statusCanWander, stepResidentMotion, themeNavigation } from '../src/residentMotion.ts';
+import { createNavigation, createResidentMotion, findResidentArrival, findResidentPath, MAX_MOTION_DT, pointIsWalkable, residentAssetForID, residentSeed, residentWanderTargetIndex, RESIDENT_RADIUS, resolveResidentSpacing, segmentIsWalkable, stationObstacle, stationObstacles, statusCanWander, stepResidentMotion, themeNavigation } from '../src/residentMotion.ts';
 import type { ResidentMotion, MotionStep, NavigationMap } from '../src/residentMotion.ts';
 import type { AgentStatus } from '../src/state.ts';
 
@@ -108,6 +108,32 @@ test('reduced motion removes ambient walking but returns an already-wandering re
   assert.equal(returned.walking, false);
 });
 
+test('idle ships continue exploring from sea destinations without returning home between trips', () => {
+  const shipHome = { x: -10, z: 0, rotation: Math.PI / 2 };
+  const sea = createNavigation({ radius: 24, bodyRadius: 1.35, wanderPoints: [{ x: 0, z: 8 }, { x: 12, z: 0 }, { x: 0, z: -8 }] });
+  for (const status of ['idle', 'completed'] as const) {
+    let state = createResidentMotion(firstID, shipHome);
+    const visited = new Set<number>();
+    let departed = false;
+    for (let tick = 0; tick < 3000; tick++) {
+      const next = stepResidentMotion(state, { home: shipHome, status, dt: MAX_MOTION_DT, rosterIDs: [firstID] }, sea);
+      if (next.route.length) assert.ok(!near(next.route.at(-1)!, shipHome), 'An idle route must not require a return to port');
+      sea.wanderPoints.forEach((point, index) => { if (near(next, point)) visited.add(index); });
+      if (departed) assert.ok(!near(next, shipHome), 'Idle ships must continue from the last destination');
+      departed ||= Math.hypot(next.x - shipHome.x, next.z - shipHome.z) > 1;
+      assert.ok(segmentIsWalkable(state, next, sea));
+      state = next;
+    }
+    assert.equal(visited.size, sea.wanderPoints.length, 'Every sea destination should remain available while idle');
+    const paused = advance(state, status, 10, { paused: true }, sea);
+    assert.ok(near(paused, state));
+    assert.equal(paused.phase, 'paused');
+    const returned = advance(state, status, 90, { reducedMotion: true }, sea);
+    assert.ok(near(returned, shipHome));
+    assert.equal(returned.phase, 'at_station');
+  }
+});
+
 test('navigation routes around the garden, desks and décor and keeps all twelve homes reachable', () => {
   assert.equal(DEFAULT_STATIONS.length, 12);
   assert.equal(DEFAULT_WANDER_POINTS.length, 16);
@@ -150,6 +176,29 @@ test('unreachable goals keep residents in a safe location instead of projecting 
   assert.equal(next.walking, false);
 });
 
+test('new arrivals use an empty home and reserve distinct reachable positions around occupied homes', () => {
+  const sea = createNavigation({ radius: 14, bodyRadius: 1.35, obstacles: [{ x: 0, z: -3, radius: 1 }] });
+  const berth = { x: 0, z: 0, rotation: Math.PI };
+  const occupied = [findResidentArrival(berth, sea, [])!];
+  assert.deepEqual(occupied[0], { x: berth.x, z: berth.z });
+  for (let index = 0; index < 8; index++) {
+    const before = structuredClone(occupied);
+    const arrival = findResidentArrival(berth, sea, occupied);
+    assert.deepEqual(occupied, before, 'Arrival search must not move or mutate existing residents');
+    assert.ok(arrival && pointIsWalkable(arrival, sea));
+    assert.ok(occupied.every(peer => Math.hypot(arrival.x - peer.x, arrival.z - peer.z) >= sea.bodyRadius * 2 + 0.08));
+    assert.ok(findResidentPath(arrival, berth, sea), 'Every arrival must retain a route to its assigned home');
+    occupied.push(arrival);
+  }
+});
+
+test('arrival search declines a full or unreachable map without unsafe placement', () => {
+  const smallSea = createNavigation({ radius: 2, bodyRadius: 1.35, wanderPoints: [] });
+  assert.equal(findResidentArrival({ x: 0, z: 0 }, smallSea, [{ x: 0, z: 0 }]), null);
+  const blockedSea = createNavigation({ radius: 14, bodyRadius: 1.35, obstacles: [{ x: 0, z: 0, radius: 2 }] });
+  assert.equal(findResidentArrival({ x: 0, z: 0 }, blockedSea, []), null);
+});
+
 test('stable appearance uses complete identity independently of roster order and asset ordering', () => {
   const ids = [firstID, secondID, thirdID];
   const assets = ['resident', 'resident_explorer', 'resident_engineer', 'resident_botanist'] as const;
@@ -190,6 +239,33 @@ test('spacing results are identity-stable across roster reordering and do not di
   assert.deepEqual(resolved, reordered);
   assert.ok(near(resolved[1], before[1]));
   assert.ok(segmentIsWalkable(before[0], resolved[0], open));
+});
+
+test('ships choose another idle destination after a traffic wait while preserving required work destinations', () => {
+  const sea = createNavigation({ radius: 14, bodyRadius: 1.35, wanderPoints: [{ x: 0, z: 0 }, { x: -6, z: 6 }] });
+  for (const status of ['idle', 'working'] as const) {
+    const shipHome = status === 'idle' ? { x: -7, z: 0 } : { x: 0, z: 0 };
+    let states = [
+      { ...createResidentMotion('roamer', shipHome), x: -4, heading: Math.PI / 2, speed: 1,
+        intent: status === 'idle' ? 'wander' as const : 'station' as const, route: [{ x: 0, z: 0 }], sequence: 1 },
+      { ...createResidentMotion('selected', { x: 6, z: 0 }), x: 0 },
+    ];
+    for (let tick = 0; tick < 240; tick++) {
+      const proposed = states.map((state, index) => stepResidentMotion(state, {
+        home: state.home, status: index === 0 ? status : 'idle', dt: MAX_MOTION_DT, paused: index === 1, rosterIDs: ['roamer'],
+      }, sea));
+      states = resolveResidentSpacing(proposed, states, sea, new Set(['selected']));
+      assert.ok(near(states[1], { x: 0, z: 0 }), 'Resolving traffic must not displace a selected ship');
+    }
+    if (status === 'idle') {
+      assert.ok(states[0].z > 3, 'An occupied ambient destination must not strand the ship');
+      assert.ok(states[0].sequence > 1);
+    } else {
+      assert.equal(states[0].intent, 'station');
+      assert.ok(near(states[0].route.at(-1)!, shipHome), 'Traffic must not replace a required work destination');
+      assert.equal(states[0].sequence, 1);
+    }
+  }
 });
 
 test('wander destinations stay evenly spread across rounds regardless of roster order', () => {

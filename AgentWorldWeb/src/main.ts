@@ -70,6 +70,8 @@ function openTransfer(transferID: string): void {
 function renderActivity(): void {
   const requests = snapshot.attentionRequests ?? [], transfers = snapshot.transfers ?? [];
   snailAlert.update(requests, snapshot.agents, demo);
+  el<HTMLButtonElement>('new-agent').disabled = !demo && snapshot.canCreateAgent !== true;
+  el('new-agent').title = demo ? 'Agent creation is available in Locus' : snapshot.canCreateAgent ? 'Create an agent in this world' : 'Agent creation is unavailable in this world';
   el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
   el('agent-controls-title').textContent = ocean ? 'Captain’s quarters' : 'Agent controls';
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
@@ -224,7 +226,7 @@ function applyThemePresentation(isOcean: boolean): void {
   el('resident-search').setAttribute('aria-label', isOcean ? 'Search fleet' : 'Search residents');
   el<HTMLInputElement>('resident-search').placeholder = isOcean ? 'Find your captain' : 'Find an agent';
   el('empty-title').textContent = isOcean ? 'Your adventure begins here' : 'No residents yet';
-  el('empty-description').textContent = isOcean ? 'Create an agent profile in Locus to launch their own ship.' : 'Create an agent profile in Locus to give it a home here.';
+  el('empty-description').textContent = isOcean ? 'Choose New Agent to welcome a captain and launch their ship.' : 'Choose New Agent to give your first agent a home here.';
   el('coordinate-region').textContent = isOcean ? 'THE AGE OF LOCAL MINDS' : 'LYRA SYSTEM';
   el('coordinate-unit').textContent = isOcean ? 'FLEET' : 'SECTOR';
   el('coordinate-detail').textContent = isOcean ? ' · LOCAL LINE' : ' · 04.28 N / 78.16 E';
@@ -334,6 +336,10 @@ function receive(message: unknown): void {
 }
 window.locusAgentWorld = { receive };
 
+el('new-agent').addEventListener('click', () => {
+  if (demo) showNote('Open Agent World in Locus to create an agent. This preview does not save agent profiles.');
+  else if (snapshot.canCreateAgent) send({ version: 1, type: 'createAgent' });
+});
 el('shared-chat').addEventListener('click', () => {
   if (demo) showNote('Crew Chat connects your agents in Locus. This preview does not open a real chat or send messages.');
   else send({ version: 1, type: 'openSharedChat' });

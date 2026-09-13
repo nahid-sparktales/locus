@@ -123,17 +123,21 @@ struct AgentTeamsSettingsView: View {
         ) {
             if let profile = profileToDelete {
                 Button("Remove \(profile.name)", role: .destructive) {
-                    agentTeams.removeAgentProfile(profile)
                     profileToDelete = nil
+                    Task {
+                        do { try await model.removeSavedAgent(profile) }
+                        catch { model.showToast(error.localizedDescription) }
+                    }
                 }
+                .disabled(model.removingSavedAgentIDs.contains(profile.id))
             }
             Button("Cancel", role: .cancel) { profileToDelete = nil }
         } message: {
             if let profile = profileToDelete {
                 let count = agentTeams.agentTeams.filter { $0.memberIDs.contains(profile.id) }.count
                 Text(count == 0
-                    ? "This removes the saved specialist. Completed runs are kept."
-                    : "This specialist will also be removed from \(count) \(count == 1 ? "team" : "teams"). Teams may need a new dispatcher or lead editor before they can run.")
+                    ? "This removes the saved specialist and archives its chats. Completed runs are kept."
+                    : "This specialist’s chats will be archived, and it will be removed from \(count) \(count == 1 ? "team" : "teams"). Completed runs are kept. Teams may need a new dispatcher or lead editor before they can run.")
             }
         }
         .confirmationDialog(

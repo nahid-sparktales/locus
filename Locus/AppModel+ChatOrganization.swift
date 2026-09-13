@@ -312,7 +312,7 @@ extension AppModel {
                 }
                 showToast("Chat restored")
                 if deletion.wasActive,
-                   let restoredID = response.sessionIDs.first,
+                   let restoredID = response.sessionIDs.first(where: { $0 == deletion.session.id }) ?? response.sessionIDs.first,
                    let restored = sessions.first(where: { $0.id == restoredID })
                 {
                     resume(restored)

@@ -705,7 +705,11 @@ extension AppModel {
         }
         if let variant = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_FIXTURE"],
            !variant.isEmpty {
-            seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
+            if variant == "orphaned-profile" {
+                seedOrphanedSavedAgentFixture(workspace: workspace)
+            } else {
+                seedAgentFixture(workspace: workspace, selectsAgentChat: variant != "fleet")
+            }
             // "schedule" lands on the scheduled agent's chat so its panel shows.
             if variant == "schedule" {
                 installTranscriptSession("seed-schedule-chat", blocks: blocks)
@@ -912,6 +916,32 @@ extension AppModel {
         if let record {
             _ = goals.handleEvent(["type": "goal_snapshot", "goal": record], sessionID: sessionID)
         }
+    }
+
+    /// Opt-in regression fixture for saved chats whose profile has already
+    /// been removed. Keep it separate from the established agent fixtures.
+    private func seedOrphanedSavedAgentFixture(workspace: String) {
+        let profile = AgentProfile(id: UUID(uuidString: "FAAAA111-1111-4111-8111-111111111111")!,
+            name: "Atlas", model: "fixture-model", instructions: "Help with project research.")
+        let missingProfileID = "FAAAA222-2222-4222-8222-222222222222"
+        let now = Date().timeIntervalSince1970
+        agentProfiles = [profile]
+        let orphanChats = (1...2).map { index in
+            SessionSummary(id: "orphaned-agent-chat-\(index)", name: "orphaned-agent-chat-\(index).jsonl",
+                preview: "Saved test conversation", mtime: now + Double(index), size: 0,
+                title: "Orphan chat \(index)", cwd: workspace, agentProfileID: missingProfileID)
+        }
+        let liveChat = SessionSummary(id: "live-agent-chat", name: "live-agent-chat.jsonl",
+            preview: "Retained conversation", mtime: now, size: 0,
+            title: "Atlas chat", cwd: workspace, agentProfileID: profile.id.uuidString)
+        sessions = orphanChats + [liveChat]
+        selectedSavedAgentID = nil
+        selectedAgentID = nil
+        agentInspector.clearAgentSelection()
+        agentInspector.show(.fleet)
+        installTranscriptSession(orphanChats[0].id, blocks: [])
+        sidebarDestination = .agents
+        inspectorCollapsed = true
     }
 
     /// One Gmail agent with two chats and two deliveries plus a fired price

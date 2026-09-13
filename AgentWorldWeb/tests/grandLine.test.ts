@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_THEME, SHIP_ASSET_TYPES, SHIP_NAMES, parseTheme, safeAssetPath } from '../src/theme.ts';
 import {
-  MAX_MOTION_DT, RESIDENT_RADIUS, createResidentMotion, findResidentPath,
+  MAX_MOTION_DT, RESIDENT_RADIUS, createResidentMotion, findResidentArrival, findResidentPath,
   pointIsWalkable, resolveResidentSpacing, segmentIsWalkable, stationObstacle,
   stepResidentMotion, themeNavigation,
 } from '../src/residentMotion.ts';
@@ -139,29 +139,71 @@ test('every ship has a distinct island harbor with an approach bearing toward th
   assert.equal(assignedIslands.size, 12);
 });
 
-test('idle ships spend time at their own harbors and take separate local patrols', () => {
+test('idle ships leave promptly and explore beyond their home islands with fleet clearance', () => {
   const theme = loadGrandLine(), sea = themeNavigation(theme), homes = theme.layout.stations;
-  const ids = homes.map((_, index) => `harbor-patrol-${index}`);
+  const ids = homes.map((_, index) => `free-roaming-${index}`);
   let states = homes.map((home, index) => ({ ...createResidentMotion(ids[index], home), speed: 0.52 }));
-  const furthest = homes.map(() => 0), anchoredTicks = homes.map(() => 0);
-  // The opening minute includes a dockside rest and a complete local outing,
-  // before the occasional later visit to another island can begin.
-  for (let tick = 0; tick < 1200; tick++) {
+  const furthest = homes.map(() => 0), departureTicks = homes.map(() => -1);
+  // Allow time for busy sea lanes to change a ship's destination along the way.
+  for (let tick = 0; tick < 3600; tick++) {
     const proposed = states.map((state, index) => stepResidentMotion(state, { home: homes[index], status: 'idle', dt: MAX_MOTION_DT, rosterIDs: ids }, sea));
     const next = resolveResidentSpacing(proposed, states, sea);
     for (let index = 0; index < next.length; index++) {
       const fromHarbor = distance(next[index], homes[index]);
       furthest[index] = Math.max(furthest[index], fromHarbor);
-      if (near(next[index], homes[index])) anchoredTicks[index]++;
-      assert.ok(fromHarbor <= 7.2, `Ship ${index} abandoned its island for the shared center`);
+      if (departureTicks[index] < 0 && fromHarbor > 0.1) departureTicks[index] = tick;
       assert.ok(segmentIsWalkable(states[index], next[index], sea));
-      for (let other = index + 1; other < next.length; other++) assert.ok(distance(next[index], next[other]) >= sea.bodyRadius * 2 + 0.08 - 0.00001, 'Local patrols must not crowd together');
+      for (let other = index + 1; other < next.length; other++) assert.ok(distance(next[index], next[other]) >= sea.bodyRadius * 2 + 0.08 - 0.00001, 'Freely roaming ships must keep their clearance');
     }
     states = next;
   }
   for (let index = 0; index < homes.length; index++) {
-    assert.ok(furthest[index] > 2.2, `Ship ${index} never left its harbor for a patrol`);
-    assert.ok(anchoredTicks[index] >= 240, `Ship ${index} should rest by its island between outings`);
+    assert.ok(furthest[index] > 8, `Ship ${index} remained tethered to its own island`);
+    assert.ok(departureTicks[index] >= 0 && departureTicks[index] < 200, `Ship ${index} waited too long to start exploring`);
+  }
+});
+
+test('adding a captain while a ship crosses its harbor keeps both moving without overlap', () => {
+  const theme = loadGrandLine(), sea = themeNavigation(theme), homes = theme.layout.stations;
+  let survivor = { ...createResidentMotion('captain-0', homes[0]), speed: 0.52 };
+  for (let tick = 0; tick <= 3528; tick++) survivor = stepResidentMotion(survivor, { home: homes[0], status: 'idle', dt: MAX_MOTION_DT, rosterIDs: [survivor.id] }, sea);
+  const clearance = sea.bodyRadius * 2 + 0.08;
+  assert.ok(distance(survivor, homes[1]) < clearance, 'The regression needs a ship crossing the new captain’s berth');
+  const arrival = findResidentArrival(homes[1], sea, [survivor]);
+  assert.ok(arrival && distance(arrival, survivor) > clearance);
+  let states = [survivor, { ...createResidentMotion('new-agent', homes[1]), ...arrival, speed: 0.52 }];
+  const travel = [0, 0];
+  for (let tick = 0; tick < 4800; tick++) {
+    const proposed = states.map(state => stepResidentMotion(state, { home: state.home, status: tick < 2400 ? 'idle' : 'working', dt: MAX_MOTION_DT, rosterIDs: states.map(item => item.id) }, sea));
+    const next = resolveResidentSpacing(proposed, states, sea);
+    for (let index = 0; index < next.length; index++) {
+      const moved = distance(states[index], next[index]);
+      travel[index] += moved;
+      assert.ok(moved <= next[index].speed * MAX_MOTION_DT + 0.00001);
+      assert.ok(segmentIsWalkable(states[index], next[index], sea));
+    }
+    assert.ok(distance(next[0], next[1]) >= clearance - 0.00001);
+    states = next;
+  }
+  assert.ok(travel.every(length => length > 10), 'Both the survivor and newcomer must keep sailing');
+  assert.ok(near(states[0], homes[0]) && near(states[1], homes[1]), 'Both captains must still return to their own islands');
+});
+
+test('a freely roaming fleet keeps sailing instead of waiting indefinitely at occupied destinations', () => {
+  const theme = loadGrandLine(), sea = themeNavigation(theme), homes = theme.layout.stations;
+  const ids = homes.map((_, index) => `c-${index}`);
+  let states = homes.map((home, index) => ({ ...createResidentMotion(ids[index], home), speed: 0.52 }));
+  const lastMove = states.map(() => 0);
+  // These identities previously formed a permanent cluster after their first
+  // few destinations. Cover enough rounds for their travel timings to diverge.
+  for (let tick = 0; tick < 12000; tick++) {
+    const proposed = states.map(state => stepResidentMotion(state, { home: state.home, status: 'idle', dt: MAX_MOTION_DT, rosterIDs: ids }, sea));
+    const next = resolveResidentSpacing(proposed, states, sea);
+    for (let index = 0; index < next.length; index++) {
+      if (distance(states[index], next[index]) > 0.00001) lastMove[index] = tick;
+      assert.ok((tick - lastMove[index]) * MAX_MOTION_DT < 15, `Ship ${index} stopped exploring because another ship occupied its destination`);
+    }
+    states = next;
   }
 });
 

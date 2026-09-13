@@ -58,6 +58,9 @@ extension AppModel {
     }
 
     func agentWorldProfileDispatch(profileID: UUID, mode: WorkMode) throws -> TaskCapsuleDispatch {
+        guard !removingSavedAgentIDs.contains(profileID) else {
+            throw AgentWorldError.unavailable("This saved agent is being removed.")
+        }
         guard let profile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw AgentWorldError.unavailable("This conversation's agent profile was removed. Choose another agent or start a regular chat.")
         }
