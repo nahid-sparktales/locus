@@ -241,6 +241,40 @@ def test_selection_is_atomic_and_keeps_api_accounts_separate(manager, monkeypatc
     assert core.ensure_model() is None
 
 
+def test_profile_chat_keeps_instructions_out_of_user_history(manager, sdk, monkeypatch, tmp_path):
+    from ollama_code.agent_profile_runtime import bounded_profile_configuration, parse_solo_profile
+
+    monkeypatch.setattr(manager, 'account', lambda: {'account': {'type': 'claude_plan'}})
+    profile = parse_solo_profile({
+        'id': 'bob', 'name': 'Bob', 'model': 'default', 'role': 'generalist',
+        'instructions': 'Return concise findings with uncertainties.',
+    }, 'default')
+    core = AgentCore(cwd=str(tmp_path), config={'provider': 'ollama', 'model': 'local'})
+    core.use_claude_plan(account_id='account-a', model='default', account_label='Claude', manager=manager)
+    core.configure_agent(bounded_profile_configuration(profile), mode='ask')
+    sdk.response = [msg('AssistantMessage', content=[msg('TextBlock', text='Hello!')], error=None)]
+
+    core.run_turn('hey man', allow_tools=False)
+
+    assert 'Bob' in sdk.options[-1].system_prompt
+    assert 'Return concise findings' in sdk.options[-1].system_prompt
+    assert sdk.options[-1].tools == []
+    assert sdk.options[-1].mcp_servers == {}
+    assert sdk.prompts[-1][0]['message']['content'] == [{'type': 'text', 'text': 'hey man'}]
+
+    # A replacement managed session needs conversation history, but the current
+    # system prompt is already supplied through the SDK's dedicated field.
+    core._clear_chatgpt_thread()
+    core.run_turn('hi again', allow_tools=False)
+    replay = sdk.prompts[-1][0]['message']['content'][0]['text']
+    assert 'USER: hey man' in replay
+    assert 'ASSISTANT FINAL ANSWER: Hello!' in replay
+    assert 'CURRENT USER REQUEST:\nhi again' in replay
+    assert 'SYSTEM:' not in replay
+    assert 'Locked runtime rules' not in replay
+    assert 'Return concise findings' not in replay
+
+
 def test_scheduled_and_team_routes_are_subscription_only():
     assert 'claude_plan' in SCHEDULE_PROVIDERS
     route = {'provider': 'claude_plan', 'account_id': 'account-a'}

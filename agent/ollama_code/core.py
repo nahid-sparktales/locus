@@ -2310,17 +2310,20 @@ class AgentCore:
                         canonical = []
                         for message in prior:
                             role = str(message.get("role") or "message")
+                            # The current application contract is supplied by
+                            # start_thread, not by the user's conversation.
+                            # A fresh session contains only this system row;
+                            # replaying it invents history on the first turn.
+                            if role == "system":
+                                continue
                             content = str(message.get("content") or "")
                             if message.get("tool_calls"):
                                 content += "\nTool calls: " + json.dumps(message["tool_calls"], ensure_ascii=False)
                             if role == "tool":
                                 content = f"Tool {message.get('name', '')} ({message.get('tool_call_id', '')}): " + content
                             if parity:
-                                # A native-prompt thread must not replay the
-                                # Locus system prompt or the mode wrappers old
-                                # messages carry.
-                                if role == "system":
-                                    continue
+                                # Native-prompt threads also omit the mode
+                                # wrappers carried by older user messages.
                                 if role == "user":
                                     content = strip_prompt_decoration(content)
                             if content:
