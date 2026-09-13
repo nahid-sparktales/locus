@@ -22,11 +22,11 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 2.8.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v2.8.0/Locus-macOS.zip).
-> This wallet-free release adds unified task recovery, selective file restoration,
-> and optional background agents. Install this download once if you use 2.6.0 or earlier;
+> [Download Locus 3.0.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v3.0.0/Locus-macOS.zip).
+> This wallet-free release adds Agent World, Claude plan accounts, and more reliable
+> background runtime updates. Install this download once if you use 2.6.0 or earlier;
 > existing chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v2.8.0).
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v3.0.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 
