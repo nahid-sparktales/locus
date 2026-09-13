@@ -1151,13 +1151,13 @@ private struct MCPServerEditorView: View {
             Text(server == nil ? "Add MCP server" : "Edit MCP server")
                 .font(.locus(size: 16, weight: .bold))
             Form {
-                TextField("Name", text: $name)
+                LocusFormTextField("Name", text: $name)
                 Picker("Transport", selection: $transport) {
                     Text("Remote (Streamable HTTP)").tag("streamable_http")
                     Text("Local command (stdio)").tag("stdio")
                 }
                 if transport == "stdio" {
-                    TextField("Command", text: $command)
+                    LocusFormTextField("Command", text: $command)
                     TextEditor(text: $arguments)
                         .foregroundStyle(LocusTheme.inkSoft)
                         .tint(LocusTheme.accentAction)
@@ -1172,7 +1172,7 @@ private struct MCPServerEditorView: View {
                             .foregroundStyle(LocusTheme.coral)
                     }
                 } else {
-                    TextField("Server URL", text: $url)
+                    LocusFormTextField("Server URL", text: $url)
                 }
                 Picker("Authentication", selection: $auth) {
                     Text("None").tag("none")
@@ -1182,14 +1182,14 @@ private struct MCPServerEditorView: View {
                     Text("OAuth (manual endpoints + PKCE)").tag("oauth")
                 }
                 if auth == "oauth" {
-                    TextField("Issuer (optional; discovers endpoints)", text: $issuer)
-                    TextField("Authorization endpoint", text: $authorizationEndpoint)
-                    TextField("Token endpoint", text: $tokenEndpoint)
-                    TextField("Client ID", text: $clientID)
-                    TextField("Scopes, separated by spaces", text: $scopes)
+                    LocusFormTextField("Issuer (optional; discovers endpoints)", text: $issuer)
+                    LocusFormTextField("Authorization endpoint", text: $authorizationEndpoint)
+                    LocusFormTextField("Token endpoint", text: $tokenEndpoint)
+                    LocusFormTextField("Client ID", text: $clientID)
+                    LocusFormTextField("Scopes, separated by spaces", text: $scopes)
                 } else if auth == "auto" {
-                    TextField("Client ID or metadata document URL (optional)", text: $clientID)
-                    TextField("Requested scopes, separated by spaces (optional)", text: $scopes)
+                    LocusFormTextField("Client ID or metadata document URL (optional)", text: $clientID)
+                    LocusFormTextField("Requested scopes, separated by spaces (optional)", text: $scopes)
                 }
                 Picker("Default tool policy", selection: $approval) {
                     Text("Use safety annotations").tag("annotations")
@@ -2222,7 +2222,7 @@ struct SettingsView: View {
 
             if model.settingsPage == .developer {
                 Section("Agent") {
-                TextField("Maximum tool steps per request — all models (optional)", text: $iterationLimit)
+                LocusFormTextField("Maximum tool steps per request — all models (optional)", text: $iterationLimit)
                     .accessibilityIdentifier("settings.maxIterations")
 
                 Text("Leave empty for 40. This ceiling applies to local, ChatGPT-plan, and API-backed requests because Locus still coordinates their tool loop. A request that reaches the limit stops and says so.")
@@ -2430,7 +2430,7 @@ struct SettingsView: View {
 
             if model.settingsPage == .developer {
                 Section("Terminal") {
-                TextField("Shell executable (optional)", text: $draft.terminalShell)
+                LocusFormTextField("Shell executable (optional)", text: $draft.terminalShell)
                     .accessibilityIdentifier("settings.terminalShell")
                 Toggle("Start as a login shell", isOn: $draft.terminalLoginShell)
                     .accessibilityIdentifier("settings.terminalLoginShell")
@@ -2445,9 +2445,9 @@ struct SettingsView: View {
                 Text("The app includes its own local-agent runtime. These settings are used for custom or development backends.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
-                TextField("Backend URL", text: $draft.backendURL)
+                LocusFormTextField("Backend URL", text: $draft.backendURL)
                     .accessibilityIdentifier("settings.backendURL")
-                TextField("Fallback backend folder", text: $draft.backendRoot)
+                LocusFormTextField("Fallback backend folder", text: $draft.backendRoot)
                     .accessibilityIdentifier("settings.backendRoot")
                 HStack {
                     Button("Choose Folder…") { chooseBackendFolder() }
@@ -2644,11 +2644,11 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("settings.proxyType")
 
-                    TextField("Proxy host", text: $draft.proxyHost)
+                    LocusFormTextField("Proxy host", text: $draft.proxyHost)
                         .accessibilityIdentifier("settings.proxyHost")
-                    TextField("Port", text: $proxyPort)
+                    LocusFormTextField("Port", text: $proxyPort)
                         .accessibilityIdentifier("settings.proxyPort")
-                    TextField("Bypass proxy for these hosts (optional)", text: $draft.proxyBypass)
+                    LocusFormTextField("Bypass proxy for these hosts (optional)", text: $draft.proxyBypass)
                         .accessibilityIdentifier("settings.proxyBypass")
 
                     Text("Comma-separated: exact hostnames, IP addresses, or domain suffixes like .corp.example.com. Loopback addresses, the local agent, and the Ollama host always connect directly and do not need listing.")
@@ -2662,9 +2662,9 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.proxyAuth")
 
                     if proxyAuthEnabled {
-                        TextField("Username", text: $draft.proxyUsername)
+                        LocusFormTextField("Username", text: $draft.proxyUsername)
                             .accessibilityIdentifier("settings.proxyUsername")
-                        SecureField(
+                        LocusFormSecureField(
                             proxyPasswordStored ? "Password (a password is saved)" : "Password",
                             text: $proxyPassword
                         )
@@ -3005,14 +3005,14 @@ struct SettingsView: View {
                     }
                 }
 
-                TextField(
+                LocusFormTextField(
                     "Transcription model",
                     text: $draft.voiceCloudTranscriptionModel
                 )
                 .accessibilityIdentifier("settings.voice.transcriptionModel")
-                TextField("Speech model", text: $draft.voiceCloudSpeechModel)
+                LocusFormTextField("Speech model", text: $draft.voiceCloudSpeechModel)
                     .accessibilityIdentifier("settings.voice.speechModel")
-                TextField("Voice identifier", text: $draft.voiceCloudVoiceIdentifier)
+                LocusFormTextField("Voice identifier", text: $draft.voiceCloudVoiceIdentifier)
                     .accessibilityIdentifier("settings.voice.voiceIdentifier")
             }
 
@@ -3151,7 +3151,7 @@ struct SettingsView: View {
 
             if expandedAdvancedPages.contains(.accounts) {
                 Section("Advanced local model settings") {
-                    TextField("Local context window in tokens (optional)", text: $localWindow)
+                    LocusFormTextField("Local context window in tokens (optional)", text: $localWindow)
                         .accessibilityIdentifier("settings.localContextWindow")
 
                     Text("Leave empty and Locus asks Ollama for the largest window the model was built for, up to 32,768 tokens — Ollama's own default is 4,096, most of which a turn spends on tools before the conversation starts. Bigger windows cost memory for the KV cache, and a model that ends up partly on the CPU is backed off automatically. Set a value to pin one exactly; it is requested as num_ctx and is what compaction budgets against.")

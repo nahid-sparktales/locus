@@ -115,6 +115,14 @@ final class AppModel: ObservableObject {
     let backgroundServicesModel = BackgroundServicesModel()
     let extensionsModel: ExtensionsModel
     let agentWorld = AgentWorldModel()
+    let agentCrewChat: AgentCrewChatModel
+    @Published var agentCrewChatPresented = false
+    @Published var agentWorldOwnsPresentations = false
+    weak var appUpdates: AppUpdateController?
+    var agentWorldRunSignals: [String: OrchestrationRun] = [:]
+    var agentWorldRequestOwners: [String: AgentWorldRequestOwner] = [:]
+    var agentWorldSignalsRefreshAt = Date.distantPast
+    var agentWorldSignalsRefreshTask: Task<Void, Never>?
     let sessionCatalog = SessionCatalogModel()
     let transcriptPresentation = TranscriptPresentationModel()
     /// Compatibility notification for an AppModel-owned identity transition,
@@ -478,6 +486,13 @@ final class AppModel: ObservableObject {
     @Published var automaticInspectorPrompt: AutomaticInspectorPrompt?  // internal(for: AppModel extension files)
     @Published var usageDashboardPresented = false
     @Published var configureAgentPresented = false
+    @Published var savedAgentEditor: AgentProfile?
+    var savedAgentRuntimeSyncInFlight = false
+    var savedAgentRuntimeSyncPending = false
+    var pendingSavedAgentEditor: AgentProfile?
+    @Published var selectedSavedAgentID: UUID?
+    @Published var configureAgentProfileID: UUID?
+    @Published var creatingSavedAgentChatIDs: Set<UUID> = []
     @Published var configureAgentCreationPresented = false
     @Published var configureAgentPendingCreation = false
     @Published var configureAgentTab: ConfigureAgentTab = .agents
@@ -792,6 +807,7 @@ final class AppModel: ObservableObject {
         self.isUITesting = isUITesting
         let persistenceEnabled = startImmediately && !isUITesting
         self.persistenceEnabled = persistenceEnabled
+        agentCrewChat = persistenceEnabled ? AgentCrewChatModel() : AgentCrewChatModel(storageDirectory: nil)
         duo = duoOverride ?? DuoModel(defaults: persistenceEnabled ? .standard : nil)
         identityVault = IdentityVaultModel(
             store: persistenceEnabled ? IdentityVaultStore() : IdentityVaultStore(inMemory: ()),
@@ -1281,6 +1297,13 @@ final class AppModel: ObservableObject {
         )
         configureTaskCapsules()
         configureAgentWorld()
+        agentTeamsModel.profilesChanged = { [weak self] in
+            guard let self else { return }
+            self.agentCrewChat.refresh()
+            self.agentWorld.refresh()
+            guard RuntimeInstallation.enabled, !self.isUITesting else { return }
+            Task { @MainActor [weak self] in try? await self?.syncSavedAgentsToRuntime() }
+        }
         configureGoals()
         configureOptionalQuestions()
         runs.configure(

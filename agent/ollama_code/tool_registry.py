@@ -1098,7 +1098,7 @@ class ToolRegistry:
         ):
             return False
         if (
-            name in _SAFE_EXTENSION_TOOLS or name in self._mcp_by_qualified
+            name in _SAFE_EXTENSION_TOOLS or name in self._mcp_by_qualified or name in _CONNECTOR_TOOL_NAMES
         ) and not policy.get("mcp", True):
             return False
         return True
@@ -1364,9 +1364,11 @@ class ToolRegistry:
         return True
 
     def connector_schemas(self) -> list[dict[str, Any]]:
-        if not self.connector_connections:
+        if not self.connector_connections or not self._user_capability_policy.get("mcp", True):
             return []
-        kinds = set(self.connector_connections.values())
+        connections = {key: kind for key, kind in self.connector_connections.items()
+                       if key not in (self._mcp_agent_policy or {}).get("excluded_connection_ids", [])}
+        kinds = set(connections.values())
         values: list[dict[str, Any]] = []
         for original in CONNECTOR_TOOL_SCHEMAS:
             name = str(original["function"]["name"])
@@ -1379,13 +1381,17 @@ class ToolRegistry:
             schema = copy.deepcopy(original)
             wanted_kind = "gmail" if name.startswith("gmail_") else "telegram"
             schema["function"]["parameters"]["properties"]["connection_id"]["enum"] = [
-                identifier for identifier, kind in sorted(self.connector_connections.items())
+                identifier for identifier, kind in sorted(connections.items())
                 if kind == wanted_kind
             ]
             values.append(schema)
         return values
 
     def connector_tool_allowed(self, name: str, connection_id: str = "") -> bool:
+        if not self._user_allows(name):
+            return False
+        if connection_id in (self._mcp_agent_policy or {}).get("excluded_connection_ids", []):
+            return False
         if name not in _CONNECTOR_TOOL_NAMES:
             return False
         expected = "gmail" if name.startswith("gmail_") else "telegram"
@@ -1753,7 +1759,9 @@ class ToolRegistry:
             return True
         server_id = str(item.get("server_id") or "")
         servers = {str(value) for value in policy.get("server_ids") or []}
-        if not servers or server_id not in servers:
+        if server_id in (policy.get("excluded_server_ids") or []):
+            return False
+        if not servers or ("*" not in servers and server_id not in servers):
             return False
         allowed = {str(value) for value in policy.get(category) or []}
         if not allowed:
@@ -1764,7 +1772,7 @@ class ToolRegistry:
             str(item.get("uri") or ""),
             f"{server_id}:{item.get('name') or item.get('uri') or ''}",
         }
-        if not (allowed & identifiers):
+        if "*" not in allowed and not (allowed & identifiers):
             return False
         if category != "tools":
             return True

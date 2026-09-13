@@ -339,7 +339,7 @@ final class EventAutomationModel: ObservableObject {
                 // however unrelated the edit — unless the person asked for the
                 // current model, which is also how a broken route is repaired.
                 if draft.id == nil || draft.adoptCurrentRoute {
-                    for (key, value) in agentProviderRoute?() ?? [:] where !value.isEmpty {
+                    for (key, value) in draft.profileRoute ?? agentProviderRoute?() ?? [:] where !value.isEmpty {
                         targetBody[key] = value
                     }
                 }

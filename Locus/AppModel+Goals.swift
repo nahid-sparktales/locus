@@ -38,7 +38,8 @@ extension AppModel {
             && !currentSessionID.isEmpty && !isIdentityTask && !isBusy && !hasPendingPermission
             && taskCapsules.activeStageSessions[currentSessionID] == nil
             && taskCapsules.pendingPlanningRequest(for: currentSessionID) == nil
-            && sessions.first(where: { $0.id == currentSessionID })?.isAgentChat != true
+            && (sessions.first(where: { $0.id == currentSessionID })?.isAgentChat != true
+                || savedAgentProfileID(for: currentSessionID) != nil)
     }
 
     func presentGoalEditor() {
@@ -54,6 +55,17 @@ extension AppModel {
         ]
         if let account = activeAccount { execution["provider_account_id"] = account.id.uuidString }
         if let behavior = encodedJSONObject(primaryAgentBehavior) { execution["agent_config"] = behavior }
+        if let profileID = savedAgentProfileID(for: currentSessionID) {
+            do {
+                let dispatch = try agentWorldProfileDispatch(profileID: profileID, mode: .work)
+                execution["provider"] = dispatch.provider
+                execution["provider_account_id"] = dispatch.accountID
+                execution["model"] = dispatch.profile.model
+                execution["agent_config"] = encodedJSONObject(dispatch.profile.resolvedBehavior)
+                execution["conversation_profile_id"] = profileID.uuidString
+                execution["agent_profile_configuration"] = goalAgentConfiguration(dispatch.profile)
+            } catch { showToast(error.localizedDescription); return }
+        }
         if let team = selectedAgentTeam {
             guard teamManifest(for: "", teamID: team.id) != nil else { return }
             execution["team_id"] = team.id.uuidString
@@ -205,7 +217,22 @@ extension AppModel {
             if let error = AgentTeamValidation.routeErrors(team: team, profiles: agentProfiles,
                     accounts: providerAccounts, accountModels: accountModels).first { return error }
         }
+        if let rawID = execution["conversation_profile_id"]?.string {
+            guard let id = UUID(uuidString: rawID),
+                  let profile = agentProfiles.first(where: { $0.id == id }) else {
+                return "The goal's saved agent is unavailable."
+            }
+            if execution["agent_profile_configuration"]?.string != goalAgentConfiguration(profile) {
+                return "The saved agent's configuration changed. Edit the goal before resuming."
+            }
+        }
         return nil
+    }
+
+    private func goalAgentConfiguration(_ profile: AgentProfile) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(profile)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
 
     private func goalTeamConfiguration(_ team: AgentTeam) -> String {

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- The Agent page now groups saved agents with their conversations and supports
+  new chats, schedules, event triggers, and price alerts from Manage Agent.
+- Agent World adds The Local Line: twelve ships with their own named islands,
+  map panning, bow-first sailing, side-on docking, and animated island crews.
+  Orbital Locus Outpost uses Locus colors and a mix of people, pandas, and robots.
+- Shared Crew Chat connects the main Agent page and Agent World, selecting
+  relevant or explicitly mentioned members while preserving each saved profile.
+  Captain’s Quarters exposes the normal Locus conversation and agent controls.
+- Ping Ping provides a 3D alert for approvals and input requests, with collapse,
+  hide, and restore controls. Courier boats visualize delivered agent handoffs.
+
+### Fixed
+
+- Agent and settings forms use full-width, left-aligned placeholder inputs;
+  comma-separated event filters preserve unfinished entries while typing.
+- Saved-agent chats support full work modes, goals, task capsules, and controlled
+  delegation while retaining the agent’s model, instructions, and access.
+- Gmail agent polling handles connection responses consistently and saved-agent
+  access defaults agree between setup, chat, and runtime execution.
+
 ## 3.0.0 — 2026-09-13
 
 ### Added

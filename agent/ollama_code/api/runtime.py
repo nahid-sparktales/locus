@@ -161,6 +161,32 @@ def automation_update(kind: str, automation_id: str, request: Request, body: dic
         raise HTTPException(422, str(exc)) from exc
 
 
+def agent_profiles_update(request: Request, body: dict = Body(default_factory=dict)):
+    """Replace controller-owned profiles in the private runtime configuration."""
+    import uuid
+
+    from ..agent_profile_runtime import parse_solo_profile
+
+    profiles = body.get("profiles")
+    if not isinstance(profiles, list):
+        raise HTTPException(422, "profiles must be a list")
+    saved = {}
+    try:
+        for item in profiles:
+            profile = item["profile"]
+            key = str(uuid.UUID(profile["id"]))
+            parse_solo_profile(profile, profile["model"])
+            if key in saved:
+                raise ValueError("Duplicate agent profile")
+            if not item.get("unavailable") and not isinstance(item.get("provider"), dict):
+                raise ValueError("An agent profile needs its selected provider")
+            saved[key] = item
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise HTTPException(422, "Invalid saved agent configuration") from exc
+    supervisor(request.app).private.set("agent-profiles", saved)
+    return {"ok": True}
+
+
 async def credentials(request: Request, body: dict = Body(default_factory=dict)):
     """Write-only provisioning: controller-selected credentials stay off the event stream."""
     runtime = supervisor(request.app)
@@ -344,5 +370,6 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/runtime/decisions/respond", decision_respond, methods=["POST"])
     router.add_api_route("/api/runtime/automations/{kind}/{automation_id}", automation_update, methods=["PATCH"])
     router.add_api_route("/api/runtime/credentials", credentials, methods=["POST"])
+    router.add_api_route("/api/runtime/agent-profiles", agent_profiles_update, methods=["POST"])
     router.add_api_route("/api/runtime/workers/{session_id}/{path:path}", proxy, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     router.add_api_websocket_route("/ws/runtime/{session_id}", socket_proxy)

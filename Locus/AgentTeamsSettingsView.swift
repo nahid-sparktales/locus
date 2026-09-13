@@ -77,7 +77,7 @@ struct AgentTeamsSettingsView: View {
                 isNew: !agentTeams.agentProfiles.contains(where: { $0.id == profile.id }),
                 existingProfiles: agentTeams.agentProfiles
             ) {
-                agentTeams.saveAgentProfile($0)
+                model.saveSidebarAgent($0)
                 editingProfile = nil
             }
             .environmentObject(model)
@@ -235,22 +235,11 @@ struct AgentTeamsSettingsView: View {
     }
 
     private var profilesSection: some View {
-        settingsSection(title: "Specialist profiles", actionTitle: "Add Agent") {
-            let route: AgentRoute = model.settings.activeAccountID
-                .flatMap(UUID.init(uuidString:))
-                .map(AgentRoute.providerAccount) ?? .localOllama
-            editingProfile = AgentProfile(
-                name: "",
-                route: route,
-                model: model.selectedModel,
-                role: .generalist,
-                instructions: "",
-                accessCeiling: .readOnly,
-                behavior: AgentBehavior(selfDescription: "A specialist for delegated tasks.")
-            )
+        settingsSection(title: "Agents", actionTitle: "New Agent") {
+            editingProfile = model.newSavedAgentDraft()
         } content: {
             if agentTeams.agentProfiles.isEmpty {
-                emptyRow("Save a specialist for research, implementation, or review. Start with a name and instructions; reuse it in any team.")
+                emptyRow("Create an agent for chats, Agent World, and teams. Start with a name and instructions.")
             } else if filteredProfiles.isEmpty {
                 emptyRow("No specialists match “\(profileSearch)”.")
             } else {
@@ -368,9 +357,9 @@ struct AgentTeamsSettingsView: View {
     private var observabilitySection: some View {
         Section("Optional telemetry") {
             Toggle("Export completed runs with OTLP/HTTP", isOn: $model.settings.otlpExportEnabled)
-            TextField("https://collector.example", text: $model.settings.otlpEndpoint)
+            LocusFormTextField("https://collector.example", text: $model.settings.otlpEndpoint)
                 .textFieldStyle(.roundedBorder)
-            SecureField(
+            LocusFormSecureField(
                 "Authorization header (optional)",
                 text: $model.settings.otlpAuthorization
             )
@@ -1268,8 +1257,8 @@ private struct AgentBehaviorEditor: View {
             ScrollView {
                 Form {
                     Section("Identity and response") {
-                        TextField("Display name", text: $draft.displayName)
-                        TextField("What this agent is", text: $draft.selfDescription, axis: .vertical)
+                        LocusFormTextField("Display name", text: $draft.displayName)
+                        LocusFormTextField("What this agent is", text: $draft.selfDescription, axis: .vertical)
                             .lineLimit(2...5)
                         Picker("Tone", selection: $draft.responseStyle.tone) {
                             ForEach(AgentResponseTone.allCases) { Text($0.title).tag($0) }
@@ -1345,10 +1334,10 @@ private struct AgentBehaviorEditor: View {
             Group {
                 Text("MODE-SPECIFIC GUIDANCE")
                     .font(.locus(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
-                TextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
-                TextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
-                TextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
-                TextField("Grill", text: $draft.modeInstructions.grill, axis: .vertical)
+                LocusFormTextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
+                LocusFormTextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
+                LocusFormTextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
+                LocusFormTextField("Grill", text: $draft.modeInstructions.grill, axis: .vertical)
             }
             Divider()
             Group {
@@ -1453,15 +1442,15 @@ private struct AgentBehaviorEditor: View {
             }
             Toggle("Task model-call limit", isOn: Binding(get: { draft.runtimePolicy.maxModelCalls != nil }, set: { draft.runtimePolicy.maxModelCalls = $0 ? 100 : nil }))
             if draft.runtimePolicy.maxModelCalls != nil {
-                TextField("Maximum calls", value: Binding(get: { draft.runtimePolicy.maxModelCalls ?? 100 }, set: { draft.runtimePolicy.maxModelCalls = max($0, 1) }), format: .number)
+                LocusFormTextField("Maximum calls", value: Binding(get: { draft.runtimePolicy.maxModelCalls ?? 100 }, set: { draft.runtimePolicy.maxModelCalls = max($0, 1) }), format: .number)
             }
             Toggle("Task token limit", isOn: Binding(get: { draft.runtimePolicy.maxTotalTokens != nil }, set: { draft.runtimePolicy.maxTotalTokens = $0 ? 100_000 : nil }))
             if draft.runtimePolicy.maxTotalTokens != nil {
-                TextField("Maximum tokens", value: Binding(get: { draft.runtimePolicy.maxTotalTokens ?? 100_000 }, set: { draft.runtimePolicy.maxTotalTokens = max($0, 1) }), format: .number)
+                LocusFormTextField("Maximum tokens", value: Binding(get: { draft.runtimePolicy.maxTotalTokens ?? 100_000 }, set: { draft.runtimePolicy.maxTotalTokens = max($0, 1) }), format: .number)
             }
             Toggle("Estimated spending control", isOn: Binding(get: { draft.runtimePolicy.maxEstimatedUSD != nil }, set: { draft.runtimePolicy.maxEstimatedUSD = $0 ? 5 : nil }))
             if draft.runtimePolicy.maxEstimatedUSD != nil {
-                TextField("Maximum estimated USD", value: Binding(get: { draft.runtimePolicy.maxEstimatedUSD ?? 5 }, set: { draft.runtimePolicy.maxEstimatedUSD = max($0, 0.01) }), format: .number)
+                LocusFormTextField("Maximum estimated USD", value: Binding(get: { draft.runtimePolicy.maxEstimatedUSD ?? 5 }, set: { draft.runtimePolicy.maxEstimatedUSD = max($0, 0.01) }), format: .number)
                 Text("New API calls pause when pricing or unsettled usage prevents a meaningful estimate. Subscription usage is separate.").font(.caption)
             }
             Text("Managed providers are interrupted at the next usage boundary they report.")
@@ -1633,6 +1622,7 @@ struct AgentProfileEditor: View {
     @State private var mcpTools: String
     @State private var mcpResources: String
     @State private var mcpPrompts: String
+    @State private var connectedServices: [ConnectorConnection] = []
     @State private var advancedSettings = false
     @State private var editingBehavior = false
     @State private var environmentExpanded = false
@@ -1653,6 +1643,7 @@ struct AgentProfileEditor: View {
     ) {
         var value = profile
         value.behavior = profile.resolvedBehavior
+        if isNew { value.applyNewAgentServiceDefaults() }
         _draft = State(initialValue: value)
         _tags = State(initialValue: profile.capabilityTags.joined(separator: ", "))
         _mcpTools = State(initialValue: (profile.mcpPolicy?.tools ?? []).joined(separator: ", "))
@@ -1713,6 +1704,10 @@ struct AgentProfileEditor: View {
             Task { await refreshModels() }
         }
         .onChange(of: draft.model) { _, _ in connectionResult = nil }
+        .onReceive(model.eventAutomations.$connections) { connectedServices = $0 }
+        .onChange(of: draft.accessCeiling) { _, _ in
+            if isNew { draft.applyNewAgentServiceDefaults() }
+        }
         .sheet(isPresented: $editingBehavior) {
             AgentBehaviorEditor(
                 title: "\(draft.name.isEmpty ? "Specialist" : draft.name) Behavior",
@@ -1740,9 +1735,9 @@ struct AgentProfileEditor: View {
                 .background(LocusTheme.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(isNew ? "Create a specialist" : "Edit specialist")
+                Text(isNew ? "New Agent" : "Edit Agent")
                     .font(.locus(size: 17, weight: .semibold))
-                Text("A reusable agent for delegated work and teams.")
+                Text("One agent for chats, Agent World, and teams.")
                     .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.textTertiary)
             }
@@ -1922,7 +1917,17 @@ struct AgentProfileEditor: View {
 
     private var connectionSummary: String {
         if !draft.resolvedBehavior.capabilityPolicy.mcp { return "Disabled in Permissions & tools" }
+        if draft.mcpPolicy?.allowsAllServices == true {
+            let excluded = (draft.mcpPolicy?.excludedServerIDs?.count ?? 0)
+                + (draft.mcpPolicy?.excludedConnectionIDs?.count ?? 0)
+            return excluded == 0 ? "All services and extensions allowed" : "All services allowed · \(excluded) turned off"
+        }
         let count = draft.mcpPolicy?.serverIDs.count ?? 0
+        let nativeCount = connectedServices.filter {
+            ($0.kind == .gmail || $0.kind == .telegram)
+                && !(draft.mcpPolicy?.excludedConnectionIDs ?? []).contains($0.id)
+        }.count
+        if count == 0, nativeCount > 0 { return "\(nativeCount) connected services allowed" }
         if count == 0 { return "No services allowed" }
         if csv(mcpTools).isEmpty && csv(mcpResources).isEmpty && csv(mcpPrompts).isEmpty {
             return "\(count) \(count == 1 ? "service" : "services") selected · Choose allowed tools"
@@ -2175,34 +2180,55 @@ struct AgentProfileEditor: View {
 
     private var connectionSettings: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if extensionsModel.extensions.mcpServers.isEmpty {
-                Text("No services are connected. Add an MCP server in Extensions to make it available here.")
-                    .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textTertiary)
-            } else {
-                ForEach(extensionsModel.extensions.mcpServers) { server in
-                    Toggle(server.name, isOn: Binding(
-                        get: { draft.mcpPolicy?.serverIDs.contains(server.id) == true },
-                        set: { enabled in
-                            var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-                            if enabled, !policy.serverIDs.contains(server.id) { policy.serverIDs.append(server.id) }
-                            else if !enabled { policy.serverIDs.removeAll { $0 == server.id } }
-                            draft.mcpPolicy = policy
-                        }
-                    ))
-                    .toggleStyle(.checkbox)
+            Toggle("Allow all services and extensions", isOn: Binding(
+                get: { draft.mcpPolicy?.allowsAllServices == true },
+                set: { enabled in
+                    let previous = draft.mcpPolicy ?? MCPAgentPolicy()
+                    var policy = enabled ? MCPAgentPolicy.allConnected : MCPAgentPolicy()
+                    policy.excludedServerIDs = previous.excludedServerIDs
+                    policy.excludedConnectionIDs = previous.excludedConnectionIDs
+                    draft.mcpPolicy = policy
                 }
-            }
-            TextField("Allowed tools", text: $mcpTools, prompt: Text("Tool names, separated by commas"))
-                .textFieldStyle(.roundedBorder)
-            TextField("Allowed resources", text: $mcpResources, prompt: Text("Resource URIs or names"))
-                .textFieldStyle(.roundedBorder)
-            TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("Prompt names"))
-                .textFieldStyle(.roundedBorder)
-            Text("Service access requires an allowed server and tool. External actions still require a writer role and the active chat’s permission. Prompts must be named explicitly.")
-                .font(.locus(size: 9))
+            ))
+            .toggleStyle(.checkbox)
+            .accessibilityIdentifier("agent.connections.all")
+            Text("Includes enabled extensions and services you connect later. Turn off individual services below. Chat permissions still apply.")
+                .font(.locus(size: 10))
                 .foregroundStyle(LocusTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+            ForEach(connectedServices.filter { $0.kind == .gmail || $0.kind == .telegram }) { connection in
+                Toggle(connection.displayName, isOn: Binding(
+                    get: { !(draft.mcpPolicy?.excludedConnectionIDs ?? []).contains(connection.id) },
+                    set: { enabled in
+                        var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                        var excluded = policy.excludedConnectionIDs ?? []
+                        excluded.removeAll { $0 == connection.id }
+                        if !enabled { excluded.append(connection.id) }
+                        policy.excludedConnectionIDs = excluded
+                        draft.mcpPolicy = policy
+                    }
+                ))
+                .toggleStyle(.checkbox)
+            }
+            ForEach(extensionsModel.extensions.mcpServers) { server in
+                Toggle(server.name, isOn: Binding(
+                    get: { draft.mcpPolicy?.allowsServer(server.id) == true },
+                    set: { enabled in
+                        var policy = draft.mcpPolicy ?? MCPAgentPolicy()
+                        policy.setServer(server.id, enabled: enabled)
+                        draft.mcpPolicy = policy
+                    }
+                ))
+                .toggleStyle(.checkbox)
+            }
+            if draft.mcpPolicy?.allowsAllServices != true {
+                TextField("Allowed tools", text: $mcpTools, prompt: Text("Tool names, separated by commas"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Allowed resources", text: $mcpResources, prompt: Text("Resource URIs or names"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("Prompt names"))
+                    .textFieldStyle(.roundedBorder)
+            }
         }
     }
 
@@ -2217,7 +2243,7 @@ struct AgentProfileEditor: View {
             Button("Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("agent.cancel")
-            Button(isNew ? "Create specialist" : "Save changes") { saveProfile() }
+            Button(isNew ? "Create Agent" : "Save changes") { saveProfile() }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.accentAction)
                 .keyboardShortcut(.defaultAction)
@@ -2231,10 +2257,10 @@ struct AgentProfileEditor: View {
 
     private var nameValidationMessage: String? {
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty { return "Give this specialist a name." }
+        if name.isEmpty { return "Give this agent a name." }
         if name.count > 64 { return "Keep the name to 64 characters or fewer." }
         if existingProfiles.contains(where: { $0.id != draft.id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            return "A specialist with this name already exists."
+            return "An agent with this name already exists."
         }
         return nil
     }
@@ -2255,9 +2281,11 @@ struct AgentProfileEditor: View {
         guard nameValidationMessage == nil, modelValidationMessage == nil else { return }
         draft.capabilityTags = csv(tags)
         var policy = draft.mcpPolicy ?? MCPAgentPolicy()
-        policy.tools = csv(mcpTools)
-        policy.resources = csv(mcpResources)
-        policy.prompts = csv(mcpPrompts)
+        if !policy.allowsAllServices {
+            policy.tools = csv(mcpTools)
+            policy.resources = csv(mcpResources)
+            policy.prompts = csv(mcpPrompts)
+        }
         draft.mcpPolicy = policy
         var behavior = draft.resolvedBehavior
         behavior.displayName = draft.name
@@ -2378,7 +2406,7 @@ private struct AgentTeamEditor: View {
             Divider()
             ScrollView {
                 Form {
-                    TextField("Team name", text: $draft.name)
+                    LocusFormTextField("Team name", text: $draft.name)
                     Section("Members") {
                         ForEach(agentTeams.agentProfiles) { profile in
                             Toggle(isOn: Binding(
@@ -2448,8 +2476,8 @@ private struct AgentTeamEditor: View {
                         )) {
                             ForEach(AgentRoutingMode.allCases) { Text($0.title).tag($0) }
                         }
-                        TextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
-                        TextField(
+                        LocusFormTextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
+                        LocusFormTextField(
                             "Maximum estimated cost",
                             value: $draft.maximumEstimatedCost,
                             format: .currency(code: "USD")
@@ -2650,9 +2678,9 @@ private struct EvaluationSuiteEditor: View {
 
     var body: some View {
         Form {
-            TextField("Suite name", text: $draft.name)
-            TextField("Description", text: $draft.description, axis: .vertical)
-            TextField("Tags", text: $tags, prompt: Text("swift, security, routing"))
+            LocusFormTextField("Suite name", text: $draft.name)
+            LocusFormTextField("Description", text: $draft.description, axis: .vertical)
+            LocusFormTextField("Tags", text: $tags, prompt: Text("swift, security, routing"))
             Toggle("Allow explicitly read-only MCP evidence", isOn: $draft.readOnlyMCP)
             Text("Coding cases always run in disposable managed worktrees. Computer control and mutating MCP tools are disabled.")
                 .font(.locus(size: 8))
@@ -2661,16 +2689,16 @@ private struct EvaluationSuiteEditor: View {
                 ForEach(draft.cases.indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 7) {
                         HStack {
-                            TextField("Case name", text: $draft.cases[index].name)
+                            LocusFormTextField("Case name", text: $draft.cases[index].name)
                             Button(role: .destructive) {
                                 if draft.cases.count > 1 { draft.cases.remove(at: index) }
                             } label: { Image(systemName: "trash") }
                                 .buttonStyle(.locus())
                                 .disabled(draft.cases.count == 1)
                         }
-                        TextField("Prompt", text: $draft.cases[index].prompt, axis: .vertical)
+                        LocusFormTextField("Prompt", text: $draft.cases[index].prompt, axis: .vertical)
                             .lineLimit(3...8)
-                        TextField(
+                        LocusFormTextField(
                             "Case tags",
                             text: caseTagsBinding(index),
                             prompt: Text("swift, routing, regression")
@@ -2732,7 +2760,7 @@ private struct EvaluationSuiteEditor: View {
                             }
                             .font(.locus(size: 8))
                         }
-                        TextField("Optional subjective rubric", text: $draft.cases[index].rubric, axis: .vertical)
+                        LocusFormTextField("Optional subjective rubric", text: $draft.cases[index].rubric, axis: .vertical)
                         if !draft.cases[index].rubric.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Picker("Blind judge", selection: $draft.cases[index].judgeProfileID) {
                                 Text("No subjective judge").tag("")
@@ -2751,7 +2779,7 @@ private struct EvaluationSuiteEditor: View {
                                         "output_contains", "output_regex",
                                     ], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ")).tag($0) }
                                 }
-                                TextField(
+                                LocusFormTextField(
                                     draft.cases[index].assertions[assertionIndex].kind == "command" ? "Command" : "Path",
                                     text: draft.cases[index].assertions[assertionIndex].kind == "command"
                                         ? $draft.cases[index].assertions[assertionIndex].command
@@ -2760,7 +2788,7 @@ private struct EvaluationSuiteEditor: View {
                                 if !["path_exists", "path_absent"].contains(
                                     draft.cases[index].assertions[assertionIndex].kind
                                 ) {
-                                    TextField(
+                                    LocusFormTextField(
                                         "Expected value or JSON",
                                         text: assertionValueBinding(index, assertionIndex)
                                     )
@@ -3120,12 +3148,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                 }
             }
             Toggle("Index this workspace", isOn: $enabled)
-            TextField(
+            LocusFormTextField(
                 "Optional Ollama embedding model",
                 text: $embeddingModel,
                 prompt: Text("Text search only")
             )
-            TextField(
+            LocusFormTextField(
                 "Additional exclusions",
                 text: $exclusions,
                 prompt: Text("Generated/**, Fixtures/private-*.json")
@@ -3367,12 +3395,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .foregroundStyle(LocusTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                         Toggle("Index this workspace", isOn: $enabled)
-                        TextField(
+                        LocusFormTextField(
                             "Optional local Ollama embedding model",
                             text: $embeddingModel,
                             prompt: Text("Leave empty for fast text search only")
                         )
-                        TextField(
+                        LocusFormTextField(
                             "Additional exclusions (comma separated globs)",
                             text: $exclusions,
                             prompt: Text("Generated/**, Fixtures/private-*.json")
@@ -4079,7 +4107,7 @@ private struct WorkspaceMemoryEditor: View {
             Text(scopeExplanation)
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
-            TextField("Title", text: $value.title)
+            LocusFormTextField("Title", text: $value.title)
             TextEditor(text: $value.content)
                 .foregroundStyle(LocusTheme.inkSoft)
                 .tint(LocusTheme.accentAction)
@@ -4088,7 +4116,7 @@ private struct WorkspaceMemoryEditor: View {
                 .font(.locus(size: 10))
                 .frame(minHeight: 180)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
-            TextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
+            LocusFormTextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text("Confidence · \(value.confidence, format: .percent.precision(.fractionLength(0)))")
                     .font(.locus(size: 9, weight: .semibold))

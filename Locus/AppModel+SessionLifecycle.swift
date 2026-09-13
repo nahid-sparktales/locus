@@ -17,6 +17,7 @@ extension AppModel {
             showToast("Finish or stop the active run before switching chats")
             return
         }
+        agentCrewChatPresented = false
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         let candidates = sessions.filter {
             $0.archived != true && ($0.isAgentChat ? SidebarDestination.agents : .ask) == destination
@@ -293,6 +294,7 @@ extension AppModel {
     }
 
     func resume(_ session: SessionSummary) {
+        agentCrewChatPresented = false
         if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
         if let path = session.workspacePath {

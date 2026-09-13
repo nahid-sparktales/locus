@@ -3,6 +3,8 @@ import Foundation
 
 extension AppModel {
     func configureAgentWorld() {
+        agentWorld.appModel = self
+        configureAgentCrewChat()
         agentWorld.configure(
             extensions: extensionsModel,
             profiles: { [weak self] in self?.agentProfiles ?? [] },
@@ -15,12 +17,7 @@ extension AppModel {
             state: { [weak self] id in self?.agentWorldConversationState(id) ?? .init() },
             create: { [weak self] workspace, profile in
                 guard let self else { throw AgentWorldError.unavailable("The agent is unavailable.") }
-                struct Created: Decodable { let session_id: String }
-                let response = try await self.backend.post("/api/sessions/detached", body: [
-                    "cwd": workspace, "title": "\(profile.name) · Agent World", "agent_profile_id": profile.id.uuidString,
-                ], as: Created.self)
-                await self.refreshMetadata()
-                return response.session_id
+                return try await self.createSavedAgentConversation(profile, workspace: workspace).id
             },
             load: { [weak self] id in
                 guard let self else { throw CancellationError() }
@@ -29,6 +26,7 @@ extension AppModel {
                 self.splitPaneBlocks[id] = ChatTranscriptBuilder.blocks(from: detail.messages)
             },
             activity: { [weak self] profile, workspace in
+                if let activity = self?.agentCrewChat.activity(for: profile.id, workspace: workspace), activity.busy { return activity }
                 guard let self, SessionSummary.canonicalWorkspacePath(self.workspacePath) == workspace,
                       let activity = self.teamRunLive.agentActivities.first(where: {
                           $0.id.caseInsensitiveCompare(profile.id.uuidString) == .orderedSame && !$0.state.isTerminal
@@ -114,6 +112,9 @@ extension AppModel {
               let profile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw AgentWorldError.unavailable("This agent profile is unavailable.")
         }
+        guard savedAgentProfileID(for: sessionID) == profileID else {
+            throw AgentWorldError.unavailable("This conversation belongs to a different saved agent.")
+        }
         guard pendingChatTurns[sessionID] == nil, !agentWorldConversationState(sessionID).busy else {
             throw AgentWorldError.unavailable("This conversation is still working or needs your attention in Locus.")
         }
@@ -121,8 +122,9 @@ extension AppModel {
             throw AgentWorldError.unavailable("Pause the current goal before continuing this agent conversation.")
         }
         let route = try agentProfileProvider(profile)
-        let dispatch = TaskCapsuleDispatch(profile: profile, provider: route.provider, accountID: route.accountID,
+        var dispatch = TaskCapsuleDispatch(profile: profile, provider: route.provider, accountID: route.accountID,
                                            providerBody: route.body, context: [:], mode: mode)
+        dispatch.profileOnly = true
         let runID = UUID().uuidString
         let token = UUID()
         var failure: Error?

@@ -1,7 +1,7 @@
 {
   "name": "agent-world",
   "version": "0.1.0",
-  "description": "Explore a sci-fi outpost, meet your saved Locus agents, and give them real work.",
+  "description": "Explore the Orbital Locus Outpost or The Local Line, meet your saved agents, and give them real work.",
   "author": {
     "name": "SparkTales"
   },
@@ -9,19 +9,25 @@
   "interface": {
     "displayName": "Agent World",
     "shortDescription": "A world for your agents in Locus.",
-    "longDescription": "Oversee a living garden outpost where free agents explore and working agents return to their stations. Click characters connected to your saved profiles to chat, assign tasks, and follow progress in a separate Locus window. Includes diverse animated residents and prepared Meshy scenery.",
+    "longDescription": "Meet a mixed crew in the Orbital Locus Outpost or set sail in The Local Line, a One Piece-inspired world of AI-named ships and islands. Open real agent conversations in Captain\u2019s quarters, follow approval requests through Ping Ping, and watch courier skiffs carry actual handoffs and artifacts. Includes locally prepared scenery and no generation calls during use.",
     "developerName": "SparkTales",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": "Open Agent World in Locus to meet my saved agents."
   },
   "locus": {
-    "screens": [{
-      "id": "agent-world",
-      "title": "Agent World",
-      "entrypoint": "ui/index.html",
-      "version": 1,
-      "capabilities": ["agents.read", "agents.interact", "world.preferences"]
-    }]
+    "screens": [
+      {
+        "id": "agent-world",
+        "title": "Agent World",
+        "entrypoint": "ui/index.html",
+        "version": 1,
+        "capabilities": [
+          "agents.read",
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    ]
   }
 }

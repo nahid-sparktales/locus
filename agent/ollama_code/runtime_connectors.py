@@ -15,6 +15,12 @@ from urllib.parse import quote, urlsplit
 import requests
 
 
+class ConnectorHTTPError(ValueError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f"Connector returned HTTP {status}")
+
+
 class RuntimeConnectors:
     def __init__(self, runtime):
         self.runtime = runtime
@@ -31,7 +37,7 @@ class RuntimeConnectors:
             with requests.Session() as client:
                 response = client.request(method, url, timeout=35, allow_redirects=False, stream=True, **kwargs)
                 if response.status_code >= 300:
-                    raise ValueError(f"Connector returned HTTP {response.status_code}")
+                    raise ConnectorHTTPError(response.status_code)
                 chunks, size = [], 0
                 for chunk in response.iter_content(65536):
                     size += len(chunk)
@@ -120,20 +126,48 @@ class RuntimeConnectors:
             if not cursor.get("history_id"):
                 return [], {"history_id": self.gmail(key, "profile")["historyId"], "last_successful_at": time.time()}
             ids, page = [], ""
-            while True:
-                params = {"startHistoryId": cursor["history_id"], "historyTypes": "messageAdded", "maxResults": 100}
-                if page:
-                    params["pageToken"] = page
-                result = self.gmail(key, "history", params=params)
-                for item in result.get("history", []):
-                    ids.extend(value["message"]["id"] for value in item.get("messagesAdded", []))
-                new_history = result.get("historyId", cursor["history_id"])
-                page = result.get("nextPageToken", "")
-                if not page:
-                    break
+            try:
+                while True:
+                    params = {"startHistoryId": cursor["history_id"], "historyTypes": "messageAdded", "maxResults": 100}
+                    if page:
+                        params["pageToken"] = page
+                    result = self.gmail(key, "history", params=params)
+                    for item in result.get("history", []):
+                        ids.extend(value["message"]["id"] for value in item.get("messagesAdded", []))
+                    new_history = result.get("historyId", cursor["history_id"])
+                    page = result.get("nextPageToken", "")
+                    if not page:
+                        break
+            except ConnectorHTTPError as error:
+                if error.status != 404:
+                    raise
+                # The baseline precedes the scan so concurrent arrivals are
+                # still returned by the next history poll.
+                new_history = self.gmail(key, "profile")["historyId"]
+                since = int(cursor.get("last_successful_at") or time.time() - 300)
+                ids, page = [], ""
+                while True:
+                    params = {"q": f"after:{max(since - 60, 1)}", "includeSpamTrash": "false", "maxResults": 500}
+                    if page:
+                        params["pageToken"] = page
+                    result = self.gmail(key, "messages", params=params)
+                    ids.extend(item["id"] for item in result.get("messages", []))
+                    page = result.get("nextPageToken", "")
+                    if not page:
+                        break
+                ids.reverse()
+            recent = cursor.get("recent_message_ids") or []
             events = []
             for message_id in dict.fromkeys(ids):
-                item = self.gmail(key, "messages/" + quote(message_id, safe=""), params={"format": "full"})
+                if message_id in recent:
+                    continue
+                try:
+                    item = self.gmail(key, "messages/" + quote(message_id, safe=""), params={"format": "full"})
+                except ConnectorHTTPError as error:
+                    if error.status != 404:
+                        raise
+                    continue  # Deleted since it appeared in history/list.
+
                 payload = item.get("payload", {})
                 headers = {field["name"].lower(): field["value"] for field in payload.get("headers", [])}
                 events.append(self.event(kind, message_id, text=self.gmail_text(payload) or item.get("snippet", ""),
@@ -141,7 +175,8 @@ class RuntimeConnectors:
                                          actor={"email": email.utils.parseaddr(headers.get("from", ""))[1]},
                                          recipients=[address for _, address in email.utils.getaddresses([headers.get("to", ""), headers.get("cc", "")])],
                                          labels=item.get("labelIds", []), data={"thread_id": item.get("threadId", ""), "message_id": message_id}))
-            return events, {**cursor, "history_id": new_history, "last_successful_at": time.time()}
+            return events, {**cursor, "history_id": new_history, "last_successful_at": time.time(),
+                            "recent_message_ids": list(dict.fromkeys(list(reversed(ids)) + recent))[:500]}
         if kind == "price_feed":
             return self.prices(connection), cursor
         raise ValueError("Unsupported connector")

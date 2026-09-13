@@ -21,11 +21,14 @@ struct AgentSidebarGroupModel: Identifiable {
     let definition: AgentDefinition?
     let runningChatCount: Int
     let sourceNeedsAttention: Bool
+    var profileID: UUID? = nil
+    var profile: AgentProfile? = nil
 
-    var status: AgentOverview.Status { AgentOverview.status(for: definition) }
+    var status: AgentOverview.Status { profile != nil ? .active : AgentOverview.status(for: definition) }
     var needsAttention: Bool { status.isWarning || sourceNeedsAttention }
     var statusTitle: String {
-        AgentInspectorCopy.agentStatusTitle(status, vocabulary: definition?.vocabulary ?? .events,
+        if profile != nil { return sourceNeedsAttention ? "Needs attention" : runningChatCount > 0 ? "Working" : "Ready" }
+        return AgentInspectorCopy.agentStatusTitle(status, vocabulary: definition?.vocabulary ?? .events,
             isRunning: runningChatCount > 0, sourceNeedsAttention: sourceNeedsAttention)
     }
 }
@@ -37,18 +40,50 @@ enum AgentSidebarCatalog {
     static func groups(
         definitions: [AgentDefinition], sessions: [SessionSummary], query: String,
         showArchived: Bool, runningSessionIDs: Set<String>,
-        connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false
+        connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false,
+        profiles: [AgentProfile] = []
     ) -> [AgentSidebarGroupModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let chats = sessions.filter { $0.isAgentChat && (showArchived || !$0.isArchived) }
+        let profileChats = sessions.filter { $0.savedAgentProfileID != nil && (showArchived || !$0.isArchived) }
+        let profileIDs = Set(profiles.map(\.id)).union(profileChats.compactMap(\.savedAgentProfileID))
+        let savedGroups = profileIDs.compactMap { profileID -> AgentSidebarGroupModel? in
+            let profile = profiles.first { $0.id == profileID }
+            let tasks = profileChats.filter { $0.savedAgentProfileID == profileID }.sorted {
+                if $0.isPinned != $1.isPinned { return $0.isPinned }
+                if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
+                return $0.id < $1.id
+            }
+            let name = profile?.name ?? "Unavailable agent"
+            let nameMatches = query.isEmpty || name.localizedCaseInsensitiveContains(query)
+            let matches = nameMatches ? tasks : tasks.filter { $0.displayTitle.localizedCaseInsensitiveContains(query) }
+            guard nameMatches || !matches.isEmpty else { return nil }
+            let ownedReferences = Set(sessions.filter { $0.savedAgentProfileID == profileID }
+                .compactMap { $0.agentReference(in: definitions)?.id })
+            let needsAttention = definitions.filter { ownedReferences.contains(AgentInspectorAgent($0).id) }
+                .contains { definition in
+                    AgentOverview.status(for: definition).isWarning || sourceNeedsAttention(
+                        definition: definition,
+                        connection: definition.trigger.flatMap { trigger in connections.first { $0.id == trigger.connectionID } },
+                        connectionsLoaded: connectionsLoaded)
+                }
+            return AgentSidebarGroupModel(id: "profile:\(profileID.uuidString)", reference: nil,
+                accessibilityID: profileID.uuidString, name: name, tasks: matches, totalChatCount: tasks.count,
+                definition: nil, runningChatCount: tasks.filter { runningSessionIDs.contains($0.id) }.count,
+                sourceNeedsAttention: needsAttention, profileID: profileID, profile: profile)
+        }
+        // A saved agent owns its automation chats too; do not repeat those
+        // configurations as unrelated agents beside their parent.
+        let ownedDefinitions = Set(sessions.filter { $0.savedAgentProfileID != nil }
+            .compactMap { $0.agentReference(in: definitions)?.id })
+        let chats = sessions.filter { $0.isAgentChat && $0.savedAgentProfileID == nil && (showArchived || !$0.isArchived) }
         let byAgent = Dictionary(grouping: chats) {
             $0.agentReference(in: definitions)?.id ?? "unassigned:\($0.id)"
         }
         let definitionsByID = Dictionary(uniqueKeysWithValues: definitions.map {
             (AgentInspectorAgent($0).id, $0)
         })
-        let identities = Set(definitionsByID.keys).union(byAgent.keys)
-        return identities.compactMap { identity -> AgentSidebarGroupModel? in
+        let identities = Set(definitionsByID.keys).subtracting(ownedDefinitions).union(byAgent.keys)
+        let automatedGroups = identities.compactMap { identity -> AgentSidebarGroupModel? in
             let definition = definitionsByID[identity]
             let tasks = (byAgent[identity] ?? []).sorted {
                 if $0.isPinned != $1.isPinned { return $0.isPinned }
@@ -81,7 +116,7 @@ enum AgentSidebarCatalog {
                 )
             )
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return (savedGroups + automatedGroups).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     static func sourceNeedsAttention(
@@ -476,6 +511,7 @@ struct SessionSidebarView: View {
                     }
                     if model.sidebarDestination == .agents {
                         AgentSidebarSection(
+                            crew: model.agentCrewChat,
                             automation: model.eventAutomations,
                             snapshot: snapshot,
                             confirmDelete: { agentToDelete = $0 },
@@ -830,8 +866,7 @@ struct SessionSidebarView: View {
         .padding(.bottom, 12)
     }
 
-    /// New Chat follows the active destination. In Agents it continues the
-    /// current agent, falling back to the most recently used one.
+    /// The primary action creates a saved agent in Agent, or a chat in Work.
     private var primaryCreationButton: some View {
         let isAgents = model.sidebarDestination == .agents
         return Button {
@@ -840,7 +875,7 @@ struct SessionSidebarView: View {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text("New chat")
+                Text(isAgents ? "New agent" : "New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -856,10 +891,10 @@ struct SessionSidebarView: View {
         }
         .buttonStyle(.locus())
         .help(isAgents
-            ? "Start a new chat with the current or most recent agent (⌘N)"
+            ? "Create a saved agent and its first chat (⌘N)"
             : "Start a new chat (⌘N)")
-        .accessibilityLabel("New chat")
-        .accessibilityValue(isAgents ? "Agent chat" : "Standard chat")
+        .accessibilityLabel(isAgents ? "New agent" : "New chat")
+        .accessibilityValue(isAgents ? "Saved agent" : "Standard chat")
         .accessibilityIdentifier("sidebar.newSession")
     }
 
@@ -1386,6 +1421,7 @@ struct SessionSidebarView: View {
     /// its own agent, which the picker states explicitly when they differ.
     private struct AgentSelectionMenu: View {
         @EnvironmentObject private var model: AppModel
+        @EnvironmentObject private var agentTeams: AgentTeamsModel
         @EnvironmentObject private var schedule: ScheduleModel
         @EnvironmentObject private var sessionCatalog: SessionCatalogModel
         @ObservedObject var automation: EventAutomationModel
@@ -1413,6 +1449,11 @@ struct SessionSidebarView: View {
         }
 
         private var selectedReference: AgentInspectorAgent? { model.inspectedAgentReference }
+        private var profiles: [AgentProfile] { agentTeams.agentProfiles }
+        private var filteredProfiles: [AgentProfile] {
+            let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            return profiles.filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
+        }
         private var currentReference: AgentInspectorAgent? {
             sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?
                 .agentReference(in: model.agentDefinitions)
@@ -1424,6 +1465,7 @@ struct SessionSidebarView: View {
             entries.first { $0.inspectorID == currentReference }
         }
         private var selectedName: String {
+            if let profile = model.selectedSavedAgentProfile { return profile.name }
             if let selectedEntry { return selectedEntry.name }
             guard let selectedReference else { return "Choose an agent" }
             return sessionCatalog.snapshot.sessions.first {
@@ -1431,6 +1473,7 @@ struct SessionSidebarView: View {
             }?.agentName?.nilIfBlank ?? "Choose an agent"
         }
         private var selectedContext: String {
+            if let profile = model.selectedSavedAgentProfile { return "\(profile.role.title) · \(profile.model)" }
             guard let selectedEntry else { return "For your next conversation" }
             let ownership = currentReference == selectedEntry.inspectorID ? "This chat" : "New chats"
             return "\(ownership) · \(statusTitle(selectedEntry))"
@@ -1481,7 +1524,7 @@ struct SessionSidebarView: View {
             .buttonStyle(.locus())
             .help("Choose an agent for new chats, or manage its instructions, triggers, and access")
             .accessibilityLabel("Agent menu")
-            .accessibilityValue("\(selectedName), \(selectedContext), \(entries.count) configured")
+            .accessibilityValue("\(selectedName), \(selectedContext), \(entries.count + profiles.count) configured")
             .accessibilityIdentifier("sidebar.agentMenu")
             .popover(isPresented: $isPresented, arrowEdge: .trailing) { picker }
         }
@@ -1492,7 +1535,7 @@ struct SessionSidebarView: View {
                     Text("Choose an agent")
                         .font(.locus(size: 13, weight: .semibold))
                     Spacer()
-                    Text("\(entries.count)")
+                    Text("\(entries.count + profiles.count)")
                         .font(.locus(size: 10, design: .monospaced))
                         .foregroundStyle(LocusTheme.muted)
                 }
@@ -1502,7 +1545,13 @@ struct SessionSidebarView: View {
                     TextField("Search agents", text: $query)
                         .textFieldStyle(.plain)
                         .focused($searchFocused)
-                        .onSubmit { choose(keyboardReference ?? filteredEntries.first?.inspectorID) }
+                        .onSubmit {
+                            if let reference = keyboardReference ?? filteredEntries.first?.inspectorID { choose(reference) }
+                            else if let profile = filteredProfiles.first {
+                                isPresented = false
+                                model.selectSavedAgent(profile)
+                            }
+                        }
                         .accessibilityIdentifier("sidebar.agentPicker.search")
                     if !query.isEmpty {
                         Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -1544,11 +1593,31 @@ struct SessionSidebarView: View {
                         .accessibilityIdentifier("sidebar.agentPicker.workChat")
                 }
 
-                if filteredEntries.isEmpty {
+                if !filteredProfiles.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(filteredProfiles) { profile in
+                                Button {
+                                    isPresented = false
+                                    model.selectSavedAgent(profile)
+                                } label: {
+                                    HStack {
+                                        Label(profile.name, systemImage: "person.crop.square")
+                                        Spacer()
+                                        if model.selectedSavedAgentProfile?.id == profile.id { Image(systemName: "checkmark") }
+                                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                }.buttonStyle(.locus())
+                                .accessibilityIdentifier("sidebar.agentPicker.profile.\(profile.id.uuidString)")
+                            }
+                        }
+                    }.frame(maxHeight: 180).padding(.horizontal, 6)
+                    Divider()
+                }
+                if filteredEntries.isEmpty && filteredProfiles.isEmpty {
                     VStack(spacing: 7) {
-                        Text(entries.isEmpty ? "No agents yet" : "No matching agents")
+                        Text(entries.isEmpty && profiles.isEmpty ? "No agents yet" : "No matching agents")
                             .font(.locus(size: 11, weight: .medium))
-                        Text(entries.isEmpty
+                        Text(entries.isEmpty && profiles.isEmpty
                             ? "Create an agent with its own instructions, access, and triggers."
                             : "Try an agent name or trigger type.")
                             .font(.locus(size: 10))
@@ -1573,7 +1642,7 @@ struct SessionSidebarView: View {
                     }
                 }
                 Rectangle().fill(LocusTheme.line).frame(height: 1)
-                Text("Choosing an agent sets up your next chat. Your open conversation stays unchanged.")
+                Text("Choose a saved agent to open its chats, or select an automation.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2540,6 +2609,8 @@ enum AgentSidebarFilter: String, CaseIterable, Identifiable {
 private struct AgentSidebarSection: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @ObservedObject var crew: AgentCrewChatModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var automation: EventAutomationModel
     let snapshot: SessionCatalogSnapshot
@@ -2554,10 +2625,11 @@ private struct AgentSidebarSection: View {
         AgentSidebarCatalog.groups(
             definitions: automation.triggers.map(AgentDefinition.trigger)
                 + schedule.scheduledTasks.map(AgentDefinition.schedule),
-            sessions: snapshot.sessions, query: snapshot.searchQuery,
+            sessions: snapshot.sessions.filter { crew.boundProfileID(for: $0.id) == nil }, query: snapshot.searchQuery,
             showArchived: snapshot.showArchivedSessions,
             runningSessionIDs: model.runningChatSessionIDs,
-            connections: automation.connections, connectionsLoaded: automation.hasLoaded
+            connections: automation.connections, connectionsLoaded: automation.hasLoaded,
+            profiles: agentTeams.agentProfiles
         )
     }
 
@@ -2565,6 +2637,7 @@ private struct AgentSidebarSection: View {
         let all = groups
         let visible = all.filter(filter.includes)
         LazyVStack(spacing: 3) {
+            CrewChatSidebarEntry().padding(.bottom, 6)
             if !all.isEmpty || filter != .all {
                 HStack {
                     Menu {
@@ -2626,6 +2699,7 @@ private struct AgentSidebarSection: View {
         if collapsedIDs.contains(agent.id) { return false }
         return !snapshot.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || expandedIDs.contains(agent.id)
+            || (agent.profileID != nil && agent.profileID == model.selectedSavedAgentProfile?.id)
             || agent.reference == model.inspectedAgentReference
             || totalAgents <= 3
     }
@@ -2647,7 +2721,8 @@ private struct AgentSidebarSection: View {
         return VStack(spacing: 1) {
             AgentGroupRow(
                 agent: agent, automation: automation, expanded: expanded,
-                selected: agent.reference != nil && model.inspectedAgentReference == agent.reference,
+                selected: !model.agentCrewChatPresented && crew.boundProfileID(for: model.currentSessionID) == nil && (agent.profileID != nil ? agent.profileID == model.selectedSavedAgentProfile?.id
+                    : agent.reference != nil && model.inspectedAgentReference == agent.reference),
                 toggle: {
                     withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         if expanded {
@@ -2664,7 +2739,8 @@ private struct AgentSidebarSection: View {
                         collapsedIDs.remove(agent.id)
                         expandedIDs.insert(agent.id)
                     }
-                    if let reference = agent.reference { model.selectAgent(reference) }
+                    if let profile = agent.profile { model.selectSavedAgent(profile) }
+                    else if let reference = agent.reference { model.selectAgent(reference) }
                     else { model.showToast("This agent is unavailable. Its saved chats are still available below.") }
                 },
                 confirmDelete: confirmDelete
@@ -2693,7 +2769,8 @@ private struct AgentSidebarSection: View {
                     }
                     if agent.tasks.isEmpty {
                         Button {
-                            if let reference = agent.reference { model.newAgentChat(reference: reference) }
+                            if let profile = agent.profile { model.newSavedAgentChat(profile) }
+                            else if let reference = agent.reference { model.newAgentChat(reference: reference) }
                         } label: {
                             Label("Start a conversation", systemImage: "plus.bubble")
                                 .font(.locus(size: 9))
@@ -2703,7 +2780,7 @@ private struct AgentSidebarSection: View {
                                 .frame(height: 30)
                         }
                         .buttonStyle(.locus())
-                        .disabled(agent.reference == nil || model.chatNavigationDisabled)
+                        .disabled((agent.reference == nil && agent.profile == nil) || model.chatNavigationDisabled)
                         .accessibilityIdentifier("agent.\(agent.accessibilityID).firstChat")
                     }
                 }
@@ -2736,7 +2813,7 @@ private struct AgentSidebarSection: View {
                     ? "Try another name or show all agents."
                     : unavailable
                         ? "Reconnect to load your agents and their activity."
-                        : "Give an agent instructions and a trigger. It keeps its work and conversations together.")
+                        : "Give an agent a name, model, and instructions. Its chats and automatic work stay together.")
                     .font(.locus(size: 10))
                     .foregroundStyle(LocusTheme.muted)
                     .multilineTextAlignment(.center)
@@ -2815,7 +2892,7 @@ private struct AgentGroupRow: View {
 
     var body: some View {
         let record = definition
-        let status = AgentOverview.status(for: record)
+        let status = agent.status
         let words = record?.vocabulary ?? .events
         let showsWarning = agent.runningChatCount == 0 && agent.needsAttention
         return HStack(spacing: 3) {
@@ -2854,7 +2931,7 @@ private struct AgentGroupRow: View {
                                     .font(.locus(size: 7))
                             }
                             Text(agent.runningChatCount > 0 || agent.sourceNeedsAttention || status != .active
-                                ? agent.statusTitle : record?.kindTitle ?? "Saved chats")
+                                ? agent.statusTitle : agent.profile?.role.title ?? record?.kindTitle ?? "Saved chats")
                             Text("·")
                             Text("\(agent.totalChatCount) \(agent.totalChatCount == 1 ? "chat" : "chats")")
                         }
@@ -2895,16 +2972,25 @@ private struct AgentGroupRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(Rectangle())
         .contextMenu { agentActions }
-        .help(agent.sourceNeedsAttention ? "This Agent’s source connection needs attention. Open its settings to review the connection." : status.detail(for: words))
+        .help(agent.profileID != nil
+            ? (agent.needsAttention ? "Open Manage Agent to review its automatic work." : "Open this agent’s chats and manage its instructions and automatic work.")
+            : agent.sourceNeedsAttention ? "This Agent’s source connection needs attention. Open its settings to review the connection." : status.detail(for: words))
     }
 
     @ViewBuilder
     private var agentActions: some View {
         Button("New Chat with \(agent.name)") {
-            if let reference = agent.reference { model.newAgentChat(reference: reference) }
+            if let profile = agent.profile { model.newSavedAgentChat(profile) }
+            else if let reference = agent.reference { model.newAgentChat(reference: reference) }
         }
-        .disabled(agent.reference == nil || model.chatNavigationDisabled)
+        .disabled((agent.reference == nil && agent.profile == nil) || model.chatNavigationDisabled)
         .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
+        if let profile = agent.profile {
+            Button("Manage Agent…") { model.manageSavedAgent(profile) }
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).manage")
+            Button("Edit Agent…") { model.presentSavedAgentEditor(profile) }
+                .accessibilityIdentifier("agent.\(agent.accessibilityID).edit")
+        }
         if let record = definition {
             if record.isSchedule {
                 Button("Run Now") { model.runAgentNow(record) }

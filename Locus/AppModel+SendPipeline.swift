@@ -34,15 +34,9 @@ extension AppModel {
         approvedPlan: [String: JSONValue]? = nil
     ) {
         guard admitTranscriptInput() else { return }
-        let residentProfileID = agentWorld.boundProfileID(for: currentSessionID)
+        let residentProfileID = savedAgentProfileID(for: currentSessionID)
         var residentDispatch: TaskCapsuleDispatch?
         if let residentProfileID {
-            guard [.ask, .work].contains(selectedMode), explicitCapsuleDispatch == nil, approvedPlan == nil,
-                  taskCapsules.pendingPlanningRequest(for: currentSessionID) == nil,
-                  !rawText.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") else {
-                showToast("Choose Chat or Work for this agent conversation. Use a regular chat for plans, Duo, Task Capsules, and slash commands.")
-                return
-            }
             do { residentDispatch = try agentWorldProfileDispatch(profileID: residentProfileID, mode: selectedMode) }
             catch { showToast(error.localizedDescription); return }
         }
@@ -52,15 +46,18 @@ extension AppModel {
         }
         let pendingCapsule = (selectedMode != .duo && duoTask != nil)
             ? nil : taskCapsules.pendingPlanningRequest(for: currentSessionID)
-        let capsuleDispatch = residentDispatch ?? explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
-        if pendingCapsule != nil, capsuleDispatch == nil { return }
+        let workflowDispatch = explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
+        if pendingCapsule != nil, workflowDispatch == nil { return }
+        // A saved agent owns the conversation. Explicit Duo/capsule stages use
+        // their selected specialist; ordinary messages return to the owner.
+        let capsuleDispatch = workflowDispatch ?? residentDispatch
+        let isCapsuleStage = capsuleDispatch?.profileOnly == false
         if let capsuleDispatch, !capsuleDispatch.profileOnly, isBusy || hasPendingPermission {
             taskCapsules.error = "Finish the active task before starting this capsule stage."
             return
         }
-        if capsuleDispatch != nil, goals.goal(for: currentSessionID)?.status == .active {
-            if capsuleDispatch?.profileOnly == true { showToast("Pause the current goal before continuing this agent conversation.") }
-            else { taskCapsules.error = "Pause the current goal before starting a capsule stage." }
+        if isCapsuleStage, goals.goal(for: currentSessionID)?.status == .active {
+            taskCapsules.error = "Pause the current goal before starting a capsule stage."
             return
         }
         // A normal message following a capsule must use the user's regular
@@ -127,11 +124,15 @@ extension AppModel {
         }
 
         let isSlashPassthrough = allowLocalCommands && SlashCommand.query(from: text) != nil
+        if residentProfileID != nil, isSlashPassthrough {
+            showToast("Describe the task in this agent's chat, or use a regular chat for this command.")
+            return
+        }
         // Capture the mode before any asynchronous context work. A user can
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
         let dispatchedMode: WorkMode = privateIdentity ? .work : capsuleDispatch?.mode ?? selectedMode
-        let savedGoal = capsuleDispatch == nil && !privateIdentity && !isSlashPassthrough
+        let savedGoal = !isCapsuleStage && !privateIdentity && !isSlashPassthrough
             && dispatchedMode == .work ? goals.goal(for: currentSessionID).flatMap {
                 $0.status == .active ? $0 : nil
             } : nil
@@ -147,13 +148,13 @@ extension AppModel {
             teams: agentTeams
         )
         let wantsTeam = savedGoal.map { $0.execution["runner"]?.string == "team" }
-            ?? (capsuleDispatch == nil && !privateIdentity && dispatchedMode != .ask
+            ?? (!isCapsuleStage && !privateIdentity && dispatchedMode != .ask
             && !isSlashPassthrough
             && (selectedAgentTeamID != nil || teamMention.agent != nil || teamMention.team != nil))
         let savedTeamID = savedGoal?.execution["team_id"]?.string.flatMap(UUID.init(uuidString:))
         let dispatchedTeam = wantsTeam ? teamManifest(for: text, teamID: savedTeamID) : nil
         if wantsTeam, dispatchedTeam == nil { return }
-        let dispatchedSoloSwarm = capsuleDispatch == nil && !privateIdentity && dispatchedTeam == nil
+        let dispatchedSoloSwarm = !isCapsuleStage && !privateIdentity && dispatchedTeam == nil
             && selectedAgentTeamID == nil
             && dispatchedMode != .ask
             && !isSlashPassthrough
@@ -413,9 +414,10 @@ extension AppModel {
             ]
             if privateIdentity { request["identity_mode"] = true }
             if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
+            if let residentProfileID { request["conversation_profile_id"] = residentProfileID.uuidString }
             if let capsuleDispatch {
-                if capsuleDispatch.profileOnly { request["agent_profile"] = Self.agentWorldProfileBody(capsuleDispatch.profile) }
-                else { request["capsule_context"] = capsuleDispatch.context }
+                if dispatchedTeam == nil { request["agent_profile"] = Self.agentWorldProfileBody(capsuleDispatch.profile) }
+                if !capsuleDispatch.profileOnly { request["capsule_context"] = capsuleDispatch.context }
             }
             if let savedConfig = savedGoal?.execution["agent_config"],
                let agentConfig = encodedJSONValue(savedConfig) {
@@ -796,6 +798,10 @@ extension AppModel {
     }
 
     func submitDraft() {
+        if agentCrewChatPresented, sidebarDestination == .agents {
+            agentCrewChat.submit()
+            return
+        }
         guard admitTranscriptInput() else { return }
         if isBusy {
             queueDraft()
@@ -1027,7 +1033,7 @@ extension AppModel {
 
     func retryLastResponse() {
         guard admitTranscriptInput() else { return }
-        if agentWorld.boundProfileID(for: currentSessionID) != nil {
+        if savedAgentProfileID(for: currentSessionID) != nil {
             showToast("Reuse the last message and send it again to retry with this agent's saved profile and permissions.")
             return
         }
@@ -1078,7 +1084,13 @@ extension AppModel {
         }
     }
 
-    func stop() { stop(persistingGoalPause: true) }
+    func stop() {
+        if agentCrewChatPresented, sidebarDestination == .agents {
+            agentCrewChat.stopAllReplies()
+        } else {
+            stop(persistingGoalPause: true)
+        }
+    }
 
     func stop(persistingGoalPause: Bool) {
         guard admitTranscriptInput() else { return }

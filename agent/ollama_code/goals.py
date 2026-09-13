@@ -116,7 +116,8 @@ def _execution(value: Any) -> dict[str, Any]:
         raise GoalError("execution must be an object")
     allowed = {"provider", "provider_account_id", "model", "runner", "team_id", "team_name",
                "workspace_root", "execution_path", "execution_environment", "agent_config",
-               "team_manifest", "team_configuration", "solo_swarm"}
+               "team_manifest", "team_configuration", "solo_swarm",
+               "conversation_profile_id", "agent_profile_configuration"}
     result = sanitize_event({key: item for key, item in value.items() if key in allowed})
     for key in ("provider", "model", "workspace_root"):
         result[key] = _text(result.get(key, ""), key, 4096, required=True)
@@ -139,6 +140,14 @@ def _execution(value: Any) -> dict[str, Any]:
             raise GoalError("choose an exact saved model account for this goal") from error
     if "agent_config" in result and not isinstance(result["agent_config"], dict):
         raise GoalError("agent_config must be an object")
+    if "conversation_profile_id" in result:
+        try:
+            uuid.UUID(result["conversation_profile_id"])
+        except (ValueError, TypeError, AttributeError) as error:
+            raise GoalError("choose an exact saved agent for this goal") from error
+        result["agent_profile_configuration"] = _text(
+            result.get("agent_profile_configuration", ""), "agent_profile_configuration", 100_000, required=True,
+        )
     if str(result.get("team_id", "")).startswith("capsule-"):
         raise GoalError("task capsules cannot run as persistent goals")
     result["execution_environment"] = result.get("execution_environment", "local")

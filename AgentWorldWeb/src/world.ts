@@ -6,6 +6,7 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
@@ -16,16 +17,30 @@ import '@babylonjs/core/Animations/animatable';
 import '@babylonjs/core/Culling/ray';
 import '@babylonjs/loaders/glTF';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
+import { LOCUS_OUTPOST_PALETTE as OUTPOST } from './outpostPalette';
 import { STATUS_META, isClickGesture, labelIsUnobscured } from './state';
-import type { Agent, ScreenPoint } from './state';
-import { RESIDENT_ASSET_TYPES, DEFAULT_STATIONS } from './theme';
-import type { Theme, AssetType, ResidentAssetType, PropAssetType, Placement } from './theme';
-import { createResidentMotion, residentAssetForID, residentSeed, resolveResidentSpacing, stationObstacle, statusCanWander, stepResidentMotion, themeNavigation } from './residentMotion';
+import type { Agent, AgentTransfer, AttentionRequest, Point, ResidentStyle, ScreenPoint } from './state';
+import { createDenDenMushi, createCourierBoat } from './seaSignals';
+import { courierPose, courierRouteLength } from './fleetActivity';
+import { RESIDENT_ASSET_TYPES, HUMANOID_ASSET_TYPES, SHIP_ASSET_TYPES, SHIP_NAMES, DEFAULT_STATIONS } from './theme';
+import { buildGrandLineScenery, GRAND_LINE_HOME_NAMES, GRAND_LINE_CREW_PLAZAS } from './grandLineScenery';
+import { assignHarbors } from './harborAssignments';
+import { createShipFallback, createShipWake } from './ships';
+import { createPanda } from './pandas';
+import { createPerson } from './people';
+import { createIslandCrew } from './islandCrew';
+import { islandCrewActivity, shipBerthHeading } from './islandBerths';
+import { assignCrewKinds } from './crewAssignments';
+import type { ResidentKind } from './crewAssignments';
+import { applyLocusSceneryTint } from './outpostPalette';
+import type { Theme, AssetType, ResidentAssetType, ShipAssetType, PropAssetType, Placement } from './theme';
+import { createNavigation, findResidentPath, pointIsWalkable, createResidentMotion, residentAssetForID, residentSeed, resolveResidentSpacing, stationObstacle, statusCanWander, stepResidentMotion, themeNavigation } from './residentMotion';
 import type { NavigationMap, ResidentMotion } from './residentMotion';
 
-type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
-type Resident = { agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; home: Placement; motion: ResidentMotion; id: string; phase: number };
-type Callbacks = { onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
+type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; kind: ResidentKind | 'ship'; panda?: ReturnType<typeof createPanda>; person?: ReturnType<typeof createPerson>; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
+type Resident = { crew?: ReturnType<typeof createIslandCrew>; agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; wake?: TransformNode; home: Placement; motion: ResidentMotion; id: string; phase: number };
+type Courier = { event: AgentTransfer; boat: ReturnType<typeof createCourierBoat>; route: Point[]; wake: TransformNode; started: number; duration: number; arrivedAt?: number; label: HTMLDivElement };
+type Callbacks = { onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
 export class OutpostWorld {
   private engine: Engine;
@@ -37,6 +52,8 @@ export class OutpostWorld {
   private containers = new Map<AssetType, AssetContainer>();
   private materials = new Map<string, StandardMaterial>();
   private appearanceAssignments = new Map<string, ResidentAssetType>();
+  private crewAssignments = new Map<string, ResidentKind>();
+  private harborAssignments = new Map<string, number>();
   private navigation: NavigationMap;
   private visible = true;
   private disposed = false;
@@ -50,22 +67,33 @@ export class OutpostWorld {
   private labels: HTMLElement;
   private hudOverlays: HTMLElement[];
   private stars?: TransformNode;
+  private ocean?: ReturnType<typeof buildGrandLineScenery>;
+  private navigationMode: 'orbit' | 'pan' = 'orbit';
+  private attentionRequests: readonly AttentionRequest[] = [];
+  private snails = new Map<string, ReturnType<typeof createDenDenMushi>>();
+  private couriers = new Map<string, Courier>();
+  private courierNavigation?: NavigationMap;
 
-  constructor(private canvas: HTMLCanvasElement, private theme: Theme, private callbacks: Callbacks) {
+  constructor(private canvas: HTMLCanvasElement, private theme: Theme, private callbacks: Callbacks, private residentStyle: ResidentStyle = 'mixed') {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'low-power', audioEngine: false }, true);
-    this.engine.setHardwareScalingLevel(Math.max(1, (window.devicePixelRatio || 1) / 1.4));
+    // Keep sails, faces and fine rigging sharp on Retina displays.
+    this.engine.setHardwareScalingLevel(Math.max(1, (window.devicePixelRatio || 1) / 2));
     this.scene = new Scene(this.engine);
+    this.scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    this.scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    this.scene.imageProcessingConfiguration.exposure = 1.05;
     this.scene.clearColor = Color4.FromColor3(Color3.FromHexString(theme.palette.sky), 1);
-    this.scene.ambientColor = new Color3(0.25, 0.34, 0.36);
+    this.scene.ambientColor = theme.environment === 'ocean' ? new Color3(0.25, 0.34, 0.36) : new Color3(0.30, 0.30, 0.25);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
     this.scene.fogColor = Color3.FromHexString(theme.palette.sky).scale(1.9);
-    this.scene.fogDensity = 0.0045;
+    this.scene.fogDensity = theme.environment === 'ocean' ? 0.002 : 0.0045;
     this.scene.skipPointerMovePicking = true;
     this.scene.autoClear = true;
     this.labels = document.getElementById('agent-labels')!;
-    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback'));
+    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, .voyage-chart, .view-reset, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback, #fleet-activity, #snail-alert'));
     this.mapRoot = new TransformNode('outpost', this.scene);
     this.navigation = themeNavigation(theme, []);
+    if (theme.environment === 'ocean') this.courierNavigation = createNavigation({ radius: theme.layout.radius, bodyRadius: 0.48, obstacles: theme.layout.obstacles });
 
     this.camera = new ArcRotateCamera('overview-camera', Math.PI / 2 - 0.3, 1.01, 33, new Vector3(0, 0.9, -0.4), this.scene);
     this.camera.lowerRadiusLimit = 14;
@@ -81,18 +109,28 @@ export class OutpostWorld {
     this.camera.inertia = this.reducedMotion ? 0 : 0.75;
     this.camera.attachControl(canvas, true);
     this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
+    if (theme.environment === 'ocean') {
+      this.camera.lowerRadiusLimit = 13;
+      this.camera.upperRadiusLimit = 84;
+      this.camera.wheelPrecision = 10;
+      this.camera.panningSensibility = 85;
+      this.camera.panningAxis.set(1, 0, 1);
+      this.camera.panningDistanceLimit = 55;
+      this.camera.upperBetaLimit = 1.28;
+      this.resetView();
+    }
 
     const ambient = new HemisphericLight('sky-light', new Vector3(0.2, 1, -0.4), this.scene);
-    ambient.intensity = 0.65;
-    ambient.diffuse = new Color3(0.85, 0.96, 1);
-    ambient.groundColor = new Color3(0.24, 0.34, 0.37);
+    ambient.intensity = theme.environment === 'ocean' ? 0.9 : 0.65;
+    ambient.diffuse = theme.environment === 'ocean' ? new Color3(0.85, 0.96, 1) : new Color3(1, 0.98, 0.91);
+    ambient.groundColor = theme.environment === 'ocean' ? new Color3(0.42, 0.57, 0.61) : new Color3(0.26, 0.27, 0.23);
     const sun = new DirectionalLight('sunrise', new Vector3(-0.5, -1, 0.5), this.scene);
     sun.position = new Vector3(14, 24, -17);
     sun.intensity = 1.0;
-    sun.diffuse = new Color3(1, 0.9, 0.74);
-    this.shadow = new ShadowGenerator(1024, sun);
+    sun.diffuse = theme.environment === 'ocean' ? new Color3(1, 0.9, 0.74) : new Color3(1, 0.96, 0.88);
+    this.shadow = new ShadowGenerator(2048, sun);
     this.shadow.usePercentageCloserFiltering = true;
-    this.shadow.filteringQuality = ShadowGenerator.QUALITY_LOW;
+    this.shadow.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
     this.shadow.bias = 0.001;
     this.shadow.normalBias = 0.02;
     this.shadow.setDarkness(0.28);
@@ -146,17 +184,21 @@ export class OutpostWorld {
   }
 
   private buildMap(): void {
+    if (this.theme.environment === 'ocean') {
+      this.ocean = buildGrandLineScenery(this.scene, this.shadow, this.mapRoot);
+      return;
+    }
     const radius = this.theme.layout.radius;
-    const moss = this.material('campus-lawn', '#526f60');
-    const grass = this.material('commons-grass', '#6f936a');
-    const dark = this.material('navy-alloy', '#233d48');
-    const trim = this.material('warm-ceramic', '#c3bca0');
-    const path = this.material('promenade-stone', '#9da99a');
-    const wood = this.material('warm-timber', '#8f7054');
-    const woodLight = this.material('warm-timber-light', '#a18461');
+    const moss = this.material('campus-lawn', OUTPOST.sageDeep);
+    const grass = this.material('commons-grass', OUTPOST.sage);
+    const dark = this.material('navy-alloy', OUTPOST.charcoalRaised);
+    const trim = this.material('warm-ceramic', OUTPOST.paper);
+    const path = this.material('promenade-stone', OUTPOST.paperDeep);
+    const wood = this.material('warm-timber', OUTPOST.muted);
+    const woodLight = this.material('warm-timber-light', OUTPOST.amber);
     const light = this.material('guide-light', this.theme.palette.accent, 0.65);
-    const copper = this.material('brushed-copper', '#bd8c65');
-    const rock = this.material('bedrock', '#263d43');
+    const copper = this.material('brushed-copper', OUTPOST.amber);
+    const rock = this.material('bedrock', OUTPOST.charcoal);
     const base = MeshBuilder.CreateCylinder('floating-campus-foundation', { diameterTop: radius * 2 + 1, diameterBottom: radius * 1.65, height: 3.8, tessellation: 13, subdivisions: 2 }, this.scene);
     base.position.y = -2.5;
     base.material = rock;
@@ -220,17 +262,17 @@ export class OutpostWorld {
   }
 
   private buildCommons(): void {
-    const stone = this.material('pond-ceramic', '#c7c1a8');
+    const stone = this.material('pond-ceramic', OUTPOST.paper);
     const pond = this.cylinder('pond-rim', 4.1, 0.22, 0.2, stone, 48);
     pond.scaling.set(1.1, 1, 0.72); pond.position.x = 1.2; pond.position.z = 1.1;
-    const water = this.cylinder('pond-water', 3.77, 0.055, 0.305, this.material('garden-water', '#3f9f99', 0.13), 48);
+    const water = this.cylinder('pond-water', 3.77, 0.055, 0.305, this.material('garden-water', OUTPOST.tealDeep, 0.13), 48);
     water.scaling.set(1.1, 1, 0.72); water.position.x = 1.2; water.position.z = 1.1;
     for (let index = 0; index < 3; index++) {
-      const ripple = this.ring(`pond-ripple-${index}`, 0.5 + index * 0.48, 0.012, 0.34, this.material('water-ripple', '#89c9b7', 0.18));
+      const ripple = this.ring(`pond-ripple-${index}`, 0.5 + index * 0.48, 0.012, 0.34, this.material('water-ripple', OUTPOST.teal, 0.18));
       ripple.scaling.z = 0.72; ripple.position.x = 1.0; ripple.position.z = 1.2;
     }
-    const wood = this.material('garden-bench-wood', '#a38461');
-    const iron = this.material('garden-bench-frame', '#324e4e');
+    const wood = this.material('garden-bench-wood', OUTPOST.amber);
+    const iron = this.material('garden-bench-frame', OUTPOST.alloy);
     for (const [x, z, angle] of [[-2.2, 3.25, -0.4], [3.2, -1.6, 0.8]]) {
       const bench = new TransformNode('commons-bench', this.scene);
       bench.position.set(x, 0.17, z); bench.rotation.y = angle;
@@ -239,11 +281,11 @@ export class OutpostWorld {
       for (const side of [-0.58, 0.58]) this.box('bench-leg', [0.1, 0.4, 0.43], [side, 0.16, 0], iron, bench);
       for (const mesh of bench.getChildMeshes()) this.shadow.addShadowCaster(mesh);
     }
-    this.createGardenTree(-1.75, -1.35, 4.25, '#699b78');
-    this.createGardenTree(2.25, -2.55, 2.7, '#81a979');
-    this.createGardenTree(-3.1, 1.15, 2.35, '#ab987e');
-    this.createGardenTree(2.85, 2.7, 1.8, '#729878');
-    const leaves = ['#628966', '#8b9f6c', '#557e65', '#89a683'];
+    this.createGardenTree(-1.75, -1.35, 4.25, OUTPOST.sageDeep);
+    this.createGardenTree(2.25, -2.55, 2.7, OUTPOST.sage);
+    this.createGardenTree(-3.1, 1.15, 2.35, OUTPOST.amber);
+    this.createGardenTree(2.85, 2.7, 1.8, OUTPOST.sageMid);
+    const leaves = [OUTPOST.sageMid, OUTPOST.sage, OUTPOST.sageDeep, OUTPOST.sage];
     for (let index = 0; index < 31; index++) {
       const angle = index * 2.39996;
       const radius = 3.6 + (index % 3) * 0.18;
@@ -254,7 +296,7 @@ export class OutpostWorld {
       this.shadow.addShadowCaster(shrub);
       if (index % 4 === 0) {
         const bloom = MeshBuilder.CreateIcoSphere(`commons-bloom-${index}`, { radius: 0.12, subdivisions: 1, flat: true }, this.scene);
-        bloom.position.set(x, 0.64, z); bloom.material = this.material('commons-flowers', index % 8 === 0 ? '#e3ae8f' : '#b2d4a4', 0.08); bloom.isPickable = false;
+        bloom.position.set(x, 0.64, z); bloom.material = this.material('commons-flowers', index % 8 === 0 ? OUTPOST.clay : OUTPOST.logoLime, 0.08); bloom.isPickable = false;
       }
     }
   }
@@ -262,7 +304,7 @@ export class OutpostWorld {
   private createGardenTree(x: number, z: number, height: number, color: string, parent?: TransformNode): void {
     const root = new TransformNode('garden-tree', this.scene); root.position.set(x, 0.18, z);
     if (parent) root.parent = parent;
-    const trunk = this.cylinder('tree-trunk', height * 0.085, height * 0.64, height * 0.32, this.material('tree-trunk', '#806d57'), 7, root);
+    const trunk = this.cylinder('tree-trunk', height * 0.085, height * 0.64, height * 0.32, this.material('tree-trunk', OUTPOST.muted), 7, root);
     trunk.rotation.z = 0.07;
     this.shadow.addShadowCaster(trunk);
     for (let index = 0; index < 5; index++) {
@@ -276,7 +318,7 @@ export class OutpostWorld {
   }
 
   private buildBackground(): void {
-    const rock = this.material('satellite-rock', '#274350');
+    const rock = this.material('satellite-rock', OUTPOST.line);
     for (let index = 0; index < 9; index++) {
       const angle = index * 2.39996;
       const distance = 19 + ((index * 7) % 19);
@@ -289,15 +331,15 @@ export class OutpostWorld {
     }
     const planet = MeshBuilder.CreateSphere('distant-world', { diameter: 24, segments: 32 }, this.scene);
     planet.position.set(36, 19, -65);
-    planet.material = this.material('distant-world-surface', '#57797e', 0.25);
+    planet.material = this.material('distant-world-surface', OUTPOST.sageMid, 0.25);
     planet.isPickable = false;
-    const orbit = this.ring('planet-ring', 33, 1.8, 0, this.material('planet-dust', '#81a1a0', 0.18, 0.23));
+    const orbit = this.ring('planet-ring', 33, 1.8, 0, this.material('planet-dust', OUTPOST.ivory, 0.18, 0.23));
     orbit.parent = planet;
     orbit.rotation.set(0.45, 0, -0.35);
     const stars = new TransformNode('constellations', this.scene);
     this.stars = stars;
     const source = MeshBuilder.CreateSphere('star-source', { diameter: 0.09, segments: 3 }, this.scene);
-    source.material = this.material('starlight', '#adcac8', 1.2);
+    source.material = this.material('starlight', OUTPOST.paper, 1.2);
     source.isVisible = false;
     for (let index = 0; index < 180; index++) {
       // Deterministic stars: appearance does not change every time a project opens.
@@ -317,8 +359,8 @@ export class OutpostWorld {
     root.position.set(x, 0, z);
     root.rotation.y = rotation;
     root.metadata = { assetType: type, propFallback: true };
-    const dark = this.material('navy-alloy', '#233d48');
-    const pearl = this.material('pearl-alloy', '#b0bcb4');
+    const dark = this.material('navy-alloy', OUTPOST.charcoalRaised);
+    const pearl = this.material('pearl-alloy', OUTPOST.paper);
     const light = this.material('guide-light', this.theme.palette.accent, 0.9);
     if (type === 'habitat') {
       const building = this.box('habitat-shell', [3.4, 2.3, 2.4], [0, 1.25, 0], pearl, root);
@@ -336,10 +378,10 @@ export class OutpostWorld {
       this.cylinder('beacon-lamp', 0.45, 0.35, 3.4, light, 6, root);
     } else if (type === 'planter') {
       this.cylinder('planter-pot', 1.35, 0.45, 0.22, pearl, 12, root);
-      this.cylinder('planter-soil', 1.2, 0.06, 0.46, this.material('planter-soil', '#5e6850'), 12, root);
-      this.createGardenTree(0, 0, 1.0, '#8ca984', root);
+      this.cylinder('planter-soil', 1.2, 0.06, 0.46, this.material('planter-soil', OUTPOST.line), 12, root);
+      this.createGardenTree(0, 0, 1.0, OUTPOST.sage, root);
     } else if (type === 'lounge') {
-      const cushion = this.material('lounge-cushion', '#8ba393');
+      const cushion = this.material('lounge-cushion', OUTPOST.sage);
       for (const side of [-0.53, 0.53]) {
         this.box('lounge-seat', [0.96, 0.24, 0.85], [side, 0.39, 0], cushion, root);
         this.box('lounge-back', [0.96, 0.53, 0.16], [side, 0.59, -0.38], cushion, root);
@@ -367,6 +409,24 @@ export class OutpostWorld {
     const root = new TransformNode(name, this.scene);
     const fallback = new TransformNode(`${name}-fallback`, this.scene);
     fallback.parent = root;
+    if (this.theme.environment === 'ocean') {
+      createShipFallback(this.scene, this.shadow, fallback, appearance as ShipAssetType);
+      for (const mesh of fallback.getChildMeshes()) { mesh.isPickable = true; mesh.metadata = { actorID: name }; }
+      return { root, fallback, appearance, kind: 'ship', walking: false };
+    }
+    const kind = this.residentKind(name, appearance);
+    if (kind === 'panda') {
+      const panda = createPanda(this.scene, this.shadow, fallback, name, residentSeed(name));
+      return { root, fallback, appearance, kind, panda, walking: false };
+    }
+    if (this.residentStyle === 'mixed' && kind === 'person') {
+      const person = createPerson(this.scene, this.shadow, fallback, name, residentSeed(name));
+      return { root, fallback, appearance, kind, person, walking: false };
+    }
+    if (this.residentStyle === 'mixed' && appearance === 'resident_explorer') {
+      const robots = HUMANOID_ASSET_TYPES.filter(type => type !== 'resident_explorer' && this.theme.assets[type]);
+      appearance = residentAssetForID(name, robots.length ? robots : ['resident']);
+    }
     const pearl = this.material('actor-shell', '#ccd4c6');
     const navy = this.material('actor-joints', '#25414c');
     const color = this.material('actor-accent', accent, 0.2);
@@ -397,28 +457,28 @@ export class OutpostWorld {
     });
     this.shadow.addShadowCaster(torso, true);
     for (const mesh of fallback.getChildMeshes()) { this.shadow.addShadowCaster(mesh); mesh.isPickable = true; mesh.metadata = { actorID: name }; }
-    return { root, fallback, body, appearance, walking: false, leftLeg: legs[0], rightLeg: legs[1] };
+    return { root, fallback, body, appearance, kind, walking: false, leftLeg: legs[0], rightLeg: legs[1] };
   }
 
   private createStation(x: number, z: number, rotation: number): TransformNode {
     const root = new TransformNode('workstation', this.scene);
     root.position.set(x, 0, z);
     root.rotation.y = rotation;
-    const berth = this.box('workstation-berth', [1.85, 0.035, 2.2], [0, 0.085, 0], this.material('station-berth', '#546c67'), root);
+    const berth = this.box('workstation-berth', [1.85, 0.035, 2.2], [0, 0.085, 0], this.material('station-berth', OUTPOST.line), root);
     berth.receiveShadows = true;
-    const marking = this.material('berth-markings', '#7ca89f', 0.05);
+    const marking = this.material('berth-markings', OUTPOST.sage, 0.05);
     this.box('berth-edge-left', [0.035, 0.045, 1.8], [-0.9, 0.11, 0], marking, root);
     this.box('berth-edge-right', [0.035, 0.045, 1.8], [0.9, 0.11, 0], marking, root);
     const container = this.containers.get('station');
     if (container) {
       this.attachModel('station', root, container);
     } else {
-      const pearl = this.material('pearl-alloy', '#b0bcb4');
-      const navy = this.material('navy-alloy', '#233d48');
+      const pearl = this.material('pearl-alloy', OUTPOST.paper);
+      const navy = this.material('navy-alloy', OUTPOST.charcoalRaised);
       this.box('desk-pedestal', [0.5, 0.8, 0.45], [0, 0.4, 0], navy, root);
       const top = this.box('desk-console', [1.35, 0.18, 0.75], [0, 0.96, 0], pearl, root);
       top.rotation.x = -0.16;
-      const glass = this.box('desk-screen', [1.08, 0.04, 0.54], [0, 1.07, 0.015], this.material('console-display', '#6eceba', 0.48), root);
+      const glass = this.box('desk-screen', [1.08, 0.04, 0.54], [0, 1.07, 0.015], this.material('console-display', OUTPOST.lime, 0.48), root);
       glass.rotation.x = -0.16;
       this.shadow.addShadowCaster(top);
     }
@@ -437,12 +497,17 @@ export class OutpostWorld {
     // Normalize in isolation before applying the resident's location and facing.
     const bounds = normalized.getHierarchyBoundingVectors(true);
     const height = bounds.max.y - bounds.min.y;
-    const scale = height > 0.0001 ? this.theme.heights[type] / height : 1;
+    const ship = SHIP_ASSET_TYPES.includes(type as ShipAssetType);
+    const horizontal = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
+    // Ship silhouettes vary greatly; cap the beam/length as well as the mast
+    // height so submarines cannot engulf neighbouring boats or shorelines.
+    const scale = height > 0.0001 ? Math.min(this.theme.heights[type] / height, ship && horizontal > 0 ? 3.35 / horizontal : Infinity) : 1;
     normalized.scaling.setAll(scale);
     normalized.position.set(-(bounds.min.x + bounds.max.x) / 2 * scale, -bounds.min.y * scale, -(bounds.min.z + bounds.max.z) / 2 * scale);
     normalized.parent = pivot;
     pivot.parent = parent;
     pivot.rotation.y = this.theme.rotations[type] || 0;
+    if (ship) pivot.position.y = -0.12;
     for (const mesh of pivot.getChildMeshes()) {
       mesh.isPickable = isResident;
       mesh.metadata = { actorID: isResident ? parent.name : undefined };
@@ -454,12 +519,13 @@ export class OutpostWorld {
   }
 
   private upgradeActor(actor: Actor): void {
-    const type = this.containers.has(actor.appearance) ? actor.appearance : 'resident';
+    if (actor.panda || actor.person) return;
+    const type = this.containers.has(actor.appearance) ? actor.appearance : this.theme.environment === 'ocean' ? actor.appearance : 'resident';
     const container = this.containers.get(type);
     if (!container || actor.loadedAppearance === type) return;
     try {
       actor.model?.dispose();
-      for (const child of [...actor.root.getChildren()]) if (child !== actor.fallback) child.dispose();
+      for (const child of [...actor.root.getChildren()]) if (child !== actor.fallback && !child.metadata?.worldSignal) child.dispose();
       actor.model = this.attachModel(type, actor.root, container);
       actor.loadedAppearance = type;
       actor.fallback.setEnabled(false);
@@ -481,6 +547,8 @@ export class OutpostWorld {
           const url = new URL(`./themes/${this.theme.id}/${path}`, document.baseURI).href;
           const container = await LoadAssetContainerAsync(url, this.scene, { pluginExtension: '.glb' });
           if (this.disposed) { container.dispose(); return; }
+          if (this.theme.environment !== 'ocean') applyLocusSceneryTint(container);
+          for (const texture of container.textures) texture.anisotropicFilteringLevel = 16;
           this.containers.set(type, container);
           if (RESIDENT_ASSET_TYPES.includes(type as ResidentAssetType)) for (const resident of this.residents) this.upgradeActor(resident.actor);
           if (type === 'station') this.rebuildStations();
@@ -507,6 +575,10 @@ export class OutpostWorld {
   private rebuildStations(): void {
     for (const station of this.stations) station.dispose();
     this.stations = [];
+    if (this.theme.environment === 'ocean') {
+      this.navigation = themeNavigation(this.theme, []);
+      return;
+    }
     for (const resident of this.residents) {
       const center = stationObstacle(resident.home);
       const station = this.createStation(center.x, center.z, (resident.home.rotation ?? 0) + Math.PI);
@@ -521,12 +593,20 @@ export class OutpostWorld {
     const sameResidents = agents.length === this.residents.length && agents.every(agent => existingByID.has(agent.id));
     if (sameResidents) {
       // Reordering profiles must not interrupt their walk or change their desks.
-      for (const agent of agents) { const resident = existingByID.get(agent.id)!; resident.agent = agent; this.updateLabel(resident); }
+      for (const agent of agents) { const resident = existingByID.get(agent.id)!; resident.agent = agent; this.syncIslandCrew(resident); this.updateLabel(resident); }
+      this.updateSeaAlerts();
       return;
     }
-    for (const resident of this.residents) { resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.label.remove(); }
-    const appearances = RESIDENT_ASSET_TYPES.filter(type => !!this.theme.assets[type]);
-    if (!appearances.length) appearances.push('resident');
+    this.clearCouriers();
+    for (const snail of this.snails.values()) snail.dispose();
+    this.snails.clear();
+    for (const resident of this.residents) { resident.crew?.dispose(); resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.wake?.dispose(); resident.label.remove(); }
+    if (this.theme.environment !== 'ocean') {
+      for (const [id, kind] of assignCrewKinds(agents.map(agent => agent.id), this.crewAssignments)) this.crewAssignments.set(id, kind);
+    }
+    const candidates: readonly ResidentAssetType[] = this.theme.environment === 'ocean' ? SHIP_ASSET_TYPES : HUMANOID_ASSET_TYPES;
+    const appearances = candidates.filter(type => !!this.theme.assets[type]);
+    if (!appearances.length) appearances.push(this.theme.environment === 'ocean' ? 'ship_thousand_sunny' : 'resident');
     // Balance the initial campus while preserving every existing profile's look
     // when statuses change, profiles reorder, or another sector is visited.
     const counts = new Map(appearances.map(type => [type, 0]));
@@ -538,8 +618,10 @@ export class OutpostWorld {
       this.appearanceAssignments.set(id, appearance);
       counts.set(appearance, counts.get(appearance)! + 1);
     }
+    if (this.theme.environment === 'ocean') this.harborAssignments = assignHarbors(agents.map(agent => agent.id), this.harborAssignments, this.theme.layout.stations.length);
     this.residents = agents.map((agent, index) => {
-      const placement = this.theme.layout.stations[index] || DEFAULT_STATIONS[index];
+      const homeIndex = this.theme.environment === 'ocean' ? this.harborAssignments.get(agent.id) ?? index : index;
+      const placement = this.theme.layout.stations[homeIndex] || DEFAULT_STATIONS[index];
       const appearance = this.appearanceAssignments.get(agent.id)!;
       const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][residentSeed(agent.id) % 4], appearance);
       actor.root.position.set(placement.x, 0.075, placement.z);
@@ -548,19 +630,30 @@ export class OutpostWorld {
       const label = document.createElement('div');
       label.className = 'agent-label';
       label.dataset.agentId = agent.id;
-      label.dataset.appearance = appearance;
+      label.dataset.appearance = actor.appearance;
+      label.dataset.residentKind = actor.kind;
+      label.dataset.residentStyle = this.theme.environment === 'ocean' ? 'ships' : this.residentStyle;
+      if (this.theme.environment === 'ocean') label.dataset.homeIsland = this.getAgentHome(agent.id) ?? '';
       label.title = `Interact with ${agent.name}`;
       label.addEventListener('click', () => this.callbacks.onSelect(agent.id));
       label.addEventListener('pointerenter', () => this.setHovered(agent.id));
       label.addEventListener('pointerleave', () => this.setHovered(undefined));
-      const ring = this.ring(`resident-pad-${agent.id}`, 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
+      const ring = this.ring(`resident-pad-${agent.id}`, this.theme.environment === 'ocean' ? 3.6 : 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
       ring.position.x = placement.x; ring.position.z = placement.z;
-      const resident = { agent, actor, label, ring, home: placement, motion: createResidentMotion(agent.id, placement), id: agent.id, phase: index * 1.5 };
+      const wake = this.theme.environment === 'ocean' ? createShipWake(this.scene, this.mapRoot, agent.id) : undefined;
+      const motion = createResidentMotion(agent.id, placement);
+      if (this.theme.environment === 'ocean') {
+        motion.speed *= 0.65;
+        motion.heading = shipBerthHeading(placement);
+        actor.root.rotation.y = motion.heading;
+      }
+      const resident = { agent, actor, label, ring, wake, home: placement, motion, id: agent.id, phase: index * 1.5 };
       this.labels.append(label);
       this.updateLabel(resident);
       return resident;
     });
     this.rebuildStations();
+    this.updateSeaAlerts();
     this.setHovered(undefined);
   }
 
@@ -569,8 +662,24 @@ export class OutpostWorld {
     resident.label.replaceChildren();
     const inner = document.createElement('div'); inner.className = 'agent-label-inner';
     const name = document.createElement('span'); name.className = 'agent-label-name'; name.textContent = resident.agent.name;
+    if (this.theme.environment === 'ocean') {
+      const ship = document.createElement('span'); ship.className = 'agent-label-ship'; ship.textContent = SHIP_NAMES[resident.actor.appearance as ShipAssetType];
+      name.append(ship);
+      const port = document.createElement('span'); port.className = 'agent-label-port'; port.textContent = this.getAgentHome(resident.id) ?? '';
+      name.append(port);
+      resident.label.dataset.ship = ship.textContent ?? '';
+    }
     const state = document.createElement('span'); state.className = 'agent-label-state'; state.textContent = meta.label;
-    inner.append(name, state); resident.label.append(inner);
+    inner.append(name, state);
+    const request = this.theme.environment === 'ocean' ? this.attentionRequests.find(item => item.agentID.toLowerCase() === resident.id.toLowerCase()) : undefined;
+    if (request) {
+      const call = document.createElement('button'); call.type = 'button'; call.tabIndex = -1; call.className = 'den-den-call';
+      call.textContent = request.kind === 'approval' ? 'Ping Ping · Approval' : 'Ping Ping · Needs your input';
+      call.title = request.title; call.dataset.requestId = request.id;
+      call.addEventListener('click', event => { event.stopPropagation(); this.callbacks.onAttention?.(request.id); });
+      inner.append(call);
+    }
+    resident.label.append(inner);
     resident.label.classList.toggle('selected', resident.id === this.selectedID);
     resident.label.classList.toggle('hovered', resident.id === this.hoveredID);
     resident.label.title = `Interact with ${resident.agent.name}`;
@@ -599,9 +708,9 @@ export class OutpostWorld {
     this.cleanups.push(() => motionPreference.removeEventListener('change', motionPreferenceChanged));
     let pointerStart: ScreenPoint | undefined;
     let dragged = false;
-    const pickResident = (event: PointerEvent): string | undefined => {
+    const pick = (event: PointerEvent): { actorID?: string; attentionID?: string; transferID?: string } | undefined => {
       const rect = this.canvas.getBoundingClientRect();
-      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && typeof mesh.metadata?.actorID === 'string')?.pickedMesh?.metadata?.actorID;
+      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string'))?.pickedMesh?.metadata;
     };
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -614,15 +723,19 @@ export class OutpostWorld {
         if (dragged) { this.setHovered(undefined); this.canvas.style.cursor = 'grabbing'; }
         return;
       }
-      this.setHovered(pickResident(event));
+      const target = pick(event);
+      this.setHovered(target?.actorID);
+      if (target?.transferID || target?.attentionID) this.canvas.style.cursor = 'pointer';
     };
     const up = (event: PointerEvent) => {
       const click = pointerStart && !dragged && isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
       pointerStart = undefined;
       dragged = false;
-      const id = pickResident(event);
-      this.setHovered(id);
-      if (click && id) this.callbacks.onSelect(id);
+      const target = pick(event);
+      this.setHovered(target?.actorID);
+      if (click && target?.attentionID) this.callbacks.onAttention?.(target.attentionID);
+      else if (click && target?.transferID) this.callbacks.onTransfer?.(target.transferID);
+      else if (click && target?.actorID) this.callbacks.onSelect(target.actorID);
     };
     const cancel = () => { pointerStart = undefined; dragged = false; this.setHovered(undefined); };
     this.canvas.addEventListener('pointerdown', down); this.canvas.addEventListener('pointermove', move); this.canvas.addEventListener('pointerup', up);
@@ -633,7 +746,7 @@ export class OutpostWorld {
   }
 
   private setHovered(id?: string): void {
-    this.canvas.style.cursor = id ? 'pointer' : 'grab';
+    this.canvas.style.cursor = id ? 'pointer' : this.navigationMode === 'pan' ? 'move' : 'grab';
     if (id === this.hoveredID) return;
     this.hoveredID = id;
     for (const resident of this.residents) this.updateLabel(resident);
@@ -646,6 +759,7 @@ export class OutpostWorld {
     const dt = Math.min((now - (this.lastFrame || now)) / 1000, 0.05);
     this.lastFrame = now;
     this.elapsed += dt;
+    this.ocean?.update(this.elapsed, this.reducedMotion);
     const rosterIDs = this.residents.map(resident => resident.id);
     const pausedIDs = new Set(this.residents.filter(resident => statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID)).map(resident => resident.id));
     const previous = this.residents.map(resident => resident.motion);
@@ -656,13 +770,40 @@ export class OutpostWorld {
       resident.motion = motions[index];
       resident.actor.root.position.set(resident.motion.x, 0.075, resident.motion.z);
       resident.actor.root.rotation.y = resident.motion.heading;
+      if (this.theme.environment === 'ocean') {
+        resident.actor.root.position.y = this.reducedMotion ? 0.025 : 0.045 + Math.sin(this.elapsed * 1.5 + resident.phase) * 0.055;
+        resident.actor.root.rotation.x = this.reducedMotion ? 0 : Math.sin(this.elapsed * 1.2 + resident.phase) * 0.018;
+        resident.actor.root.rotation.z = this.reducedMotion ? 0 : Math.sin(this.elapsed * 1.6 + resident.phase) * 0.027;
+        if (resident.wake) {
+          resident.wake.position.set(resident.motion.x, 0.075, resident.motion.z);
+          resident.wake.rotation.y = resident.motion.heading;
+          resident.wake.setEnabled(resident.motion.walking && !this.reducedMotion);
+          resident.wake.scaling.z = 0.95 + Math.sin(this.elapsed * 2 + resident.phase) * 0.12;
+        }
+      }
       resident.ring.position.x = resident.motion.x;
       resident.ring.position.z = resident.motion.z;
       resident.label.dataset.behavior = resident.motion.phase;
       resident.label.dataset.walking = String(resident.motion.walking);
       resident.label.dataset.worldX = resident.motion.x.toFixed(3);
       resident.label.dataset.worldZ = resident.motion.z.toFixed(3);
+      resident.label.dataset.heading = resident.motion.heading.toFixed(5);
+      if (this.theme.environment === 'ocean') {
+        this.syncIslandCrew(resident);
+        const atBerth = Math.hypot(resident.motion.x - resident.home.x, resident.motion.z - resident.home.z) < 0.08 && !resident.motion.walking;
+        const parkedHeading = shipBerthHeading(resident.home);
+        const aligned = Math.abs(Math.atan2(Math.sin(resident.motion.heading - parkedHeading), Math.cos(resident.motion.heading - parkedHeading))) < 0.06;
+        const docked = atBerth && aligned;
+        const berthState = docked ? 'Docked' : atBerth ? 'Mooring' : resident.motion.intent === 'station' ? 'Returning to port' : 'Sailing';
+        const home = this.getAgentHome(resident.id) ?? 'Home island';
+        const portText = `${berthState} · ${home}${resident.crew ? ` · ${resident.crew.count} crew ashore` : ''}`;
+        const port = resident.label.querySelector('.agent-label-port');
+        if (port && port.textContent !== portText) port.textContent = portText;
+        resident.label.dataset.docked = String(docked);
+      }
       this.setActorWalking(resident.actor, resident.motion.walking);
+      resident.actor.panda?.animate(resident.motion.walking, this.elapsed + resident.phase, this.reducedMotion);
+      resident.actor.person?.animate(resident.motion.walking, this.elapsed + resident.phase, this.reducedMotion);
       if (!this.reducedMotion && !resident.actor.model && resident.actor.body) {
         resident.actor.body.position.y = resident.motion.walking ? Math.abs(Math.sin(this.elapsed * 8 + resident.phase)) * 0.035 : Math.sin(this.elapsed * 1.4 + resident.phase) * 0.017;
         if (resident.actor.leftLeg) resident.actor.leftLeg.rotation.x = resident.motion.walking ? Math.sin(this.elapsed * 8 + resident.phase) * 0.42 : 0;
@@ -671,6 +812,7 @@ export class OutpostWorld {
         resident.actor.body.rotation.y = resident.agent.status === 'working' ? Math.sin(this.elapsed * 1.8 + resident.phase) * 0.045 : 0;
       }
     }
+    this.updateSeaActivity();
     this.scene.render();
     this.updateLabels();
   };
@@ -700,19 +842,126 @@ export class OutpostWorld {
       const halfWidth = resident.label.offsetWidth / 2;
       const bounds = { left: x - halfWidth, top: y - resident.label.offsetHeight, right: x + halfWidth, bottom: y };
       const priority = resident.id === this.selectedID ? 0 : resident.id === this.hoveredID ? 1 : resident.agent.status === 'needs_attention' ? 2 : resident.agent.status === 'working' ? 3 : 4;
-      return { resident, projected, x, y, bounds, priority };
-    }).sort((a, b) => a.priority - b.priority || a.projected.z - b.projected.z || a.resident.id.localeCompare(b.resident.id));
+      return { label: resident.label, id: resident.id, projected, x, y, bounds, priority };
+    });
+    for (const courier of this.couriers.values()) {
+      const projected = Vector3.Project(courier.boat.root.position.add(new Vector3(0, 1.7, 0)), Matrix.IdentityReadOnly, this.scene.getTransformMatrix(), viewport);
+      const x = projected.x * scaleX, y = projected.y * scaleY, halfWidth = courier.label.offsetWidth / 2;
+      candidates.push({ label: courier.label, id: courier.event.id, projected, x, y, bounds: { left: x - halfWidth, top: y - courier.label.offsetHeight, right: x + halfWidth, bottom: y }, priority: 3 });
+    }
+    candidates.sort((a, b) => a.priority - b.priority || a.projected.z - b.projected.z || a.id.localeCompare(b.id));
     const occupied = [...overlays];
-    for (const { resident, projected, x, y, bounds } of candidates) {
+    for (const { label, projected, x, y, bounds } of candidates) {
       const visible = projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, occupied);
       if (visible) occupied.push(bounds);
-      resident.label.dataset.labelVisible = String(visible);
-      resident.label.style.opacity = visible ? '1' : '0';
+      label.dataset.labelVisible = String(visible);
+      label.style.opacity = visible ? '1' : '0';
       // Hide immediately on overlap; an opacity transition must not linger over the HUD.
-      resident.label.style.visibility = visible ? 'visible' : 'hidden';
-      resident.label.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-100%)`;
-      resident.label.style.zIndex = `${Math.round(1000 - projected.z * 1000)}`;
+      label.style.visibility = visible ? 'visible' : 'hidden';
+      label.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-100%)`;
+      label.style.zIndex = `${Math.round(1000 - projected.z * 1000)}`;
     }
+  }
+
+
+  /** Requests persist until the native snapshot removes them; transfers arrive once. */
+  setActivity(requests: readonly AttentionRequest[], transfers: readonly AgentTransfer[]): void {
+    this.attentionRequests = requests;
+    this.updateSeaAlerts();
+    if (!this.courierNavigation || this.theme.environment !== 'ocean') return;
+    for (const event of transfers) {
+      if (this.couriers.has(event.id) || this.couriers.size >= 8) continue;
+      const from = this.residents.find(resident => resident.id.toLowerCase() === event.fromAgentID.toLowerCase());
+      const to = this.residents.find(resident => resident.id.toLowerCase() === event.toAgentID.toLowerCase());
+      if (!from || !to) continue;
+      const berth = (resident: Resident): Point => {
+        const direction = resident.home.rotation ?? 0;
+        const point = { x: resident.home.x + Math.sin(direction) * 1.7, z: resident.home.z + Math.cos(direction) * 1.7 };
+        return pointIsWalkable(point, this.courierNavigation!) ? point : { x: resident.home.x, z: resident.home.z };
+      };
+      const start = berth(from), end = berth(to), path = findResidentPath(start, end, this.courierNavigation);
+      if (!path?.length) continue;
+      const route = [start, ...path];
+      const boat = createCourierBoat(this.scene, this.shadow, this.mapRoot, event.id, event.kind);
+      const wake = createShipWake(this.scene, this.mapRoot, `courier-${event.id}`); wake.scaling.set(0.4, 1, 0.4);
+      const label = document.createElement('div'); label.className = 'agent-label courier-label'; label.dataset.transferId = event.id;
+      const inner = document.createElement('div'); inner.className = 'agent-label-inner';
+      const text = document.createElement('span'); text.className = 'agent-label-name'; text.textContent = event.kind === 'artifact' ? 'Artifact delivery' : 'Agent handoff';
+      inner.append(text); label.append(inner); label.title = `${from.agent.name} → ${to.agent.name}: ${event.title}`;
+      label.addEventListener('click', () => this.callbacks.onTransfer?.(event.id));
+      this.labels.append(label);
+      this.couriers.set(event.id, { event, boat, route, wake, started: this.elapsed, duration: Math.max(14, Math.min(36, courierRouteLength(route) / 2.2)), label });
+    }
+    this.updateSeaActivity();
+  }
+
+  private updateSeaAlerts(): void {
+    if (this.theme.environment !== 'ocean') return;
+    const active = new Set<string>();
+    for (const resident of this.residents) {
+      const request = this.attentionRequests.find(item => item.agentID.toLowerCase() === resident.id.toLowerCase());
+      if (request) {
+        active.add(request.id);
+        if (!this.snails.has(request.id)) {
+          const snail = createDenDenMushi(this.scene, this.shadow, resident.actor.root, request.id, resident.id);
+          snail.root.metadata = { worldSignal: true };
+          snail.root.position.set(0.70, 0.95, 0.55);
+          this.snails.set(request.id, snail);
+        }
+      }
+      this.updateLabel(resident);
+    }
+    for (const [id, snail] of this.snails) if (!active.has(id)) { snail.dispose(); this.snails.delete(id); }
+  }
+
+  private updateSeaActivity(): void {
+    for (const snail of this.snails.values()) snail.animate(this.elapsed, this.reducedMotion);
+    for (const [id, courier] of this.couriers) {
+      const progress = this.reducedMotion || courier.arrivedAt !== undefined ? 1 : Math.min(1, (this.elapsed - courier.started) / courier.duration);
+      if (progress === 1 && courier.arrivedAt === undefined) courier.arrivedAt = this.elapsed;
+      if (courier.arrivedAt !== undefined && this.elapsed - courier.arrivedAt > 10) {
+        courier.boat.dispose(); courier.wake.dispose(); courier.label.remove(); this.couriers.delete(id); continue;
+      }
+      const pose = courierPose(courier.route, progress);
+      courier.boat.root.position.set(pose.x, this.reducedMotion ? 0.02 : 0.035 + Math.sin(this.elapsed * 2.2) * 0.025, pose.z);
+      courier.boat.root.rotation.set(this.reducedMotion ? 0 : Math.sin(this.elapsed * 1.8) * 0.018, pose.heading, this.reducedMotion ? 0 : Math.sin(this.elapsed * 2.4) * 0.04);
+      courier.wake.position.set(pose.x, 0.078, pose.z); courier.wake.rotation.y = pose.heading; courier.wake.setEnabled(progress < 1 && !this.reducedMotion);
+      courier.label.dataset.progress = progress.toFixed(3);
+      courier.label.dataset.worldX = pose.x.toFixed(3); courier.label.dataset.worldZ = pose.z.toFixed(3);
+      courier.label.dataset.delivered = String(progress === 1);
+    }
+  }
+
+  private syncIslandCrew(resident: Resident): void {
+    if (this.theme.environment !== 'ocean') return;
+    const activity = islandCrewActivity(resident.agent.status, resident.motion, resident.home);
+    const harbor = this.harborAssignments.get(resident.id);
+    const plaza = harbor === undefined ? undefined : GRAND_LINE_CREW_PLAZAS[harbor];
+    if (!activity || !plaza) {
+      resident.crew?.dispose(); resident.crew = undefined;
+    } else {
+      if (!resident.crew) {
+        resident.crew = createIslandCrew(this.scene, this.shadow, this.mapRoot, resident.id, residentSeed(resident.id));
+        resident.crew.root.position.set(plaza.x, plaza.y, plaza.z);
+        resident.crew.root.rotation.y = plaza.rotation;
+        // This short boarding plank retracts with the landing party, before any
+        // departure. It connects the fixed jetty to the side of the parked hull.
+        const berthDistance = Math.hypot(resident.home.x - plaza.x, resident.home.z - plaza.z);
+        const wood = this.material('boarding-plank', '#966747'), rope = this.material('boarding-rope', '#dec68d');
+        this.box('ship-boarding-plank', [0.48, 0.065, 0.91], [0, 0.635 - plaza.y, berthDistance - 1.065], wood, resident.crew.root);
+        for (const x of [-0.23, 0.23]) this.box('ship-boarding-edge', [0.027, 0.035, 0.91], [x, 0.68 - plaza.y, berthDistance - 1.065], rope, resident.crew.root);
+      }
+      resident.crew.animate(activity === 'working', this.elapsed + resident.phase, this.reducedMotion);
+    }
+    const count = resident.crew?.count ?? 0;
+    resident.label.dataset.crewAshore = String(count);
+    resident.label.dataset.crewActivity = resident.crew ? activity ?? '' : '';
+    resident.actor.root.metadata = { ...resident.actor.root.metadata, crewAshore: count };
+  }
+
+  private clearCouriers(): void {
+    for (const courier of this.couriers.values()) { courier.boat.dispose(); courier.wake.dispose(); courier.label.remove(); }
+    this.couriers.clear();
   }
 
   focusResident(id: string): void {
@@ -720,6 +969,77 @@ export class OutpostWorld {
     if (!resident) return;
     this.selectedID = id;
     for (const item of this.residents) this.updateLabel(item);
+    this.camera.setTarget(new Vector3(resident.motion.x, 0.8, resident.motion.z));
+    this.camera.radius = Math.min(this.camera.radius, this.theme.environment === 'ocean' ? 16 : 14);
+  }
+
+  setResidentStyle(style: ResidentStyle): void {
+    if (this.residentStyle === style) return;
+    this.residentStyle = style;
+    if (this.theme.environment === 'ocean') return;
+    for (const resident of this.residents) {
+      const previous = resident.actor;
+      const position = previous.root.position.clone();
+      const rotation = previous.root.rotation.clone();
+      previous.model?.dispose();
+      previous.root.dispose();
+      resident.actor = this.createActor(resident.id, ['#C9F54A', '#CDB382', '#D39F87', '#A6BB96'][residentSeed(resident.id) % 4], this.appearanceAssignments.get(resident.id) ?? previous.appearance);
+      resident.actor.root.position.copyFrom(position);
+      resident.actor.root.rotation.copyFrom(rotation);
+      this.upgradeActor(resident.actor);
+      resident.label.dataset.residentStyle = style;
+      resident.label.dataset.residentKind = resident.actor.kind;
+      resident.label.dataset.appearance = resident.actor.appearance;
+    }
+  }
+
+  private residentKind(id: string, appearance: ResidentAssetType): ResidentKind {
+    if (this.residentStyle === 'pandas') return 'panda';
+    if (this.residentStyle === 'mixed') return this.crewAssignments.get(id) ?? 'person';
+    return appearance === 'resident_explorer' ? 'person' : 'robot';
+  }
+
+  getAgentKind(id: string): ResidentKind | 'ship' | undefined {
+    const appearance = this.appearanceAssignments.get(id);
+    if (!appearance) return undefined;
+    return this.theme.environment === 'ocean' ? 'ship' : this.residentKind(id, appearance);
+  }
+
+  getAgentAppearance(id: string): ResidentAssetType | undefined { return this.appearanceAssignments.get(id); }
+
+  getAgentHome(id: string): string | undefined {
+    const index = this.harborAssignments.get(id);
+    return this.theme.environment === 'ocean' && index !== undefined ? GRAND_LINE_HOME_NAMES[index] : undefined;
+  }
+
+  setNavigationMode(mode: 'orbit' | 'pan'): void {
+    this.navigationMode = mode;
+    this.camera.detachControl();
+    this.camera.attachControl(false, true, mode === 'pan' ? 0 : 2);
+    this.camera.panningSensibility = mode === 'pan' || this.theme.environment === 'ocean' ? 85 : 0;
+    this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0;
+    this.canvas.style.cursor = mode === 'pan' ? 'move' : 'grab';
+    this.canvas.dataset.navigationMode = mode;
+  }
+
+  panMap(direction: 'left' | 'right' | 'up' | 'down'): void {
+    const step = Math.max(0.45, this.camera.radius * 0.025);
+    const right = new Vector3(-Math.sin(this.camera.alpha), 0, Math.cos(this.camera.alpha));
+    const forward = new Vector3(-Math.cos(this.camera.alpha), 0, -Math.sin(this.camera.alpha));
+    const offset = direction === 'left' ? right.scale(-step) : direction === 'right' ? right.scale(step) : direction === 'up' ? forward.scale(step) : forward.scale(-step);
+    const target = this.camera.target.add(offset);
+    const limit = this.theme.layout.radius + 12;
+    target.x = Math.max(-limit, Math.min(limit, target.x)); target.z = Math.max(-limit, Math.min(limit, target.z));
+    this.camera.target.copyFrom(target);
+  }
+
+  resetView(): void {
+    this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0; this.camera.inertialRadiusOffset = 0;
+    this.camera.inertialPanningX = 0; this.camera.inertialPanningY = 0;
+    this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -2.5 : 0, 0.9, -0.4));
+    this.camera.alpha = this.theme.environment === 'ocean' ? -Math.PI / 2 : Math.PI / 2 - 0.3;
+    this.camera.beta = this.theme.environment === 'ocean' ? 0.74 : 1.01;
+    this.camera.radius = this.theme.environment === 'ocean' ? 76 : 33;
   }
 
   setVisible(visible: boolean): void {
@@ -735,7 +1055,12 @@ export class OutpostWorld {
     this.disposed = true;
     for (const cleanup of this.cleanups) cleanup();
     this.engine.stopRenderLoop();
+    this.clearCouriers();
+    for (const resident of this.residents) resident.crew?.dispose();
+    for (const snail of this.snails.values()) snail.dispose();
+    this.snails.clear();
     this.labels.replaceChildren();
+    this.ocean?.dispose();
     for (const container of this.containers.values()) container.dispose();
     this.scene.dispose();
     this.engine.dispose();

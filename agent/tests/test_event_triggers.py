@@ -914,3 +914,23 @@ def test_price_trigger_validation_and_webhook_contract(tmp_path) -> None:
     base["filters"]["price_condition"]["threshold"] = "1e1000000"
     with pytest.raises(RunStoreError, match="bounded positive decimal"):
         store.create_event_trigger(base)
+
+
+def test_saved_profile_owns_event_destination_and_side_chats(tmp_path):
+    import uuid
+
+    template = SessionStore(str(tmp_path), model="fixture")
+    profile_id = str(uuid.uuid4())
+    SessionMeta.update(template.session_id, agent_profile_id=profile_id, agent_world_profile_id=profile_id)
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "fixture"}))
+    _connection(service.run_store)
+    for trigger_id in ("mail", "price"):
+        target = trigger_target_create(service, {
+            "trigger_id": trigger_id, "template_session_id": template.session_id, "name": trigger_id,
+        })["session"]
+        _trigger(service.run_store, trigger_id=trigger_id, session_id=target["id"])
+        side = trigger_task_create(trigger_id, service, {"name": "Questions"})["session"]
+        assert target["agent_profile_id"] == profile_id
+        assert side["agent_profile_id"] == profile_id
+        assert SessionMeta.get(side["id"])["agent_world_profile_id"] == profile_id
+    assert SessionMeta.get(template.session_id).get("agent_trigger_id") is None

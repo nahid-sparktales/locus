@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import WebKit
 import XCTest
@@ -30,6 +31,120 @@ final class AgentWorldTests: XCTestCase {
         for value in ["", "../secret", "data:alert(1)", "<script>", "UpperCase", String(repeating: "a", count: 65)] {
             XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["theme": value]], screen: screen))
         }
+    }
+
+    func testWorldActivityActionsRequireInteractiveCapabilityAndExactOpaqueIDs() {
+        let id = UUID().uuidString
+        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
+                                             version: 1, capabilities: ["agents.read"])
+        let actions: [([String: Any], PluginScreenMessage)] = [
+            (["version": 1, "type": "openAttention", "requestID": id.lowercased()], .openAttention(id)),
+            (["version": 1, "type": "openTransfer", "transferID": id], .openTransfer(id)),
+            (["version": 1, "type": "openSharedChat"], .openSharedChat),
+            (["version": 1, "type": "openAgentControls"], .openAgentControls(nil)),
+            (["version": 1, "type": "openAgentControls", "agentID": id], .openAgentControls(id)),
+        ]
+        for (payload, expected) in actions {
+            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), expected)
+            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
+            var extra = payload; extra["sessionID"] = "another-conversation"
+            XCTAssertNil(PluginScreenMessage.decode(extra, screen: screen))
+            var badVersion = payload; badVersion["version"] = true
+            XCTAssertNil(PluginScreenMessage.decode(badVersion, screen: screen))
+        }
+        for type in ["openAttention", "openTransfer", "openAgentControls"] {
+            let key = type == "openAttention" ? "requestID" : type == "openTransfer" ? "transferID" : "agentID"
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": type, key: "../private"], screen: screen))
+        }
+    }
+
+    func testResidentAppearanceBridgeAcceptsOnlySupportedStylesAndOnePreferenceAtATime() {
+        for style in ["mixed", "pandas", "explorers"] {
+            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": style]], screen: screen), .residentStyle(style))
+        }
+        for style in ["", "Pandas", "Mixed", "panda", "../pandas", "<script>", "outpost"] {
+            XCTAssertFalse(AgentWorldModel.isSafeResidentStyle(style))
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": style]], screen: screen))
+        }
+        for preferences: [String: Any] in [[:], ["residentStyle": true], ["residentStyle": ["pandas"]],
+                                          ["residentStyle": "pandas", "theme": "outpost"],
+                                          ["residentStyle": "pandas", "unknown": "value"]] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": preferences], screen: screen))
+        }
+        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 1, capabilities: ["agents.read"])
+        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": "pandas"]], screen: readOnly))
+    }
+
+    func testResidentAppearanceDefaultsToMixedInTheEmptySnapshot() {
+        let model = AgentWorldModel()
+        XCTAssertEqual(model.residentStyle, "mixed")
+        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "mixed")
+        model.setResidentStyle("pandas")
+        XCTAssertEqual(model.residentStyle, "mixed", "A closed or revoked world cannot change preferences")
+    }
+
+    func testResidentAppearancePersistsPerScreenAndRestoresWithoutChangingTheTheme() throws {
+        let suiteName = "AgentWorldAppearanceTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let titlePrefix = "Agent World Appearance Test " + UUID().uuidString
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
+        try Data("<!doctype html><html><body>Local appearance fixture</body></html>".utf8).write(to: root.appendingPathComponent("ui/index.html"))
+        defer {
+            for window in NSApp.windows where window.title.hasPrefix(titlePrefix) { window.close() }
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let first = ExtensionPluginScreen(id: "first", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read", "world.preferences"])
+        let second = ExtensionPluginScreen(id: "second", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read", "world.preferences"])
+        let readOnly = ExtensionPluginScreen(id: "read-only", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read"])
+        let pluginID = "appearance-fixture"
+        var plugin = ExtensionPlugin(id: pluginID, name: pluginID, displayName: "Appearance fixture", description: nil,
+                                     version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
+                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
+                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
+        plugin.root = root.path; plugin.screens = [first, second, readOnly]
+        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
+        let extensions = ExtensionsModel()
+        extensions.extensions = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
+                                                   mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
+        let key = "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + first.id
+        defaults.set("unrecognized-style", forKey: key)
+        let model = AgentWorldModel()
+        model.configure(extensions: extensions, profiles: { [] }, workspace: { root.path }, availability: { _ in nil },
+                        state: { _ in .init() }, create: { _, _ in XCTFail("Appearance changes must not create a conversation"); return "unused" },
+                        load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("Appearance changes must not dispatch work") },
+                        stop: { _ in }, open: { _ in }, manage: {}, defaults: defaults)
+        model.open(pluginID: pluginID, screenID: first.id)
+        XCTAssertEqual(model.residentStyle, "mixed", "Unrecognized saved styles must use the mixed crew default")
+        model.setResidentStyle("pandas")
+        XCTAssertEqual(model.residentStyle, "pandas")
+        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "pandas")
+        XCTAssertEqual(defaults.string(forKey: key), "pandas")
+        model.setResidentStyle("invalid")
+        XCTAssertEqual(model.residentStyle, "pandas")
+        model.setTheme("grand-line")
+        XCTAssertEqual(model.residentStyle, "pandas", "Changing worlds must preserve the campus appearance preference")
+        model.open(pluginID: pluginID, screenID: second.id)
+        XCTAssertEqual(model.residentStyle, "mixed", "An unconfigured screen uses the mixed crew default")
+        model.setResidentStyle("explorers")
+        XCTAssertEqual(defaults.string(forKey: key), "pandas")
+        model.open(pluginID: pluginID, screenID: first.id)
+        XCTAssertEqual(model.residentStyle, "pandas")
+        XCTAssertEqual(model.theme, "grand-line")
+        model.open(pluginID: pluginID, screenID: second.id)
+        XCTAssertEqual(model.residentStyle, "explorers", "Explicit saved explorer choices survive the new mixed default")
+        model.setResidentStyle("mixed")
+        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "mixed")
+        XCTAssertEqual(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + second.id), "mixed")
+        model.open(pluginID: pluginID, screenID: first.id)
+        XCTAssertEqual(model.residentStyle, "pandas", "Explicit saved panda choices remain independent of other screens")
+        model.open(pluginID: pluginID, screenID: second.id)
+        XCTAssertEqual(model.residentStyle, "mixed", "Mixed crew choices restore through the same preference bridge")
+        model.open(pluginID: pluginID, screenID: readOnly.id)
+        model.setResidentStyle("pandas")
+        XCTAssertEqual(model.residentStyle, "mixed")
+        XCTAssertNil(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + readOnly.id))
     }
 
     func testFilesRejectTraversalAbsolutePathsAndEscapingSymlinks() throws {

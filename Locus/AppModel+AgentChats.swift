@@ -43,6 +43,7 @@ extension AppModel {
     }
 
     func selectAgent(_ reference: AgentInspectorAgent) {
+        selectedSavedAgentID = nil
         let agentID = reference.agentID
         selectedAgentID = agentID
         agentInspector.show(.agent(reference))
@@ -52,6 +53,14 @@ extension AppModel {
 
     func inspectAgentChat(_ session: SessionSummary) {
         guard session.isAgentChat else { return }
+        if let profileID = session.savedAgentProfileID {
+            selectedSavedAgentID = profileID
+            selectedAgentID = nil
+            agentInspector.clearAgentSelection()
+            agentInspector.show(.fleet)
+            return
+        }
+        selectedSavedAgentID = nil
         guard let reference = session.agentReference(in: agentDefinitions) else {
             agentInspector.clearAgentSelection()
             selectedAgentID = nil
@@ -99,26 +108,25 @@ extension AppModel {
         if reveal { selectInspectorTab(.agent) }
     }
 
-    /// The sidebar's primary button and ⌘N share this. Both destinations start
-    /// chats: Work starts a workspace chat, while Agent starts the next chat for
-    /// the current (or most recently used) agent.
+    /// The primary action creates the parent object for the active destination.
     func newChatForSidebarDestination() {
         if sidebarDestination == .agents {
-            newAgentChat()
+            presentNewAgent()
         } else {
             newSession()
         }
     }
 
-    /// New Agents begin with an explicit choice of what starts their work.
-    /// A kind supplied by a contextual action still opens that editor directly.
+    /// Saved agents share the same profile editor as Agent World. A trigger
+    /// kind supplied by a contextual action still opens that editor directly.
     func presentNewAgent(kind: EventTriggerKind? = nil) {
-        configureAgentPendingCreation = kind == nil
-        if let kind {
-            configureAgentPendingTriggerEdit = PendingEventTriggerEdit(
-                trigger: nil, targetSessionID: currentSessionID, triggerKind: kind
-            )
+        guard let kind else {
+            presentSavedAgentEditor(newSavedAgentDraft())
+            return
         }
+        configureAgentPendingTriggerEdit = PendingEventTriggerEdit(
+            trigger: nil, targetSessionID: currentSessionID, triggerKind: kind
+        )
         presentConfigureAgent(draftText: draftText)
     }
 
@@ -142,6 +150,10 @@ extension AppModel {
     /// selected agent, then the current chat's agent, then the most recent
     /// agent; with no agents at all it opens Manage Agents, where one is made.
     func newAgentChat(triggerID: String? = nil) {
+        if triggerID == nil, let profile = selectedSavedAgentProfile {
+            newSavedAgentChat(profile)
+            return
+        }
         let snapshot = sessionCatalog.snapshot
         let reference: AgentInspectorAgent?
         if let triggerID = triggerID?.nilIfEmpty {

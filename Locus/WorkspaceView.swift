@@ -19,7 +19,10 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let destination = model.emptySidebarDestination {
+            if model.agentCrewChatPresented, model.sidebarDestination == .agents {
+                AgentCrewChatView(model: model.agentCrewChat, sidebarVisible: sidebarVisible, showSidebar: showSidebar)
+                    .id(model.agentCrewChat.workspace)
+            } else if let destination = model.emptySidebarDestination {
                 if !sidebarVisible {
                     HStack {
                         HeaderIconButton(symbol: "sidebar.left", label: "Show sidebar",
@@ -33,11 +36,11 @@ struct WorkspaceView: View {
                           systemImage: destination == .agents ? "person.2" : "bubble.left")
                 } description: {
                     Text(destination == .agents
-                         ? "Select an agent in the sidebar or manage your agents to get started."
+                         ? "Create a saved agent or select one in the sidebar to open its chats."
                          : "Create a chat to start working in this workspace.")
                 } actions: {
-                    Button(destination == .agents ? "Manage Agents" : "New chat") {
-                        if destination == .agents { model.presentConfigureAgent(draftText: "") }
+                    Button(destination == .agents ? "New agent" : "New chat") {
+                        if destination == .agents { model.presentNewAgent() }
                         else { model.newSession() }
                     }
                     .accessibilityIdentifier("workspace.emptyDestination.action")
@@ -2014,6 +2017,7 @@ struct ScheduleEditorView: View {
                     ForEach(ScheduleRunner.selectableCases) { runner in Text(runner.title).tag(runner) }
                 }
                 .accessibilityIdentifier("scheduleEditor.runner")
+                .disabled(draft.agentProfileID != nil)
                 if draft.runner == .team {
                     Picker("Team", selection: $draft.teamID) {
                         Text("Choose a team").tag(String?.none)
@@ -2039,12 +2043,14 @@ struct ScheduleEditorView: View {
                     }
                 }
                 .accessibilityIdentifier("scheduleEditor.account")
+                .disabled(draft.agentProfileID != nil)
                 if catalogModels.isEmpty {
                     LabeledContent("Model") {
                         TextField("Exact model ID", text: $draft.model)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Model")
                             .accessibilityIdentifier("scheduleEditor.model")
+                            .disabled(draft.agentProfileID != nil)
                     }
                 } else {
                     Picker("Model", selection: $draft.model) {
@@ -2052,6 +2058,7 @@ struct ScheduleEditorView: View {
                         ForEach(availableModels, id: \.self) { name in Text(name).tag(name) }
                     }
                     .accessibilityIdentifier("scheduleEditor.model")
+                    .disabled(draft.agentProfileID != nil)
                 }
                 Text("Keep Locus running to process scheduled work. The selected provider receives the task when it starts.")
                     .font(.locus(size: 9))
@@ -5337,7 +5344,7 @@ private struct TrailingFractionLayout: Layout {
     }
 }
 
-private struct MessageBlockView: View, Equatable {
+struct MessageBlockView: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     @State private var responseCopied = false
@@ -5361,6 +5368,7 @@ private struct MessageBlockView: View, Equatable {
     let onRewind: () -> Void
     let onRegenerate: () -> Void
     let onOpenWorkspaceReference: (WorkspaceArtifactReference) -> Void
+    var showsConversationActions = true
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block
@@ -5373,6 +5381,7 @@ private struct MessageBlockView: View, Equatable {
             && lhs.showsAssistantMarker == rhs.showsAssistantMarker
             && lhs.showsAssistantActions == rhs.showsAssistantActions
             && lhs.accessibilityIdentifier == rhs.accessibilityIdentifier
+            && lhs.showsConversationActions == rhs.showsConversationActions
             // The store is a stable reference and deliberately not compared;
             // the row identity it is keyed by must be.
             && lhs.selectionRowID == rhs.selectionRowID
@@ -5583,7 +5592,7 @@ private struct MessageBlockView: View, Equatable {
             }
             .disabled(actionsDisabled)
         }
-        if block.kind == .user {
+        if block.kind == .user && showsConversationActions {
             actionButton("checkmark.shield", help: "Make reusable check", identifier: "makeReusableCheck", action: onMakeReusableCheck)
                 .disabled(actionsDisabled)
             actionButton("arrow.counterclockwise", help: "Rewind to this message", identifier: "rewind") {

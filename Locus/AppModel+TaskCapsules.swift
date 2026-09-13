@@ -3,10 +3,11 @@ import SwiftUI
 
 struct TaskCapsulePresentation: ViewModifier {
     @ObservedObject var capsules: TaskCapsuleModel
+    var enabled = true
     var openTask: ((String) -> Void)? = nil
     var onDismiss: (() -> Void)? = nil
     func body(content: Content) -> some View {
-        content.sheet(isPresented: $capsules.isPresented, onDismiss: onDismiss) { TaskCapsuleView(model: capsules, openTask: openTask) }
+        content.sheet(isPresented: Binding(get: { enabled && capsules.isPresented }, set: { if enabled { capsules.isPresented = $0 } }), onDismiss: { if enabled { onDismiss?() } }) { TaskCapsuleView(model: capsules, openTask: openTask) }
     }
 }
 

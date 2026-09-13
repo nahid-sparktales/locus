@@ -24,10 +24,11 @@ extension FocusedValues {
 struct NotebookNewNoteCommand: View {
     @FocusedValue(\.notebookModel) private var notebook
     @FocusedValue(\.notebookCreateNote) private var createNote
+    var newItemTitle = "New Chat"
     let newChat: () -> Void
 
     var body: some View {
-        Button(notebook == nil ? "New Chat" : "New Note") {
+        Button(notebook == nil ? newItemTitle : "New Note") {
             if let createNote {
                 createNote()
             } else if notebook == nil {

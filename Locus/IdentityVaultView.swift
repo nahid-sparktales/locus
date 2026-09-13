@@ -5,14 +5,15 @@ import UniformTypeIdentifiers
 
 struct IdentityVaultPresentation: ViewModifier {
     @ObservedObject var vault: IdentityVaultModel
+    var enabled = true
     @EnvironmentObject private var model: AppModel
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: $vault.isPresented) {
+            .sheet(isPresented: Binding(get: { enabled && vault.isPresented }, set: { if enabled { vault.isPresented = $0 } })) {
                 IdentityVaultView(vault: vault).environmentObject(model)
             }
-            .sheet(item: Binding(get: { vault.pendingReview }, set: { value in
-                if value == nil, let request = vault.pendingReview { vault.answerReview(id: request.id, selected: nil) }
+            .sheet(item: Binding(get: { enabled ? vault.pendingReview : nil }, set: { value in
+                if enabled, value == nil, let request = vault.pendingReview { vault.answerReview(id: request.id, selected: nil) }
             })) { request in
                 IdentityVaultApprovalView(request: request) { selected in
                     vault.answerReview(id: request.id, selected: selected)

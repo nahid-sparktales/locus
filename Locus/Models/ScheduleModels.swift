@@ -415,6 +415,7 @@ struct ScheduleOccurrence: Identifiable, Codable, Hashable {
 
 struct ScheduleEditorDraft: Identifiable, Hashable {
     var id: String?
+    var agentProfileID: String?
     var name = ""
     var prompt = ""
     var workspaceRoot = ""

@@ -244,6 +244,7 @@ POST /api/reusable-checks/contracts/{run_id}/verify
 POST /api/reusable-checks/propose
 POST /api/reusable-checks/{key}/apply
 POST /api/reusable-checks/{key}/test
+POST /api/runtime/agent-profiles
 POST /api/runtime/credentials
 POST /api/runtime/decisions/respond
 POST /api/runtime/detach

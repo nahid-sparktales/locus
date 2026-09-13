@@ -370,10 +370,37 @@ struct MCPAgentPolicy: Codable, Hashable {
     var tools: [String] = []
     var resources: [String] = []
     var prompts: [String] = []
+    var excludedServerIDs: [String]?
+    var excludedConnectionIDs: [String]?
+
+    static var allConnected: MCPAgentPolicy {
+        MCPAgentPolicy(serverIDs: ["*"], tools: ["*"], resources: ["*"], prompts: ["*"])
+    }
+
+    var allowsAllServices: Bool { serverIDs.contains("*") }
+
+    func allowsServer(_ id: String) -> Bool {
+        (allowsAllServices || serverIDs.contains(id)) && !(excludedServerIDs ?? []).contains(id)
+    }
+
+    mutating func setServer(_ id: String, enabled: Bool) {
+        if allowsAllServices {
+            var excluded = excludedServerIDs ?? []
+            excluded.removeAll { $0 == id }
+            if !enabled { excluded.append(id) }
+            excludedServerIDs = excluded
+        } else {
+            excludedServerIDs?.removeAll { $0 == id }
+            serverIDs.removeAll { $0 == id }
+            if enabled { serverIDs.append(id) }
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case tools, resources, prompts
         case serverIDs = "server_ids"
+        case excludedServerIDs = "excluded_server_ids"
+        case excludedConnectionIDs = "excluded_connection_ids"
     }
 
     mutating func clamp() {
@@ -381,6 +408,8 @@ struct MCPAgentPolicy: Codable, Hashable {
         tools = bounded(tools)
         resources = bounded(resources)
         prompts = bounded(prompts)
+        excludedServerIDs = excludedServerIDs.map(bounded)
+        excludedConnectionIDs = excludedConnectionIDs.map(bounded)
     }
 
     private func bounded(_ values: [String]) -> [String] {
@@ -639,6 +668,10 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     }
 
     var isConfigured: Bool { !name.isEmpty && !model.isEmpty }
+
+    mutating func applyNewAgentServiceDefaults() {
+        if accessCeiling.canWrite, mcpPolicy == nil { mcpPolicy = .allConnected }
+    }
 
     var resolvedBehavior: AgentBehavior {
         var value = behavior ?? .migrated(name: name, instructions: instructions)

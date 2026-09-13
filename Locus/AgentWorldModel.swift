@@ -30,6 +30,13 @@ struct AgentWorldConversationState {
 /// names, roles and activity labels, never transcripts or provider material.
 @MainActor
 final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
+    weak var appModel: AppModel?
+    @Published var conversationPresented = false
+    @Published var sharedChatPresented = false
+    @Published private(set) var activatingConversation = false
+    @Published var selectedTransfer: AgentWorldTransfer?
+    @Published private(set) var attentionRequests: [AgentWorldAttention] = []
+    @Published private(set) var transfers: [AgentWorldTransfer] = []
     @Published private(set) var residents: [AgentWorldResident] = []
     @Published private(set) var availableScreens: [AvailableScreen] = []
     @Published private(set) var selection: String?
@@ -41,10 +48,11 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published var draft = ""
     @Published var error: String?
     @Published private(set) var theme = "outpost"
+    @Published private(set) var residentStyle = "mixed"
     @Published var graphicsError: String?
     var projectName: String { URL(fileURLWithPath: workspace).lastPathComponent }
     var selectedProfile: AgentProfile? { profilesProvider().first { $0.id.uuidString == selection } }
-    var selectedSessionID: String? { selection.flatMap { bindings[Self.bindingKey(workspace: workspace, profileID: $0)] } }
+    var selectedSessionID: String? { selectedSessionOverride ?? selection.flatMap { bindings[Self.bindingKey(workspace: workspace, profileID: $0)] } }
     var canInteract: Bool { activeScreen?.screen.capabilities.contains("agents.interact") == true }
 
     struct AvailableScreen: Identifiable, Equatable {
@@ -81,6 +89,9 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var window: NSWindow?
     private var refreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
+    private var activationTask: Task<Void, Never>?
+    private var activationToken = UUID()
+    private var selectedSessionOverride: String?
     private var queues: [String: [QueuedTurn]] = [:]
     private var runners: [String: Task<Void, Never>] = [:]
     private var runnerTokens: [String: UUID] = [:]
@@ -127,6 +138,14 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func boundProfileID(for sessionID: String) -> UUID? {
         profileHistory[sessionID].flatMap(UUID.init(uuidString:))
+    }
+
+    func bindConversation(_ sessionID: String, workspace: String, profileID: UUID) {
+        guard boundProfileID(for: sessionID).map({ $0 == profileID }) ?? true else { return }
+        profileHistory[sessionID] = profileID.uuidString
+        bindings[Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)] = sessionID
+        persistConversationBindings()
+        refresh()
     }
 
     private func persistConversationBindings() {
@@ -183,6 +202,12 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
                                       detail: issue ?? queueErrors[key] ?? state.detail)
         }
         if residents != updated { residents = updated }
+        if let appModel {
+            if window?.occlusionState.contains(.visible) == true { appModel.refreshAgentWorldRunSignals(workspace: targetWorkspace) }
+            let signals = appModel.agentWorldSignals(workspace: targetWorkspace)
+            if attentionRequests != signals.attention { attentionRequests = signals.attention }
+            if transfers != signals.transfers { transfers = signals.transfers }
+        }
         if let selection, !profilesProvider().contains(where: { $0.id.uuidString == selection }) {
             self.selection = nil; blocks = []; error = "This agent profile was removed."
         }
@@ -208,7 +233,9 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         window?.close()
         windowWorkspace = SessionSummary.canonicalWorkspacePath(workspaceProvider())
         workspace = windowWorkspace; activeScreen = choice; selection = nil; blocks = []; error = nil
+        selectedSessionOverride = nil; conversationPresented = false; sharedChatPresented = false; selectedTransfer = nil
         theme = defaults?.string(forKey: "Locus.AgentWorld.theme.v1." + choice.id).flatMap { Self.isSafeThemeID($0) ? $0 : nil } ?? "outpost"
+        residentStyle = defaults?.string(forKey: "Locus.AgentWorld.residentStyle.v1." + choice.id).flatMap { Self.isSafeResidentStyle($0) ? $0 : nil } ?? "mixed"
         graphicsError = nil; draft = ""
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -230,17 +257,21 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         visibilityChanged?(false); visibilityChanged = nil
-        refreshTask?.cancel(); refreshTask = nil; selectionTask?.cancel()
+        refreshTask?.cancel(); refreshTask = nil; selectionTask?.cancel(); activationTask?.cancel()
+        appModel?.agentWorldOwnsPresentations = false
         window?.contentView = nil; window = nil; activeScreen = nil
         // Runners and the application's workers intentionally outlive the window.
     }
+    func windowDidBecomeKey(_ notification: Notification) { appModel?.agentWorldOwnsPresentations = true }
     func windowDidMiniaturize(_ notification: Notification) { visibilityChanged?(false) }
     func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true) }
     func windowDidChangeOcclusionState(_ notification: Notification) { visibilityChanged?(window?.occlusionState.contains(.visible) == true) }
 
     func select(_ agentID: String) {
         guard canInteract, let profile = profilesProvider().first(where: { $0.id.uuidString == agentID }) else { return }
+        activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
         selection = agentID; error = nil; draft = ""; blocks = []; pendingCount = 0
+        selectedSessionOverride = nil; conversationPresented = true; sharedChatPresented = false; selectedTransfer = nil
         selectionTask?.cancel()
         let selectedWorkspace = windowWorkspace
         selectionTask = Task { [weak self] in
@@ -249,7 +280,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
                 let id = try await conversation(workspace: selectedWorkspace, profile: profile)
                 guard !Task.isCancelled, selection == agentID else { return }
                 try await loadConversation(id)
-                if selection == agentID { refresh() }
+                if selection == agentID { refresh(); activateSelectedConversation() }
             } catch {
                 if !Task.isCancelled, selection == agentID {
                     self.error = "\(error.localizedDescription) You can start a new conversation from the resident's menu."
@@ -282,6 +313,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func dismissConversation() {
         selectionTask?.cancel(); selection = nil; blocks = []; conversationBusy = false; pendingCount = 0; error = nil
+        activationTask?.cancel(); activatingConversation = false; selectedSessionOverride = nil; conversationPresented = false; sharedChatPresented = false
     }
 
     func newConversation() {
@@ -351,8 +383,96 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     }
     func openSelectedInLocus() { if let id = selectedSessionID { openConversation(id) } }
     func manageAgents() { manageProfiles() }
+
+    func activateSelectedConversation() {
+        guard canInteract, let sessionID = selectedSessionID, let appModel else { return }
+        activationTask?.cancel()
+        let token = UUID(); activationToken = token
+        let expectedSelection = selection, expectedWorkspace = workspace
+        let requiredOwnership = appModel.agentWorldOwnsPresentations
+        activatingConversation = true
+        activationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.activationToken == token { self.activatingConversation = false } }
+            do {
+                try await appModel.activateAgentWorldConversation(sessionID, workspace: expectedWorkspace, stillCurrent: { [weak self] in
+                    guard let self else { return false }
+                    return self.activationToken == token && self.selection == expectedSelection
+                        && self.workspace == expectedWorkspace && self.conversationPresented && !self.sharedChatPresented
+                        && self.canInteract && (!requiredOwnership || appModel.agentWorldOwnsPresentations)
+                })
+                guard !Task.isCancelled, self.selection == expectedSelection else { return }
+                self.refresh()
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    /// New/forked chats in the native workspace keep the current captain only
+    /// when their durable saved-profile and workspace identities both match.
+    func adoptForegroundConversation() {
+        guard conversationPresented, !sharedChatPresented, let appModel,
+              appModel.agentWorldOwnsPresentations, let selection,
+              appModel.savedAgentProfileID(for: appModel.currentSessionID)?.uuidString == selection,
+              SessionSummary.canonicalWorkspacePath(appModel.workspacePath) == workspace else { return }
+        selectedSessionOverride = appModel.currentSessionID
+        refresh()
+    }
+
+    func openSharedChat() {
+        guard canInteract, let appModel else { return }
+        selectionTask?.cancel(); activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
+        appModel.agentCrewChat.activate(workspace: workspace)
+        conversationPresented = true; sharedChatPresented = true; selectedTransfer = nil
+    }
+
+    func openAgentControls(_ agentID: String? = nil) {
+        guard canInteract else { return }
+        if let id = agentID ?? selection ?? residents.first?.id { select(id) }
+    }
+
+    func openAttention(_ requestID: String) {
+        refresh()
+        guard canInteract, let request = attentionRequests.first(where: { $0.id == requestID }) else { return }
+        showConversation(request.sessionID, profileID: request.agentID)
+    }
+
+    func openTransfer(_ transferID: String) {
+        refresh()
+        guard canInteract, let transfer = transfers.first(where: { $0.id == transferID }) else { return }
+        selectedTransfer = transfer
+    }
+
+    func showTransferConversation(_ transfer: AgentWorldTransfer) {
+        guard canInteract, transfers.contains(where: { $0.id == transfer.id }) else { return }
+        selectedTransfer = nil
+        showConversation(transfer.sessionID, profileID: transfer.toAgentID)
+    }
+
+    func showConversation(_ sessionID: String, profileID: String) {
+        guard profilesProvider().contains(where: { $0.id.uuidString == profileID }) else { return }
+        selectionTask?.cancel()
+        selection = profileID; selectedSessionOverride = sessionID
+        conversationPresented = true; sharedChatPresented = false; error = nil
+        activateSelectedConversation()
+    }
+
+    var conversationContext: String? {
+        guard let sessionID = selectedSessionOverride, let profile = selectedProfile,
+              appModel?.savedAgentProfileID(for: sessionID) != profile.id else { return nil }
+        return "Shared task · \(profile.name)"
+    }
     nonisolated static func isSafeThemeID(_ value: String) -> Bool {
         value.range(of: "^[a-z0-9][a-z0-9-]{0,63}$", options: .regularExpression) != nil
+    }
+    nonisolated static func isSafeResidentStyle(_ value: String) -> Bool {
+        value == "mixed" || value == "pandas" || value == "explorers"
+    }
+    func setResidentStyle(_ value: String) {
+        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeResidentStyle(value) else { return }
+        residentStyle = value
+        defaults?.set(value, forKey: "Locus.AgentWorld.residentStyle.v1." + activeScreen.id)
     }
     func setTheme(_ value: String) {
         guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeThemeID(value) else { return }
@@ -362,15 +482,17 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     var snapshot: [String: Any] {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else {
-            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "projectName": ""]
+            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": ""]
         }
-        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "projectName": projectName,
+        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "projectName": projectName,
                                   "agents": residents.map { resident -> [String: Any] in
             // Route failures can contain provider names; the world needs only
             // the activity label. Detailed errors stay in the native panel.
             ["id": resident.id, "name": resident.name, "role": resident.role, "status": resident.status]
         }]
         if let selection { value["selectedAgentID"] = selection }
+        value["attentionRequests"] = attentionRequests.map(\.snapshot)
+        value["transfers"] = transfers.map(\.snapshot)
         return value
     }
 }

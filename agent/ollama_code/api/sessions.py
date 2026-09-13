@@ -412,6 +412,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "workspace_root": meta.get("workspace_root"),
         "execution_path": meta.get("execution_path"),
         "environment": meta.get("environment"),
+        "agent_profile_id": meta.get("agent_profile_id"),
         "agent_activities": activity["activities"],
         "orchestration_state": activity.get("orchestration_state"),
         "orchestration_run_id": activity.get("run_id"),
