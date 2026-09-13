@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
@@ -678,7 +679,9 @@ def session_duplicate(
             except WorktreeError:
                 pass
         if clone is not None:
+            from ..mcp_media import remove_session_media
             clone.path.unlink(missing_ok=True)
+            remove_session_media(clone.session_id)
             SessionMeta.forget([clone.session_id])
             ChatOrganizationStore.detach_sessions([clone.session_id])
         status = 413 if isinstance(exc, SessionTooLargeError) else 409
@@ -887,6 +890,19 @@ def session_handoff(
         raise HTTPException(422, str(exc)) from exc
 
 
+def session_media(session_id: str, media_id: str, service: ServiceDependency) -> Response:
+    from ..mcp_media import read_cached_media
+    if SessionStore.path_for(session_id) is None:
+        raise HTTPException(404, "Chat image not found")
+    try:
+        data, metadata = read_cached_media(session_id, media_id)
+    except (OSError, ValueError):
+        raise HTTPException(404, "Chat image not found") from None
+    return Response(data, media_type=metadata["mime_type"], headers={
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store",
+    })
+
+
 def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/sessions", sessions, methods=["GET"])
     router.add_api_route("/api/chat-folders", chat_folders, methods=["GET"])
@@ -909,6 +925,7 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/sessions/{session_id}", session_delete, methods=["DELETE"])
     router.add_api_route("/api/sessions/restore", sessions_restore, methods=["POST"])
     router.add_api_route("/api/sessions/{session_id}", session_detail, methods=["GET"])
+    router.add_api_route("/api/sessions/{session_id}/media/{media_id}", session_media, methods=["GET"])
     router.add_api_route(
         "/api/sessions/{session_id}/export-data", session_export_data, methods=["GET"]
     )

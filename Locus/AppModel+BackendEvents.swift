@@ -318,6 +318,7 @@ extension AppModel {
 
         case "tool_result":
             let toolID = event["id"] as? String ?? ""
+            let media = (event["media"] as? [[String: Any]])?.compactMap { decode(ToolMediaReference.self, from: $0) }
             let denied = event["denied"] as? Bool == true
             let ok = event["ok"] as? Bool == true
             if let index = blocks.firstIndex(where: { $0.tool?.toolID == toolID }) {
@@ -325,6 +326,7 @@ extension AppModel {
                     $0[index].tool?.status = denied ? .denied : ok ? .done : .error
                     $0[index].tool?.result = event["result"] as? String
                     $0[index].tool?.activityLabel = ok && !denied ? event["activity_label"] as? String : nil
+                    $0[index].tool?.media = media
                 }
             } else {
                 // Never drop a result: without a matching card the outcome of
@@ -336,7 +338,8 @@ extension AppModel {
                     detail: "",
                     status: denied ? .denied : ok ? .done : .error,
                     result: event["result"] as? String,
-                    activityLabel: ok && !denied ? event["activity_label"] as? String : nil
+                    activityLabel: ok && !denied ? event["activity_label"] as? String : nil,
+                    media: media
                 )))
             }
             if let runtime = taskWorkers[currentSessionID],
@@ -425,6 +428,9 @@ extension AppModel {
             }
             updateTaskConversation(state: .dispatching, event: event)
             if persistenceEnabled { Task { await refreshMetadata() } }
+
+        case "mcp_task_started", "mcp_task_progress", "mcp_task_input_required", "mcp_task_completed", "mcp_task_cancelled", "mcp_task_failed":
+            runs.ingestMCPTaskEvent(event)
 
         case "dispatcher_started", "dispatcher_completed", "dispatcher_plan_rejected":
             teamRunLive.apply(type, event)

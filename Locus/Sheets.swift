@@ -243,7 +243,7 @@ private struct ExtensionsSettingsView: View {
             if let error = extensionsModel.extensionErrorMessage, !error.isEmpty {
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                    Text(error).lineLimit(2)
+                    Text(error).lineLimit(3).textSelection(.enabled)
                     Spacer()
                     Button("Dismiss") { extensionsModel.extensionErrorMessage = nil }
                         .buttonStyle(.locus())
@@ -597,6 +597,7 @@ private struct ExtensionsSettingsView: View {
                         }
                     }
                     ForEach(extensionsModel.extensions.mcpServers) { server in
+                        let status = extensionsModel.mcpProbeStatuses[server.id]
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 10) {
                                 MCPLogo(
@@ -607,7 +608,7 @@ private struct ExtensionsSettingsView: View {
                                 )
                                 .overlay(alignment: .bottomTrailing) {
                                     Circle()
-                                        .fill(mcpStatusColor(server.state))
+                                        .fill(mcpStatusColor(status?.state ?? server.state))
                                         .frame(width: 8, height: 8)
                                         .overlay {
                                             Circle().stroke(LocusTheme.white, lineWidth: 1.5)
@@ -617,15 +618,18 @@ private struct ExtensionsSettingsView: View {
                                 .accessibilityIdentifier("extensions.mcp.server.\(server.id).logo")
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(server.name).font(.locus(size: 11, weight: .semibold))
-                                    Text("\(server.transport.uppercased()) · \(server.state ?? "disconnected") · \(server.toolCount ?? 0) tools")
+                                    Text("\(server.transport.uppercased()) · \(status?.state ?? server.state ?? "disconnected") · \(status?.toolCount ?? server.toolCount ?? 0) tools")
                                         .font(.locus(size: 8))
                                         .foregroundStyle(LocusTheme.muted)
                                 }
                                 Spacer()
-                                Button("Test") { Task { await extensionsModel.testMCPServer(server.id) } }
-                                    .disabled(model.isBusy)
+                                Button(extensionsModel.mcpOperations[server.id] ?? "Test") {
+                                    Task { await extensionsModel.testMCPServer(server.id) }
+                                }
+                                .disabled(model.isBusy || extensionsModel.mcpOperations[server.id] != nil)
+                                .accessibilityIdentifier("extensions.mcp.server.\(server.id).test")
                                 Button("Reconnect") { Task { await extensionsModel.reconnectMCPServer(server.id) } }
-                                    .disabled(model.isBusy)
+                                    .disabled(model.isBusy || extensionsModel.mcpOperations[server.id] != nil)
                                 if server.origin == "user" {
                                     Button("Edit") {
                                         editingServer = server
@@ -633,9 +637,25 @@ private struct ExtensionsSettingsView: View {
                                     }
                                 }
                             }
-                            if let error = server.error, !error.isEmpty {
-                                Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
+                            if let error = extensionsModel.mcpError(for: server), !error.isEmpty {
+                                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
                             }
+                            if let diagnostics = extensionsModel.mcpDiagnostics(for: server) {
+                                MCPConnectionDetailsView(diagnostics: diagnostics)
+                            }
+                            if let capabilities = server.negotiatedCapabilities {
+                                Text("Supports: " + capabilities.keys.sorted().joined(separator: ", "))
+                                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                            }
+                            if let warnings = status?.warnings ?? server.warnings, !warnings.isEmpty {
+                                DisclosureGroup("Connection notes") {
+                                    Text(warnings.joined(separator: "\n")).textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }.font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                            }
+                            MCPServerCatalogView(server: server)
                             if server.presetID == "github",
                                extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly {
                                 Label(
@@ -658,12 +678,12 @@ private struct ExtensionsSettingsView: View {
                                         server.presetID == "github"
                                             && extensionsModel.githubConnectionCapability(for: server) == .tokenFallbackOnly
                                     )
-                                } else if server.auth != "none" {
+                                } else if server.auth != "none" || server.transport == "stdio" {
                                     Button(server.hasCredentials == true ? "Update credentials" : "Add credentials") {
                                         credentialServer = server
                                     }
                                 }
-                                if server.authFallback != nil || server.optionalHeader != nil {
+                                if server.authFallback != nil || server.optionalHeader != nil || server.auth == "none" && server.transport != "stdio" {
                                     Button(server.hasCredentials == true ? "Update token" : "Use token instead") {
                                         credentialServer = server
                                     }
@@ -693,8 +713,9 @@ private struct ExtensionsSettingsView: View {
                             }
                             .font(.locus(size: 9))
 
-                            let tools = extensionsModel.extensionTools.filter { $0.serverID == server.id }
-                            if !tools.isEmpty {
+                            let tools = extensionsModel.mcpCatalogs[server.id]?.tools?.map(\.permissionMetadata)
+                                ?? extensionsModel.extensionTools.filter { $0.serverID == server.id }
+                            if !tools.isEmpty || server.state == "connected" {
                                 DisclosureGroup("Tool permissions") {
                                     ForEach(tools) { tool in
                                         HStack {
@@ -706,6 +727,12 @@ private struct ExtensionsSettingsView: View {
                                             Menu(policyTitle(tool.approvalMode)) {
                                                 policyButtons(serverID: server.id, tool: tool.name)
                                             }
+                                        }
+                                    }
+                                    Button("Load complete tool catalog") {
+                                        Task {
+                                            do { try await extensionsModel.loadMCPCatalog(server.id) }
+                                            catch { extensionsModel.extensionErrorMessage = error.localizedDescription }
                                         }
                                     }
                                 }
@@ -1104,7 +1131,7 @@ private struct MCPEnableReviewView: View {
                     .font(.locus(size: 16, weight: .bold))
                     .foregroundStyle(LocusTheme.success)
             }
-            Text("\(server.name) completed its tool probe. Enable it now, or keep the reviewed server disabled in Settings.")
+            Text("\(server.name) completed its connection check. Enable it now, or keep the reviewed server disabled in Settings.")
                 .font(.locus(size: 10))
             Text("The default policy uses MCP safety annotations. Resources are discoverable; server prompts remain disabled until you explicitly allow them.")
                 .font(.locus(size: 9))
@@ -1125,19 +1152,45 @@ private struct MCPEnableReviewView: View {
     }
 }
 
+private struct MCPConnectionDetailsView: View {
+    let diagnostics: MCPConnectionDiagnostics
+    var body: some View {
+        DisclosureGroup("Connection details") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(diagnostics.report)
+                    .font(.locus(size: 9, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Copy diagnostics") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(diagnostics.report, forType: .string)
+                }
+                .accessibilityIdentifier("extensions.mcp.copyDiagnostics")
+            }
+            .padding(.top, 6)
+        }
+        .font(.locus(size: 9))
+        .accessibilityIdentifier("extensions.mcp.connectionDetails")
+    }
+}
+
+private struct MCPKeyValueDraft: Identifiable {
+    let id = UUID()
+    var key = ""
+    var value = ""
+}
+
 private struct MCPServerEditorView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @Environment(\.dismiss) private var dismiss
     let server: ExtensionMCPServer?
     @State private var name = ""
-    // Must match the agent's own spelling (extensions.py writes "streamable_http");
-    // the hyphenated form matched neither Picker tag nor the saved value, so the
-    // control rendered blank when editing a correctly configured server.
     @State private var transport = "streamable_http"
     @State private var url = ""
     @State private var command = ""
     @State private var arguments = ""
+    @State private var cwd = ""
     @State private var auth = "none"
     @State private var approval = "annotations"
     @State private var authorizationEndpoint = ""
@@ -1145,6 +1198,16 @@ private struct MCPServerEditorView: View {
     @State private var issuer = ""
     @State private var clientID = ""
     @State private var scopes = ""
+    @State private var protocolMode = "auto"
+    @State private var startupTimeout = 10
+    @State private var toolTimeout = 60
+    @State private var envVars = ""
+    @State private var headerEnv: [MCPKeyValueDraft] = []
+    @State private var bearerEnv = ""
+    @State private var shareWorkspaceRoot = false
+    @State private var allowLoopbackHTTP = false
+    @State private var saving = false
+    @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1153,147 +1216,474 @@ private struct MCPServerEditorView: View {
             Form {
                 LocusFormTextField("Name", text: $name)
                 Picker("Transport", selection: $transport) {
-                    Text("Remote (Streamable HTTP)").tag("streamable_http")
+                    Text("Streamable HTTP").tag("streamable_http")
+                    Text("Legacy HTTP + SSE").tag("sse")
                     Text("Local command (stdio)").tag("stdio")
+                        .disabled(!extensionsModel.extensions.capabilities.stdio)
                 }
                 if transport == "stdio" {
                     LocusFormTextField("Command", text: $command)
-                    TextEditor(text: $arguments)
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .tint(LocusTheme.accentAction)
-                        .scrollContentBackground(.hidden)
-                        .background(LocusTheme.surfaceCard)
-                        .frame(height: 55)
-                        .overlay(alignment: .topLeading) {
-                            if arguments.isEmpty { Text("One argument per line").foregroundStyle(LocusTheme.muted).padding(5) }
-                        }
+                    TextEditor(text: $arguments).frame(height: 65)
+                    Text("One literal argument per line. Do not add shell quotes.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    LocusFormTextField("Working directory (optional)", text: $cwd)
                     if !extensionsModel.extensions.capabilities.stdio {
-                        Text("Local command servers are unavailable in this App Store build.")
-                            .foregroundStyle(LocusTheme.coral)
+                        Text("Local command servers are unavailable in this App Store build.").foregroundStyle(LocusTheme.coral)
                     }
                 } else {
                     LocusFormTextField("Server URL", text: $url)
-                }
-                Picker("Authentication", selection: $auth) {
-                    Text("None").tag("none")
-                    Text("Bearer token").tag("bearer")
-                    Text("Custom header").tag("headers")
-                    Text("OAuth (automatic discovery + PKCE)").tag("auto")
-                    Text("OAuth (manual endpoints + PKCE)").tag("oauth")
-                }
-                if auth == "oauth" {
-                    LocusFormTextField("Issuer (optional; discovers endpoints)", text: $issuer)
-                    LocusFormTextField("Authorization endpoint", text: $authorizationEndpoint)
-                    LocusFormTextField("Token endpoint", text: $tokenEndpoint)
-                    LocusFormTextField("Client ID", text: $clientID)
-                    LocusFormTextField("Scopes, separated by spaces", text: $scopes)
-                } else if auth == "auto" {
-                    LocusFormTextField("Client ID or metadata document URL (optional)", text: $clientID)
-                    LocusFormTextField("Requested scopes, separated by spaces (optional)", text: $scopes)
+                    Picker("Authentication", selection: $auth) {
+                        Text("None").tag("none")
+                        Text("Bearer token").tag("bearer")
+                        Text("Custom headers").tag("headers")
+                        Text("OAuth (automatic discovery + PKCE)").tag("auto")
+                        Text("OAuth (manual endpoints + PKCE)").tag("oauth")
+                    }
+                    if auth == "oauth" {
+                        LocusFormTextField("Issuer (optional; discovers endpoints)", text: $issuer)
+                        LocusFormTextField("Authorization endpoint", text: $authorizationEndpoint)
+                        LocusFormTextField("Token endpoint", text: $tokenEndpoint)
+                    }
+                    if auth == "oauth" || auth == "auto" {
+                        LocusFormTextField("Client ID or metadata URL (optional for discovery)", text: $clientID)
+                        LocusFormTextField("Scopes, separated by spaces", text: $scopes)
+                        Text("Callback: \(AppEdition.current.mcpRedirectURI)")
+                            .font(.locus(size: 9, design: .monospaced)).textSelection(.enabled)
+                    }
                 }
                 Picker("Default tool policy", selection: $approval) {
                     Text("Use safety annotations").tag("annotations")
                     Text("Ask").tag("ask")
                     Text("Allow").tag("allow")
+                    Text("Disabled").tag("disabled")
+                }
+                DisclosureGroup("Advanced connection settings") {
+                    Picker("Protocol", selection: $protocolMode) {
+                        Text("Automatic").tag("auto")
+                        Text("Legacy initialization").tag("legacy")
+                    }
+                    Stepper("Connection timeout: \(startupTimeout) seconds", value: $startupTimeout, in: 1...120)
+                    Stepper("Tool timeout: \(toolTimeout) seconds", value: $toolTimeout, in: 1...600)
+                    Toggle("Share the current workspace root", isOn: $shareWorkspaceRoot)
+                    Text("Shares the current workspace location with this server. No other folders are exposed.")
+                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    if transport == "stdio" {
+                        TextField("Environment variables to inherit (one name per line)", text: $envVars, axis: .vertical)
+                        Text("Add secret environment values with the server's credentials after saving.")
+                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    } else {
+                        LocusFormTextField("Bearer token environment variable (optional)", text: $bearerEnv)
+                        Text("Headers from environment variables").font(.locus(size: 10, weight: .medium))
+                        ForEach($headerEnv) { $row in
+                            HStack {
+                                TextField("Header", text: $row.key)
+                                TextField("Environment variable", text: $row.value)
+                                Button("Remove") { headerEnv.removeAll { $0.id == row.id } }
+                            }
+                        }
+                        Button("Add header mapping") { headerEnv.append(MCPKeyValueDraft()) }
+                        if auth == "auto" || auth == "oauth" {
+                            Toggle("Allow HTTP OAuth on this Mac (compatibility)", isOn: $allowLoopbackHTTP)
+                                .disabled(MCPOAuthTransportPolicy.loopbackHTTPOrigin(url) == nil)
+                            Text("Compatibility exception to OAuth's HTTPS requirement. HTTP authorization is restricted to \(MCPOAuthTransportPolicy.loopbackHTTPOrigin(url) ?? "the configured localhost origin"). The server must accept the Locus callback above.")
+                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        }
+                    }
                 }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
+            if let error { Text(error).foregroundStyle(LocusTheme.coral).textSelection(.enabled) }
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { dismiss() }.disabled(saving)
                 Spacer()
-                Button("Save") {
-                    var body: [String: Any] = [
-                        "name": name,
-                        "transport": transport,
-                        "url": url,
-                        "command": command,
-                        "args": arguments.components(separatedBy: .newlines).filter { !$0.isEmpty },
-                        "auth": auth,
-                        "default_tools_approval_mode": approval,
-                    ]
-                    if let server { body["id"] = server.id }
-                    if auth == "oauth" || auth == "auto" {
-                        body["oauth"] = [
-                            "issuer": issuer,
-                            "authorization_endpoint": authorizationEndpoint,
-                            "token_endpoint": tokenEndpoint,
-                            "client_id": clientID,
-                            "scopes": scopes.split(separator: " ").map(String.init),
-                            "redirect_uri": AppEdition.current.mcpRedirectURI,
-                        ]
-                    }
-                    Task { await extensionsModel.saveMCPServer(body) }
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
-                .disabled(name.isEmpty || (transport == "stdio" ? command.isEmpty : url.isEmpty))
+                Button(saving ? "Saving…" : "Save") { save() }
+                    .buttonStyle(.borderedProminent).tint(LocusTheme.ink)
+                    .disabled(saving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || (transport == "stdio" ? command.isEmpty || !extensionsModel.extensions.capabilities.stdio : url.isEmpty))
             }
         }
-        .padding(18)
-        .frame(width: 500, height: 540)
-        .background(LocusTheme.panel)
-        .onAppear {
-            guard let server else { return }
-            name = server.name
-            transport = server.transport
-            url = server.url ?? ""
-            command = server.command ?? ""
-            arguments = (server.args ?? []).joined(separator: "\n")
-            auth = server.auth ?? "none"
-            approval = server.approvalMode ?? "annotations"
-            authorizationEndpoint = server.oauth?.authorizationEndpoint ?? ""
-            tokenEndpoint = server.oauth?.tokenEndpoint ?? ""
-            issuer = server.oauth?.issuer ?? ""
-            clientID = server.oauth?.clientID ?? ""
-            scopes = (server.oauth?.scopes ?? []).joined(separator: " ")
+        .padding(18).frame(width: 570, height: 660).background(LocusTheme.panel)
+        .onChange(of: url) { old, new in
+            let oldOrigin = MCPOAuthTransportPolicy.loopbackHTTPOrigin(old)
+            let newOrigin = MCPOAuthTransportPolicy.loopbackHTTPOrigin(new)
+            if newOrigin == nil || oldOrigin != nil && oldOrigin != newOrigin { allowLoopbackHTTP = false }
+        }
+        .onChange(of: transport) { if transport == "stdio" { allowLoopbackHTTP = false } }
+        .onAppear { restore() }
+    }
+
+    private func restore() {
+        guard let server else { return }
+        name = server.name; transport = server.transport; url = server.url ?? ""
+        command = server.command ?? ""; arguments = (server.args ?? []).joined(separator: "\n")
+        cwd = server.cwd ?? ""; auth = server.auth ?? "none"; approval = server.approvalMode ?? "annotations"
+        authorizationEndpoint = server.oauth?.authorizationEndpoint ?? ""
+        tokenEndpoint = server.oauth?.tokenEndpoint ?? ""; issuer = server.oauth?.issuer ?? ""
+        clientID = server.oauth?.clientID ?? ""; scopes = (server.oauth?.scopes ?? []).joined(separator: " ")
+        protocolMode = server.protocolMode ?? "auto"; startupTimeout = server.startupTimeoutSeconds ?? 10
+        toolTimeout = server.toolTimeoutSeconds ?? 60; shareWorkspaceRoot = server.shareWorkspaceRoot ?? false
+        envVars = (server.envVars ?? []).joined(separator: "\n"); bearerEnv = server.bearerTokenEnvVar ?? ""
+        headerEnv = (server.envHTTPHeaders ?? [:]).sorted { $0.key < $1.key }.map { MCPKeyValueDraft(key: $0.key, value: $0.value) }
+        allowLoopbackHTTP = server.oauth?.allowLoopbackHTTP ?? false
+    }
+
+    private func save() {
+        let entries = headerEnv.filter { !$0.key.isEmpty || !$0.value.isEmpty }
+        guard entries.allSatisfy({ !$0.key.isEmpty && !$0.value.isEmpty && !$0.key.contains("\n") && !$0.key.contains(":") }),
+              Set(entries.map { $0.key.lowercased() }).count == entries.count
+        else { error = "Each header mapping needs a unique header name and an environment variable."; return }
+        var body = server?.editableConfiguration ?? [:]
+        body.merge([
+            "name": name, "transport": transport,
+            "url": transport == "stdio" ? "" : url, "command": transport == "stdio" ? command : "",
+            "args": transport == "stdio" ? arguments.components(separatedBy: .newlines).filter { !$0.isEmpty } : [],
+            "cwd": cwd, "auth": transport == "stdio" ? "none" : auth,
+            "default_tools_approval_mode": approval, "protocol_mode": protocolMode,
+            "startup_timeout_sec": startupTimeout, "tool_timeout_sec": toolTimeout,
+            "share_workspace_root": shareWorkspaceRoot,
+            "env_vars": envVars.split(whereSeparator: { $0.isWhitespace }).map(String.init),
+            "env_http_headers": Dictionary(uniqueKeysWithValues: entries.map { ($0.key, $0.value) }),
+            "bearer_token_env_var": bearerEnv,
+        ]) { _, new in new }
+        if transport != "stdio", auth == "oauth" || auth == "auto" {
+            body["oauth"] = [
+                "issuer": issuer, "authorization_endpoint": authorizationEndpoint, "token_endpoint": tokenEndpoint,
+                "client_id": clientID, "scopes": scopes.split(whereSeparator: { $0.isWhitespace }).map(String.init),
+                "redirect_uri": AppEdition.current.mcpRedirectURI, "allow_loopback_http": allowLoopbackHTTP,
+            ]
+        } else { body["oauth"] = NSNull() }
+        saving = true; error = nil
+        Task {
+            if await extensionsModel.saveMCPServer(body) { dismiss() }
+            else { error = extensionsModel.extensionErrorMessage ?? "The server could not be saved." }
+            saving = false
         }
     }
 }
 
 private struct MCPCredentialView: View {
-    @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @Environment(\.dismiss) private var dismiss
     let server: ExtensionMCPServer
-    @State private var secret = ""
-    @State private var fieldName = "Authorization"
+    @State private var accessToken = ""
+    @State private var rows: [MCPKeyValueDraft] = []
+    @State private var originalNames: Set<String> = []
+    @State private var saving = false
+    @State private var error: String?
+    private var isStdio: Bool { server.transport == "stdio" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Credentials for \(server.name)").font(.locus(size: 15, weight: .bold))
-            if server.auth == "headers" || server.transport == "stdio" {
-                TextField(server.transport == "stdio" ? "Environment variable" : "Header name", text: $fieldName)
-            }
-            SecureField(server.auth == "bearer" ? "Bearer token" : "Secret value", text: $secret)
-            Text("The value is stored in \(MCPCredentialStore.displayName), readable only by your macOS user account. Only the current access token or header is sent to the local agent in memory; OAuth registrations and refresh tokens stay native.")
+            Text("Saved values stay in \(MCPCredentialStore.displayName). Leave a value blank to keep it; remove its row to delete it. OAuth refresh credentials are preserved.")
                 .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-            HStack {
-                Button("Cancel") { dismiss() }
-                Spacer()
-                Button("Save") {
-                    let values: [String: Any]
-                    if server.auth == "bearer" || server.authFallback == "bearer" {
-                        values = ["access_token": secret]
-                    } else if server.transport == "stdio" {
-                        values = ["env": [fieldName: secret]]
-                    } else {
-                        values = ["headers": [fieldName: secret]]
+            if !isStdio, server.auth != "oauth" && server.auth != "auto" || server.authFallback == "bearer" {
+                SecureField("Bearer token (blank keeps the current token)", text: $accessToken)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach($rows) { $row in
+                        HStack {
+                            TextField(isStdio ? "Environment variable" : "Header name", text: $row.key)
+                                .disabled(originalNames.contains(row.key))
+                            SecureField(originalNames.contains(row.key) ? "Saved value — unchanged" : "Value", text: $row.value)
+                            Button("Remove") { rows.removeAll { $0.id == row.id } }
+                        }
                     }
-                    Task { await extensionsModel.setMCPCredentials(serverID: server.id, values: values) }
-                    dismiss()
+                    Button(isStdio ? "Add environment variable" : "Add header") { rows.append(MCPKeyValueDraft()) }
                 }
-                .buttonStyle(.borderedProminent).tint(LocusTheme.ink)
-                .disabled(secret.isEmpty || fieldName.isEmpty)
+            }
+            if let error { Text(error).foregroundStyle(LocusTheme.coral).textSelection(.enabled) }
+            HStack {
+                Button("Cancel") { dismiss() }.disabled(saving)
+                Spacer()
+                Button(saving ? "Saving…" : "Save") { save() }
+                    .buttonStyle(.borderedProminent).tint(LocusTheme.ink).disabled(saving)
             }
         }
-        .padding(18)
-        .frame(width: 420, height: 210)
-        .background(LocusTheme.panel)
+        .padding(18).frame(width: 580, height: 360).background(LocusTheme.panel)
         .onAppear {
-            fieldName = server.optionalHeader ?? server.fallbackHeader ?? "Authorization"
+            let known = extensionsModel.mcpCredentialNames(serverID: server.id, kind: isStdio ? "env" : "headers")
+            originalNames = Set(known)
+            rows = known.map { MCPKeyValueDraft(key: $0) }
+            if rows.isEmpty, server.auth == "headers" {
+                rows = [MCPKeyValueDraft(key: server.optionalHeader ?? server.fallbackHeader ?? "")]
+            }
+        }
+    }
+
+    private func save() {
+        let active = rows.filter { !$0.key.isEmpty || !$0.value.isEmpty }
+        let normalized = active.map { isStdio ? $0.key : $0.key.lowercased() }
+        guard active.allSatisfy({ !$0.key.isEmpty && !$0.key.contains("\n") && !$0.key.contains(":")
+            && (originalNames.contains($0.key) || !$0.value.isEmpty) }), Set(normalized).count == active.count
+        else { error = "Each entry needs a unique name and a value. Leave existing values blank to keep them."; return }
+        if !accessToken.isEmpty, active.contains(where: { $0.key.lowercased() == "authorization" }) {
+            error = "Use either the bearer token field or an Authorization header."; return
+        }
+        let values = Dictionary(uniqueKeysWithValues: active.map { ($0.key, $0.value) })
+        let removed = originalNames.subtracting(active.map(\.key))
+        saving = true; error = nil
+        Task {
+            let saved = await extensionsModel.updateMCPTransportCredentials(
+                serverID: server.id, accessToken: accessToken.isEmpty ? nil : accessToken,
+                headers: isStdio ? [:] : values, env: isStdio ? values : [:],
+                removedHeaders: isStdio ? [] : removed, removedEnv: isStdio ? removed : []
+            )
+            saving = false
+            if saved { dismiss() }
+            else { error = extensionsModel.extensionErrorMessage ?? "Credentials could not be saved." }
+        }
+    }
+}
+
+private struct MCPServerCatalogView: View {
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
+    let server: ExtensionMCPServer
+    @State private var expanded = false
+    @State private var loading = false
+    @State private var error: String?
+    @State private var resourceAccess = "all"
+    @State private var resources: Set<String> = []
+    @State private var prompts: Set<String> = []
+    @State private var preview: MCPPreviewSelection?
+
+    var body: some View {
+        DisclosureGroup("Resources and prompts", isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Browsing metadata does not grant access. Previews and completions also use the current agent's permissions.")
+                    .foregroundStyle(LocusTheme.muted)
+                if loading { ProgressView().controlSize(.small) }
+                if let error { Text(error).foregroundStyle(LocusTheme.coral).textSelection(.enabled) }
+                if let catalog = extensionsModel.mcpCatalogs[server.id] {
+                    Picker("Resource access", selection: $resourceAccess) {
+                        Text("All resources").tag("all")
+                        Text("Selected resources").tag("selected")
+                        Text("No resources").tag("none")
+                    }
+                    ForEach(catalog.resources + catalog.templates) { item in
+                        HStack(alignment: .top) {
+                            if resourceAccess == "selected" {
+                                Toggle("Allow \(item.displayName)", isOn: selected(item.uri, in: $resources)).labelsHidden()
+                            }
+                            VStack(alignment: .leading) {
+                                Text(item.displayName).fontWeight(.medium)
+                                Text(item.uri).fontDesign(.monospaced).foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+                            }
+                            Spacer()
+                            Button(item.template == true ? "Fill & preview" : "Preview") {
+                                preview = MCPPreviewSelection(kind: "resource", name: item.uri, title: item.displayName,
+                                    arguments: item.parameterNames.map { MCPPromptArgument(name: $0, required: false) })
+                            }
+                        }
+                    }
+                    ForEach(catalog.prompts) { item in
+                        HStack {
+                            Toggle(item.displayName, isOn: selected(item.name, in: $prompts))
+                            Spacer()
+                            Button("Preview prompt") {
+                                preview = MCPPreviewSelection(kind: "prompt", name: item.name, title: item.displayName,
+                                    arguments: item.arguments ?? [])
+                            }
+                        }
+                    }
+                    if catalog.resources.isEmpty && catalog.templates.isEmpty && catalog.prompts.isEmpty {
+                        Text("This server has no resources or prompts in its current catalog.").foregroundStyle(LocusTheme.muted)
+                    }
+                    HStack {
+                        Button("Refresh catalog") { load() }
+                        Spacer()
+                        Button("Save access") { savePolicy() }
+                    }.disabled(loading)
+                } else if !loading { Button("Load catalog") { load() } }
+            }.padding(.top, 8)
+        }
+        .font(.locus(size: 9))
+        .onChange(of: expanded) { if expanded { restorePolicy(); load() } }
+        .onChange(of: server) { old, new in
+            if expanded && (old.resourceAccess != new.resourceAccess
+                || old.enabledResources != new.enabledResources || old.enabledPrompts != new.enabledPrompts) { restorePolicy() }
+        }
+        .sheet(item: $preview) { selection in MCPItemPreviewView(serverID: server.id, selection: selection) }
+    }
+
+    private func selected(_ value: String, in values: Binding<Set<String>>) -> Binding<Bool> {
+        Binding(get: { values.wrappedValue.contains(value) }, set: { enabled in
+            if enabled { values.wrappedValue.insert(value) } else { values.wrappedValue.remove(value) }
+        })
+    }
+    private func restorePolicy() {
+        resources = Set(server.enabledResources ?? []); prompts = Set(server.enabledPrompts ?? [])
+        resourceAccess = server.resourceAccess ?? (resources.isEmpty ? "all" : "selected")
+    }
+    private func load() {
+        guard !loading else { return }; loading = true; error = nil
+        Task {
+            do { try await extensionsModel.loadMCPCatalog(server.id) }
+            catch { self.error = error.localizedDescription }
+            loading = false
+        }
+    }
+    private func savePolicy() {
+        guard !loading else { return }; loading = true; error = nil
+        Task {
+            do { try await extensionsModel.updateMCPCatalogPolicy(serverID: server.id, resourceAccess: resourceAccess,
+                resources: resources.sorted(), prompts: prompts.sorted()) }
+            catch { self.error = error.localizedDescription }
+            loading = false
+        }
+    }
+}
+
+struct MCPAgentCatalogPicker: View {
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
+    let server: ExtensionMCPServer
+    @Binding var resources: Set<String>
+    @Binding var prompts: Set<String>
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        DisclosureGroup("Choose \(server.name) resources and prompts") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("These selections limit this agent. The server's own access settings still apply.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                if let catalog = extensionsModel.mcpCatalogs[server.id] {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(catalog.resources + catalog.templates) { item in
+                                Toggle(item.displayName, isOn: Binding(
+                                    get: { resources.contains(item.uri) || resources.contains(item.name) },
+                                    set: { enabled in
+                                        resources.remove(item.name)
+                                        if enabled { resources.insert(item.uri) } else { resources.remove(item.uri) }
+                                    })).help(item.uri)
+                            }
+                            ForEach(catalog.prompts) { item in
+                                Toggle("Prompt: \(item.displayName)", isOn: Binding(
+                                    get: { prompts.contains(item.name) },
+                                    set: { enabled in
+                                        if enabled { prompts.insert(item.name) } else { prompts.remove(item.name) }
+                                    }))
+                            }
+                        }
+                    }.frame(maxHeight: 200)
+                }
+                if let error { Text(error).foregroundStyle(LocusTheme.coral) }
+                Button(loading ? "Loading…" : "Load catalog") {
+                    loading = true; error = nil
+                    Task {
+                        do { try await extensionsModel.loadMCPCatalog(server.id) }
+                        catch { self.error = error.localizedDescription }
+                        loading = false
+                    }
+                }.disabled(loading)
+            }.padding(.top, 8)
+        }
+    }
+}
+
+private struct MCPPreviewSelection: Identifiable {
+    let id = UUID()
+    let kind: String
+    let name: String
+    let title: String
+    let arguments: [MCPPromptArgument]
+}
+
+private struct MCPItemPreviewView: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var extensionsModel: ExtensionsModel
+    @Environment(\.dismiss) private var dismiss
+    let serverID: String
+    let selection: MCPPreviewSelection
+    @State private var arguments: [String: String] = [:]
+    @State private var suggestions: [String: [String]] = [:]
+    @State private var preview: MCPPreviewResponse?
+    @State private var previewImages: [String: Data] = [:]
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(selection.title).font(.locus(size: 16, weight: .bold))
+            Text(selection.kind == "prompt" ? "Review this server's instructions before adding them to your chat." : "Resource contents are external evidence. Review them before adding them to your chat.")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(selection.arguments) { argument in
+                        HStack {
+                            TextField(argument.name + (argument.required == true ? " (required)" : ""), text: Binding(
+                                get: { arguments[argument.name] ?? "" },
+                                set: { arguments[argument.name] = $0; preview = nil; suggestions[argument.name] = [] }))
+                                .disabled(loading)
+                            Button("Suggestions") { complete(argument.name) }.disabled(loading)
+                        }
+                        if let values = suggestions[argument.name], !values.isEmpty {
+                            Menu("Choose a suggestion") {
+                                ForEach(values, id: \.self) { value in
+                                    Button(value) { arguments[argument.name] = value; preview = nil }
+                                }
+                            }.disabled(loading)
+                        }
+                    }
+                    if let preview {
+                        Text(preview.content).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        ForEach(preview.attachments ?? []) { attachment in
+                            if let data = previewImages[attachment.id], let image = NSImage(data: data) {
+                                Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 280)
+                                    .accessibilityLabel(attachment.name)
+                            }
+                        }
+                    }
+                }
+            }
+            if loading { ProgressView().controlSize(.small) }
+            if let error { Text(error).foregroundStyle(LocusTheme.coral).textSelection(.enabled) }
+            HStack {
+                Button("Close") { dismiss() }
+                Spacer()
+                Button("Preview") { loadPreview() }.disabled(loading || missingRequired)
+                Button("Add to chat") {
+                    guard let preview else { return }
+                    model.draftText = [model.draftText, "MCP \(selection.kind) · \(selection.title)\n\n" + preview.content]
+                        .filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    let images = (preview.attachments ?? []).compactMap { attachment in
+                        previewImages[attachment.id].map { (data: $0, mimeType: attachment.mimeType) }
+                    }
+                    if !images.isEmpty { model.addPastedImages(images, nameStem: selection.title) }
+                    dismiss()
+                }.buttonStyle(.borderedProminent).disabled(preview == nil || loading)
+            }
+        }.padding(20).frame(width: 600, height: 540).background(LocusTheme.panel)
+        .task { if selection.arguments.isEmpty { loadPreview() } }
+    }
+    private var missingRequired: Bool {
+        selection.arguments.contains { $0.required == true && (arguments[$0.name] ?? "").isEmpty }
+    }
+    private var filledArguments: [String: String] { arguments.filter { !$0.value.isEmpty } }
+    private func loadPreview() {
+        loading = true; error = nil; preview = nil; previewImages = [:]
+        Task {
+            do {
+                let result = try await extensionsModel.previewMCPItem(serverID: serverID, kind: selection.kind,
+                    name: selection.name, arguments: filledArguments)
+                preview = result
+                do { previewImages = try await extensionsModel.loadMCPPreviewImages(result) }
+                catch { self.error = "The text is ready, but an image preview could not load: " + error.localizedDescription }
+            }
+            catch { self.error = error.localizedDescription + " Check this server's saved access and the current agent's allowed resources or prompts." }
+            loading = false
+        }
+    }
+    private func complete(_ argument: String) {
+        loading = true; error = nil
+        Task {
+            do { suggestions[argument] = try await extensionsModel.completeMCPArgument(serverID: serverID,
+                kind: selection.kind, name: selection.name, argument: argument, value: arguments[argument] ?? "", context: filledArguments) }
+            catch { self.error = error.localizedDescription }
+            loading = false
         }
     }
 }

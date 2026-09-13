@@ -628,6 +628,65 @@ enum MCPCredentialStore {
     }
 }
 
+/// An opt-in belongs to one server origin, never to the coordinator or a
+/// process-wide networking setting. HTTPS remains the default for OAuth.
+struct MCPOAuthTransportPolicy: Equatable, Sendable {
+    let resourceOrigin: String?
+    let loopbackOAuthOrigin: String?
+
+    static let httpsOnly = MCPOAuthTransportPolicy(resourceOrigin: nil, loopbackOAuthOrigin: nil)
+
+    init(server: ExtensionMCPServer) throws {
+        let origin = Self.loopbackHTTPOrigin(server.url ?? "")
+        if server.oauth?.allowLoopbackHTTP == true, origin == nil {
+            throw Self.error("HTTP OAuth compatibility requires an HTTP MCP server on localhost, 127.0.0.1, or ::1.")
+        }
+        resourceOrigin = origin
+        loopbackOAuthOrigin = server.oauth?.allowLoopbackHTTP == true ? origin : nil
+    }
+
+    private init(resourceOrigin: String?, loopbackOAuthOrigin: String?) {
+        self.resourceOrigin = resourceOrigin
+        self.loopbackOAuthOrigin = loopbackOAuthOrigin
+    }
+
+    static func loopbackHTTPOrigin(_ value: String) -> String? {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "http",
+              let host = components.host?.lowercased(),
+              ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host),
+              components.user == nil, components.password == nil,
+              components.fragment == nil,
+              components.url != nil,
+              (1...65535).contains(components.port ?? 80)
+        else { return nil }
+        let formattedHost = host == "::1" ? "[::1]" : host
+        return "http://\(formattedHost):\(components.port ?? 80)"
+    }
+
+    func url(_ value: String, label: String, resource: Bool = false) throws -> URL {
+        guard let components = URLComponents(string: value),
+              components.host?.isEmpty == false,
+              components.user == nil, components.password == nil, components.fragment == nil,
+              let url = components.url
+        else { throw Self.error("The \(label) must be a credential-free URL without a fragment.") }
+        if let origin = loopbackOAuthOrigin {
+            guard Self.loopbackHTTPOrigin(value) == origin else {
+                throw Self.error("Local OAuth compatibility restricts every authorization endpoint to \(origin).")
+            }
+            return url
+        }
+        if components.scheme?.lowercased() == "https" { return url }
+        let allowed = resource ? resourceOrigin : loopbackOAuthOrigin
+        if let allowed, Self.loopbackHTTPOrigin(value) == allowed { return url }
+        throw Self.error("The \(label) must use HTTPS. HTTP OAuth compatibility is restricted to the configured local server origin.")
+    }
+
+    private static func error(_ message: String) -> NSError {
+        NSError(domain: "Locus.MCPOAuth", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+}
+
 private final class MCPNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(
         _ session: URLSession,
@@ -654,6 +713,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         let scopes: [String]
         let resource: String
         let requireIssuerResponse: Bool
+        var transportPolicy: MCPOAuthTransportPolicy = .httpsOnly
+        var credentialBinding = ""
     }
 
     private struct ProtectedResourceContext {
@@ -729,17 +790,34 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         ]
     }
 
-    func refreshedCredentialsIfNeeded(_ credentials: [String: Any]) async throws -> [String: Any] {
+    func refreshedCredentialsIfNeeded(
+        _ credentials: [String: Any], server: ExtensionMCPServer? = nil
+    ) async throws -> [String: Any] {
+        let policy = try server.map(MCPOAuthTransportPolicy.init(server:)) ?? .httpsOnly
+        if let server, !ExtensionsModel.mcpCredentials(credentials, areBoundTo: server) {
+            throw authError("Saved credentials do not match the MCP settings, which may have changed. Reconnect this account.")
+        }
+        if let origin = credentials["loopback_oauth_origin"] as? String {
+            guard origin == policy.loopbackOAuthOrigin,
+                  let server, ExtensionsModel.mcpCredentials(credentials, areBoundTo: server)
+            else { throw authError("The local OAuth compatibility setting changed. Reconnect this account.") }
+        }
         let expiresAt = (credentials["expires_at"] as? NSNumber)?.doubleValue
             ?? .greatestFiniteMagnitude
         guard expiresAt <= Date().timeIntervalSince1970 + 60,
               let refreshToken = credentials["refresh_token"] as? String,
               let endpoint = credentials["token_endpoint"] as? String,
-              let tokenURL = try? secureURL(endpoint, label: "token endpoint"),
               let clientID = credentials["client_id"] as? String,
               let issuer = credentials["issuer"] as? String,
               !issuer.isEmpty
         else { return credentials }
+        if endpoint.lowercased().hasPrefix("http:") {
+            guard credentials["loopback_oauth_origin"] as? String == policy.loopbackOAuthOrigin,
+                  policy.loopbackOAuthOrigin != nil,
+                  let server, ExtensionsModel.mcpCredentials(credentials, areBoundTo: server)
+            else { throw authError("Local OAuth credentials do not match the approved server. Reconnect this account.") }
+        }
+        let tokenURL = try policy.url(endpoint, label: "token endpoint")
 
         var fields = [
             "grant_type": "refresh_token",
@@ -1058,9 +1136,10 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     }
 
     private func resolve(server: ExtensionMCPServer) async throws -> Context {
-        guard let resourceURL = try? secureURL(server.url ?? "", label: "MCP server"),
+        let policy = try MCPOAuthTransportPolicy(server: server)
+        guard let resourceURL = try? policy.url(server.url ?? "", label: "MCP server", resource: true),
               var resourceComponents = URLComponents(url: resourceURL, resolvingAgainstBaseURL: false)
-        else { throw authError("Remote MCP authentication requires a credential-free HTTPS server URL.") }
+        else { throw authError("MCP authentication requires a credential-free HTTPS or loopback HTTP server URL.") }
         resourceComponents.fragment = nil
         guard let normalizedResource = resourceComponents.url?.absoluteString else {
             throw authError("The MCP resource URL is invalid.")
@@ -1070,10 +1149,10 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         )
 
         if server.auth == "oauth", let oauth = server.oauth {
-            let authorizationURL = try secureURL(oauth.authorizationEndpoint, label: "authorization endpoint")
-            let tokenURL = try secureURL(oauth.tokenEndpoint, label: "token endpoint")
+            let authorizationURL = try policy.url(oauth.authorizationEndpoint, label: "authorization endpoint")
+            let tokenURL = try policy.url(oauth.tokenEndpoint, label: "token endpoint")
             let issuer = try validatedIssuer(
-                oauth.issuer ?? originString(for: authorizationURL)
+                oauth.issuer?.isEmpty == false ? oauth.issuer! : originString(for: authorizationURL), policy: policy
             )
             return Context(
                 issuer: issuer,
@@ -1084,7 +1163,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
                 redirectURI: redirectURI,
                 scopes: oauth.scopes,
                 resource: normalizedResource,
-                requireIssuerResponse: false
+                requireIssuerResponse: false,
+                transportPolicy: policy, credentialBinding: server.credentialBinding
             )
         }
 
@@ -1093,28 +1173,29 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         }
         let protectedResource = try await discoverProtectedResource(
             resourceURL: resourceURL,
-            resource: normalizedResource
+            resource: normalizedResource, policy: policy
         )
         let protectedMetadata = protectedResource.metadata
         guard let servers = protectedMetadata["authorization_servers"] as? [String],
               let first = servers.first
         else { throw authError("The MCP protected-resource metadata did not name an authorization server.") }
-        let issuer = try validatedIssuer(first)
-        let authorizationMetadata = try await discoverAuthorizationServer(issuer: issuer)
+        let issuer = try validatedIssuer(first, policy: policy)
+        let authorizationMetadata = try await discoverAuthorizationServer(issuer: issuer, policy: policy)
         guard authorizationMetadata["issuer"] as? String == issuer else {
             throw authError("Authorization metadata returned a different issuer.")
         }
         guard let authorization = authorizationMetadata["authorization_endpoint"] as? String,
               let token = authorizationMetadata["token_endpoint"] as? String
         else { throw authError("Authorization metadata is missing required endpoints.") }
-        let authorizationURL = try secureURL(authorization, label: "authorization endpoint")
-        let tokenURL = try secureURL(token, label: "token endpoint")
+        let authorizationURL = try policy.url(authorization, label: "authorization endpoint")
+        let tokenURL = try policy.url(token, label: "token endpoint")
         guard let challengeMethods = authorizationMetadata["code_challenge_methods_supported"] as? [String],
               challengeMethods.contains("S256")
         else { throw authError("The authorization server does not advertise S256 PKCE.") }
 
         let stored = credentialStore.get(serverID: server.id) ?? [:]
-        let storedIssuer = stored["issuer"] as? String ?? ""
+        let storedIssuer = ExtensionsModel.mcpCredentials(stored, areBoundTo: server)
+            ? (stored["issuer"] as? String ?? "") : ""
         var clientID = storedIssuer == issuer ? (stored["client_id"] as? String ?? "") : ""
         var clientSecret = storedIssuer == issuer ? stored["client_secret"] as? String : nil
         var registeredNow = false
@@ -1131,7 +1212,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
                 throw authError("This server offers neither a client metadata document nor dynamic registration. Use its token fallback instead.")
             }
             let registered = try await registerClient(
-                endpoint: try secureURL(registration, label: "registration endpoint"),
+                endpoint: try policy.url(registration, label: "registration endpoint"),
                 redirectURI: redirectURI
             )
             clientID = registered.clientID
@@ -1158,6 +1239,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             }
             registration["token_endpoint"] = tokenURL.absoluteString
             registration["resource"] = normalizedResource
+            registration["loopback_oauth_origin"] = policy.loopbackOAuthOrigin
+            registration["mcp_server_binding"] = server.credentialBinding
             guard credentialStore.set(registration, serverID: server.id) else {
                 throw authError("The OAuth registration could not be stored in \(credentialStore.displayName).")
             }
@@ -1171,19 +1254,21 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             redirectURI: redirectURI,
             scopes: scopes,
             resource: normalizedResource,
-            requireIssuerResponse: authorizationMetadata["authorization_response_iss_parameter_supported"] as? Bool == true
+            requireIssuerResponse: authorizationMetadata["authorization_response_iss_parameter_supported"] as? Bool == true,
+            transportPolicy: policy, credentialBinding: server.credentialBinding
         )
     }
 
     private func discoverProtectedResource(
         resourceURL: URL,
-        resource: String
+        resource: String,
+        policy: MCPOAuthTransportPolicy
     ) async throws -> ProtectedResourceContext {
         // The 2026-07-28 authorization spec gives an explicit challenge URL
         // priority over guessed well-known locations.
-        if let challenge = try await resourceMetadataFromChallenge(resourceURL) {
+        if let challenge = try await resourceMetadataFromChallenge(resourceURL, policy: policy) {
             let metadata = try await fetchJSON(challenge.url)
-            guard try resourceMatches(metadata["resource"] as? String, expected: resource) else {
+            guard try resourceMatches(metadata["resource"] as? String, expected: resource, policy: policy) else {
                 throw authError("Protected-resource metadata named a different MCP resource.")
             }
             return ProtectedResourceContext(
@@ -1203,7 +1288,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
 
         for candidate in candidates {
             if let metadata = try? await fetchJSON(candidate),
-               try resourceMatches(metadata["resource"] as? String, expected: resource) {
+               try resourceMatches(metadata["resource"] as? String, expected: resource, policy: policy) {
                 return ProtectedResourceContext(metadata: metadata, challengedScopes: [])
             }
         }
@@ -1211,7 +1296,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
     }
 
     private func resourceMetadataFromChallenge(
-        _ resourceURL: URL
+        _ resourceURL: URL, policy: MCPOAuthTransportPolicy
     ) async throws -> (url: URL, scopes: [String])? {
         var request = URLRequest(url: resourceURL)
         request.httpMethod = "POST"
@@ -1247,12 +1332,12 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             .split(whereSeparator: \.isWhitespace)
             .map(String.init) ?? []
         return (
-            try secureURL(metadataValue, label: "resource metadata URL"),
+            try policy.url(metadataValue, label: "resource metadata URL", resource: true),
             scopes
         )
     }
 
-    private func discoverAuthorizationServer(issuer: String) async throws -> [String: Any] {
+    private func discoverAuthorizationServer(issuer: String, policy: MCPOAuthTransportPolicy) async throws -> [String: Any] {
         guard var components = URLComponents(string: issuer) else {
             throw authError("The authorization issuer is invalid.")
         }
@@ -1269,6 +1354,7 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         components.query = nil
         if let oidc = components.url, !candidates.contains(oidc) { candidates.append(oidc) }
         for candidate in candidates {
+            _ = try policy.url(candidate.absoluteString, label: "authorization metadata")
             if let metadata = try? await fetchJSON(candidate),
                metadata["issuer"] as? String == issuer {
                 return metadata
@@ -1344,6 +1430,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
             "resource": context.resource,
             "scope": context.scopes.joined(separator: " "),
         ]
+        credentials["loopback_oauth_origin"] = context.transportPolicy.loopbackOAuthOrigin
+        credentials["mcp_server_binding"] = context.credentialBinding
         if let secret = context.clientSecret, !secret.isEmpty { credentials["client_secret"] = secret }
         if let refreshToken = root["refresh_token"] as? String, !refreshToken.isEmpty {
             credentials["refresh_token"] = refreshToken
@@ -1395,6 +1483,9 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         let delegate = MCPNoRedirectDelegate()
         let configuration = (testConfiguration?.copy() as? URLSessionConfiguration)
             ?? ProxyRuntime.shared.configuration(scope: .modelAndAgent)
+        if let url = request.url, MCPOAuthTransportPolicy.loopbackHTTPOrigin(url.absoluteString) != nil {
+            configuration.connectionProxyDictionary = [:]
+        }
         let session = URLSession(
             configuration: configuration,
             delegate: delegate,
@@ -1408,9 +1499,9 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         return (data, http)
     }
 
-    private func resourceMatches(_ declared: String?, expected: String) throws -> Bool {
+    private func resourceMatches(_ declared: String?, expected: String, policy: MCPOAuthTransportPolicy) throws -> Bool {
         guard let declared,
-              let url = try? secureURL(declared, label: "protected resource")
+              let url = try? policy.url(declared, label: "protected resource", resource: true)
         else { return false }
         return url.absoluteString == expected
     }
@@ -1427,8 +1518,8 @@ final class MCPAuthCoordinator: NSObject, ASWebAuthenticationPresentationContext
         return url
     }
 
-    private func validatedIssuer(_ value: String) throws -> String {
-        let url = try secureURL(value, label: "authorization issuer")
+    private func validatedIssuer(_ value: String, policy: MCPOAuthTransportPolicy = .httpsOnly) throws -> String {
+        let url = try policy.url(value, label: "authorization issuer")
         guard url.query == nil else { throw authError("The authorization issuer cannot contain a query.") }
         return value
     }

@@ -1122,8 +1122,7 @@ struct MCPInputRequestView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     let request: MCPInputRequest
-    @State private var textValues: [String: String] = [:]
-    @State private var boolValues: [String: Bool] = [:]
+    @State private var draft = MCPFormDraft()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1149,19 +1148,23 @@ struct MCPInputRequestView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
             } else {
-                ForEach(formFields, id: \.name) { field in
-                    if field.type == "boolean" {
-                        Toggle(field.title, isOn: Binding(
-                            get: { boolValues[field.name] ?? false },
-                            set: { boolValues[field.name] = $0 }
-                        ))
-                    } else {
-                        TextField(field.title, text: Binding(
-                            get: { textValues[field.name] ?? "" },
-                            set: { textValues[field.name] = $0 }
-                        ))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(formFields, id: \.name) { field in
+                            VStack(alignment: .leading, spacing: 4) {
+                                formControl(field)
+                                if let description = field.specification["description"]?.string {
+                                    Text(description).font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                                }
+                                if let error = validation.errors[field.name] {
+                                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                                        .accessibilityIdentifier("mcpInput.error.\(field.name)")
+                                }
+                            }
+                        }
                     }
                 }
+                .frame(maxHeight: 430)
                 Text("Only the displayed non-sensitive fields are returned to the extension.")
                     .font(.locus(size: 8))
                     .foregroundStyle(LocusTheme.muted)
@@ -1171,65 +1174,221 @@ struct MCPInputRequestView: View {
                 Button("Cancel") { extensionsModel.answerMCPInput(action: "cancel") }
                 Spacer()
                 Button(request.mode == "url" ? "I've Completed It" : "Submit") {
-                    extensionsModel.answerMCPInput(action: "accept", content: formContent)
+                    extensionsModel.answerMCPInput(action: "accept", content: validation.content)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.ink)
-                .disabled(request.mode != "url" && missingRequiredField)
+                .disabled(request.mode != "url" && !validation.errors.isEmpty)
             }
         }
         .padding(22)
         .frame(width: 500)
+        .task(id: request.id) { draft = MCPFormDraft(fields: formFields) }
     }
 
-    private struct Field {
-        let name: String
-        let title: String
-        let type: String
-        let required: Bool
-    }
+    private var formFields: [MCPFormField] { MCPFormField.fields(request.schema ?? [:]) }
+    private var validation: MCPFormValidation { draft.validate(formFields) }
 
-    private var formFields: [Field] {
-        guard case .object(let properties) = request.schema?["properties"] else { return [] }
-        let required: Set<String>
-        if case .array(let values) = request.schema?["required"] {
-            required = Set(values.compactMap(\.string))
-        } else {
-            required = []
-        }
-        return properties.keys.sorted().map { name in
-            let specification: [String: JSONValue]
-            if case .object(let value) = properties[name] { specification = value }
-            else { specification = [:] }
-            return Field(
-                name: name,
-                title: specification["title"]?.string ?? name.replacingOccurrences(of: "_", with: " ").capitalized,
-                type: specification["type"]?.string ?? "string",
-                required: required.contains(name)
-            )
-        }
-    }
-
-    private var missingRequiredField: Bool {
-        formFields.contains { field in
-            field.required && field.type != "boolean"
-                && (textValues[field.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
-    private var formContent: [String: Any] {
-        var output: [String: Any] = [:]
-        for field in formFields {
-            if field.type == "boolean" {
-                output[field.name] = boolValues[field.name] ?? false
-            } else if field.type == "integer" {
-                output[field.name] = Int(textValues[field.name] ?? "") ?? 0
-            } else if field.type == "number" {
-                output[field.name] = Double(textValues[field.name] ?? "") ?? 0
+    @ViewBuilder
+    private func formControl(_ field: MCPFormField) -> some View {
+        if field.type == "array" {
+            Text(field.title).font(.locus(size: 11, weight: .semibold))
+            ForEach(Array(field.choices.enumerated()), id: \.offset) { _, choice in
+                Toggle(choice.title, isOn: Binding(
+                    get: { draft.arrays[field.name, default: []].contains(choice.value) },
+                    set: { selected in
+                        if selected { draft.arrays[field.name, default: []].insert(choice.value) }
+                        else { draft.arrays[field.name, default: []].remove(choice.value) }
+                    }
+                ))
+            }
+        } else if !field.choices.isEmpty {
+            Picker(field.title, selection: Binding(
+                get: { field.choices.firstIndex { $0.value == draft.selections[field.name] } ?? -1 },
+                set: { index in
+                    if field.choices.indices.contains(index) { draft.selections[field.name] = field.choices[index].value }
+                    else { draft.selections.removeValue(forKey: field.name) }
+                }
+            )) {
+                Text(field.required ? "Choose…" : "Not set").tag(-1)
+                ForEach(Array(field.choices.enumerated()), id: \.offset) { index, choice in Text(choice.title).tag(index) }
+            }
+        } else if field.type == "boolean" {
+            if field.required {
+                Toggle(field.title, isOn: Binding(
+                    get: { draft.booleans[field.name] ?? false },
+                    set: { draft.booleans[field.name] = $0 }
+                ))
             } else {
-                output[field.name] = textValues[field.name] ?? ""
+                Picker(field.title, selection: Binding(
+                    get: { draft.booleans[field.name] }, set: { draft.booleans[field.name] = $0 }
+                )) {
+                    Text("Not set").tag(Optional<Bool>.none)
+                    Text("Yes").tag(Optional(true))
+                    Text("No").tag(Optional(false))
+                }
+            }
+        } else {
+            TextField(field.title, text: Binding(
+                get: { draft.text[field.name] ?? "" }, set: { draft.text[field.name] = $0 }
+            ))
+            .accessibilityIdentifier("mcpInput.field.\(field.name)")
+        }
+    }
+}
+
+struct MCPFormChoice {
+    let value: JSONValue
+    let title: String
+}
+
+struct MCPFormField {
+    let name: String
+    let specification: [String: JSONValue]
+    let required: Bool
+    var title: String { (specification["title"]?.string ?? name.replacingOccurrences(of: "_", with: " ").capitalized) + (required ? " *" : "") }
+    var type: String { specification["type"]?.string ?? "string" }
+    var choices: [MCPFormChoice] {
+        let source: [String: JSONValue]
+        if type == "array", case .object(let items) = specification["items"] { source = items }
+        else { source = specification }
+        if case .array(let values) = source["enum"] {
+            let labels: [JSONValue]
+            if case .array(let names) = source["enumNames"] { labels = names } else { labels = [] }
+            return values.enumerated().map { index, value in
+                MCPFormChoice(value: value, title: labels.indices.contains(index) ? labels[index].string ?? "Choice" : value.string ?? "Choice")
             }
         }
-        return output
+        if case .array(let values) = source["oneOf"] ?? source["anyOf"] {
+            return values.compactMap { value in
+                guard case .object(let option) = value, let constant = option["const"] else { return nil }
+                return MCPFormChoice(value: constant, title: option["title"]?.string ?? constant.string ?? "Choice")
+            }
+        }
+        return []
+    }
+
+    static func fields(_ schema: [String: JSONValue]) -> [MCPFormField] {
+        guard case .object(let properties) = schema["properties"] else { return [] }
+        let required: Set<String>
+        if case .array(let values) = schema["required"] { required = Set(values.compactMap(\.string)) }
+        else { required = [] }
+        return properties.keys.sorted().map { name in
+            let specification: [String: JSONValue]
+            if case .object(let value) = properties[name] { specification = value } else { specification = [:] }
+            return MCPFormField(name: name, specification: specification, required: required.contains(name))
+        }
+    }
+}
+
+struct MCPFormValidation {
+    var content: [String: Any] = [:]
+    var errors: [String: String] = [:]
+}
+
+struct MCPFormDraft {
+    var text: [String: String] = [:]
+    var booleans: [String: Bool] = [:]
+    var selections: [String: JSONValue] = [:]
+    var arrays: [String: Set<JSONValue>] = [:]
+
+    init(fields: [MCPFormField] = []) {
+        for field in fields {
+            if let value = field.specification["default"] {
+                if field.type == "array", case .array(let values) = value { arrays[field.name] = Set(values) }
+                else if !field.choices.isEmpty { selections[field.name] = value }
+                else if case .bool(let value) = value { booleans[field.name] = value }
+                else if case .number(let value) = value { text[field.name] = value.rounded() == value && value >= Double(Int.min) && value < Double(Int.max) ? String(Int(value)) : String(value) }
+                else if case .string(let value) = value { text[field.name] = value }
+            } else if field.required && field.type == "boolean" { booleans[field.name] = false }
+        }
+    }
+
+    func validate(_ fields: [MCPFormField]) -> MCPFormValidation {
+        var result = MCPFormValidation()
+        for field in fields {
+            let name = field.name
+            func number(_ key: String) -> Double? {
+                if case .number(let value) = field.specification[key] { return value }
+                return nil
+            }
+            var value: Any?
+            if field.type == "array" {
+                let selected = arrays[name] ?? []
+                if field.choices.isEmpty { result.errors[name] = "This field needs an unsupported form control."; continue }
+                if !selected.isSubset(of: Set(field.choices.map(\.value))) { result.errors[name] = "Choose only the listed values."; continue }
+                if !selected.isEmpty || field.required {
+                    value = field.choices.filter { selected.contains($0.value) }.map { Self.scalar($0.value) }
+                    if let minimum = number("minItems"), Double(selected.count) < minimum { result.errors[name] = "Choose at least \(minimum.formatted()) values." }
+                    if let maximum = number("maxItems"), Double(selected.count) > maximum { result.errors[name] = "Choose at most \(maximum.formatted()) values." }
+                }
+            } else if !field.choices.isEmpty {
+                if let selected = selections[name] {
+                    if field.choices.contains(where: { $0.value == selected }) { value = Self.scalar(selected) }
+                    else { result.errors[name] = "Choose one of the listed values." }
+                }
+            } else if field.type == "boolean" { value = booleans[name] }
+            else if ["string", "integer", "number"].contains(field.type) {
+                if let raw = text[name], field.required || !raw.isEmpty {
+                    if field.type == "string" {
+                        value = raw
+                        if let minimum = number("minLength"), Double(raw.count) < minimum { result.errors[name] = "Enter at least \(minimum.formatted()) characters." }
+                        if let maximum = number("maxLength"), Double(raw.count) > maximum { result.errors[name] = "Enter at most \(maximum.formatted()) characters." }
+                        if let pattern = field.specification["pattern"]?.string,
+                           raw.range(of: pattern, options: .regularExpression) == nil { result.errors[name] = "This value does not match the requested format." }
+                        if let format = field.specification["format"]?.string, !Self.matchesFormat(raw, format: format) {
+                            result.errors[name] = "Enter a valid \(format.replacingOccurrences(of: "-", with: " "))."
+                        }
+                    } else {
+                        let parsed = Double(raw)
+                        if let parsed, parsed.isFinite, field.type != "integer" || Int(raw) != nil {
+                            value = field.type == "integer" ? Int(raw)! as Any : parsed as Any
+                            if let minimum = number("minimum"), parsed < minimum { result.errors[name] = "Enter \(minimum.formatted()) or greater." }
+                            if let maximum = number("maximum"), parsed > maximum { result.errors[name] = "Enter \(maximum.formatted()) or less." }
+                            if let minimum = number("exclusiveMinimum"), parsed <= minimum { result.errors[name] = "Enter more than \(minimum.formatted())." }
+                            if let maximum = number("exclusiveMaximum"), parsed >= maximum { result.errors[name] = "Enter less than \(maximum.formatted())." }
+                            if let multiple = number("multipleOf"), multiple > 0 {
+                                let quotient = parsed / multiple
+                                if !quotient.isFinite || abs(quotient - quotient.rounded()) > 1e-9 * max(1, abs(quotient)) {
+                                    result.errors[name] = "Enter a multiple of \(multiple.formatted())."
+                                }
+                            }
+                        } else { result.errors[name] = field.type == "integer" ? "Enter a whole number." : "Enter a valid number." }
+                    }
+                }
+            } else { result.errors[name] = "This field needs an unsupported form control." }
+            if let value { result.content[name] = value }
+            else if field.required && result.errors[name] == nil { result.errors[name] = "This field is required." }
+        }
+        return result
+    }
+
+    private static func scalar(_ value: JSONValue) -> Any {
+        switch value {
+        case .string(let value): value
+        case .number(let value): value
+        case .bool(let value): value
+        default: NSNull()
+        }
+    }
+
+    private static func matchesFormat(_ value: String, format: String) -> Bool {
+        switch format {
+        case "email": return value.contains("@")
+        case "uri": return URLComponents(string: value)?.scheme != nil
+        case "date":
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.isLenient = false
+            guard let date = formatter.date(from: value) else { return false }
+            return formatter.string(from: date) == value
+        case "date-time":
+            let formatter = ISO8601DateFormatter()
+            if formatter.date(from: value) != nil { return true }
+            formatter.formatOptions.insert(.withFractionalSeconds)
+            return formatter.date(from: value) != nil
+        default: return true
+        }
     }
 }

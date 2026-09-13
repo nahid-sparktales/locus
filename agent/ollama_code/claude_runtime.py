@@ -313,8 +313,8 @@ class ClaudeManager:
                     name, arguments, call_id, reply = payload
                     try:
                         result = tool_handler(name, arguments, call_id) if tool_handler and not stop.is_set() else "Not run: tool access is unavailable."
-                        reply.put({"content": [{"type": "text", "text": str(result)}],
-                                   "isError": str(result).startswith(("Error", "Permission denied", "Not run:"))})
+                        from .mcp_media import claude_tool_result
+                        reply.put(claude_tool_result(result))
                     except Exception as error:
                         reply.put({"content": [{"type": "text", "text": str(error)}], "isError": True})
                 elif kind == "error":

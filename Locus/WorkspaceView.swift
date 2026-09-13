@@ -6126,6 +6126,14 @@ private struct ToolActivityView: View {
                 hiddenLine
             }
         }
+        if !expanded, visibility != .verbose {
+            ForEach(tools.filter { $0.status != .error && $0.status != .awaitingPermission }, id: \.toolID) { tool in
+                ForEach(tool.media ?? []) { reference in
+                    MCPImagePreview(reference: reference)
+                        .padding(.leading, 30)
+                }
+            }
+        }
     }
 
     private var collapsedActivity: some View {
@@ -6498,6 +6506,12 @@ private struct ToolCardView: View {
                     Rectangle().fill(LocusTheme.line).frame(height: 1)
                 }
             }
+            if let media = tool.media, !media.isEmpty {
+                ForEach(media) { reference in
+                    MCPImagePreview(reference: reference)
+                        .padding(11)
+                }
+            }
         }
         .locusCard(radius: 9)
         // Keep the disclosure button distinct from its clipped card wrapper.
@@ -6531,6 +6545,70 @@ private struct ToolCardView: View {
         case .done: "done"
         case .error: "error"
         case .denied: "denied"
+        }
+    }
+}
+
+private struct MCPImagePreview: View {
+    @EnvironmentObject private var model: AppModel
+    let reference: ToolMediaReference
+    @State private var data: Data?
+    @State private var image: NSImage?
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let image {
+                Image(nsImage: image)
+                    .resizable().scaledToFit()
+                    .frame(maxWidth: 620, maxHeight: 420)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityLabel("Image returned by an MCP tool, \(reference.width) by \(reference.height)")
+                    .contextMenu {
+                        Button("Copy Image") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.writeObjects([image])
+                        }
+                        Button("Save As…") { save() }
+                    }
+            } else if let failure {
+                Label(failure, systemImage: "photo")
+                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text("\(reference.name) · \(reference.width)×\(reference.height)")
+                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("tool.image.\(reference.id)")
+        .task(id: "\(model.currentSessionID):\(reference.id)") {
+            data = nil; image = nil; failure = nil
+            do {
+                let loaded: Data
+                do {
+                    loaded = try await model.conversationBackend.chatImage(sessionID: model.currentSessionID, mediaID: reference.id)
+                } catch let error as NSError where error.code == 404 && reference.sessionID != nil && reference.sessionID != model.currentSessionID {
+                    loaded = try await model.conversationBackend.chatImage(sessionID: reference.sessionID!, mediaID: reference.id)
+                }
+                try Task.checkCancellation()
+                guard let decoded = NSImage(data: loaded) else { throw URLError(.cannotDecodeContentData) }
+                data = loaded; image = decoded
+            } catch is CancellationError {
+            } catch {
+                failure = "This chat image is unavailable."
+            }
+        }
+    }
+
+    private func save() {
+        guard let data else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = reference.name
+        panel.allowedContentTypes = [UTType(mimeType: reference.mimeType) ?? .image]
+        if panel.runModal() == .OK, let url = panel.url {
+            do { try data.write(to: url, options: .atomic) }
+            catch { failure = "The image could not be saved." }
         }
     }
 }

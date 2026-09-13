@@ -193,6 +193,7 @@ struct HistoryMessage: Codable {
     var responseParts: ResponseDocument? = nil
     var reasoningFormat: AssistantReasoningFormat? = nil
     var activityLabel: String? = nil
+    var media: [ToolMediaReference]? = nil
 
     var teamRunID: String? { runID }
 
@@ -206,6 +207,7 @@ struct HistoryMessage: Codable {
         case responseParts = "response_parts"
         case reasoningFormat = "reasoning_format"
         case activityLabel = "activity_label"
+        case media
     }
 
     // A single null-content tool message must not fail an entire resume.
@@ -222,6 +224,7 @@ struct HistoryMessage: Codable {
         reasoningFormat = (try? container.decodeIfPresent(String.self, forKey: .reasoningFormat))
             .map { AssistantReasoningFormat(rawValue: $0) ?? .none }
         activityLabel = try? container.decodeIfPresent(String.self, forKey: .activityLabel)
+        media = try? container.decodeIfPresent([ToolMediaReference].self, forKey: .media)
         runID = (try? container.decodeIfPresent(String.self, forKey: .runID))
             ?? (try? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID))
         eventTrigger = try? container.decodeIfPresent(
@@ -241,6 +244,7 @@ struct HistoryMessage: Codable {
         try container.encodeIfPresent(responseParts, forKey: .responseParts)
         try container.encodeIfPresent(reasoningFormat, forKey: .reasoningFormat)
         try container.encodeIfPresent(activityLabel, forKey: .activityLabel)
+        try container.encodeIfPresent(media, forKey: .media)
         try container.encodeIfPresent(runID, forKey: .runID)
         try container.encodeIfPresent(eventTrigger, forKey: .eventTrigger)
     }
@@ -254,6 +258,22 @@ enum ToolStatus: String, Codable {
     case denied
 }
 
+struct ToolMediaReference: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var mimeType: String
+    var size: Int
+    var width: Int
+    var height: Int
+    var sessionID: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, size, width, height
+        case mimeType = "mime_type"
+        case sessionID = "session_id"
+    }
+}
+
 struct ToolPayload: Codable, Hashable {
     var toolID: String
     var tool: String
@@ -265,6 +285,7 @@ struct ToolPayload: Codable, Hashable {
     /// Optional, runtime-verified description of a successful tool result.
     /// Older checkpoints and providers keep the generic activity summary.
     var activityLabel: String? = nil
+    var media: [ToolMediaReference]? = nil
 }
 
 /// The status a compact tool-activity row presents for a group. Active work

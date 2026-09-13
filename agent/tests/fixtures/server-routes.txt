@@ -87,6 +87,7 @@ DELETE /api/sessions
 DELETE /api/sessions/{session_id}
 POST /api/sessions/restore
 GET /api/sessions/{session_id}
+GET /api/sessions/{session_id}/media/{media_id}
 GET /api/sessions/{session_id}/export-data
 PATCH /api/sessions/{session_id}/organization
 GET /api/sessions/{session_id}/organization
@@ -189,6 +190,10 @@ POST /api/extensions/mcp/presets/materialize
 POST /api/extensions/mcp/enable
 POST /api/extensions/mcp/credentials
 POST /api/extensions/mcp/policy
+GET /api/extensions/mcp/{server_id:path}/catalog
+POST /api/extensions/mcp/resource
+POST /api/extensions/mcp/prompt
+POST /api/extensions/mcp/complete
 POST /api/extensions/mcp/test
 POST /api/extensions/mcp/reconnect
 DELETE /api/extensions/mcp/{server_id:path}

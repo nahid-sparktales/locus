@@ -56,6 +56,20 @@ final class ResponseOutputTests: XCTestCase {
         XCTAssertEqual(CompactToolActivitySummary(tools: [legacy]).title, "Read files")
     }
 
+    func testMCPImageReferencesSurviveTranscriptAndCheckpointWithoutInlineData() throws {
+        let source = Data(#"{"role":"tool","name":"mcp__macuse__snapshot","content":"Screenshot","item_id":"snapshot-call","media":[{"id":"0123456789abcdef0123456789abcdef","name":"mcp-image-1.png","mime_type":"image/png","size":68,"width":1,"height":1}]}"#.utf8)
+        let history = try JSONDecoder().decode(HistoryMessage.self, from: source)
+        let restored = try JSONDecoder().decode(HistoryMessage.self, from: JSONEncoder().encode(history))
+        let block = try XCTUnwrap(ChatTranscriptBuilder.blocks(from: [restored]).first)
+        let checkpoint = try JSONEncoder().encode(block)
+        let tool = try XCTUnwrap(JSONDecoder().decode(ChatBlock.self, from: checkpoint).tool)
+        XCTAssertEqual(tool.media?.first?.mimeType, "image/png")
+        XCTAssertEqual(tool.media?.first?.id, "0123456789abcdef0123456789abcdef")
+        XCTAssertFalse(String(decoding: checkpoint, as: UTF8.self).contains("base64"))
+        let legacy = try JSONDecoder().decode(HistoryMessage.self, from: Data(#"{"role":"tool","content":"Old result"}"#.utf8))
+        XCTAssertNil(legacy.media)
+    }
+
     func testVerifiedActivitySummaryRequiresCompletedResultsAndPreservesGenericActivities() {
         let labelled = ToolPayload(toolID: "read", tool: "read_file", summary: "read_file", detail: "", status: .done,
                                    result: "contents", activityLabel: "Read Sources/App.swift")

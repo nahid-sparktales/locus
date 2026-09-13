@@ -1074,8 +1074,10 @@ class CodexBrokerClient:
                         if tool_handler is not None
                         else "Not run: this route has no tool access."
                     )
+                    from .mcp_media import validate_native_tool_result
                     socket.send(json.dumps({
-                        "type": "tool_result", "call_id": call_id, "result": str(result),
+                        "type": "tool_result", "call_id": call_id,
+                        "result": validate_native_tool_result(result),
                     }))
                 elif kind == "completed":
                     turn = message.get("turn")

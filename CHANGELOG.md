@@ -4,6 +4,12 @@
 
 ### Added
 
+- MCP supports Legacy SSE, advanced connection settings, and opt-in OAuth for
+  local HTTP servers. Settings includes full tool/resource/prompt catalogs,
+  access controls, template arguments, previews, and argument completion.
+- MCP images reach supported models and chat previews, including delegated
+  agents. Long-running tasks appear in the run Inspector, and input forms
+  support choices, defaults, multiple selections, and validated values.
 - The Agent page now groups saved agents with their conversations and supports
   new chats, schedules, event triggers, and price alerts from Manage Agent.
 - Agent World adds The Local Line: twelve ships with their own named islands,
@@ -17,6 +23,9 @@
 
 ### Fixed
 
+- MCP connection failures include redacted causes, HTTP status, bounded STDERR,
+  and suggested next steps. Tests report failures accurately, settings edits
+  preserve credentials, and permission changes retain discovered resource links.
 - Agent and settings forms use full-width, left-aligned placeholder inputs;
   comma-separated event filters preserve unfinished entries while typing.
 - Saved-agent chats support full work modes, goals, task capsules, and controlled

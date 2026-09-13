@@ -152,7 +152,7 @@ async def ws_codex_broker(ws: WebSocket) -> None:
             def forward_event(event: dict[str, Any]) -> None:
                 send_from_helper({"type": "event", "event": event})
 
-            def run_tool(name: str, arguments: dict[str, Any], call_id: str) -> str:
+            def run_tool(name: str, arguments: dict[str, Any], call_id: str) -> str | dict[str, Any]:
                 send_from_helper(
                     {
                         "type": "tool_call",
@@ -165,7 +165,8 @@ async def ws_codex_broker(ws: WebSocket) -> None:
                 reply = future.result(timeout=1_800)
                 if reply.get("type") != "tool_result" or reply.get("call_id") != call_id:
                     raise CodexProtocolMismatch("worker returned an invalid dynamic tool result")
-                return str(reply.get("result") or "")
+                from ..mcp_media import validate_native_tool_result
+                return validate_native_tool_result(reply.get("result", ""))
 
             try:
                 turn = await asyncio.to_thread(

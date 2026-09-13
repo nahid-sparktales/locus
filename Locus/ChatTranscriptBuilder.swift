@@ -60,7 +60,8 @@ enum ChatTranscriptBuilder {
                         detail: "",
                         status: .done,
                         result: message.content,
-                        activityLabel: message.activityLabel
+                        activityLabel: message.activityLabel,
+                        media: message.media
                     ),
                     historyIndex: index
                 )

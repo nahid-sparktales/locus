@@ -9,9 +9,10 @@ struct ExtensionCapabilities: Codable, Hashable {
     var hooks = false
     var sandboxed = false
     var pluginScreens: Bool? = nil
+    var sse: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case stdio, oauth, hooks, sandboxed
+        case stdio, oauth, hooks, sandboxed, sse
         case streamableHTTP = "streamable_http"
         case mcpApps = "mcp_apps"
         case pluginScreens = "plugin_screens"
@@ -170,9 +171,29 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
     let authFallback: String?
     let fallbackHeader: String?
     let optionalHeader: String?
+    var diagnostics: MCPConnectionDiagnostics? = nil
+    var negotiatedCapabilities: [String: JSONValue]? = nil
+    var protocolVersion: String? = nil
+    var startupTimeoutSeconds: Int? = nil
+    var toolTimeoutSeconds: Int? = nil
+    var envVars: [String]? = nil
+    var envHTTPHeaders: [String: String]? = nil
+    var bearerTokenEnvVar: String? = nil
+    var envKeys: [String]? = nil
+    var headerKeys: [String]? = nil
+    var enabledTools: [String]? = nil
+    var disabledTools: [String]? = nil
+    var enabledResources: [String]? = nil
+    var enabledPrompts: [String]? = nil
+    var shareWorkspaceRoot: Bool? = nil
+    var resourceAccess: String? = nil
+    var protocolMode: String? = nil
+    var presetProvenance: [String: JSONValue]? = nil
+    var toolPolicies: [String: JSONValue]? = nil
+    var warnings: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, transport, url, command, args, cwd, origin, active, enabled, state, error, auth, oauth
+        case id, name, transport, url, command, args, cwd, origin, active, enabled, state, error, auth, oauth, diagnostics, warnings
         case pluginID = "plugin_id"
         case enabledGlobal = "enabled_global"
         case enabledWorkspaces = "enabled_workspaces"
@@ -185,7 +206,134 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
         case fallbackHeader = "fallback_header"
         case optionalHeader = "optional_header"
         case oauthStrategy = "oauth_strategy"
+        case startupTimeoutSeconds = "startup_timeout_sec"
+        case toolTimeoutSeconds = "tool_timeout_sec"
+        case envVars = "env_vars"
+        case envHTTPHeaders = "env_http_headers"
+        case bearerTokenEnvVar = "bearer_token_env_var"
+        case envKeys = "env_keys"
+        case headerKeys = "header_keys"
+        case enabledTools = "enabled_tools"
+        case disabledTools = "disabled_tools"
+        case enabledResources = "enabled_resources"
+        case enabledPrompts = "enabled_prompts"
+        case protocolMode = "protocol_mode"
+        case shareWorkspaceRoot = "share_workspace_root"
+        case resourceAccess = "resource_access"
+        case negotiatedCapabilities = "negotiated_capabilities"
+        case protocolVersion = "protocol_version"
+        case presetProvenance = "preset_provenance"
+        case toolPolicies = "tool_policies"
     }
+
+    /// Native credential scope. Display names, enablement, timeouts, and access
+    /// policy do not change the identity of the server receiving credentials.
+    var credentialBinding: String {
+        let value: [String: Any] = [
+            "transport": transport, "url": url ?? "", "command": command ?? "",
+            "auth": auth ?? "none",
+            "oauth": [
+                "issuer": oauth?.issuer ?? "", "authorization_endpoint": oauth?.authorizationEndpoint ?? "",
+                "token_endpoint": oauth?.tokenEndpoint ?? "", "client_id": oauth?.clientID ?? "",
+                "scopes": (oauth?.scopes ?? []).sorted(), "redirect_uri": oauth?.redirectURI ?? "",
+                "allow_loopback_http": oauth?.allowLoopbackHTTP ?? false,
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    var editableConfiguration: [String: Any] {
+        guard let data = try? JSONEncoder().encode(self),
+              var value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        value["default_tools_approval_mode"] = approvalMode ?? "annotations"
+        if let policies = value.removeValue(forKey: "tool_policies") { value["tools"] = policies }
+        for key in ["diagnostics", "negotiated_capabilities", "protocol_version", "warnings", "state", "error", "tool_count", "has_credentials", "active", "env_keys", "header_keys"] {
+            value.removeValue(forKey: key)
+        }
+        return value
+    }
+}
+
+struct MCPServerCatalog: Decodable {
+    var tools: [MCPToolCatalogEntry]?
+    let resources: [MCPResourceEntry]
+    let templates: [MCPResourceEntry]
+    let prompts: [MCPPromptEntry]
+}
+
+struct MCPToolCatalogEntry: Decodable {
+    let name: String
+    var description: String?
+    var approvalMode: String?
+    var enabled: Bool?
+    enum CodingKeys: String, CodingKey {
+        case name, description, enabled
+        case approvalMode = "approval_mode"
+    }
+    var permissionMetadata: ExtensionToolMetadata {
+        ExtensionToolMetadata(name: name, description: description ?? "", origin: "mcp",
+            serverID: nil, serverName: nil, active: enabled ?? true, deferred: false,
+            approvalMode: enabled == false ? "disabled" : approvalMode)
+    }
+}
+
+struct MCPResourceEntry: Decodable, Identifiable {
+    let uri: String
+    let name: String
+    var title: String?
+    var description: String?
+    var mimeType: String?
+    var template: Bool?
+    var enabled: Bool?
+    var id: String { uri }
+    var displayName: String { title?.isEmpty == false ? title! : name }
+    enum CodingKeys: String, CodingKey {
+        case uri, name, title, description, template, enabled
+        case mimeType = "mime_type"
+    }
+    var parameterNames: [String] {
+        guard template == true,
+              let expression = try? NSRegularExpression(pattern: "\\{([^}]+)\\}") else { return [] }
+        let text = uri as NSString
+        var seen: Set<String> = []
+        return expression.matches(in: uri, range: NSRange(location: 0, length: text.length)).flatMap { match in
+            text.substring(with: match.range(at: 1)).trimmingCharacters(in: CharacterSet(charactersIn: "+#./;?&"))
+                .split(separator: ",").map { String($0).components(separatedBy: ":")[0].replacingOccurrences(of: "*", with: "") }
+        }.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+}
+
+struct MCPPromptEntry: Decodable, Identifiable {
+    let name: String
+    var title: String?
+    var description: String?
+    var arguments: [MCPPromptArgument]?
+    var enabled: Bool?
+    var id: String { name }
+    var displayName: String { title?.isEmpty == false ? title! : name }
+}
+
+struct MCPPromptArgument: Decodable, Identifiable {
+    let name: String
+    var description: String?
+    var required: Bool?
+    var id: String { name }
+}
+
+struct MCPPreviewResponse: Decodable {
+    let content: String
+    var attachments: [ToolMediaReference]?
+    var sessionID: String?
+    enum CodingKeys: String, CodingKey {
+        case content, attachments
+        case sessionID = "session_id"
+    }
+}
+
+struct MCPCompletionResponse: Decodable {
+    let values: [String]
 }
 
 struct ExtensionMCPPreset: Codable, Identifiable, Hashable {
@@ -233,6 +381,7 @@ struct MCPOAuthConfiguration: Codable, Hashable {
     let clientID: String
     let scopes: [String]
     let redirectURI: String?
+    var allowLoopbackHTTP: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case issuer, scopes
@@ -240,6 +389,7 @@ struct MCPOAuthConfiguration: Codable, Hashable {
         case tokenEndpoint = "token_endpoint"
         case clientID = "client_id"
         case redirectURI = "redirect_uri"
+        case allowLoopbackHTTP = "allow_loopback_http"
     }
 }
 
@@ -413,10 +563,52 @@ struct MCPStatusResponse: Codable {
     let state: String
     let error: String?
     let toolCount: Int?
+    var diagnostics: MCPConnectionDiagnostics? = nil
+    var negotiatedCapabilities: [String: JSONValue]? = nil
+    var protocolVersion: String? = nil
+    var warnings: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, state, error
+        case id, name, state, error, diagnostics, warnings
         case toolCount = "tool_count"
+        case negotiatedCapabilities = "negotiated_capabilities"
+        case protocolVersion = "protocol_version"
+    }
+}
+
+/// Runtime-produced diagnostics are already bounded and redacted. Never add
+/// raw configuration or credentials when displaying or copying this report.
+struct MCPConnectionDiagnostics: Codable, Hashable {
+    var transport: String?
+    var stage: String?
+    var target: String?
+    var elapsedMS: Double?
+    var authPresent: Bool?
+    var httpStatus: Int?
+    var causes: [String]?
+    var stderrTail: String?
+    var hints: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case transport, stage, target, causes, hints
+        case elapsedMS = "elapsed_ms"
+        case authPresent = "auth_present"
+        case httpStatus = "http_status"
+        case stderrTail = "stderr_tail"
+    }
+
+    var report: String {
+        var lines: [String] = []
+        if let transport { lines.append("Transport: \(transport)") }
+        if let target { lines.append("Target: \(target)") }
+        if let stage { lines.append("Stage: \(stage)") }
+        if let elapsedMS, elapsedMS.isFinite { lines.append("Elapsed: \(elapsedMS.formatted(.number.precision(.fractionLength(0)))) ms") }
+        if let authPresent { lines.append("Credentials: \(authPresent ? "provided" : "not provided")") }
+        if let httpStatus { lines.append("HTTP status: \(httpStatus)") }
+        if let causes, !causes.isEmpty { lines.append("\nDetails:\n" + causes.joined(separator: "\n")) }
+        if let stderrTail, !stderrTail.isEmpty { lines.append("\nRecent standard error:\n" + stderrTail) }
+        if let hints, !hints.isEmpty { lines.append("\nNext steps:\n" + hints.joined(separator: "\n")) }
+        return lines.joined(separator: "\n")
     }
 }
 

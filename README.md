@@ -55,6 +55,9 @@ the separate **LocusX** edition.
   dedicated chats, bounded permissions, and visible run history.
 - **Choose your models.** Use Ollama, ChatGPT-plan access, OpenAI, Claude,
   Kimi, or an OpenAI-compatible endpoint. Voice controls are optional.
+- **Connect MCP servers.** Diagnose connections, configure credentials, and use
+  tools, resources, prompts, screenshots, and long-running tasks. See the
+  [MCP setup and compatibility guide](Docs/MCPCompatibility.md).
 - **Continue from your phone.** The optional [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile)
   companion pairs directly with your Mac over LAN or Tailscale.
 

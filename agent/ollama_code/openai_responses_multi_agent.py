@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .mcp_media import bound_responses_media, responses_tool_result
+from .ollama import looks_like_image_rejection
 from .proxy import sanitized_child_environment
 
 BETA_HEADER = "responses_multi_agent=v1"
@@ -271,7 +273,7 @@ class OpenAIResponsesMultiAgentClient:
         before_request: Callable[[], None] | None = None,
         usage_observer: Callable[[int, int], None] | None = None,
         tools: list[dict[str, Any]] | None = None,
-        tool_executor: Callable[[str, str, str, str], str] | None = None,
+        tool_executor: Callable[[str, str, str, str], str | dict[str, Any]] | None = None,
         developer_instructions: str = "",
     ) -> None:
         if not api_key:
@@ -296,6 +298,7 @@ class OpenAIResponsesMultiAgentClient:
         self._opener = opener or urllib.request.urlopen
         self.before_request = before_request
         self.usage_observer = usage_observer
+        self._image_input_disabled = False
 
     def run(
         self,
@@ -345,7 +348,7 @@ class OpenAIResponsesMultiAgentClient:
             root_chunks: list[str] = []
             if self.before_request is not None:
                 self.before_request()
-            for event in self._stream(payload):
+            for event in self._stream_with_media_fallback(payload):
                 event_type = str(event.get("type") or "")
                 if event_type == "response.output_item.added":
                     item = event.get("item") if isinstance(event.get("item"), dict) else {}
@@ -408,7 +411,7 @@ class OpenAIResponsesMultiAgentClient:
                 return {
                     "type": "function_call_output",
                     "call_id": str(call.get("call_id") or ""),
-                    "output": output,
+                    "output": responses_tool_result(output),
                 }
 
             if len(pending_calls) > 1:
@@ -418,6 +421,7 @@ class OpenAIResponsesMultiAgentClient:
                     history.extend(pool.map(execute_call, pending_calls))
             else:
                 history.extend(execute_call(call) for call in pending_calls)
+            bound_responses_media(history, remove_all=self._image_input_disabled)
             if not pending_calls:
                 break
         else:
@@ -460,6 +464,24 @@ class OpenAIResponsesMultiAgentClient:
             raise OpenAIResponsesLimitBreach("hosted agent tree exceeded the approved policy")
         return depth
 
+    def _stream_with_media_fallback(self, payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
+        """Retry only a rejected model request; completed tools are never replayed."""
+        emitted = False
+        try:
+            for event in self._stream(payload):
+                emitted = True
+                yield event
+        except OpenAIResponsesMultiAgentError as exc:
+            if emitted or not looks_like_image_rejection(str(exc)):
+                raise
+            if not bound_responses_media(payload["input"], remove_all=True):
+                raise
+            self._image_input_disabled = True
+            self.emit({"type": "note", "text": "The hosted model route rejected MCP images. The previews remain in chat; the workers are continuing with text."})
+            if self.before_request is not None:
+                self.before_request()
+            yield from self._stream(payload)
+
     def _stream(self, payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
@@ -495,8 +517,17 @@ class OpenAIResponsesMultiAgentClient:
                     if isinstance(value, dict):
                         yield value
         except urllib.error.HTTPError as exc:
-            # Never include response bodies: beta/API errors can echo request
-            # material and must not enter durable Locus history.
+            # Classify bounded error text in memory, but never include bodies
+            # in exceptions/events: providers can echo private request material.
+            if exc.code in {400, 422}:
+                try:
+                    error_text = exc.read(16_384).decode("utf-8", errors="replace")
+                except (OSError, ValueError):
+                    error_text = ""
+                if looks_like_image_rejection(error_text):
+                    raise OpenAIResponsesMultiAgentError(
+                        "OpenAI Responses does not support this image input"
+                    ) from None
             raise OpenAIResponsesMultiAgentError(
                 f"OpenAI Responses request failed with HTTP {exc.code}"
             ) from None

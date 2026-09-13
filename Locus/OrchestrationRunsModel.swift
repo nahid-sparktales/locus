@@ -13,6 +13,12 @@ final class OrchestrationRunsModel: ObservableObject {
     @Published var runDetailsByID: [String: OrchestrationRun] = [:]
     @Published var orchestrationEvents: [OrchestrationEvent] = []
     @Published private(set) var isLoadingOrchestrationRuns = false
+    @Published private(set) var mcpTasksByRunID: [String: [MCPTaskRecord]] = [:]
+    @Published private(set) var mcpTaskResultsByID: [String: MCPTaskLookupResponse] = [:]
+    @Published private(set) var loadingMCPTaskRuns: Set<String> = []
+    @Published private(set) var activeMCPTaskActions: Set<String> = []
+    @Published private(set) var mcpTaskErrorsByRunID: [String: String] = [:]
+    @Published private(set) var mcpTaskErrorsByID: [String: String] = [:]
     var orchestrationEventIDs: Set<String> = []
 
     private var orchestrationRunsTasks: [String: (generation: Int, task: Task<OrchestrationRunsResponse, Error>)] = [:]
@@ -22,6 +28,9 @@ final class OrchestrationRunsModel: ObservableObject {
     private var orchestrationSelectionGeneration = 0
     private var requestedOrchestrationRunID: String?
     private var requestedOrchestrationLoadKey: String?
+    private var mcpTaskLoadGeneration: [String: Int] = [:]
+    private var mcpTaskActionTokens: [String: UUID] = [:]
+    private var mcpTaskRequestEpoch = 0
 
     private var backend: BackendService?
     private var sessionIDProvider: () -> String = { "" }
@@ -56,6 +65,131 @@ final class OrchestrationRunsModel: ObservableObject {
         orchestrationRunsTasks = [:]
         orchestrationDetailTasks = [:]
         orchestrationEventTasks = [:]
+        for runID in Array(mcpTaskLoadGeneration.keys) { mcpTaskLoadGeneration[runID, default: 0] += 1 }
+        loadingMCPTaskRuns = []
+        mcpTaskRequestEpoch += 1
+        mcpTaskActionTokens = [:]
+        activeMCPTaskActions = []
+    }
+
+    /// Reads persisted records only. Server lookup and cancellation are explicit actions below.
+    func refreshMCPTasks(runID: String) async {
+        guard !runID.isEmpty, !loadingMCPTaskRuns.contains(runID),
+              let transport = transportProvider(runID) else { return }
+        mcpTaskLoadGeneration[runID, default: 0] += 1
+        let generation = mcpTaskLoadGeneration[runID]!
+        let selection = orchestrationSelectionGeneration
+        let sessionID = sessionIDProvider()
+        let transportKey = transport.currentBaseURL.absoluteString
+        loadingMCPTaskRuns.insert(runID)
+        mcpTaskErrorsByRunID.removeValue(forKey: runID)
+        defer { if mcpTaskLoadGeneration[runID] == generation { loadingMCPTaskRuns.remove(runID) } }
+        do {
+            let response = try await transport.get(
+                "/api/mcp/tasks", query: [URLQueryItem(name: "run_id", value: runID)],
+                as: MCPTasksResponse.self
+            )
+            guard !Task.isCancelled, mcpTaskLoadGeneration[runID] == generation,
+                  orchestrationSelectionGeneration == selection,
+                  sessionIDProvider() == sessionID,
+                  transportProvider(runID)?.currentBaseURL.absoluteString == transportKey else { return }
+            mcpTasksByRunID[runID] = response.tasks.filter { $0.runID == runID }
+        } catch {
+            if !Task.isCancelled, mcpTaskLoadGeneration[runID] == generation,
+               orchestrationSelectionGeneration == selection,
+               sessionIDProvider() == sessionID,
+               transportProvider(runID)?.currentBaseURL.absoluteString == transportKey {
+                mcpTaskErrorsByRunID[runID] = "Could not load extension tasks: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func lookupMCPTask(_ task: MCPTaskRecord) async { await performMCPTaskAction(task, action: "lookup") }
+    func cancelMCPTask(_ task: MCPTaskRecord) async {
+        guard task.isCancellable else { return }
+        await performMCPTaskAction(task, action: "cancel")
+    }
+
+    private func performMCPTaskAction(_ task: MCPTaskRecord, action: String) async {
+        guard !activeMCPTaskActions.contains(task.id), let runID = task.runID,
+              let transport = transportProvider(runID),
+              let identifier = task.id.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))
+              ) else { return }
+        activeMCPTaskActions.insert(task.id)
+        let token = UUID()
+        mcpTaskActionTokens[task.id] = token
+        let epoch = mcpTaskRequestEpoch
+        let selection = orchestrationSelectionGeneration
+        let sessionID = sessionIDProvider()
+        let generation = mcpTaskLoadGeneration[runID, default: 0]
+        let transportKey = transport.currentBaseURL.absoluteString
+        mcpTaskErrorsByID.removeValue(forKey: task.id)
+        defer {
+            if mcpTaskActionTokens[task.id] == token {
+                mcpTaskActionTokens.removeValue(forKey: task.id)
+                activeMCPTaskActions.remove(task.id)
+            }
+        }
+        do {
+            let response = try await transport.post(
+                "/api/mcp/tasks/\(identifier)/\(action)", body: [:],
+                timeout: action == "lookup" ? 75 : 25, as: MCPTaskLookupResponse.self
+            )
+            guard !Task.isCancelled, response.task.runID == runID,
+                  mcpTaskRequestEpoch == epoch, orchestrationSelectionGeneration == selection,
+                  sessionIDProvider() == sessionID,
+                  mcpTaskActionTokens[task.id] == token,
+                  transportProvider(runID)?.currentBaseURL.absoluteString == transportKey else { return }
+            var records = mcpTasksByRunID[runID] ?? []
+            var accepted = response
+            if mcpTaskLoadGeneration[runID, default: 0] != generation {
+                // Lookup publishes a status event before its HTTP result. Keep
+                // that newer record while accepting the matching result payload.
+                guard let latest = records.first(where: { $0.id == response.task.id }),
+                      latest.state == response.task.state, latest.serverID == response.task.serverID else { return }
+                accepted.task = latest
+            }
+            records.removeAll { $0.id == response.task.id }
+            records.insert(accepted.task, at: 0)
+            mcpTasksByRunID[runID] = records
+            mcpTaskResultsByID[task.id] = accepted
+        } catch {
+            if !Task.isCancelled, mcpTaskRequestEpoch == epoch, orchestrationSelectionGeneration == selection,
+               sessionIDProvider() == sessionID,
+               mcpTaskActionTokens[task.id] == token,
+               transportProvider(runID)?.currentBaseURL.absoluteString == transportKey {
+                mcpTaskErrorsByID[task.id] = "Could not \(action == "cancel" ? "cancel" : "check") extension task: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func mcpTaskImage(_ task: MCPTaskRecord, reference: ToolMediaReference, sessionID: String) async throws -> Data {
+        guard let runID = task.runID, let transport = transportProvider(runID) else { throw URLError(.cancelled) }
+        return try await transport.chatImage(sessionID: sessionID, mediaID: reference.id)
+    }
+
+    func ingestMCPTaskEvent(_ event: [String: Any]) {
+        guard let runID = event["run_id"] as? String, !runID.isEmpty,
+              let taskID = event["task_id"] as? String, !taskID.isEmpty else { return }
+        let existing = mcpTasksByRunID[runID]?.first { $0.id == taskID }
+        guard let serverID = event["server_id"] as? String ?? existing?.serverID,
+              let tool = event["tool"] as? String ?? existing?.toolName else { return }
+        // A live update supersedes any older database snapshot still in flight.
+        mcpTaskLoadGeneration[runID, default: 0] += 1
+        loadingMCPTaskRuns.remove(runID)
+        let record = MCPTaskRecord(
+            id: taskID, serverID: serverID, runID: runID,
+            jobID: event["job_id"] as? String ?? existing?.jobID,
+            toolCallID: event["tool_call_id"] as? String ?? existing?.toolCallID,
+            toolName: tool, state: event["state"] as? String ?? existing?.state ?? "working",
+            statusMessage: event["message"] as? String ?? event["status_message"] as? String ?? existing?.statusMessage
+        )
+        if let existing, !existing.isCancellable, record.isCancellable { return }
+        var records = mcpTasksByRunID[runID] ?? []
+        records.removeAll { $0.id == taskID }
+        records.insert(record, at: 0)
+        mcpTasksByRunID[runID] = Array(records.prefix(1_000))
     }
 
     func refreshOrchestrationRuns(
@@ -293,4 +427,25 @@ final class OrchestrationRunsModel: ObservableObject {
         orchestrationEventTasks[key] = task
         return task
     }
+}
+
+struct MCPTasksResponse: Decodable { let tasks: [MCPTaskRecord] }
+
+struct MCPTaskLookupResponse: Decodable {
+    var task: MCPTaskRecord
+    var result: String?
+    var attachments: [ToolMediaReference]?
+    var sessionID: String?
+    var mediaWarning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case task, result, attachments
+        case sessionID = "session_id"
+        case mediaWarning = "media_warning"
+    }
+}
+
+extension MCPTaskRecord {
+    var isCancellable: Bool { ["working", "input_required"].contains(state) }
+    var stateTitle: String { state.replacingOccurrences(of: "_", with: " ").capitalized }
 }

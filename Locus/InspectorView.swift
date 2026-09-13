@@ -1458,6 +1458,36 @@ private enum RunsStatusFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct MCPTaskImagePreview: View {
+    @EnvironmentObject private var runs: OrchestrationRunsModel
+    let task: MCPTaskRecord
+    let reference: ToolMediaReference
+    let sessionID: String
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 220)
+                    .accessibilityLabel(reference.name)
+            } else if failed {
+                Text("Image preview unavailable: \(reference.name)").font(.locus(size: 9))
+            } else {
+                ProgressView("Loading image…").controlSize(.small)
+            }
+        }
+        .task(id: reference.id) {
+            do {
+                let data = try await runs.mcpTaskImage(task, reference: reference, sessionID: sessionID)
+                guard !Task.isCancelled else { return }
+                image = NSImage(data: data)
+                failed = image == nil
+            } catch { if !Task.isCancelled { failed = true } }
+        }
+    }
+}
+
 struct InspectorRunsTab: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
@@ -1832,6 +1862,7 @@ struct InspectorRunsTab: View {
             Button("Open task") { model.showTaskDetail(runID: run.id) }
                 .accessibilityIdentifier("runs.openTask")
                 .padding(.vertical, 6)
+            mcpTasksSection(run)
             Picker("View", selection: $viewMode) {
                 Text("Overview")
                     .accessibilityIdentifier("runs.view.overview")
@@ -1854,6 +1885,90 @@ struct InspectorRunsTab: View {
             } else {
                 activity(run)
             }
+        }
+        .task(id: run.id) { await runs.refreshMCPTasks(runID: run.id) }
+    }
+
+    @ViewBuilder
+    private func mcpTasksSection(_ run: OrchestrationRun) -> some View {
+        let tasks = runs.mcpTasksByRunID[run.id] ?? []
+        if let error = runs.mcpTaskErrorsByRunID[run.id] {
+            HStack {
+                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                Button("Retry") { Task { await runs.refreshMCPTasks(runID: run.id) } }
+            }
+            .padding(.horizontal, 12)
+        }
+        if !tasks.isEmpty {
+            DisclosureGroup("Extension tasks (\(tasks.count))") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Saved status. Check a task to contact its server.")
+                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                            Spacer()
+                            Button("Refresh list") { Task { await runs.refreshMCPTasks(runID: run.id) } }
+                                .disabled(runs.loadingMCPTaskRuns.contains(run.id))
+                        }
+                        ForEach(tasks) { task in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(task.toolName).font(.locus(size: 11, weight: .semibold))
+                                    Spacer()
+                                    Text(task.stateTitle).font(.locus(size: 9))
+                                }
+                                Text(task.serverID).font(.locus(size: 8)).foregroundStyle(LocusTheme.textSecondary)
+                                if let message = task.statusMessage, !message.isEmpty {
+                                    Text(message).font(.locus(size: 10)).textSelection(.enabled)
+                                }
+                                HStack {
+                                    Button(task.state == "completed" ? "Fetch result" : "Check status") {
+                                        Task { await runs.lookupMCPTask(task) }
+                                    }
+                                    .accessibilityIdentifier("mcpTask.lookup.\(task.id)")
+                                    if task.isCancellable {
+                                        Button("Cancel task", role: .destructive) {
+                                            Task { await runs.cancelMCPTask(task) }
+                                        }
+                                        .accessibilityIdentifier("mcpTask.cancel.\(task.id)")
+                                    }
+                                    if runs.activeMCPTaskActions.contains(task.id) { ProgressView().controlSize(.small) }
+                                }
+                                .disabled(runs.activeMCPTaskActions.contains(task.id))
+                                .buttonStyle(.locus())
+                                if let error = runs.mcpTaskErrorsByID[task.id] {
+                                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                                        .textSelection(.enabled)
+                                }
+                                if let response = runs.mcpTaskResultsByID[task.id] {
+                                    if let result = response.result {
+                                        Text(result).font(.locus(size: 10)).textSelection(.enabled)
+                                    }
+                                    if let warning = response.mediaWarning {
+                                        Text(warning).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                                    }
+                                    if let sessionID = response.sessionID {
+                                        ForEach(response.attachments ?? []) { reference in
+                                            MCPTaskImagePreview(task: task, reference: reference, sessionID: sessionID)
+                                        }
+                                    }
+                                }
+                                DisclosureGroup("Origin") {
+                                    Text("Task: \(task.id)\nRun: \(run.id)\nJob: \(task.jobID ?? "—")\nTool call: \(task.toolCallID ?? "—")")
+                                        .font(.locus(size: 8, design: .monospaced)).textSelection(.enabled)
+                                }
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 300)
+            }
+            .font(.locus(size: 11, weight: .semibold))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("runs.mcpTasks")
         }
     }
 

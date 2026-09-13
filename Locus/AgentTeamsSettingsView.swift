@@ -1626,6 +1626,7 @@ struct AgentProfileEditor: View {
     @State private var mcpTools: String
     @State private var mcpResources: String
     @State private var mcpPrompts: String
+    @State private var mcpResourceURIsWithCommas: Set<String>
     @State private var connectedServices: [ConnectorConnection] = []
     @State private var advancedSettings = false
     @State private var editingBehavior = false
@@ -1651,7 +1652,8 @@ struct AgentProfileEditor: View {
         _draft = State(initialValue: value)
         _tags = State(initialValue: profile.capabilityTags.joined(separator: ", "))
         _mcpTools = State(initialValue: (profile.mcpPolicy?.tools ?? []).joined(separator: ", "))
-        _mcpResources = State(initialValue: (profile.mcpPolicy?.resources ?? []).joined(separator: ", "))
+        _mcpResources = State(initialValue: (profile.mcpPolicy?.resources ?? []).filter { !$0.contains(",") }.joined(separator: ", "))
+        _mcpResourceURIsWithCommas = State(initialValue: Set((profile.mcpPolicy?.resources ?? []).filter { $0.contains(",") }))
         _mcpPrompts = State(initialValue: (profile.mcpPolicy?.prompts ?? []).joined(separator: ", "))
         self.isNew = isNew
         self.existingProfiles = existingProfiles
@@ -2232,6 +2234,16 @@ struct AgentProfileEditor: View {
                     .textFieldStyle(.roundedBorder)
                 TextField("Allowed prompts", text: $mcpPrompts, prompt: Text("Prompt names"))
                     .textFieldStyle(.roundedBorder)
+                ForEach(extensionsModel.extensions.mcpServers.filter { draft.mcpPolicy?.allowsServer($0.id) == true }) { server in
+                    MCPAgentCatalogPicker(server: server, resources: Binding(
+                        get: { Set(csv(mcpResources)).union(mcpResourceURIsWithCommas) },
+                        set: { selected in
+                            mcpResources = selected.filter { !$0.contains(",") }.sorted().joined(separator: ", ")
+                            mcpResourceURIsWithCommas = Set(selected.filter { $0.contains(",") })
+                        }), prompts: Binding(
+                        get: { Set(csv(mcpPrompts)) },
+                        set: { mcpPrompts = $0.sorted().joined(separator: ", ") }))
+                }
             }
         }
     }
@@ -2287,7 +2299,7 @@ struct AgentProfileEditor: View {
         var policy = draft.mcpPolicy ?? MCPAgentPolicy()
         if !policy.allowsAllServices {
             policy.tools = csv(mcpTools)
-            policy.resources = csv(mcpResources)
+            policy.resources = Array(Set(csv(mcpResources)).union(mcpResourceURIsWithCommas)).sorted()
             policy.prompts = csv(mcpPrompts)
         }
         draft.mcpPolicy = policy

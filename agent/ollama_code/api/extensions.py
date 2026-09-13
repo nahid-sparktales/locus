@@ -3,9 +3,11 @@
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Annotated, Any, TypeVar
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError
 from .dependencies import get_service
@@ -247,11 +249,17 @@ def upsert_extension_mcp(
     service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
+    def upsert() -> dict[str, Any]:
+        server_id = str(body.get("id") or "")
+        if server_id and not any(
+            server.get("id") == server_id and server.get("origin") == "user"
+            for server in service.core.extensions.mcp_servers()
+        ):
+            raise ExtensionError("standalone MCP server not found")
+        return service.core.extensions.upsert_mcp_server(body, server_id=server_id)
     return _mutate(
         service,
-        lambda: service.core.extensions.upsert_mcp_server(
-            body, server_id=str(body.get("id") or "")
-        ),
+        upsert,
         "mcp_saved",
         refresh_mcp=True,
     )
@@ -312,12 +320,144 @@ def set_extension_mcp_policy(
         service,
         lambda: service.core.extensions.set_mcp_policy(
             str(body.get("id") or ""),
-            str(body.get("mode") or "annotations"),
+            str(body["mode"]) if "mode" in body else None,
             tool_name=str(body.get("tool") or ""),
+            resource_access=str(body["resource_access"]) if "resource_access" in body else None,
+            enabled_resources=body.get("enabled_resources"),
+            enabled_prompts=body.get("enabled_prompts"),
         ),
         "mcp_policy_changed",
         refresh_mcp=True,
     )
+
+
+def get_extension_mcp_catalog(server_id: str, service: ServiceDependency) -> dict[str, Any]:
+    """Management discovery does not grant any resource or prompt access."""
+    try:
+        return service.core.mcp.catalog(server_id)
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+def _mcp_preview_item(service: ChatService, server_id: str, name: str, kind: str) -> dict[str, Any]:
+    registry = service.core.tool_registry
+    tool = "read_extension_resource" if kind == "resource" else "load_extension_prompt"
+    if not capability_enabled("modern_mcp") or not registry._user_allows(tool):
+        raise HTTPException(403, "MCP resources and prompts are disabled by capability settings")
+    values = service.core.mcp.available_resources() if kind == "resource" \
+        else service.core.mcp.available_prompts()
+    key = "uri" if kind == "resource" else "name"
+    item = next((item for item in values if item.get("server_id") == server_id
+                 and item.get(key) == name), None)
+    server = next((server for server in service.core.extensions.mcp_servers(service.core.cwd)
+                   if server.get("id") == server_id), None)
+    # Policy saves reconnect asynchronously. Recheck durable policy here so
+    # a previously published catalog cannot outlive a revocation.
+    server_allowed = bool(server and server.get("active", True) and server.get("enabled", True))
+    if server_allowed and item is not None:
+        if kind == "resource":
+            allowed = set(server.get("enabled_resources") or [])
+            mode = server.get("resource_access") or ("selected" if allowed else "all")
+            server_allowed = mode == "all" or (mode == "selected" and bool(
+                {item.get("uri"), item.get("name")} & allowed
+            ))
+        else:
+            server_allowed = name in (server.get("enabled_prompts") or [])
+    if not server_allowed:
+        raise HTTPException(403, f"The MCP server policy does not allow this {kind}")
+    if item is None or not registry._allows_mcp_item(
+        item, "resources" if kind == "resource" else "prompts"
+    ):
+        raise HTTPException(403, f"The current agent profile does not allow this MCP {kind}")
+    return item
+
+
+def _mcp_arguments(body: dict[str, Any], field: str = "arguments") -> dict[str, Any]:
+    value = body.get(field, {})
+    if not isinstance(value, dict) or len(value) > 100 or any(
+        not isinstance(key, str) or not key or len(key) > 500 for key in value
+    ):
+        raise HTTPException(422, f"{field} must be an object with at most 100 named values")
+    return value
+
+
+def _mcp_preview(service: ChatService, operation: Callable[[], T]) -> T:
+    # Keep the selected agent and its permissions stable during a preview.
+    try:
+        with service.state_mutation():
+            return operation()
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+def read_extension_mcp_resource(
+    service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    def read() -> dict[str, Any]:
+        server_id, uri = str(body.get("id") or ""), str(body.get("uri") or "")
+        _mcp_preview_item(service, server_id, uri, "resource")
+        attachments: list[dict[str, Any]] = []
+        content = service.core.mcp.read_resource(
+            server_id, uri, arguments=_mcp_arguments(body), media_receiver=attachments.extend,
+        )
+        if content.startswith("Error:"):
+            raise HTTPException(422, content)
+        session_id = str(getattr(getattr(service.core, "session", None), "session_id", ""))
+        references: list[dict[str, Any]] = []
+        if attachments:
+            from ..mcp_media import cache_media
+            try:
+                references = cache_media(session_id, uuid4().hex, attachments)
+            except (OSError, ValueError):
+                content += "\n\nImage previews could not be saved."
+        return {"content": content, "attachments": references, "session_id": session_id}
+    return _mcp_preview(service, read)
+
+
+def load_extension_mcp_prompt(
+    service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    def load() -> dict[str, Any]:
+        server_id, name = str(body.get("id") or ""), str(body.get("prompt") or "")
+        _mcp_preview_item(service, server_id, name, "prompt")
+        session_id = str(getattr(getattr(service.core, "session", None), "session_id", ""))
+        attachments: list[dict[str, Any]] = []
+        content = service.core.mcp.load_prompt(
+            server_id, name, _mcp_arguments(body), media_receiver=attachments.extend,
+        )
+        if content.startswith("Error:"):
+            raise HTTPException(422, content)
+        references: list[dict[str, Any]] = []
+        if attachments:
+            from ..mcp_media import cache_media
+            try:
+                references = cache_media(session_id, uuid4().hex, attachments)
+            except (OSError, ValueError):
+                content += "\n\nImage previews could not be saved."
+        return {"content": content, "attachments": references, "session_id": session_id}
+    return _mcp_preview(service, load)
+
+
+def complete_extension_mcp_argument(
+    service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    def complete() -> dict[str, Any]:
+        kind = str(body.get("kind") or "")
+        if kind not in {"resource", "prompt"}:
+            raise HTTPException(422, "kind must be resource or prompt")
+        server_id, name = str(body.get("id") or ""), str(body.get("name") or "")
+        _mcp_preview_item(service, server_id, name, kind)
+        argument, value = body.get("argument"), body.get("value", "")
+        if not isinstance(argument, str) or not argument or len(argument) > 500 \
+                or not isinstance(value, str) or len(value) > 8_192:
+            raise HTTPException(422, "Completion requires a named argument and a text value")
+        context = _mcp_arguments(body, "context_arguments")
+        if any(not isinstance(value, str) or len(value) > 8_192 for value in context.values()):
+            raise HTTPException(422, "context_arguments values must be strings")
+        return service.core.mcp.complete(server_id, kind, name, argument, value, context)
+    return _mcp_preview(service, complete)
 
 
 def test_extension_mcp(
@@ -404,6 +544,10 @@ def register_routes(router: APIRouter) -> None:
             ["POST"],
         ),
         ("/api/extensions/mcp/policy", set_extension_mcp_policy, ["POST"]),
+        ("/api/extensions/mcp/{server_id:path}/catalog", get_extension_mcp_catalog, ["GET"]),
+        ("/api/extensions/mcp/resource", read_extension_mcp_resource, ["POST"]),
+        ("/api/extensions/mcp/prompt", load_extension_mcp_prompt, ["POST"]),
+        ("/api/extensions/mcp/complete", complete_extension_mcp_argument, ["POST"]),
         ("/api/extensions/mcp/test", test_extension_mcp, ["POST"]),
         ("/api/extensions/mcp/reconnect", reconnect_extension_mcp, ["POST"]),
         ("/api/extensions/mcp/{server_id:path}", delete_extension_mcp, ["DELETE"]),
