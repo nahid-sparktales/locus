@@ -252,6 +252,23 @@ final class LocusUITests: XCTestCase {
         )).firstMatch
     }
 
+    /// Native menu items on macOS 15 can have an empty label. Require the
+    /// exact title on the identified action, regardless of which native
+    /// accessibility attribute exposes it.
+    private func assertMenuItemTitle(
+        _ identifier: String,
+        equals title: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let titledItem = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ AND (label == %@ OR title == %@ OR value == %@)",
+            identifier, title, title, title
+        )).firstMatch
+        XCTAssertTrue(titledItem.exists, "\(identifier) must display exactly \"\(title)\"",
+            file: file, line: line)
+    }
+
     /// Existence becomes true at the start of a SwiftUI transition, before a
     /// newly presented control has necessarily reached a clickable position.
     private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 3) -> Bool {
@@ -4412,7 +4429,7 @@ final class LocusUITests: XCTestCase {
         let remove = anyElement("agent.\(orphanID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
         XCTAssertTrue(remove.isEnabled, "An unavailable agent must have an actionable cleanup option")
-        XCTAssertEqual(remove.label, "Delete Agent and Chats…")
+        assertMenuItemTitle("agent.\(orphanID).delete", equals: "Delete Agent and Chats…")
         remove.click()
 
         let confirm = anyElement("agent.saved.delete.confirm")
@@ -4441,7 +4458,7 @@ final class LocusUITests: XCTestCase {
         let remove = anyElement("agent.\(profileID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
         XCTAssertTrue(remove.isEnabled)
-        XCTAssertEqual(remove.label, "Delete Agent…")
+        assertMenuItemTitle("agent.\(profileID).delete", equals: "Delete Agent…")
         remove.click()
 
         let confirm = anyElement("agent.saved.delete.confirm")
