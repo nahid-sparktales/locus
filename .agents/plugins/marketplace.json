@@ -1,0 +1,20 @@
+{
+  "name": "locus",
+  "interface": {
+    "displayName": "Locus"
+  },
+  "plugins": [
+    {
+      "name": "agent-world",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-world"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

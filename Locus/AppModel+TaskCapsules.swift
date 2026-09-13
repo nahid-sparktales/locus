@@ -18,6 +18,7 @@ struct TaskCapsuleDispatch {
     let providerBody: [String: Any]
     let context: [String: Any]
     let mode: WorkMode
+    var profileOnly = false
 }
 
 extension AppModel {
@@ -171,19 +172,22 @@ extension AppModel {
     }
 
     private func capsuleProvider(_ profile: AgentProfile) -> (provider: String, accountID: String?, body: [String: Any])? {
-        guard profile.isConfigured else { taskCapsules.error = "Configure an exact model for \(profile.name)."; return nil }
+        do { return try agentProfileProvider(profile) }
+        catch { taskCapsules.error = error.localizedDescription; return nil }
+    }
+
+    func agentProfileProvider(_ profile: AgentProfile) throws -> (provider: String, accountID: String?, body: [String: Any]) {
+        guard profile.isConfigured else { throw AgentWorldError.unavailable("Configure an exact model for \(profile.name).") }
         if case .localOllama = profile.route {
             return ("ollama", nil, ["provider": "ollama", "context_window": settings.localContextWindow ?? 0])
         }
         guard let account = Self.capsuleAccount(profile: profile, accounts: providerAccounts),
               account.isCredentialReady(in: credentialStore) else {
-            taskCapsules.error = "The selected account is unavailable. Reconnect it or explicitly choose another profile."
-            return nil
+            throw AgentWorldError.unavailable("The selected account is unavailable. Reconnect it or explicitly choose another profile.")
         }
         if account.kind.listsModels, let catalog = accountModels[account.id], !catalog.isEmpty,
            !catalog.contains(where: { $0.caseInsensitiveCompare(profile.model) == .orderedSame }) {
-            taskCapsules.error = "\(account.displayName) does not report \(profile.model). Choose an available model."
-            return nil
+            throw AgentWorldError.unavailable("\(account.displayName) does not report \(profile.model). Choose an available model.")
         }
         if account.kind.isManagedPlan {
             return (account.kind.backendProvider, account.id.uuidString, ["provider": account.kind.backendProvider, "account_id": account.id.uuidString,

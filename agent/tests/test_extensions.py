@@ -65,6 +65,160 @@ def _marketplace(root: Path, plugin: Path) -> Path:
     return root
 
 
+def _screen_plugin(root: Path, *, capabilities: list[str] | None = None) -> Path:
+    _plugin(root)
+    (root / "ui").mkdir()
+    (root / "ui/index.html").write_text("<!doctype html><title>Agent World</title>")
+    manifest_path = root / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["locus"] = {"screens": [{
+        "id": "agent-world", "title": "Agent World", "entrypoint": "ui/index.html",
+        "version": 1, "capabilities": capabilities if capabilities is not None else ["agents.read"],
+    }]}
+    manifest_path.write_text(json.dumps(manifest))
+    return root
+
+
+def test_screen_plugin_is_opt_in_and_exposed_through_install_contract(tmp_path):
+    assert parse_plugin(_plugin(tmp_path / "legacy"))["screens"] == []
+    market = tmp_path / "market"
+    plugin = _screen_plugin(market / "plugins/fixture")
+    _marketplace(market, plugin)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    marketplace = manager.add_marketplace(str(market))
+    expected = [{
+        "id": "agent-world", "title": "Agent World", "entrypoint": "ui/index.html",
+        "version": 1, "capabilities": ["agents.read"],
+    }]
+    assert manager.catalog()[0]["screens"] == expected
+    inspection = manager.inspect_catalog_plugin(marketplace["id"], "fixture")
+    assert inspection["plugin"]["screens"] == expected
+    assert inspection["trust"]["screens"] == expected
+    assert inspection["capability_diff"]["requires_renewed_trust"] is True
+    installed = manager.install_plugin(
+        marketplace["id"], "fixture", expected_digest=inspection["digest"]
+    )
+    assert installed["screens"] == expected
+    assert Path(installed["root"]).is_absolute()
+    assert (Path(installed["root"]) / expected[0]["entrypoint"]).is_file()
+    snapshot = manager.snapshot()
+    assert snapshot["capabilities"]["plugin_screens"] is True
+    assert snapshot["plugins"][0]["screens"] == expected
+
+
+@pytest.mark.parametrize("field,value,error", [
+    ("id", "../world", "screen id"),
+    ("id", "Agent-World", "screen id"),
+    ("id", "a" * 81, "screen id"),
+    ("title", " ", "title"),
+    ("title", "x" * 121, "title"),
+    ("title", "World\nWindow", "title"),
+    ("version", True, "version"),
+    ("version", 2, "version"),
+    ("version", "1", "version"),
+    ("capabilities", "agents.read", "capabilities"),
+    ("capabilities", ["credentials.read"], "capabilities"),
+    ("capabilities", [{}], "capabilities"),
+    ("capabilities", ["agents.read", "agents.read"], "duplicate capabilities"),
+    ("entrypoint", "../outside.html", "inside"),
+    ("entrypoint", "ui/../ui/index.html", "inside"),
+    ("entrypoint", "/ui/index.html", "inside"),
+    ("entrypoint", "https://example.com/index.html", "inside"),
+    ("entrypoint", "ui\\index.html", "inside"),
+    ("entrypoint", "ui/%2e%2e/index.html", "inside"),
+    ("entrypoint", "ui/index.html?capabilities=all", "inside"),
+    ("entrypoint", "ui/index.js", "HTML"),
+    ("entrypoint", "ui/missing.html", "missing"),
+])
+def test_screen_manifest_rejects_invalid_contract(tmp_path, field, value, error):
+    plugin = _screen_plugin(tmp_path / "plugin")
+    manifest_path = plugin / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["locus"]["screens"][0][field] = value
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ExtensionError, match=error):
+        parse_plugin(plugin)
+
+
+@pytest.mark.parametrize("locus", [None, [], {"screens": {}}, {"screens": [None]}])
+def test_screen_manifest_rejects_malformed_namespace(tmp_path, locus):
+    plugin = _screen_plugin(tmp_path / "plugin")
+    manifest_path = plugin / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["locus"] = locus
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ExtensionError):
+        parse_plugin(plugin)
+
+
+def test_screen_manifest_rejects_duplicates_and_excess_screens(tmp_path):
+    plugin = _screen_plugin(tmp_path / "plugin")
+    manifest_path = plugin / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    screen = manifest["locus"]["screens"][0]
+    manifest["locus"]["screens"] = [screen, screen]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ExtensionError, match="duplicate screen id"):
+        parse_plugin(plugin)
+    manifest["locus"]["screens"] = [{**screen, "id": f"screen-{i}"} for i in range(17)]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ExtensionError, match="at most 16"):
+        parse_plugin(plugin)
+
+
+@pytest.mark.parametrize("directory_link", [False, True])
+def test_screen_entrypoint_rejects_symlink_escape(tmp_path, directory_link):
+    plugin = _screen_plugin(tmp_path / "plugin")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "index.html").write_text("outside")
+    (plugin / "ui/index.html").unlink()
+    if directory_link:
+        (plugin / "ui").rmdir()
+        (plugin / "ui").symlink_to(outside, target_is_directory=True)
+    else:
+        (plugin / "ui/index.html").symlink_to(outside / "index.html")
+    with pytest.raises(ExtensionError, match="escapes"):
+        parse_plugin(plugin)
+
+
+def test_screen_update_reviews_permissions_and_rollback_preserves_scope(tmp_path):
+    market = tmp_path / "market"
+    plugin = _screen_plugin(market / "plugins/fixture")
+    _marketplace(market, plugin)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    source = manager.add_marketplace(str(market))
+    first = manager.inspect_catalog_plugin(source["id"], "fixture")
+    installed = manager.install_plugin(
+        source["id"], "fixture", expected_digest=first["digest"]
+    )
+    manager.set_plugin_enabled(installed["id"], False, scope="workspace", workspace=str(tmp_path))
+    unchanged = manager.inspect_catalog_plugin(source["id"], "fixture")
+    assert unchanged["capability_diff"]["requires_renewed_trust"] is False
+
+    manifest_path = plugin / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["version"] = "2.0.0"
+    manifest["locus"]["screens"][0]["capabilities"].append("agents.interact")
+    manifest_path.write_text(json.dumps(manifest))
+    next_review = manager.inspect_catalog_plugin(source["id"], "fixture")
+    assert next_review["capability_diff"]["requires_renewed_trust"] is True
+    assert "agents.interact" in " ".join(next_review["capability_diff"]["changes"])
+    with pytest.raises(ExtensionError, match="changed after trust review"):
+        manager.update_plugin(installed["id"], expected_digest=first["digest"])
+    updated = manager.update_plugin(installed["id"], expected_digest=next_review["digest"])
+    assert updated["screens"][0]["capabilities"] == ["agents.interact", "agents.read"]
+    assert updated["disabled_workspaces"] == [str(tmp_path.resolve())]
+    rolled_back = manager.rollback_plugin(installed["id"])
+    assert rolled_back["screens"][0]["capabilities"] == ["agents.read"]
+    assert rolled_back["disabled_workspaces"] == [str(tmp_path.resolve())]
+    disabled = manager.set_plugin_enabled(installed["id"], False)
+    assert disabled["enabled_global"] is False
+    assert disabled["screens"] == rolled_back["screens"]
+    manager.uninstall_plugin(installed["id"])
+    assert manager.snapshot()["plugins"] == []
+
+
 def test_skill_metadata_and_supporting_file_confinement(tmp_path):
     root = _skill(tmp_path)
     (root / "reference.md").write_text("safe reference")

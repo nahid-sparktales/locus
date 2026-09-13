@@ -34,20 +34,33 @@ extension AppModel {
         approvedPlan: [String: JSONValue]? = nil
     ) {
         guard admitTranscriptInput() else { return }
+        let residentProfileID = agentWorld.boundProfileID(for: currentSessionID)
+        var residentDispatch: TaskCapsuleDispatch?
+        if let residentProfileID {
+            guard [.ask, .work].contains(selectedMode), explicitCapsuleDispatch == nil, approvedPlan == nil,
+                  taskCapsules.pendingPlanningRequest(for: currentSessionID) == nil,
+                  !rawText.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") else {
+                showToast("Choose Chat or Work for this agent conversation. Use a regular chat for plans, Duo, Task Capsules, and slash commands.")
+                return
+            }
+            do { residentDispatch = try agentWorldProfileDispatch(profileID: residentProfileID, mode: selectedMode) }
+            catch { showToast(error.localizedDescription); return }
+        }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
             sendDuo(rawText, includeAttachments: includeAttachments)
             return
         }
         let pendingCapsule = (selectedMode != .duo && duoTask != nil)
             ? nil : taskCapsules.pendingPlanningRequest(for: currentSessionID)
-        let capsuleDispatch = explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
+        let capsuleDispatch = residentDispatch ?? explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
         if pendingCapsule != nil, capsuleDispatch == nil { return }
-        if capsuleDispatch != nil, isBusy || hasPendingPermission {
+        if let capsuleDispatch, !capsuleDispatch.profileOnly, isBusy || hasPendingPermission {
             taskCapsules.error = "Finish the active task before starting this capsule stage."
             return
         }
         if capsuleDispatch != nil, goals.goal(for: currentSessionID)?.status == .active {
-            taskCapsules.error = "Pause the current goal before starting a capsule stage."
+            if capsuleDispatch?.profileOnly == true { showToast("Pause the current goal before continuing this agent conversation.") }
+            else { taskCapsules.error = "Pause the current goal before starting a capsule stage." }
             return
         }
         // A normal message following a capsule must use the user's regular
@@ -292,7 +305,7 @@ extension AppModel {
             guard let self else { return }
             var capsuleRequestAccepted = false
             defer {
-                if capsuleDispatch != nil, !capsuleRequestAccepted {
+                if let capsuleDispatch, !capsuleDispatch.profileOnly, !capsuleRequestAccepted {
                     self.taskCapsules.handleEvent(["type": "turn_done", "reason": "error"], sessionID: dispatchedSessionID)
                 }
                 if self.pendingChatTurnTokens[dispatchedSessionID] == pendingTurnToken {
@@ -400,7 +413,10 @@ extension AppModel {
             ]
             if privateIdentity { request["identity_mode"] = true }
             if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
-            if let capsuleDispatch { request["capsule_context"] = capsuleDispatch.context }
+            if let capsuleDispatch {
+                if capsuleDispatch.profileOnly { request["agent_profile"] = Self.agentWorldProfileBody(capsuleDispatch.profile) }
+                else { request["capsule_context"] = capsuleDispatch.context }
+            }
             if let savedConfig = savedGoal?.execution["agent_config"],
                let agentConfig = encodedJSONValue(savedConfig) {
                 request["agent_config"] = agentConfig
@@ -571,9 +587,11 @@ extension AppModel {
                 self.chatAttachments.removeAll { oneMessageSnapshotIDs.contains($0.id) }
                 if self.chatAttachments.isEmpty { self.chatAttachmentNotice = nil }
             }
-            worker.executionState = dispatchedTeam == nil ? .running : .dispatching
-            worker.startedAt = Date()
-            self.updateBackgroundChatState(worker)
+            if capsuleDispatch?.profileOnly != true || !worker.executionState.isTerminal {
+                worker.executionState = dispatchedTeam == nil ? .running : .dispatching
+                worker.startedAt = Date()
+                self.updateBackgroundChatState(worker)
+            }
         }
         pendingChatTurnTokens[dispatchedSessionID] = pendingTurnToken
         pendingChatTurns[dispatchedSessionID] = pendingTurn
@@ -1009,6 +1027,10 @@ extension AppModel {
 
     func retryLastResponse() {
         guard admitTranscriptInput() else { return }
+        if agentWorld.boundProfileID(for: currentSessionID) != nil {
+            showToast("Reuse the last message and send it again to retry with this agent's saved profile and permissions.")
+            return
+        }
         if selectedMode == .duo {
             showToast("Use Duo's Resume, Revise, or New plan action to continue")
             return

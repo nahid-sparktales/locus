@@ -380,6 +380,11 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 .disabled(model.isBusy)
                             }
+                            ForEach(plugin.screens ?? []) { screen in
+                                Button("Open \(screen.title)") { model.agentWorld.open(pluginID: plugin.id, screenID: screen.id) }
+                                    .disabled(!workspaceEnabled || !screen.isSupported || extensionsModel.extensions.capabilities.pluginScreens != true)
+                                    .accessibilityIdentifier("extensions.openScreen.\(screen.id)")
+                            }
                             Spacer()
                             Button("Uninstall", role: .destructive) {
                                 Task { await extensionsModel.uninstallPlugin(plugin.id) }
@@ -940,6 +945,13 @@ private struct PluginTrustReviewView: View {
             }
             if let diff = item.trust.capabilityDiff, !diff.changes.isEmpty {
                 trustWarning("Capability changes", diff.changes)
+            }
+            ForEach(item.trust.trust.screens ?? []) { screen in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Screen: \(screen.title)").font(.locus(size: 10, weight: .semibold))
+                    Text("Opens a local window. " + screen.capabilityDescription)
+                        .font(.locus(size: 9))
+                }
             }
             ForEach(item.trust.trust.mcpServers, id: \.name) { server in
                 VStack(alignment: .leading, spacing: 3) {
