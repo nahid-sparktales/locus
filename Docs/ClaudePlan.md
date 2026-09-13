@@ -17,7 +17,10 @@ prior approval.
 The Python SDK is pinned to **0.2.152** and its Claude runtime to **2.1.259**.
 `Config/ClaudeRuntime.json` records official wheel URLs and SHA-256 checksums.
 `Tools/PrepareClaudeRuntime.py` verifies and extracts the binary, SDK license, and
-provenance. It was exercised on macOS arm64 without a signed-in account.
+provenance. Runtime discovery was exercised on macOS arm64. An authenticated
+saved-agent greeting also completed with the managed runtime after correcting
+duplicate system instructions in replayed conversation history. This smoke
+check does not cover the broader authentication and execution cases below.
 
 - Direct-download Release builds default to `LOCUS_BUNDLE_CLAUDE=component`.
   Run `Tools/PackageComponents.sh <release-directory>` to package both providers

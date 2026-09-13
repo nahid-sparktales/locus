@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 3.0.0 — 2026-09-12
+## 3.0.0 — 2026-09-13
 
 ### Added
 
@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Claude plan conversations with saved agents send profile instructions through
+  the system channel, preventing duplicate instructions in replayed messages.
+- Local runtime cache refreshes tolerate Finder metadata without failing builds.
 - Work and Agent restore their own conversations and preserve drafts when
   switching tabs. Account controls, voice settings, reasoning choices, and
   automation navigation consistently reach their intended configuration.
