@@ -326,7 +326,7 @@
       "sha256": "2352038fb1ae6fa6ef145512e0a50b1fff1e7065d674632cbfc8d0d56d69bfbd",
       "source_asset": "player",
       "source_campaign": "original",
-      "source_commit": "46fc5bc2",
+      "source_commit": "5ca03779",
       "animations": [
         "Idle",
         "Casual_Walk"
