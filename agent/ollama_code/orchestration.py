@@ -3524,7 +3524,7 @@ def _number(value: Any, default: float) -> float:
 
 def _parse_mcp_policy(value: Any) -> dict[str, list[str]]:
     raw = value if isinstance(value, dict) else {}
-    allowed_keys = {"server_ids", "tools", "resources", "prompts"}
+    allowed_keys = {"server_ids", "tools", "resources", "prompts", "excluded_server_ids", "excluded_connection_ids"}
     unknown = set(raw) - allowed_keys
     if unknown:
         raise OrchestrationError(f"unknown MCP agent policy field: {sorted(unknown)[0]}")

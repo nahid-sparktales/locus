@@ -3,6 +3,78 @@ import XCTest
 @testable import Locus
 
 final class SavedAgentTests: XCTestCase {
+    func testExistingAgentProfileRestoresAfterServicePolicyUpgrade() throws {
+        let json = #"{"route":{"kind":"account","accountID":"11111111-2222-3333-4444-555555555555"},"capabilityTags":[],"accessCeiling":"computer_control","tokenLimit":64000,"name":"Existing agent","instructions":"Review evidence","behavior":{"custom_instructions":"Review evidence","version":1,"mode_instructions":{"grill":"","work":"","plan":"","ask":""},"memory_policy":{"scopes":["personal","workspace","agent"],"max_automatic_memories":8,"recall_enabled":true,"proposals_enabled":true,"max_automatic_tokens":1200,"search_enabled":true,"cross_chat_context_enabled":true,"max_automatic_context_snapshots":2,"max_automatic_context_tokens":1200},"runtime_policy":{},"display_name":"Existing agent","response_style":{"cite_evidence":true,"tone":"balanced","use_markdown":true,"verbosity":"balanced"},"self_description":"A specialist for delegated tasks.","capability_policy":{"mcp":true,"network":true,"workspace_write":true,"computer_control":true,"workspace_read":true,"shell":true,"simulator_control":true}},"role":"generalist","mcpPolicy":{"prompts":[],"tools":[],"resources":[],"server_ids":[]},"metering":"self_hosted","id":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","timeoutSeconds":600,"model":"fixture"}"#
+        let profile = try JSONDecoder().decode(AgentProfile.self, from: Data(json.utf8))
+        let suite = "saved-agent-restore-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Data(("[" + json + "]").utf8), forKey: AgentTeamStore.profilesKey)
+        XCTAssertEqual(AgentTeamStore.loadProfiles(from: defaults).map(\.name), ["Existing agent"])
+        XCTAssertEqual(profile.name, "Existing agent")
+        XCTAssertEqual(profile.accessCeiling, .computerControl)
+        XCTAssertEqual(profile.mcpPolicy?.allowsAllServices, false)
+    }
+
+    func testNewWritableAgentsDefaultToAllServicesWithoutUndoingOptOuts() {
+        for ceiling in [AgentAccessCeiling.workspaceWrite, .computerControl] {
+            var profile = AgentProfile(name: "Test", model: "fixture", accessCeiling: ceiling)
+            profile.applyNewAgentServiceDefaults()
+            XCTAssertTrue(profile.mcpPolicy?.allowsAllServices == true)
+            profile.mcpPolicy?.setServer("mail", enabled: false)
+            profile.applyNewAgentServiceDefaults()
+            XCTAssertFalse(profile.mcpPolicy?.allowsServer("mail") == true)
+            profile.mcpPolicy = MCPAgentPolicy()
+            profile.applyNewAgentServiceDefaults()
+            XCTAssertFalse(profile.mcpPolicy?.allowsAllServices == true)
+        }
+        var readOnly = AgentProfile(name: "Review", model: "fixture")
+        readOnly.applyNewAgentServiceDefaults()
+        XCTAssertNil(readOnly.mcpPolicy)
+    }
+
+    @MainActor
+    func testWorldConversationUsesSavedAgentChatFlowAndSidebarOwnership() async throws {
+        SavedAgentURLProtocol.reset()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SavedAgentURLProtocol.self]
+        let backend = BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, session: URLSession(configuration: config))
+        let model = AppModel(startImmediately: false, backendOverride: backend)
+        let profile = AgentProfile(name: "World Agent", model: "fixture")
+        model.agentProfiles = [profile]
+        model.configureAgentWorld()
+        let firstID = try await model.agentWorld.conversation(workspace: "/tmp", profile: profile)
+        XCTAssertEqual(model.savedAgentChats(profile.id).first?.id, firstID)
+        XCTAssertEqual(model.savedAgentChats(profile.id).first?.displayTitle, "Chat 1")
+        XCTAssertEqual(model.agentTeamsModel.agentProfiles.first?.id, profile.id)
+        let next = try await model.createSavedAgentConversation(profile, workspace: "/tmp")
+        let worldID = try await model.agentWorld.conversation(workspace: "/tmp", profile: profile)
+        XCTAssertEqual(worldID, next.id)
+        XCTAssertEqual(model.savedAgentChats(profile.id).count, 2)
+        XCTAssertEqual(model.agentWorld.residents.map(\.id), [profile.id.uuidString])
+        model.knowledge.cancelAll()
+        model.agentInstructions.cancelAll()
+        model.toastCenter.cancelPendingDismissal()
+    }
+
+    func testServiceDefaultsRoundTripWithIndividualOptOutsAndLegacyPolicy() throws {
+        var policy = MCPAgentPolicy.allConnected
+        XCTAssertTrue(policy.allowsServer("new-extension"))
+        policy.setServer("mail", enabled: false)
+        policy.excludedConnectionIDs = ["gmail"]
+        policy.clamp()
+        let restored = try JSONDecoder().decode(MCPAgentPolicy.self, from: JSONEncoder().encode(policy))
+        XCTAssertFalse(restored.allowsServer("mail"))
+        XCTAssertTrue(restored.allowsServer("new-extension"))
+        XCTAssertEqual(restored.excludedConnectionIDs, ["gmail"])
+        policy.setServer("mail", enabled: true)
+        XCTAssertTrue(policy.allowsServer("mail"))
+        let legacy = try JSONDecoder().decode(MCPAgentPolicy.self,
+            from: Data(#"{"server_ids":["mail"],"tools":["read"],"resources":[],"prompts":[]}"#.utf8))
+        XCTAssertTrue(legacy.allowsServer("mail"))
+        XCTAssertFalse(legacy.allowsServer("new-extension"))
+    }
+
     func testProfileGroupsOwnManualAndAutomationChatsWithoutDuplicateParents() {
         let profile = AgentProfile(name: "Bob", model: "fixture")
         let chats = [

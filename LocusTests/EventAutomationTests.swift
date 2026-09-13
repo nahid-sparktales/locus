@@ -24,6 +24,76 @@ private actor EventDispatchGate {
 }
 
 final class EventAutomationTests: XCTestCase {
+    private func gmailClient() throws -> EventConnectorClient {
+        BackendStub.reset()
+        let credentials = InMemoryConnectorCredentialStore()
+        try credentials.save(["access_token": "fixture", "expires_at": "9999999999"], for: "gmail")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendStub.self]
+        return EventConnectorClient(credentials: credentials, session: URLSession(configuration: configuration))
+    }
+
+    private func gmailConnection() -> ConnectorConnection {
+        ConnectorConnection(id: "gmail", kind: .gmail, displayName: "Inbox", publicConfig: [:],
+            cursor: ["history_id": .string("100"), "last_successful_at": .number(1000),
+                     "recent_message_ids": .array([.string("seen")])],
+            enabled: true, health: "error", createdAt: 1, updatedAt: 1)
+    }
+
+    func testGmailHistorySkipsDeletedMessagesAndAdvancesCursor() async throws {
+        let client = try gmailClient()
+        BackendStub.respond(toPath: "/gmail/v1/users/me/history") { _ in
+            ["historyId": "200", "history": [["messagesAdded": [
+                ["message": ["id": "deleted"]], ["message": ["id": "live"]],
+                ["message": ["id": "live"]], ["message": ["id": "seen"]],
+            ]]]]
+        }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages/deleted", status: 404) { _ in ["error": "notFound"] }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages/live") { _ in ["id": "live", "snippet": "hello"] }
+        let result = try await client.poll(gmailConnection())
+        XCTAssertEqual(result.events.map(\.sourceEventID), ["live"])
+        XCTAssertEqual(result.cursor["history_id"]?.string, "200")
+        guard case .array(let remembered) = result.cursor["recent_message_ids"] else { return XCTFail("Missing deduplication IDs") }
+        XCTAssertTrue(remembered.contains(.string("deleted")))
+        XCTAssertFalse(BackendStub.requestPaths.contains("/gmail/v1/users/me/messages/seen"))
+    }
+
+    func testGmailExpiredHistoryReconcilesBeforeNewArrivalsAndSkipsDeletedMessages() async throws {
+        let client = try gmailClient()
+        BackendStub.respond(toPath: "/gmail/v1/users/me/history", status: 404) { _ in ["error": "notFound"] }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/profile") { _ in ["historyId": "300"] }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages") { url in
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if query.contains(where: { $0.name == "pageToken" }) {
+                return ["messages": [["id": "live"], ["id": "seen"]]] as [String: Any]
+            }
+            XCTAssertTrue(query.contains(URLQueryItem(name: "q", value: "after:940")))
+            return ["messages": [["id": "deleted"]], "nextPageToken": "next"] as [String: Any]
+        }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages/deleted", status: 404) { _ in ["error": "notFound"] }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages/live") { _ in ["id": "live"] }
+        let result = try await client.poll(gmailConnection())
+        XCTAssertEqual(result.events.map(\.sourceEventID), ["live"])
+        XCTAssertEqual(result.cursor["history_id"]?.string, "300")
+        XCTAssertEqual(Array(BackendStub.requestPaths.prefix(3)), [
+            "/gmail/v1/users/me/history", "/gmail/v1/users/me/profile", "/gmail/v1/users/me/messages",
+        ])
+    }
+
+    func testGmailTransientMessageFailureDoesNotAdvanceCursor() async throws {
+        let client = try gmailClient()
+        BackendStub.respond(toPath: "/gmail/v1/users/me/history") { _ in
+            ["historyId": "200", "history": [["messagesAdded": [["message": ["id": "live"]]]]]]
+        }
+        BackendStub.respond(toPath: "/gmail/v1/users/me/messages/live", status: 503) { _ in ["error": "unavailable"] }
+        do {
+            _ = try await client.poll(gmailConnection())
+            XCTFail("A transient failure must retain the previous cursor for retry")
+        } catch EventConnectorClientError.provider(let status, _) {
+            XCTAssertEqual(status, 503)
+        }
+    }
+
     @MainActor
     func testAttentionWarningActionsWithRunIDReachConfigurationAndAcknowledge() async throws {
         BackendStub.reset()

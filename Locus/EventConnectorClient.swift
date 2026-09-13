@@ -610,9 +610,7 @@ actor EventConnectorClient {
         }
         let recent = Set((connection.cursor["recent_message_ids"]?.arrayStrings ?? []))
         let unique = Self.uniqueIDs(messageIDs)
-        let events = try await unique.filter { !recent.contains($0) }.asyncMap {
-            try await self.gmailEvent(connection.id, messageID: $0)
-        }
+        let events = try await gmailEvents(connection.id, messageIDs: unique.filter { !recent.contains($0) })
         let remembered = Self.uniqueIDs(Array(unique.reversed()) + Array(recent)).prefix(500)
         return ConnectorPollResult(events: events, cursor: [
             "history_id": .string(newHistoryID),
@@ -622,6 +620,12 @@ actor EventConnectorClient {
     }
 
     private func reconcileGmail(_ connection: ConnectorConnection) async throws -> ConnectorPollResult {
+        // Capture the baseline before listing: arrivals during reconciliation
+        // must remain visible in the next history poll.
+        let profile = try await gmailJSON(connection.id, path: "profile")
+        guard let historyID = Self.stringValue(profile["historyId"]) else {
+            throw EventConnectorClientError.invalidResponse("Gmail could not establish a fresh history cursor.")
+        }
         let since = Int(connection.cursor["last_successful_at"]?.doubleValue ?? Date().addingTimeInterval(-300).timeIntervalSince1970)
         var pageToken = ""
         var ids: [String] = []
@@ -642,13 +646,7 @@ actor EventConnectorClient {
         ids = Self.uniqueIDs(ids)
         let recent = Set(connection.cursor["recent_message_ids"]?.arrayStrings ?? [])
         let fresh = ids.filter { !recent.contains($0) }.reversed()
-        let events = try await Array(fresh).asyncMap {
-            try await self.gmailEvent(connection.id, messageID: $0)
-        }
-        let profile = try await gmailJSON(connection.id, path: "profile")
-        guard let historyID = Self.stringValue(profile["historyId"]) else {
-            throw EventConnectorClientError.invalidResponse("Gmail could not establish a fresh history cursor.")
-        }
+        let events = try await gmailEvents(connection.id, messageIDs: Array(fresh))
         return ConnectorPollResult(events: events, cursor: [
             "history_id": .string(historyID),
             "last_successful_at": .number(Date().timeIntervalSince1970),
@@ -656,6 +654,20 @@ actor EventConnectorClient {
                 Array(Self.uniqueIDs(ids + Array(recent)).prefix(500)).map(JSONValue.string)
             ),
         ])
+    }
+
+    private func gmailEvents(_ connectionID: String, messageIDs: [String]) async throws -> [InboundEvent] {
+        var events: [InboundEvent] = []
+        for messageID in messageIDs {
+            do {
+                events.append(try await gmailEvent(connectionID, messageID: messageID))
+            } catch EventConnectorClientError.provider(let status, _) where status == 404 {
+                // A message can be deleted after history/list returned its ID.
+                // Skip only that missing message; other failures retain the cursor.
+                continue
+            }
+        }
+        return events
     }
 
     private func gmailEvent(_ connectionID: String, messageID: String) async throws -> InboundEvent {

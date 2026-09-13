@@ -15,12 +15,7 @@ extension AppModel {
             state: { [weak self] id in self?.agentWorldConversationState(id) ?? .init() },
             create: { [weak self] workspace, profile in
                 guard let self else { throw AgentWorldError.unavailable("The agent is unavailable.") }
-                struct Created: Decodable { let session_id: String }
-                let response = try await self.backend.post("/api/sessions/detached", body: [
-                    "cwd": workspace, "title": "\(profile.name) · Agent World", "agent_profile_id": profile.id.uuidString,
-                ], as: Created.self)
-                await self.refreshMetadata()
-                return response.session_id
+                return try await self.createSavedAgentConversation(profile, workspace: workspace).id
             },
             load: { [weak self] id in
                 guard let self else { throw CancellationError() }

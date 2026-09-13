@@ -70,6 +70,8 @@ final class AgentTeamsModelTests: XCTestCase {
 
         XCTAssertEqual(model.agentProfiles.count, 1)
         XCTAssertTrue(toasts.contains("Agent names must be unique"))
+        XCTAssertEqual(AgentTeamStore.loadProfiles(from: defaults).map(\.id), [first.id],
+                       "Profile saves must use the model's injected defaults, including in tests")
     }
 
     func testRemovingAProfileCascadesThroughTeams() {

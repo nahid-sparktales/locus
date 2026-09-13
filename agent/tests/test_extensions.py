@@ -992,3 +992,42 @@ def test_context_schema_usage_separates_active_and_deferred_mcp(tmp_path):
     assert after["mcp_tools"][0]["id"] == qualified
     assert sum(item["tokens"] for group in ("system_tools", "mcp_tools")
                for item in after[group]) == registry.schema_tokens()
+
+
+def test_all_services_policy_discovers_tools_resources_and_prompts_with_opt_outs(tmp_path):
+    from ollama_code.orchestration import _parse_mcp_policy
+
+    registry = ToolRegistry(ExtensionManager(str(tmp_path), root=tmp_path / "state"), _FakeMCP())
+    context = ToolContext(cwd=str(tmp_path))
+    policy = _parse_mcp_policy({"server_ids": ["*"], "tools": ["*"], "resources": ["*"], "prompts": ["*"],
+                                "excluded_server_ids": [], "excluded_connection_ids": ["mail-off"]})
+    registry.set_mcp_agent_policy(policy, access_ceiling="workspace_write", role="generalist")
+    registry.begin_turn("Find issues", str(tmp_path))
+    assert "mcp__Linear__list_issues" in registry.execute("search_extension_tools", {"query": "Linear issues"}, context)
+    assert "Untrusted MCP resource" in registry.execute("read_extension_resource", {
+        "server_id": "remote-1", "uri": "linear://issues"}, context)
+    assert "Untrusted MCP prompt" in registry.execute("load_extension_prompt", {
+        "server_id": "remote-1", "prompt": "triage", "arguments": {"project": "app"}}, context)
+    policy["excluded_server_ids"] = ["remote-1"]
+    registry.set_mcp_agent_policy(policy, access_ceiling="workspace_write", role="generalist")
+    assert not registry._allows_mcp_item({"server_id": "remote-1", "name": "anything"}, "tools")
+    assert registry._allows_mcp_item({"server_id": "future-service", "name": "anything"}, "tools")
+    registry.set_mcp_agent_policy(policy, access_ceiling="read_only", role="generalist")
+    assert not registry._allows_mcp_item({"server_id": "future-service", "name": "write", "annotations": {}}, "tools")
+    assert registry._allows_mcp_item({"server_id": "future-service", "name": "read", "annotations": {"readOnlyHint": True}}, "tools")
+
+
+def test_service_opt_out_hides_connector_and_blocks_direct_invocation(tmp_path):
+    registry = ToolRegistry(ExtensionManager(str(tmp_path), root=tmp_path / "state"), _FakeMCP())
+    registry.connector_connections = {"mail-off": "gmail", "mail-on": "gmail", "telegram-off": "telegram"}
+    registry.set_mcp_agent_policy({"excluded_connection_ids": ["mail-off", "telegram-off"]},
+                                  access_ceiling="computer_control", role="generalist")
+    schemas = registry.connector_schemas()
+    assert schemas
+    assert all(item["function"]["name"].startswith("gmail_") for item in schemas)
+    assert all(item["function"]["parameters"]["properties"]["connection_id"]["enum"] == ["mail-on"] for item in schemas)
+    assert not registry.connector_tool_allowed("gmail_fetch_thread", "mail-off")
+    assert registry.connector_tool_allowed("gmail_fetch_thread", "mail-on")
+    registry.set_user_capability_policy({"mcp": False})
+    assert registry.connector_schemas() == []
+    assert not registry.connector_tool_allowed("gmail_fetch_thread", "mail-on")

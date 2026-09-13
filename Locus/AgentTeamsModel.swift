@@ -231,7 +231,7 @@ final class AgentTeamsModel: ObservableObject {
         executionRouteWillChange()
         primaryAgentBehavior = updated
         if persistenceEnabled {
-            AgentTeamStore.savePrimaryBehavior(updated)
+            AgentTeamStore.savePrimaryBehavior(updated, to: defaults)
         }
         toastHandler("Primary agent settings saved — they apply on the next turn")
     }
@@ -327,7 +327,7 @@ final class AgentTeamsModel: ObservableObject {
 
     private func persistAgentTeams() {
         guard persistenceEnabled else { return }
-        AgentTeamStore.save(profiles: agentProfiles, teams: agentTeams)
+        AgentTeamStore.save(profiles: agentProfiles, teams: agentTeams, to: defaults)
         defaults.set(
             teamRoutingConsentAccountIDs.map(\.uuidString).sorted(),
             forKey: AgentTeamStore.consentKey
