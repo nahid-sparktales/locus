@@ -289,62 +289,24 @@ private struct CrewTranscriptMessage: View {
 
 struct CrewChatSidebarEntry: View {
     @EnvironmentObject private var model: AppModel
-    @ObservedObject var crew: AgentCrewChatModel
-    @AppStorage("Locus.crewChatSidebarExpanded") private var expanded = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var selected: Bool {
-        model.sidebarDestination == .agents && (model.agentCrewChatPresented || crew.boundProfileID(for: model.currentSessionID) != nil)
-    }
 
     var body: some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 7) {
-                Button {
-                    withAnimation(reduceMotion ? nil : LocusMotion.spatial) { expanded.toggle() }
-                } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.locus(size: 10, weight: .semibold)).frame(width: 14, height: 32)
+        Button { model.openAgentCrewChat() } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "bubble.left.and.bubble.right").font(.locus(size: 12, weight: .medium))
+                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 18)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Crew Chat").font(.locus(size: 12, weight: .semibold))
+                    Text("A shared conversation for your agents").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 }
-                .buttonStyle(.locus()).accessibilityLabel(expanded ? "Collapse Crew Chat" : "Expand Crew Chat")
-                .accessibilityIdentifier("sidebar.crewChat.disclosure")
-                Button { expanded = true; model.openAgentCrewChat() } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(.locus(size: 14, weight: .medium)).foregroundStyle(LocusTheme.signalDeep)
-                            .frame(width: 32, height: 32)
-                            .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Crew Chat").font(.locus(size: 12, weight: .semibold))
-                            Text("Shared · \(crew.conversationWorkspaces.count) \(crew.conversationWorkspaces.count == 1 ? "chat" : "chats")")
-                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-                        }
-                        Spacer(minLength: 0)
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.locus()).accessibilityIdentifier("sidebar.crewChat")
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.locus(size: 8, weight: .medium)).foregroundStyle(LocusTheme.muted)
             }
-            .padding(.horizontal, 8).padding(.vertical, 9)
-            .background(selected ? LocusTheme.signal.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-            if expanded {
-                VStack(spacing: 1) {
-                    ForEach(crew.conversationWorkspaces, id: \.self) { workspace in
-                        Button { model.openAgentCrewChat(workspace: workspace) } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: "bubble.left").font(.locus(size: 9))
-                                Text(URL(fileURLWithPath: workspace).lastPathComponent).font(.locus(size: 10)).lineLimit(1)
-                                Spacer(minLength: 0)
-                            }.padding(.horizontal, 8).frame(height: 29).contentShape(Rectangle())
-                                .background(selected && crew.workspace == workspace ? LocusTheme.signal.opacity(0.09) : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 6))
-                        }.buttonStyle(.locus()).help(workspace)
-                            .accessibilityLabel("Open Crew Chat in \(URL(fileURLWithPath: workspace).lastPathComponent)")
-                            .accessibilityIdentifier("sidebar.crewChat.workspace.\(workspace)")
-                    }
-                }.padding(.leading, 32)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
-                            .padding(.leading, 22).padding(.vertical, 3)
-                    }
-            }
+            .padding(.horizontal, 10).padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LocusTheme.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
         }
+        .buttonStyle(.locus())
+        .accessibilityIdentifier("sidebar.crewChat")
     }
 }

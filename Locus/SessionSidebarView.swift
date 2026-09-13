@@ -2637,7 +2637,7 @@ private struct AgentSidebarSection: View {
         let all = groups
         let visible = all.filter(filter.includes)
         LazyVStack(spacing: 3) {
-            CrewChatSidebarEntry(crew: crew).padding(.bottom, 6)
+            CrewChatSidebarEntry().padding(.bottom, 6)
             if !all.isEmpty || filter != .all {
                 HStack {
                     Menu {

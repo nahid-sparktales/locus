@@ -24,6 +24,8 @@ private struct LocusPresentationAnchor: View {
     @EnvironmentObject private var landingFlow: LandingFlowModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     let surface: LocusSharedPresentations.Surface
     let updates: AppUpdateController?
     let availableSize: CGSize
@@ -130,11 +132,11 @@ private struct LocusPresentationAnchor: View {
         }
         .sheet(item: owned($model.savedAgentEditor)) { profile in
             AgentProfileEditor(profile: profile,
-                isNew: !model.agentProfiles.contains(where: { $0.id == profile.id }),
-                existingProfiles: model.agentProfiles,
+                isNew: !agentTeams.agentProfiles.contains(where: { $0.id == profile.id }),
+                existingProfiles: agentTeams.agentProfiles,
                 onSave: model.saveSidebarAgent)
                 .environmentObject(model)
-                .environmentObject(model.providerAccountsModel)
+                .environmentObject(providerAccounts)
         }
         .sheet(isPresented: owned($model.configureAgentPresented), onDismiss: {
             if ownsPresentations { model.dismissConfigureAgent() }

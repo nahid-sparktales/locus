@@ -1058,7 +1058,7 @@ final class AgentOverviewTests: XCTestCase {
     }
 
     @MainActor
-    func testThePrimaryActionStartsAChatForTheActiveDestination() {
+    func testTheAgentsPrimaryActionCreatesASavedProfileWithoutStartingAChat() {
         let model = AppModel(startImmediately: false)
         model.sessions = [session("plain", triggerID: nil, name: nil, age: 60)]
         model.currentSessionID = "plain"
@@ -1066,17 +1066,20 @@ final class AgentOverviewTests: XCTestCase {
         XCTAssertEqual(SidebarDestination.agents.title, "Agent")
         XCTAssertEqual(SidebarDestination.ask.title, "Work")
 
-        // With no configured agent, New Chat takes the user to configuration
-        // instead of creating an unrelated workspace chat.
+        // Agents now owns saved profiles: its primary action is New agent,
+        // and opens an unsaved profile without starting a workspace chat.
         model.sidebarDestination = .agents
         model.newChatForSidebarDestination()
-        XCTAssertTrue(model.configureAgentPresented)
-        XCTAssertEqual(model.configureAgentTab, .agents)
+        XCTAssertNotNil(model.savedAgentEditor)
+        XCTAssertEqual(model.savedAgentEditor?.name, "")
+        XCTAssertFalse(model.configureAgentPresented)
         XCTAssertNil(model.configureAgentPendingTriggerEdit)
+        XCTAssertEqual(model.currentSessionID, "plain")
+        let firstDraftID = model.savedAgentEditor?.id
 
-        // With an agent selected, the same action stays in Agents and starts
-        // the side-chat path instead of reopening configuration.
-        model.dismissConfigureAgent()
+        // An existing trigger chat does not change New agent into a side-chat
+        // action. Starting another chat remains a per-agent action.
+        model.savedAgentEditor = nil
         model.sessions = [session("chat-new", age: 60)]
         model.currentSessionID = "chat-new"
         model.eventAutomations.seedForUITesting(
@@ -1084,9 +1087,25 @@ final class AgentOverviewTests: XCTestCase {
         )
         model.schedule.seedForUITesting(tasks: [])
         model.newChatForSidebarDestination()
+        XCTAssertNotNil(model.savedAgentEditor)
+        XCTAssertNotEqual(model.savedAgentEditor?.id, firstDraftID)
+        XCTAssertEqual(model.currentSessionID, "chat-new")
         XCTAssertFalse(model.configureAgentPresented)
 
-        // Creating a new agent remains available as an explicit action.
+        // Selecting a saved profile also creates a fresh profile, not an edit.
+        model.savedAgentEditor = nil
+        let profile = AgentProfile(name: "Navigator", model: "fixture")
+        model.agentProfiles = [profile]
+        model.selectedSavedAgentID = profile.id
+        model.newChatForSidebarDestination()
+        XCTAssertNotNil(model.savedAgentEditor)
+        XCTAssertNotEqual(model.savedAgentEditor?.id, profile.id)
+        XCTAssertEqual(model.savedAgentEditor?.name, "")
+        XCTAssertEqual(model.currentSessionID, "chat-new")
+        XCTAssertEqual(model.agentProfiles, [profile])
+
+        // An explicit trigger action still opens the appropriate trigger editor.
+        model.savedAgentEditor = nil
         model.presentNewAgent(kind: .price)
         model.mountPendingConfigureAgentEditor()
         XCTAssertEqual(model.eventAutomations.editorDraft?.triggerKind, .price)
