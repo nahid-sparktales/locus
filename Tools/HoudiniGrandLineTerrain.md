@@ -1,22 +1,22 @@
 # Houdini terrain authoring
 
 Status on 2026-09-13: **authored in Houdini 22.0.429 Apprentice**.
-The actual SOP networks cooked successfully and produced an editable
-[terrain study](/Users/nahid/Documents/locus-artwork/houdini/terrain-study-20260913/grand_line_terrain.hipnc)
-with 37,248 cliff triangles and 37,440 mountain triangles. Every cooked vertex
+The actual SOP networks cooked successfully and produced the editable
+`grand_line_terrain.hipnc` study with 37,248 cliff triangles and 37,440 mountain triangles. Every cooked vertex
 passes the existing map envelopes; the mountain stays inside radius 2.5.
-A separate [Mantra preview](/Users/nahid/Documents/locus-artwork/houdini/terrain-study-20260913/grand_line_terrain_preview.png)
+A separate `grand_line_terrain_preview.png` Mantra preview
 retains the Apprentice watermark. The starting silhouettes are less finished
 than the shipped Meshy artwork and remain a study for later refinement.
-The [authoring report](/Users/nahid/Documents/locus-artwork/houdini/terrain-study-20260913/houdini-authoring-report.json)
+The generated `houdini-authoring-report.json`
 records the real version, active license, bounds, and source hash.
 
 An independent native `rop_gltf::2.0` box export under the same license failed:
 “glTF export is only supported in Houdini Core and Houdini FX versions.”
 The action returned but the node reported this error and no GLB was created.
-The [capability report](/Users/nahid/Documents/locus-artwork/houdini/terrain-study-20260913/gltf-capability.json)
-preserves that result. Houdini terrain remains an editable study; the shipped
-map still uses its verified Meshy assets. No substitute exporter was used.
+The generated `gltf-capability.json` preserves that result. A separately requested
+interchange workflow uses Houdini's supported native PLY export, then Blender's
+own importer and GLB exporter. The shipped map still uses its verified Meshy
+assets; these terrain conversions remain study deliverables.
 
 ## Installation and licensing
 
@@ -32,11 +32,11 @@ It runs without additional environment setup and reports Python 3.13.10 and
 `licenseCategoryType.Apprentice`.
 
 No credentials have been accessed or submitted, and this workflow makes no
-purchases. Apprentice is a free non-commercial learning license. It is not a
-substitute for an appropriate production license. The script permits an
-editable study HIP and reports Apprentice’s observed native GLB export limit
-when `--export` is requested. An export-capable license is required for that
-path; the production map has not been replaced with Apprentice study output.
+purchases. Apprentice is a free non-commercial learning license. The authoring
+script saves an editable study HIP and reports Apprentice’s observed native
+GLB export limit when `--export` is requested. An export-capable license is
+required for that native GLB path. The separate PLY-to-Blender workflow records
+the source Apprentice license in its report and exported object metadata.
 [Apprentice restrictions](https://www.sidefx.com/faq/question/apprentice-restrictions/),
 [licensing setup](https://www.sidefx.com/faq/question/how-do-i-license-houdini/).
 
@@ -94,6 +94,68 @@ Successful real runs produce `houdini-authoring-report.json` with the Houdini
 version, license category, vertex bounds, triangle counts, and source hash.
 Successful exports add actual GLB hashes. Export failures stop with the
 Houdini error; the workflow never creates a substitute “Houdini” GLB.
+
+## Convert the study through Blender
+
+`ConvertHoudiniTerrainWithBlender.py` runs real Houdini and Blender background
+processes, preserving the original HIP and active application sessions. Native
+PLY export has been verified in Houdini 22.0.429 Apprentice; the installed
+Blender used for conversion is 5.1.2. This path does not invoke Houdini's GLTF ROP.
+
+Pass installed executable paths and a new, unused output directory. For example,
+from a Houdini Terminal with `hython` on `PATH`:
+
+```sh
+python3 Tools/ConvertHoudiniTerrainWithBlender.py \
+  --source-hip /path/to/terrain-study/grand_line_terrain.hipnc \
+  --output /path/to/terrain-study/blender-conversion-v1 \
+  --hython "$(command -v hython)" \
+  --blender /Applications/Blender.app/Contents/MacOS/Blender
+```
+
+The native Houdini PLY files retain source positions and triangle connectivity.
+Companion `.attributes.json` files carry float `Cd` colors, corner UVs and normals,
+and face material assignments; PLY alone cannot preserve that complete material
+representation. Corner attributes are removed only from an in-memory export copy
+to prevent PLY from splitting vertices. The saved Houdini network is unchanged.
+Blender imports the PLY geometry, verifies its complete point and face order,
+then reconstructs the original attributes and Principled materials. Sandstone
+and water keep their source roughness and vertex colors. The converter explicitly
+supports the study's white base tint, enabled point colors and no base texture;
+edited shader settings outside that subset stop conversion rather than silently
+changing the material.
+[SideFX geometry saving](https://www.sidefx.com/docs/houdini/hom/hou/Geometry.html#saveToFile).
+
+In this HIP, all cooked corner normals oppose the outward PLY triangle cross
+products. Blender negates those shading normals while preserving polygon and
+corner order, recording `source_corner_normal_sign_correction: -1` in the report
+and `source_normal_sign_correction` in GLB extras. A consistently aligned source
+keeps its normals; mixed normal orientation stops for inspection. This explicit
+application-convention correction fixes exterior shading without changing shape.
+
+The output directory contains:
+
+- `scenery_red_line.ply` and `scenery_reverse_mountain.ply`, with attribute sidecars.
+- `scenery_red_line.glb` and `scenery_reverse_mountain.glb`, exported by Blender
+  with normals, UVs, vertex colors, materials and embedded resources.
+- `grand_line_terrain_converted.blend`, an editable scene with the two forms
+  arranged side by side, plus review lights, ground and camera.
+- `blender_terrain_preview.png`, a 1500 × 1100 Cycles render of that review scene.
+- `houdini-interchange-report.json` and `blender-conversion-report.json`, recording
+  real application versions, source provenance, hashes, counts and bounds.
+
+Individual GLBs keep the source local origin and unit scale. Houdini's Y-up
+coordinates are converted to Blender's Z-up for editing, then back to glTF Y-up
+on export. The review layout offsets, ground and lights are excluded from those
+individual assets. The workflow checks the exported GLB triangle counts, local
+bounds, expected attributes and absence of external dependencies; a mismatch
+fails conversion. Blender then reimports the actual GLBs, checks their dimensions
+and triangle counts again, and uses those meshes for the editable review scene
+and render. The source HIP hash is checked before and after processing.
+
+Conversion preserves the existing terrain study; it does not refine its shapes
+or automatically replace any map artwork. Improve the Houdini network and review
+the result before considering asset integration.
 
 ## Terrain and navigation contract
 
