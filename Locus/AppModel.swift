@@ -493,6 +493,8 @@ final class AppModel: ObservableObject {
     @Published var selectedSavedAgentID: UUID?
     @Published var configureAgentProfileID: UUID?
     @Published var creatingSavedAgentChatIDs: Set<UUID> = []
+    @Published var removingSavedAgentIDs: Set<UUID> = []
+    var savedAgentConversationCreationCounts: [UUID: Int] = [:]
     @Published var configureAgentCreationPresented = false
     @Published var configureAgentPendingCreation = false
     @Published var configureAgentTab: ConfigureAgentTab = .agents

@@ -260,10 +260,11 @@ final class AgentTeamsModel: ObservableObject {
         toastHandler("Saved \(updated.name)")
     }
 
-    func removeAgentProfile(_ profile: AgentProfile) {
+    @discardableResult
+    func removeAgentProfile(_ profile: AgentProfile) -> Bool {
         guard !isBusyProvider() else {
             toastHandler("Stop the active run before removing an agent")
-            return
+            return false
         }
         agentProfiles.removeAll { $0.id == profile.id }
         agentTeams = agentTeams.compactMap { team in
@@ -278,6 +279,7 @@ final class AgentTeamsModel: ObservableObject {
             selectedAgentTeamID = nil
         }
         persistAgentTeams()
+        return true
     }
 
     func saveAgentTeam(_ team: AgentTeam) {

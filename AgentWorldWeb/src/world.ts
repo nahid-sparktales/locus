@@ -34,7 +34,7 @@ import { assignCrewKinds } from './crewAssignments';
 import type { ResidentKind } from './crewAssignments';
 import { applyLocusSceneryTint } from './outpostPalette';
 import type { Theme, AssetType, ResidentAssetType, ShipAssetType, PropAssetType, Placement } from './theme';
-import { createNavigation, findResidentPath, pointIsWalkable, createResidentMotion, residentAssetForID, residentSeed, resolveResidentSpacing, stationObstacle, statusCanWander, stepResidentMotion, themeNavigation } from './residentMotion';
+import { createNavigation, findResidentArrival, findResidentPath, pointIsWalkable, createResidentMotion, residentAssetForID, residentSeed, resolveResidentSpacing, stationObstacle, statusCanWander, stepResidentMotion, themeNavigation } from './residentMotion';
 import type { NavigationMap, ResidentMotion } from './residentMotion';
 
 type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; kind: ResidentKind | 'ship'; panda?: ReturnType<typeof createPanda>; person?: ReturnType<typeof createPerson>; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
@@ -75,9 +75,8 @@ export class OutpostWorld {
   private courierNavigation?: NavigationMap;
 
   constructor(private canvas: HTMLCanvasElement, private theme: Theme, private callbacks: Callbacks, private residentStyle: ResidentStyle = 'mixed') {
-    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'low-power', audioEngine: false }, true);
-    // Keep sails, faces and fine rigging sharp on Retina displays.
-    this.engine.setHardwareScalingLevel(Math.max(1, (window.devicePixelRatio || 1) / 2));
+    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true, powerPreference: 'low-power', audioEngine: false });
+    this.resizeRenderer();
     this.scene = new Scene(this.engine);
     this.scene.imageProcessingConfiguration.toneMappingEnabled = true;
     this.scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
@@ -121,14 +120,14 @@ export class OutpostWorld {
     }
 
     const ambient = new HemisphericLight('sky-light', new Vector3(0.2, 1, -0.4), this.scene);
-    ambient.intensity = theme.environment === 'ocean' ? 0.9 : 0.65;
+    ambient.intensity = theme.environment === 'ocean' ? 0.75 : 0.65;
     ambient.diffuse = theme.environment === 'ocean' ? new Color3(0.85, 0.96, 1) : new Color3(1, 0.98, 0.91);
     ambient.groundColor = theme.environment === 'ocean' ? new Color3(0.42, 0.57, 0.61) : new Color3(0.26, 0.27, 0.23);
     const sun = new DirectionalLight('sunrise', new Vector3(-0.5, -1, 0.5), this.scene);
     sun.position = new Vector3(14, 24, -17);
     sun.intensity = 1.0;
     sun.diffuse = theme.environment === 'ocean' ? new Color3(1, 0.9, 0.74) : new Color3(1, 0.96, 0.88);
-    this.shadow = new ShadowGenerator(2048, sun);
+    this.shadow = new ShadowGenerator(Math.min(theme.environment === 'ocean' ? 4096 : 2048, this.engine.getCaps().maxTextureSize), sun);
     this.shadow.usePercentageCloserFiltering = true;
     this.shadow.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
     this.shadow.bias = 0.001;
@@ -619,13 +618,35 @@ export class OutpostWorld {
       counts.set(appearance, counts.get(appearance)! + 1);
     }
     if (this.theme.environment === 'ocean') this.harborAssignments = assignHarbors(agents.map(agent => agent.id), this.harborAssignments, this.theme.layout.stations.length);
-    this.residents = agents.map((agent, index) => {
+    const placements = agents.map((agent, index) => {
       const homeIndex = this.theme.environment === 'ocean' ? this.harborAssignments.get(agent.id) ?? index : index;
-      const placement = this.theme.layout.stations[homeIndex] || DEFAULT_STATIONS[index];
+      return this.theme.layout.stations[homeIndex] || DEFAULT_STATIONS[index];
+    });
+    // Reserve surviving ships before placing newcomers, regardless of roster
+    // order. An idle ship may be passing another island's berth.
+    const occupied: Point[] = agents.flatMap((agent, index) => {
+      const previous = existingByID.get(agent.id), placement = placements[index];
+      return previous?.home.x === placement.x && previous.home.z === placement.z ? [previous.motion] : [];
+    });
+    this.residents = agents.flatMap((agent, index) => {
+      const placement = placements[index];
+      const previous = existingByID.get(agent.id);
+      const keepsHome = previous?.home.x === placement.x && previous?.home.z === placement.z;
+      const motion = keepsHome ? previous.motion : createResidentMotion(agent.id, placement);
+      if (this.theme.environment === 'ocean' && !keepsHome) {
+        const arrival = findResidentArrival(placement, this.navigation, occupied);
+        // An overfull custom map still exposes the agent in the roster.
+        if (!arrival) return [];
+        motion.x = arrival.x; motion.z = arrival.z;
+        motion.speed *= 0.65;
+        motion.heading = shipBerthHeading(placement);
+        occupied.push(motion);
+      }
       const appearance = this.appearanceAssignments.get(agent.id)!;
       const actor = this.createActor(agent.id, ['#80c6b2', '#d2bb7e', '#d99874', '#a79ed4'][residentSeed(agent.id) % 4], appearance);
-      actor.root.position.set(placement.x, 0.075, placement.z);
-      actor.root.rotation.y = placement.rotation ?? 0;
+      // Adding a captain must not send the rest of the fleet back to port.
+      actor.root.position.set(motion.x, 0.075, motion.z);
+      actor.root.rotation.y = motion.heading;
       this.upgradeActor(actor);
       const label = document.createElement('div');
       label.className = 'agent-label';
@@ -641,16 +662,10 @@ export class OutpostWorld {
       const ring = this.ring(`resident-pad-${agent.id}`, this.theme.environment === 'ocean' ? 3.6 : 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
       ring.position.x = placement.x; ring.position.z = placement.z;
       const wake = this.theme.environment === 'ocean' ? createShipWake(this.scene, this.mapRoot, agent.id) : undefined;
-      const motion = createResidentMotion(agent.id, placement);
-      if (this.theme.environment === 'ocean') {
-        motion.speed *= 0.65;
-        motion.heading = shipBerthHeading(placement);
-        actor.root.rotation.y = motion.heading;
-      }
       const resident = { agent, actor, label, ring, wake, home: placement, motion, id: agent.id, phase: index * 1.5 };
       this.labels.append(label);
       this.updateLabel(resident);
-      return resident;
+      return [resident];
     });
     this.rebuildStations();
     this.updateSeaAlerts();
@@ -690,9 +705,16 @@ export class OutpostWorld {
     resident.ring.isVisible = selected || hovered;
   }
 
+  private resizeRenderer(): void {
+    // Babylon's scale is inverse: 0.5 renders two pixels per CSS pixel.
+    // Reapply the cap when the window moves between displays or changes size.
+    const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    this.engine.setHardwareScalingLevel(1 / pixelRatio);
+  }
+
   private buildInput(): void {
     const listen = <K extends keyof WindowEventMap>(type: K, listener: (event: WindowEventMap[K]) => void) => { window.addEventListener(type, listener); this.cleanups.push(() => window.removeEventListener(type, listener)); };
-    listen('resize', () => this.engine.resize());
+    listen('resize', () => this.resizeRenderer());
     const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
     const motionPreferenceChanged = (event: MediaQueryListEvent) => {
       this.reducedMotion = event.matches;
@@ -1046,7 +1068,7 @@ export class OutpostWorld {
     this.visible = visible;
     this.setHovered(undefined);
     this.lastFrame = 0;
-    if (visible) { this.engine.resize(); this.engine.runRenderLoop(this.render); }
+    if (visible) { this.resizeRenderer(); this.engine.runRenderLoop(this.render); }
     else { this.engine.stopRenderLoop(this.render); }
   }
 

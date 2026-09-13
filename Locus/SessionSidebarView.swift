@@ -24,6 +24,7 @@ struct AgentSidebarGroupModel: Identifiable {
     var profileID: UUID? = nil
     var profile: AgentProfile? = nil
 
+    var isUnavailableSavedAgent: Bool { profileID != nil && profile == nil }
     var status: AgentOverview.Status { profile != nil ? .active : AgentOverview.status(for: definition) }
     var needsAttention: Bool { status.isWarning || sourceNeedsAttention }
     var statusTitle: String {
@@ -2620,6 +2621,7 @@ private struct AgentSidebarSection: View {
     @State private var collapsedIDs: Set<String> = []
     @State private var expandedIDs: Set<String> = []
     @State private var showingAllChatIDs: Set<String> = []
+    @State private var savedAgentToDelete: AgentSidebarGroupModel?
 
     private var groups: [AgentSidebarGroupModel] {
         AgentSidebarCatalog.groups(
@@ -2693,6 +2695,39 @@ private struct AgentSidebarSection: View {
             // A fresh search should reveal matches hidden by a prior filter.
             filter = .all
         }
+        .confirmationDialog(
+            savedAgentToDelete?.isUnavailableSavedAgent == true
+                ? "Delete unavailable agent and its chats?"
+                : "Delete \(savedAgentToDelete?.name ?? "this agent")?",
+            isPresented: Binding(
+                get: { savedAgentToDelete != nil },
+                set: { if !$0 { savedAgentToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let agent = savedAgentToDelete, let profileID = agent.profileID {
+                Button(agent.isUnavailableSavedAgent ? "Delete Agent and Chats" : "Delete Agent", role: .destructive) {
+                    savedAgentToDelete = nil
+                    Task {
+                        do {
+                            if let profile = agent.profile {
+                                try await model.removeSavedAgent(profile)
+                            } else {
+                                try await model.deleteUnavailableSavedAgent(profileID: profileID)
+                            }
+                        } catch { model.showToast(error.localizedDescription) }
+                    }
+                }
+                .accessibilityIdentifier("agent.saved.delete.confirm")
+            }
+            Button("Cancel", role: .cancel) { savedAgentToDelete = nil }
+        } message: {
+            if savedAgentToDelete?.isUnavailableSavedAgent == true {
+                Text("The saved agent is already gone. All of its chats, including archived chats and chats hidden by search, will move to recovery. You can undo this after deleting.")
+            } else {
+                Text("This removes the saved agent and archives its chats. Completed runs are kept. Turn on Show Archived Sessions to find its history.")
+            }
+        }
     }
 
     private func isExpanded(_ agent: AgentSidebarGroupModel, totalAgents: Int) -> Bool {
@@ -2743,7 +2778,8 @@ private struct AgentSidebarSection: View {
                     else if let reference = agent.reference { model.selectAgent(reference) }
                     else { model.showToast("This agent is unavailable. Its saved chats are still available below.") }
                 },
-                confirmDelete: confirmDelete
+                confirmDelete: confirmDelete,
+                confirmDeleteSavedAgent: { savedAgentToDelete = $0 }
             )
             if expanded {
                 VStack(spacing: 1) {
@@ -2867,6 +2903,7 @@ private struct AgentGroupRow: View {
     let toggle: () -> Void
     let select: () -> Void
     let confirmDelete: (AgentDefinition) -> Void
+    let confirmDeleteSavedAgent: (AgentSidebarGroupModel) -> Void
 
     init(
         agent: AgentSidebarGroupModel,
@@ -2875,7 +2912,8 @@ private struct AgentGroupRow: View {
         selected: Bool,
         toggle: @escaping () -> Void,
         select: @escaping () -> Void,
-        confirmDelete: @escaping (AgentDefinition) -> Void
+        confirmDelete: @escaping (AgentDefinition) -> Void,
+        confirmDeleteSavedAgent: @escaping (AgentSidebarGroupModel) -> Void
     ) {
         self.agent = agent
         self.automation = automation
@@ -2884,6 +2922,7 @@ private struct AgentGroupRow: View {
         self.toggle = toggle
         self.select = select
         self.confirmDelete = confirmDelete
+        self.confirmDeleteSavedAgent = confirmDeleteSavedAgent
     }
 
     private var definition: AgentDefinition? {
@@ -2972,24 +3011,37 @@ private struct AgentGroupRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(Rectangle())
         .contextMenu { agentActions }
-        .help(agent.profileID != nil
+        .help(agent.isUnavailableSavedAgent
+            ? "This saved agent is unavailable. Review its chats below, or delete the leftover entry from its menu."
+            : agent.profileID != nil
             ? (agent.needsAttention ? "Open Manage Agent to review its automatic work." : "Open this agent’s chats and manage its instructions and automatic work.")
             : agent.sourceNeedsAttention ? "This Agent’s source connection needs attention. Open its settings to review the connection." : status.detail(for: words))
     }
 
     @ViewBuilder
     private var agentActions: some View {
-        Button("New Chat with \(agent.name)") {
-            if let profile = agent.profile { model.newSavedAgentChat(profile) }
-            else if let reference = agent.reference { model.newAgentChat(reference: reference) }
+        if !agent.isUnavailableSavedAgent {
+            Button("New Chat with \(agent.name)") {
+                if let profile = agent.profile { model.newSavedAgentChat(profile) }
+                else if let reference = agent.reference { model.newAgentChat(reference: reference) }
+            }
+            .disabled((agent.reference == nil && agent.profile == nil) || model.chatNavigationDisabled)
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
         }
-        .disabled((agent.reference == nil && agent.profile == nil) || model.chatNavigationDisabled)
-        .accessibilityIdentifier("agent.\(agent.accessibilityID).newChat")
         if let profile = agent.profile {
             Button("Manage Agent…") { model.manageSavedAgent(profile) }
                 .accessibilityIdentifier("agent.\(agent.accessibilityID).manage")
             Button("Edit Agent…") { model.presentSavedAgentEditor(profile) }
                 .accessibilityIdentifier("agent.\(agent.accessibilityID).edit")
+        }
+        if let profileID = agent.profileID {
+            if agent.profile != nil { Divider() }
+            Button(agent.isUnavailableSavedAgent ? "Delete Agent and Chats…" : "Delete Agent…", role: .destructive) {
+                confirmDeleteSavedAgent(agent)
+            }
+            .disabled(model.isBusy || model.hasPendingPermission || model.pendingSessionReset
+                || agent.runningChatCount > 0 || model.removingSavedAgentIDs.contains(profileID))
+            .accessibilityIdentifier("agent.\(agent.accessibilityID).delete")
         }
         if let record = definition {
             if record.isSchedule {

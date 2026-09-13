@@ -179,6 +179,30 @@ export function findResidentPath(from: Point, to: Point, map: NavigationMap): Po
   return null;
 }
 
+/** Place a newcomer without displacing residents already crossing its home.
+ * Samples and graph nodes make the search finite. Home stays the assignment;
+ * its static route must be reachable once the passing traffic has cleared. */
+export function findResidentArrival(home: Placement, map: NavigationMap, occupied: readonly Point[]): Point | null {
+  if (!pointIsWalkable(home, map)) return null;
+  const clearance = map.bodyRadius * 2 + 0.08 + 0.05;
+  const safe = (point: Point): boolean => pointIsWalkable(point, map)
+    && occupied.every(peer => distance(point, peer) >= clearance);
+  if (safe(home)) return copyPoint(home);
+  const candidates: Point[] = [...map.nodes];
+  const radialStep = clearance / 2;
+  for (let ring = 1; ring <= 8; ring++) {
+    for (let sample = 0; sample < 24; sample++) {
+      const angle = sample * TAU / 24;
+      candidates.push({ x: home.x + Math.sin(angle) * radialStep * ring, z: home.z + Math.cos(angle) * radialStep * ring });
+    }
+  }
+  candidates.sort((a, b) => distance(home, a) - distance(home, b));
+  for (const point of candidates) {
+    if (safe(point) && findResidentPath(point, home, map)) return copyPoint(point);
+  }
+  return null;
+}
+
 export type ResidentMotion = {
   id: string;
   x: number;
@@ -194,6 +218,7 @@ export type ResidentMotion = {
   speed: number;
   home: Placement;
   trafficCooldown?: number;
+  trafficBlockedFor?: number;
 };
 export type MotionStep = { status: AgentStatus; home: Placement; dt: number; visible?: boolean; paused?: boolean; reducedMotion?: boolean; rosterIDs?: readonly string[] };
 export const statusCanWander = (status: AgentStatus): boolean => status === 'idle' || status === 'completed';
@@ -239,47 +264,6 @@ function findPromenadePath(from: Point, destination: number, map: NavigationMap)
   return length(clockwise) <= length(counterclockwise) ? clockwise : counterclockwise;
 }
 
-/** A harbor patrol is a small seaward loop that ends at the assigned island.
- * A rare visit can reach a neighboring bay, but it still returns home before
- * resting. Campus residents continue to use their existing promenade paths. */
-function findHarborPatrol(state: ResidentMotion, map: NavigationMap): Point[] | null {
-  const home = state.home;
-  const appendLeg = (route: Point[], from: Point, to: Point, local: boolean): Point | null => {
-    const leg = findResidentPath(from, to, map);
-    if (!leg || (local && leg.some(point => distance(home, point) > 7.2))) return null;
-    route.push(...leg); return to;
-  };
-  const visitRound = residentSeed(`${state.id}:harbor-visit`) % 11;
-  if (state.sequence >= 3 && state.sequence % 11 === visitRound) {
-    const destinations = map.wanderPoints.filter(point => distance(home, point) > 8 && distance(home, point) < 18);
-    if (destinations.length) {
-      const target = destinations[Math.floor(randomUnit(state.id, state.sequence, 'island-visit') * destinations.length)];
-      const route: Point[] = [];
-      const reached = appendLeg(route, state, target, false);
-      if (reached && appendLeg(route, reached, home, false)) return route;
-    }
-  }
-  const offshore = (home.rotation ?? 0) + Math.PI;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const radius = 2.8 + randomUnit(state.id, state.sequence + attempt, 'harbor-radius') * 1.0;
-    const center = offshore + (randomUnit(state.id, state.sequence + attempt, 'harbor-angle') - 0.5) * 0.8;
-    const direction = randomUnit(state.id, state.sequence, 'harbor-direction') > 0.5 ? 1 : -1;
-    const targets = [-0.44 * direction, 0.44 * direction].map(offset => ({
-      x: home.x + Math.sin(center + offset) * radius,
-      z: home.z + Math.cos(center + offset) * radius,
-    }));
-    if (targets.some(point => !pointIsWalkable(point, map))) continue;
-    const route: Point[] = [];
-    let current: Point | null = state;
-    for (const target of [...targets, home]) {
-      current = appendLeg(route, current, target, true);
-      if (!current) break;
-    }
-    if (current && route.length) return route;
-  }
-  return findResidentPath(state, home, map);
-}
-
 export function createResidentMotion(id: string, home: Placement): ResidentMotion {
   return { id, x: home.x, z: home.z, heading: home.rotation ?? 0, walking: false, phase: 'at_station', intent: 'station', route: [], routeIndex: 0,
     pauseRemaining: 0.6 + randomUnit(id, 0, 'arrival') * 3.5, sequence: 0, speed: 0.65 + randomUnit(id, 0, 'pace') * 0.28, home: { ...home } };
@@ -298,12 +282,13 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
   const dt = Number.isFinite(input.dt) ? Math.max(0, Math.min(MAX_MOTION_DT, input.dt)) : 0;
   if (dt === 0) return state;
   state.trafficCooldown = Math.max(0, (state.trafficCooldown ?? 0) - dt);
+  if (state.trafficBlockedFor !== undefined) state.trafficBlockedFor += dt;
   const intent = statusCanWander(input.status) && !input.reducedMotion ? 'wander' : 'station';
   const homeChanged = distance(input.home, state.home) > EPSILON || input.home.rotation !== state.home.rotation;
   if (intent !== state.intent || homeChanged) {
     state.intent = intent; state.route = []; state.routeIndex = 0; state.home = { ...input.home };
+    state.trafficBlockedFor = undefined;
     if (intent === 'station') state.pauseRemaining = 0;
-    else if (map.bodyRadius > RESIDENT_RADIUS) state.pauseRemaining = 12 + randomUnit(state.id, state.sequence, 'harbor-stay') * 18;
   }
   const atHome = distance(state, input.home) < EPSILON;
   const parkedHeading = map.bodyRadius > RESIDENT_RADIUS ? shipBerthHeading(input.home) : input.home.rotation ?? 0;
@@ -322,21 +307,20 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
       if (atHome && map.bodyRadius > RESIDENT_RADIUS) state.heading = faceToward(state.heading, parkedHeading, dt * 0.42);
       state.pauseRemaining = Math.max(0, state.pauseRemaining - dt);
       if (state.pauseRemaining > 0) return state;
-      if (map.bodyRadius > RESIDENT_RADIUS) {
-        state.route = findHarborPatrol(state, map) ?? [];
-        state.sequence += 1;
-      } else {
-        const targets = map.wanderPoints;
-        const offset = input.rosterIDs
-          ? residentWanderTargetIndex(state.id, state.sequence, targets.length, input.rosterIDs)
-          : Math.floor(randomUnit(state.id, state.sequence, 'destination') * targets.length);
-        state.sequence += 1;
-        for (let attempt = 0; attempt < targets.length; attempt++) {
-          const destination = (offset + attempt) % targets.length;
-          if (distance(state, targets[destination]) < 1.8) continue;
-          const path = findPromenadePath(state, destination, map);
-          if (path?.length) { state.route = path; break; }
-        }
+      const targets = map.wanderPoints;
+      const offset = input.rosterIDs
+        ? residentWanderTargetIndex(state.id, state.sequence, targets.length, input.rosterIDs)
+        : Math.floor(randomUnit(state.id, state.sequence, 'destination') * targets.length);
+      state.sequence += 1;
+      for (let attempt = 0; attempt < targets.length; attempt++) {
+        const destination = (offset + attempt) % targets.length;
+        if (distance(state, targets[destination]) < 1.8) continue;
+        // Idle ships explore the whole sea from their current location. Only
+        // work or reduced motion sends them back to their assigned island.
+        const path = map.bodyRadius > RESIDENT_RADIUS
+          ? findResidentPath(state, targets[destination], map)
+          : findPromenadePath(state, destination, map);
+        if (path?.length) { state.route = path; break; }
       }
       if (state.route.length === 0) { state.pauseRemaining = 2; return state; }
     }
@@ -369,9 +353,8 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
   }
   if (state.routeIndex >= state.route.length) {
     state.route = []; state.routeIndex = 0;
-    state.pauseRemaining = map.bodyRadius > RESIDENT_RADIUS
-      ? 14 + randomUnit(state.id, state.sequence, 'harbor-rest') * 18
-      : 2.2 + randomUnit(state.id, state.sequence, 'rest') * 4.8;
+    state.pauseRemaining = 2.2 + randomUnit(state.id, state.sequence, 'rest') * 4.8;
+    state.trafficBlockedFor = undefined;
     state.phase = intent === 'station' || (map.bodyRadius > RESIDENT_RADIUS && distance(state, input.home) < EPSILON) ? 'at_station' : 'resting';
   }
   return state;
@@ -450,7 +433,19 @@ export function resolveResidentSpacing(
         return Math.hypot(dx + vx * t, dz + vz * t) >= clearance - EPSILON;
       });
     };
-    if (safe(state)) { resolved.set(state.id, state); continue; }
+    if (safe(state)) { resolved.set(state.id, state.trafficBlockedFor === undefined ? state : { ...state, trafficBlockedFor: undefined }); continue; }
+    if (map.bodyRadius > RESIDENT_RADIUS) {
+      state = { ...state, trafficBlockedFor: state.trafficBlockedFor ?? 0 };
+      const goal = state.route.at(-1);
+      const occupiedGoal = goal && ordered.some(peer => peer.id !== state.id && distance(goal, resolved.get(peer.id) ?? before.get(peer.id) ?? peer) < clearance);
+      // Ambient destinations are optional. A few ships can otherwise wait
+      // forever for one another's neighboring waypoint to become free.
+      if (state.intent === 'wander' && state.trafficBlockedFor! >= 3 && occupiedGoal) {
+        resolved.set(state.id, { ...state, x: start.x, z: start.z, heading: start.heading, walking: false,
+          route: [], routeIndex: 0, pauseRemaining: 0, trafficBlockedFor: undefined });
+        continue;
+      }
+    }
     if (map.bodyRadius > RESIDENT_RADIUS && !state.trafficCooldown) {
       // Wide ships cannot always sidestep a parked vessel between shorelines.
       // Replan around the current fleet occasionally, then sail the detour at

@@ -17,6 +17,8 @@ overview. Ships turn before sailing and keep their bows aligned with their route
 The Residents or
 Fleet list provides keyboard and search access to every agent, with up to twelve
 visible in each sector. Closing the window does not stop agent tasks.
+Choose **New Agent** above the list to open Locus’s agent setup form. Saving
+adds the agent to the world while the rest of the fleet keeps its current course.
 
 Free agents wander through the planted commons and pause at landmarks. Agents
 with work return to their assigned stations. Four resident designs, lounge
@@ -27,8 +29,8 @@ and hair, and robots share the campus. **Pandas** and **Explorers** remain avail
 The choice is remembered, and existing agents keep their kind as the roster changes.
 Pandas and humans have articulated walking and idle animation.
 
-In The Local Line, each ship has its own island and pier. Idle agents mostly
-patrol near home, with occasional longer voyages; working agents return and dock
+In The Local Line, each ship has its own island and pier. Idle agents roam freely
+across the sea, pausing briefly between destinations; working agents return and dock
 side-on at their island. Once settled, a small One Piece-inspired crew walks and
 works in the shore plaza; it leaves before the ship departs. Eight articulated
 character designs are built locally without additional generation credits. Each agent keeps its own ship design, named in the Fleet list. The
@@ -58,7 +60,7 @@ skiffs carry those handoffs between islands once per event.
 The plugin requests:
 
 - `agents.read`: display saved agent names, roles, and activity labels.
-- `agents.interact`: select an agent to open Locus's native conversation panel.
+- `agents.interact`: open native agent conversations and the New Agent setup form.
 - `world.preferences`: remember the selected world theme and resident appearance.
 
 Credentials, model calls, transcripts, and tool approvals stay in native Locus.

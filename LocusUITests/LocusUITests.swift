@@ -1697,10 +1697,10 @@ final class LocusUITests: XCTestCase {
     func testAgentProfileEditorKeepsInstructionsAndAdvancedActionsVisible() {
         anyElement("workspace.modelPicker").click()
         anyElement("workspace.modelPicker.manageAgentsTeams").click()
-        let addAgent = app.buttons["Add Agent"]
-        XCTAssertTrue(addAgent.waitForExistence(timeout: 3))
-        revealSettingsControl(addAgent, in: anyElement("settings.content.agents"))
-        addAgent.click()
+        let newAgent = app.buttons["New Agent"]
+        XCTAssertTrue(newAgent.waitForExistence(timeout: 3))
+        revealSettingsControl(newAgent, in: anyElement("settings.content.agents"))
+        newAgent.click()
 
         let instructions = anyElement("agent.instructions")
         let template = anyElement("agent.useRoleTemplate")
@@ -1827,7 +1827,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitUntilHittable(manageTeams))
         manageTeams.click()
         XCTAssertTrue(anyElement("settings.quickTeam.create").waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Add Agent"].exists)
+        XCTAssertTrue(app.buttons["New Agent"].exists)
         XCTAssertTrue(app.staticTexts["Quick Team"].exists)
         XCTAssertTrue(app.staticTexts["qwen3:8b Dispatcher"].exists)
         XCTAssertTrue(app.staticTexts["qwen3:8b Lead"].exists)
@@ -4397,6 +4397,62 @@ final class LocusUITests: XCTestCase {
         add(options)
         anyElement("configureAgent.create.price").click()
         XCTAssertTrue(anyElement("eventAutomation.price.threshold").waitForExistence(timeout: 5))
+    }
+
+    func testUnavailableSavedAgentOffersDeletionAndCancelPreservesItsChats() {
+        relaunchWithAgentFixture("orphaned-profile")
+        revealSidebarForNavigation()
+        let orphanID = "FAAAA222-2222-4222-8222-222222222222"
+        let orphan = anyElement("agent.\(orphanID)")
+        XCTAssertTrue(orphan.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertTrue(anyElement("session.orphaned-agent-chat-1").exists)
+        XCTAssertTrue(anyElement("session.orphaned-agent-chat-2").exists)
+        anyElement("agent.\(orphanID).actions").click()
+
+        let remove = anyElement("agent.\(orphanID).delete")
+        XCTAssertTrue(remove.waitForExistence(timeout: 3))
+        XCTAssertTrue(remove.isEnabled, "An unavailable agent must have an actionable cleanup option")
+        XCTAssertEqual(remove.label, "Delete Agent and Chats…")
+        remove.click()
+
+        let confirm = anyElement("agent.saved.delete.confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "unavailable-agent-delete-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        // Escape invokes the standard Cancel action without ambiguously
+        // matching the mirrored Touch Bar button on macOS.
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(confirm))
+        XCTAssertTrue(orphan.exists)
+        XCTAssertTrue(anyElement("session.orphaned-agent-chat-1").exists)
+        XCTAssertTrue(anyElement("session.orphaned-agent-chat-2").exists)
+        XCTAssertTrue(anyElement("agent.FAAAA111-1111-4111-8111-111111111111").exists)
+    }
+
+    func testSavedAgentDeletionExplainsThatChatsAreArchived() {
+        relaunchWithAgentFixture("orphaned-profile")
+        revealSidebarForNavigation()
+        let profileID = "FAAAA111-1111-4111-8111-111111111111"
+        let profile = anyElement("agent.\(profileID)")
+        XCTAssertTrue(profile.waitForExistence(timeout: Self.launchContentTimeout))
+        anyElement("agent.\(profileID).actions").click()
+        let remove = anyElement("agent.\(profileID).delete")
+        XCTAssertTrue(remove.waitForExistence(timeout: 3))
+        XCTAssertTrue(remove.isEnabled)
+        XCTAssertEqual(remove.label, "Delete Agent…")
+        remove.click()
+
+        let confirm = anyElement("agent.saved.delete.confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", "archiv", "archiv"
+        )).firstMatch.exists, "Profile deletion should explain how its saved chats are retained")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(confirm))
+        XCTAssertTrue(profile.exists)
+        XCTAssertTrue(anyElement("session.live-agent-chat").exists)
     }
 
     func testNewAgentFromSidebarUsesTheSharedProfileEditor() {

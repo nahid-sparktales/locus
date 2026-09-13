@@ -368,6 +368,118 @@ def session_delete(session_id: str, service: ServiceDependency) -> dict[str, Any
         raise _busy_http() from exc
 
 
+def saved_agent_sessions_cleanup(
+    profile_id: str,
+    service: ServiceDependency,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Archive or recoverably remove every chat belonging to one saved profile.
+
+    Profile ownership is metadata, not a sidebar search result. Reading the
+    complete store also includes archived, empty and older-than-500 chats.
+    Keep that ownership intact in archives and recovery so restoring history
+    cannot silently turn an agent chat into an unrestricted regular chat.
+    """
+    try:
+        owner_id = uuid.UUID(profile_id.strip())
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(422, "agent profile ID must be a UUID") from exc
+    action = body.get("action")
+    if set(body) - {"action"} or not isinstance(action, str) or action not in {"archive", "delete"}:
+        raise HTTPException(422, "action must be archive or delete")
+    try:
+        with service.state_mutation():
+            metadata = SessionMeta.all()
+            session_ids: list[str] = []
+            for path in SessionStore.list_sessions():
+                entry = metadata.get(path.stem, {})
+                # Current ownership wins over a stale legacy world binding.
+                stored_id = entry.get("agent_profile_id") or entry.get("agent_world_profile_id")
+                try:
+                    matches = uuid.UUID(str(stored_id).strip()) == owner_id
+                except (ValueError, AttributeError):
+                    matches = False
+                if matches:
+                    session_ids.append(path.stem)
+
+            # Preflight the entire batch before changing a goal, the active
+            # conversation, or any history. This store check also covers old
+            # active runs and workflow leases outside the recent-runs window.
+            for session_id in session_ids:
+                if service.run_store.session_has_active_run(session_id):
+                    raise HTTPException(409, "Wait for this agent's chats to stop before removing it.")
+                owner = _agent_owning_chat(service, session_id)
+                if owner is not None:
+                    raise HTTPException(
+                        409,
+                        f"A chat still receives {owner}'s automatic work. Delete that automation first.",
+                    )
+
+            replaced_active = service.core.session.session_id in session_ids
+            replacement = None
+            if replaced_active:
+                # Archiving can remove the old managed checkout. Start its
+                # replacement in the source workspace, as New Chat does.
+                if service.current_task is not None or service.core.task_metadata is not None:
+                    workspace_root = (
+                        service.current_task.workspace_root
+                        if service.current_task is not None else service.core.workspace_root
+                    )
+                    try:
+                        service.core.leave_task_checkout(workspace_root)
+                    except ValueError as exc:
+                        raise HTTPException(409, "The chat's source workspace is unavailable.") from exc
+                    service.current_task = None
+                replacement = service.core.new_session(reason="deleted_active")
+
+            result = {
+                "ok": True,
+                "session_ids": session_ids,
+                "count": len(session_ids),
+                "deleted_active": replaced_active,
+                "replacement_session_info": replacement,
+                "trash_batch": None,
+            }
+            try:
+                if action == "archive":
+                    for session_id in session_ids:
+                        # Reuse worktree snapshots and goal pausing from the
+                        # ordinary archive path. A failure keeps the saved agent
+                        # in place and the operation can be retried safely.
+                        session_metadata_update(session_id, service, {"archived": True})
+                    archived = SessionMeta.all()
+                    if any(not archived.get(session_id, {}).get("archived") for session_id in session_ids):
+                        raise HTTPException(500, "The agent's chats could not all be archived. Try again.")
+                elif session_ids:
+                    for session_id in session_ids:
+                        _transition_session_goal(service, session_id, "cancel")
+                    count, recovery_path = SessionStore.move_to_trash(session_ids, require_all=True)
+                    if count != len(session_ids):
+                        # The existing recovery primitive can report a partial
+                        # filesystem move. Restore that batch before reporting a
+                        # failure instead of claiming the whole agent is gone.
+                        SessionStore.restore_from_trash_details(Path(recovery_path).name)
+                        raise HTTPException(500, "The agent's chats could not all be moved to recovery. Try again.")
+                    result["trash_batch"] = Path(recovery_path).name
+            except (HTTPException, OSError) as exc:
+                if replacement is None:
+                    if isinstance(exc, OSError):
+                        raise HTTPException(500, "The agent's chats could not be moved to recovery. Try again.") from exc
+                    raise
+                # The foreground already changed. Return its replacement even
+                # when cleanup fails, so the app can adopt it before reporting
+                # the error and keeping the profile available for a retry.
+                result.update(
+                    ok=False,
+                    session_ids=[],
+                    count=0,
+                    error=str(exc.detail) if isinstance(exc, HTTPException) else str(exc),
+                )
+            return result
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+
+
 def sessions_restore(
     service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -788,6 +900,11 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/sessions/search", sessions_search, methods=["GET"])
     router.add_api_route("/api/sessions/new", session_new, methods=["POST"])
     router.add_api_route("/api/sessions/detached", session_detached, methods=["POST"])
+    router.add_api_route(
+        "/api/sessions/agent-profile/{profile_id}/cleanup",
+        saved_agent_sessions_cleanup,
+        methods=["POST"],
+    )
     router.add_api_route("/api/sessions", sessions_clear, methods=["DELETE"])
     router.add_api_route("/api/sessions/{session_id}", session_delete, methods=["DELETE"])
     router.add_api_route("/api/sessions/restore", sessions_restore, methods=["POST"])

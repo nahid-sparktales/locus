@@ -26,6 +26,10 @@ screen extension.
 - In Locus’s **Agent** page, choose **New Agent** to use the same setup form as
   Agent World. Saving creates a named sidebar group and its first chat. Saved
   agents also appear as residents in the world.
+- In Agent World, choose **New Agent** above the Residents or Fleet list. Set
+  the agent’s name, model, instructions, and access in the native setup form.
+  Saving adds the agent to the world; the other agents keep their locations
+  and routes. Select the new agent whenever you want to start a conversation.
 - **Manage Agent → Add…** offers **New chat**, **On a schedule**, **When an event
   arrives**, and **When a price changes**. Each conversation and automation
   stays with that agent and uses its saved model, instructions, and access.
@@ -88,8 +92,8 @@ The outpost combines planted commons, lounge areas, and workstations with four
 explorer designs and four panda accessories. Pandas follow the site's original
 ink/cream/lime mascot and have articulated knees, feet, arms, and idle animation.
 The Local Line assigns a stable ship design and island home to each visible agent
-and shows the ship and home in the Fleet list. Idle ships mostly patrol their own
-island, occasionally visit elsewhere, and return to their pier when work begins. At the berth they turn side-on to the
+and shows the ship and home in the Fleet list. Idle ships roam freely across the
+sea, pause briefly between destinations, and return to their pier when work begins. At the berth they turn side-on to the
 pier. A small crew appears in its island work area after the ship settles, walks
 and works there, and leaves before departure. Eight locally built character
 designs evoke Luffy, Zoro, Chopper, Nami, Robin, Franky, Jinbei, and Marines.
@@ -108,6 +112,9 @@ LoRA Tale, JAXa, and floating SkypiAI. Seed Kings appear in the RAM Belts. Ship 
 use the same island and Thread Line obstacles as the scene, with open sailing lanes
 and twelve berths. This is an unofficial fan-art interpretation, not a
 canonically scaled map.
+The islands have sculpted shores, blended shallow water, detailed foliage and
+buildings, and softer surf. Retina rendering and clearer map text preserve the
+miniature detail when you zoom in.
 
 The fleet includes Thousand Funny, Going Sherry, BaratAI, Navy Q4, Polar Tensor,
 Spade Prompters’ Ship, Thread Force, Moby Disk, Perfume CUDA, Oro JSON,

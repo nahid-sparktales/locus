@@ -1346,8 +1346,8 @@ class SessionStore:
     # ----------------------------------------------------------------- writes
 
     @staticmethod
-    def move_to_trash(session_ids: list[str]) -> tuple[int, str]:
-        """Move sessions into the recovery folder. Returns (count, path)."""
+    def move_to_trash(session_ids: list[str], *, require_all: bool = False) -> tuple[int, str]:
+        """Move sessions into recovery, optionally requiring a durable whole batch."""
         if not session_ids:
             return 0, str(_trash_dir())
         # A UUID is unnecessary here, but microseconds plus an exclusive suffix
@@ -1365,23 +1365,59 @@ class SessionStore:
             "cleared_at": datetime.now().isoformat(timespec="seconds"),
             "sessions": {},
         }
+        planned_paths: dict[str, Path] = {}
+        if require_all:
+            try:
+                for session_id in session_ids:
+                    path = SessionStore.path_for(session_id)
+                    if path is None:
+                        raise FileNotFoundError(f"session not found: {session_id}")
+                    planned_paths[session_id] = path
+                placements = ChatOrganizationStore.snapshot()["placements"]
+                manifest["sessions"] = {session_id: meta.get(session_id, {}) for session_id in session_ids}
+                manifest["organization"] = {
+                    session_id: placements[session_id] for session_id in session_ids if session_id in placements
+                }
+                # Save ownership before moving even one transcript. A full
+                # disk must not turn recoverable deletion into identity loss.
+                manifest_text = json.dumps(manifest, indent=2) + "\n"
+                if len(manifest_text.encode("utf-8")) > MAX_METADATA_BYTES:
+                    raise OSError("the recovery metadata exceeds the restore limit")
+                (target / "manifest.json").write_text(
+                    manifest_text, encoding="utf-8"
+                )
+            except OSError:
+                (target / "manifest.json").unlink(missing_ok=True)
+                target.rmdir()
+                raise
         for session_id in session_ids:
-            path = SessionStore.path_for(session_id)
+            path = planned_paths.get(session_id) if require_all else SessionStore.path_for(session_id)
             if path is None:
                 continue
             try:
                 shutil.move(str(path), str(target / path.name))
             except OSError:
+                if require_all:
+                    # Metadata and placements are still untouched. Roll back
+                    # moved files; if rollback itself fails, the prewritten
+                    # manifest still makes the remaining files recoverable.
+                    for moved_id in moved:
+                        original = planned_paths[moved_id]
+                        shutil.move(str(target / original.name), str(original))
+                    (target / "manifest.json").unlink(missing_ok=True)
+                    target.rmdir()
+                    raise
                 continue
             moved.append(session_id)
             manifest["sessions"][session_id] = meta.get(session_id, {})
         manifest["organization"] = ChatOrganizationStore.detach_sessions(moved)
-        try:
-            (target / "manifest.json").write_text(
-                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-            )
-        except OSError:
-            pass
+        if not require_all:
+            try:
+                (target / "manifest.json").write_text(
+                    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+                )
+            except OSError:
+                pass
         SessionMeta.forget(moved)
         return len(moved), str(target)
 

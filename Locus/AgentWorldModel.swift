@@ -35,6 +35,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published var sharedChatPresented = false
     @Published private(set) var activatingConversation = false
     @Published var selectedTransfer: AgentWorldTransfer?
+    @Published var newAgentDraft: AgentProfile?
     @Published private(set) var attentionRequests: [AgentWorldAttention] = []
     @Published private(set) var transfers: [AgentWorldTransfer] = []
     @Published private(set) var residents: [AgentWorldResident] = []
@@ -54,6 +55,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     var selectedProfile: AgentProfile? { profilesProvider().first { $0.id.uuidString == selection } }
     var selectedSessionID: String? { selectedSessionOverride ?? selection.flatMap { bindings[Self.bindingKey(workspace: workspace, profileID: $0)] } }
     var canInteract: Bool { activeScreen?.screen.capabilities.contains("agents.interact") == true }
+    var canCreateAgent: Bool { canInteract && appModel != nil && !isVisualFixture }
 
     struct AvailableScreen: Identifiable, Equatable {
         let pluginID: String
@@ -97,6 +99,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var runnerTokens: [String: UUID] = [:]
     private var queueErrors: [String: String] = [:]
     private var windowWorkspace = ""
+    private var isVisualFixture = false
     var visibilityChanged: ((Bool) -> Void)?
 
     func configure(
@@ -138,6 +141,13 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func boundProfileID(for sessionID: String) -> UUID? {
         profileHistory[sessionID].flatMap(UUID.init(uuidString:))
+    }
+
+    func hasPendingWork(profileID: UUID) -> Bool {
+        let suffix = "\n" + profileID.uuidString.lowercased()
+        return creationTasks.keys.contains { $0.hasSuffix(suffix) }
+            || runners.keys.contains { $0.hasSuffix(suffix) }
+            || queues.contains { $0.key.hasSuffix(suffix) && !$0.value.isEmpty }
     }
 
     func bindConversation(_ sessionID: String, workspace: String, profileID: UUID) {
@@ -259,6 +269,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         visibilityChanged?(false); visibilityChanged = nil
         refreshTask?.cancel(); refreshTask = nil; selectionTask?.cancel(); activationTask?.cancel()
         appModel?.agentWorldOwnsPresentations = false
+        newAgentDraft = nil
         window?.contentView = nil; window = nil; activeScreen = nil
         // Runners and the application's workers intentionally outlive the window.
     }
@@ -384,6 +395,22 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func openSelectedInLocus() { if let id = selectedSessionID { openConversation(id) } }
     func manageAgents() { manageProfiles() }
 
+    /// The web world can request the editor, but profile data and saving stay
+    /// in the native form. Creating a resident leaves this project's map open.
+    func createAgent() {
+        guard canCreateAgent, newAgentDraft == nil, let appModel else { return }
+        newAgentDraft = appModel.newSavedAgentDraft()
+    }
+
+    func saveNewAgent(_ profile: AgentProfile) {
+        guard canCreateAgent, newAgentDraft?.id == profile.id, let appModel,
+              !appModel.agentProfiles.contains(where: { $0.id == profile.id }) else { return }
+        appModel.agentTeamsModel.saveAgentProfile(profile)
+        guard appModel.agentProfiles.contains(where: { $0.id == profile.id }) else { return }
+        newAgentDraft = nil
+        refresh()
+    }
+
     func activateSelectedConversation() {
         guard canInteract, let sessionID = selectedSessionID, let appModel else { return }
         activationTask?.cancel()
@@ -482,9 +509,9 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     var snapshot: [String: Any] {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else {
-            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": ""]
+            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": "", "canCreateAgent": false]
         }
-        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "projectName": projectName,
+        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "projectName": projectName, "canCreateAgent": canCreateAgent,
                                   "agents": residents.map { resident -> [String: Any] in
             // Route failures can contain provider names; the world needs only
             // the activity label. Detailed errors stay in the native panel.
@@ -504,6 +531,7 @@ extension AgentWorldModel {
         guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1",
               ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_WORLD_ROOT"] == root else { return }
         subscriptions.removeAll()
+        isVisualFixture = true
         let profiles = [
             AgentProfile(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, name: "Atlas", model: "Fixture model", role: .researcher),
             AgentProfile(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, name: "Nova", model: "Fixture model", role: .implementer),

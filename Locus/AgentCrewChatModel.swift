@@ -243,6 +243,12 @@ final class AgentCrewChatModel: ObservableObject {
 
     func boundProfileID(for sessionID: String) -> UUID? { binding(for: sessionID)?.profileID }
 
+    func hasPendingReplies(profileID: UUID) -> Bool {
+        ledgers.values.contains { ledger in
+            ledger.messages.contains { $0.profileID == profileID && $0.status.isPending }
+        }
+    }
+
     func visibleBlocks(for message: AgentCrewChatMessage) -> [ChatBlock] {
         if message.role == .user {
             return [ChatBlock(id: message.id, kind: .user, text: message.text)]

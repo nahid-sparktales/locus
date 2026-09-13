@@ -166,6 +166,15 @@ An **Undo** toast restores the chat. If the active chat is deleted, Locus create
 
 Example: delete an obsolete debugging chat, then select Undo when you realize it contains a useful command. The chat returns to its original workspace group.
 
+For a saved agent, choose **Delete Agent…** from its sidebar menu. Its chats are
+archived and its completed runs are kept. Removing a specialist in Settings uses
+the same cleanup. **Show Archived Sessions** makes that history available again.
+
+If an older deletion left an **Unavailable agent** entry, open its **…** menu and
+choose **Delete Agent and Chats…**. This moves all chats belonging to that entry,
+including archived chats and chats hidden by search, into one recovery batch.
+The **Undo** toast restores the chats with their original agent ownership.
+
 ## 5. Multi-agent execution and worktree isolation
 
 Choose Solo or Team from the composer. `@AgentName` forces an eligible member of the selected team, while `@TeamName` selects a configured team.

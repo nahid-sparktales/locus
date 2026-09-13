@@ -262,12 +262,212 @@ final class SavedAgentTests: XCTestCase {
         XCTAssertNotNil(model.savedAgentEditor)
         XCTAssertNil(model.pendingSavedAgentEditor)
     }
+
+    @MainActor
+    func testRemovingSavedAgentArchivesAllOwnedChatsBeforeRemovingProfile() async throws {
+        let profile = AgentProfile(name: "Test agent", model: "fixture")
+        let other = AgentProfile(name: "Keep agent", model: "fixture")
+        SavedAgentURLProtocol.reset(rows: [
+            cleanupRow("visible", owner: profile.id),
+            cleanupRow("outside-catalog", owner: profile.id),
+            cleanupRow("unrelated", owner: other.id),
+        ])
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentProfiles = [profile, other]
+        model.sessions = [cleanupSession("visible", owner: profile.id), cleanupSession("unrelated", owner: other.id)]
+        model.installTranscriptSession("foreground", blocks: [])
+        model.selectedSavedAgentID = profile.id
+        model.configureAgentProfileID = profile.id
+
+        try await model.removeSavedAgent(profile)
+
+        XCTAssertEqual(model.agentProfiles.map(\.id), [other.id])
+        XCTAssertEqual(model.sessions.map(\.id), ["unrelated"])
+        XCTAssertEqual(SavedAgentURLProtocol.archivedIDs(), ["visible", "outside-catalog"])
+        XCTAssertNil(model.selectedSavedAgentID)
+        XCTAssertNil(model.configureAgentProfileID)
+        XCTAssertTrue(model.removingSavedAgentIDs.isEmpty)
+        XCTAssertEqual(SavedAgentURLProtocol.cleanupActions(), ["archive"])
+    }
+
+    @MainActor
+    func testUnavailableAgentCleanupDeletesHiddenAndArchivedChatsWithSingleUndo() async throws {
+        let removedID = UUID()
+        let other = AgentProfile(name: "Keep agent", model: "fixture")
+        SavedAgentURLProtocol.reset(rows: [
+            cleanupRow("outside-search", owner: removedID),
+            cleanupRow("active", owner: removedID),
+            cleanupRow("archived", owner: removedID, archived: true),
+            cleanupRow("unrelated", owner: other.id),
+        ], current: "active")
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentProfiles = [other]
+        let active = cleanupSession("active", owner: removedID)
+        model.sessions = [active, cleanupSession("unrelated", owner: other.id)]
+        model.installTranscriptSession(active.id, blocks: [])
+        model.agentWorld.bindConversation(active.id, workspace: "/tmp", profileID: removedID)
+        model.searchQuery = "active"
+
+        try await model.deleteUnavailableSavedAgent(profileID: removedID)
+
+        XCTAssertEqual(model.sessions.map(\.id), ["unrelated"])
+        XCTAssertEqual(model.agentProfiles.map(\.id), [other.id])
+        XCTAssertEqual(model.currentSessionID, "replacement")
+        XCTAssertFalse(model.pendingSessionReset)
+        XCTAssertEqual(model.agentWorld.boundProfileID(for: active.id), removedID,
+                       "Recovery must retain saved-agent routing and access restrictions")
+        XCTAssertEqual(model.pendingDeletedChat?.trashBatch, "profile-recovery")
+        XCTAssertEqual(model.toast?.actionTitle, "Undo")
+        XCTAssertEqual(SavedAgentURLProtocol.cleanupActions(), ["delete"])
+
+        model.performToastAction()
+        for _ in 0..<100 {
+            if SavedAgentURLProtocol.requestedPaths().contains("/api/sessions/active/resume") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(Set(SavedAgentURLProtocol.rowIDs()), ["outside-search", "active", "archived", "unrelated"])
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().contains("/api/sessions/active/resume"),
+                      "Undo must reopen the original active chat, not the first chat in the batch")
+    }
+
+    @MainActor
+    func testSavedAgentRemovalRejectsBackgroundRunBeforeSendingCleanup() async throws {
+        let profile = AgentProfile(name: "Working agent", model: "fixture")
+        SavedAgentURLProtocol.reset(rows: [cleanupRow("background", owner: profile.id)])
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentProfiles = [profile]
+        model.sessions = [cleanupSession("background", owner: profile.id)]
+        model.installTranscriptSession("foreground", blocks: [])
+        model.taskConversationStates["background"] = TaskConversationState(sessionID: "background",
+            state: .running, updatedAt: Date())
+
+        do {
+            try await model.removeSavedAgent(profile)
+            XCTFail("A background run must prevent profile removal")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("runs"))
+        }
+        XCTAssertEqual(model.agentProfiles.map(\.id), [profile.id])
+        XCTAssertEqual(SavedAgentURLProtocol.cleanupActions(), [])
+        XCTAssertTrue(model.removingSavedAgentIDs.isEmpty)
+    }
+
+    @MainActor
+    func testRejectedCleanupKeepsProfileAndChatsAndReleasesActiveTransition() async throws {
+        let profile = AgentProfile(name: "Protected agent", model: "fixture")
+        SavedAgentURLProtocol.reset(rows: [cleanupRow("active", owner: profile.id)], current: "active", rejectCleanup: true)
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentProfiles = [profile]
+        model.sessions = [cleanupSession("active", owner: profile.id)]
+        model.installTranscriptSession("active", blocks: [])
+
+        do {
+            try await model.removeSavedAgent(profile)
+            XCTFail("A rejected cleanup must not remove its profile")
+        } catch {}
+        XCTAssertEqual(model.agentProfiles.map(\.id), [profile.id])
+        XCTAssertEqual(model.sessions.map(\.id), ["active"])
+        XCTAssertEqual(model.currentSessionID, "active")
+        XCTAssertFalse(model.pendingSessionReset)
+        XCTAssertTrue(model.removingSavedAgentIDs.isEmpty)
+        XCTAssertEqual(SavedAgentURLProtocol.archivedIDs(), [])
+    }
+
+    @MainActor
+    func testCleanupFailureAfterReplacementKeepsNativeSessionSynchronizedAndProfileIntact() async throws {
+        for loseResponse in [false, true] {
+            let profile = AgentProfile(name: "Retry agent", model: "fixture")
+            SavedAgentURLProtocol.reset(rows: [cleanupRow("active", owner: profile.id)], current: "active",
+                                       failAfterReplacement: true, loseCleanupResponse: loseResponse)
+            let model = cleanupModel()
+            defer { cancelPendingWork(model) }
+            model.agentProfiles = [profile]
+            model.sessions = [cleanupSession("active", owner: profile.id)]
+            model.installTranscriptSession("active", blocks: [ChatBlock(kind: .user, text: "Old conversation")])
+
+            do {
+                try await model.removeSavedAgent(profile)
+                XCTFail("A partial archive failure must retain the saved profile")
+            } catch {}
+
+            XCTAssertEqual(model.currentSessionID, "replacement", "Lost response: \(loseResponse)")
+            XCTAssertEqual(model.sessionInfo?.sessionID, "replacement")
+            XCTAssertTrue(model.blocks.isEmpty, "The old transcript must not appear under the replacement chat")
+            XCTAssertEqual(model.agentProfiles.map(\.id), [profile.id])
+            XCTAssertTrue(model.sessions.isEmpty, "Partially archived history must be refreshed even on failure")
+            XCTAssertEqual(SavedAgentURLProtocol.archivedIDs(), ["active"])
+            XCTAssertFalse(model.pendingSessionReset)
+            XCTAssertTrue(model.removingSavedAgentIDs.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testOrphanCleanupRefusesAProfileThatIsAvailableAgain() async throws {
+        let profile = AgentProfile(name: "Restored agent", model: "fixture")
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentProfiles = [profile]
+        do {
+            try await model.deleteUnavailableSavedAgent(profileID: profile.id)
+            XCTFail("The orphan action must not delete a restored saved agent")
+        } catch {}
+        XCTAssertEqual(model.agentProfiles.map(\.id), [profile.id])
+        XCTAssertEqual(SavedAgentURLProtocol.cleanupActions(), [])
+    }
+
+    @MainActor
+    private func cleanupModel() -> AppModel {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SavedAgentURLProtocol.self]
+        let backend = BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, session: URLSession(configuration: config))
+        return AppModel(startImmediately: false, backendOverride: backend)
+    }
+
+    private func cleanupSession(_ id: String, owner: UUID) -> SessionSummary {
+        SessionSummary(id: id, name: id, preview: "", mtime: 1, size: 0, cwd: "/tmp", agentProfileID: owner.uuidString)
+    }
+
+    private func cleanupRow(_ id: String, owner: UUID, archived: Bool = false) -> [String: Any] {
+        ["id": id, "name": id, "preview": "", "mtime": 1, "size": 0, "cwd": "/tmp",
+         "agent_profile_id": owner.uuidString.lowercased(), "archived": archived]
+    }
 }
 
 private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     private static var rows: [[String: Any]] = []
-    static func reset() { lock.lock(); defer { lock.unlock() }; rows = [] }
+    private static var recoveryRows: [[String: Any]] = []
+    private static var current = "foreground"
+    private static var rejectCleanup = false
+    private static var failAfterReplacement = false
+    private static var loseCleanupResponse = false
+    private static var actions: [String] = []
+    private static var paths: [String] = []
+    static func reset(rows: [[String: Any]] = [], current: String = "foreground", rejectCleanup: Bool = false,
+                      failAfterReplacement: Bool = false, loseCleanupResponse: Bool = false) {
+        lock.lock(); defer { lock.unlock() }
+        self.rows = rows; self.current = current; self.rejectCleanup = rejectCleanup
+        self.failAfterReplacement = failAfterReplacement; self.loseCleanupResponse = loseCleanupResponse
+        recoveryRows = []; actions = []; paths = []
+    }
+    static func archivedIDs() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(rows.filter { $0["archived"] as? Bool == true }.compactMap { $0["id"] as? String })
+    }
+    static func rowIDs() -> [String] { lock.lock(); defer { lock.unlock() }; return rows.compactMap { $0["id"] as? String } }
+    static func cleanupActions() -> [String] { lock.lock(); defer { lock.unlock() }; return actions }
+    static func requestedPaths() -> [String] { lock.lock(); defer { lock.unlock() }; return paths }
+    private static func sessionInfo() -> [String: Any] {
+        let info = SessionInfo(model: "fixture", host: "localhost", cwd: "/tmp", session: current,
+            sessionID: current, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            maxIterations: 10, hasProjectContext: false, permissions: SessionPermissions(skipAll: false, allowed: []))
+        return try! JSONSerialization.jsonObject(with: JSONEncoder().encode(info)) as! [String: Any]
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
@@ -275,30 +475,71 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         var result: [String: Any] = [:]
+        var statusCode = 200
+        Self.paths.append(request.url!.path)
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: bytes.prefix(count))
+            }
+        }
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         switch request.url!.path {
         case "/api/sessions/detached":
-            var data = request.httpBody ?? Data()
-            if let stream = request.httpBodyStream {
-                stream.open(); defer { stream.close() }
-                var bytes = [UInt8](repeating: 0, count: 1024)
-                while stream.hasBytesAvailable {
-                    let count = stream.read(&bytes, maxLength: bytes.count)
-                    guard count > 0 else { break }
-                    data.append(contentsOf: bytes.prefix(count))
-                }
-            }
-            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             let id = "saved-\(Self.rows.count + 1)"
             Self.rows.append(["id": id, "name": id, "preview": "", "mtime": Self.rows.count + 1,
                 "size": 0, "title": body["title"] ?? "", "cwd": body["cwd"] ?? "/tmp",
                 "agent_profile_id": body["agent_profile_id"] ?? ""])
             result = ["session_id": id]
-        case "/api/sessions": result = ["sessions": Self.rows, "current": "foreground"]
+        case let path where path.hasPrefix("/api/sessions/agent-profile/") && path.hasSuffix("/cleanup"):
+            let profileID = UUID(uuidString: request.url!.pathComponents.dropLast().last ?? "")
+            let action = body["action"] as? String ?? ""
+            Self.actions.append(action)
+            if Self.rejectCleanup {
+                statusCode = 409; result = ["detail": "This chat receives an automation's runs."]
+                break
+            }
+            let matches = Self.rows.filter { UUID(uuidString: $0["agent_profile_id"] as? String ?? "") == profileID }
+            let ids = matches.compactMap { $0["id"] as? String }
+            let wasActive = ids.contains(Self.current)
+            if wasActive { Self.current = "replacement" }
+            if action == "delete" {
+                Self.recoveryRows = matches
+                Self.rows.removeAll { ids.contains($0["id"] as? String ?? "") }
+            } else {
+                for index in Self.rows.indices where ids.contains(Self.rows[index]["id"] as? String ?? "") {
+                    Self.rows[index]["archived"] = true
+                }
+            }
+            result = ["ok": true, "session_ids": ids, "count": ids.count, "deleted_active": wasActive]
+            if action == "delete", !ids.isEmpty { result["trash_batch"] = "profile-recovery" }
+            if wasActive { result["replacement_session_info"] = Self.sessionInfo() }
+            if Self.failAfterReplacement {
+                result["ok"] = false; result["error"] = "Worktree archive failed. Try again."
+                result["session_ids"] = [String](); result["count"] = 0
+                if Self.loseCleanupResponse {
+                    statusCode = 500; result = ["detail": "The cleanup response was lost"]
+                }
+            }
+        case "/api/sessions/restore":
+            let ids = Self.recoveryRows.compactMap { $0["id"] as? String }
+            Self.rows.append(contentsOf: Self.recoveryRows); Self.recoveryRows = []
+            result = ["ok": true, "restored": ids.count, "session_ids": ids]
+        case "/api/sessions":
+            let includeArchived = request.url!.query?.contains("include_archived=true") == true
+            result = ["sessions": Self.rows.filter { includeArchived || $0["archived"] as? Bool != true }, "current": Self.current]
+        case "/api/config":
+            result = ["model": "fixture", "host": "localhost", "cwd": "/tmp", "max_iterations": 10,
+                      "session_info": Self.sessionInfo()]
         case "/api/models": result = ["models": ["fixture"]]
         case "/api/chat-folders": result = ["folders": []]
         default: break
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: result))
         client?.urlProtocolDidFinishLoading(self)

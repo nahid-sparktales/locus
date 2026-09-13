@@ -36,6 +36,7 @@ enum PluginScreenMessage: Equatable {
     case openTransfer(String)
     case openSharedChat
     case openAgentControls(String?)
+    case createAgent
 
     static func decode(_ body: Any, screen: ExtensionPluginScreen) -> PluginScreenMessage? {
         guard screen.isSupported, let value = body as? [String: Any],
@@ -59,6 +60,9 @@ enum PluginScreenMessage: Equatable {
         case "openSharedChat":
             guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
             return .openSharedChat
+        case "createAgent":
+            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
+            return .createAgent
         case "openAgentControls":
             guard screen.capabilities.contains("agents.interact") else { return nil }
             if keys == ["version", "type"] { return .openAgentControls(nil) }
@@ -212,6 +216,7 @@ struct PluginScreenHost: NSViewRepresentable {
             case .openTransfer(let id): model?.openTransfer(id)
             case .openSharedChat: model?.openSharedChat()
             case .openAgentControls(let id): model?.openAgentControls(id)
+            case .createAgent: model?.createAgent()
             }
         }
         func sendSnapshot() {

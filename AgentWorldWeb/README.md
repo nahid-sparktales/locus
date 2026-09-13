@@ -41,7 +41,7 @@ theme, embedded assets, humanoid clips, references, hashes, and paid-task totals
 ## Host boundary
 
 The renderer sends version 1 `ready`, `selectAgent`, `preferences`, `openAttention`,
-`openTransfer`, `openSharedChat`, and `openAgentControls` messages
+`openTransfer`, `openSharedChat`, `openAgentControls`, and `createAgent` messages
 through `window.webkit.messageHandlers.locusScreen`. Locus sends `snapshot` and
 `visibility` messages to `window.locusAgentWorld.receive`. `src/state.ts` defines
 and validates the contract. Agent IDs are profile UUIDs; status values describe
@@ -61,14 +61,21 @@ between destinations. Working, queued, and attention states return residents to
 their assigned workstations. Selecting or hovering an available resident pauses
 its stroll for easy interaction; assigning work resumes its return to the desk.
 In The Local Line, each visible agent has its own named island berth. Idle ships
-usually stay near their island, with occasional longer voyages. Working agents
+roam freely between destinations across the sea, with brief pauses. Working agents
 return and settle broadside at their island pier. The original inward approach
 bearing stays unchanged, so departures still turn and sail bow-first. Adding or removing a profile preserves the
-other ships' homes. `grandLineScenery.ts` supplies the ocean, RAM Belts, Thread Line,
+other ships' homes and current routes. **New Agent** opens the native setup form
+directly from the roster and adds the saved profile to the world.
+`grandLineScenery.ts` supplies the ocean, RAM Belts, Thread Line,
 Recurse Mountain, island landmarks, and the shared obstacles used for navigation.
 A voyage chart reflects the supplied One Piece Grand Line reference; named islands,
 Llamoon, Seed Kings, and SkypiAI provide One Piece references. The layout is a
 fan-art interpretation rather than a canonically scaled map.
+The coastlines use finer sculpted terrain, sand gradients, scattered rocks, and
+blended shallow water with broken surf. Layered foliage, finished house trim,
+and curved pagoda roofs add detail at close range. Map text uses filtered
+textures, the ocean uses higher-resolution shadows, and both worlds render at
+up to two physical pixels per CSS pixel on Retina displays.
 
 Ping Ping appears only for concrete approval or input requests. Its top-right
 card uses a separately prepared Meshy snail, with accessible controls for every

@@ -19,7 +19,7 @@
         <div id="theme-popover" class="theme-popover" hidden><span class="eyebrow">WORLD THEME</span><button class="theme-choice" id="outpost-theme"><span class="planet-dot" aria-hidden="true"></span><span>Orbital Locus Outpost<small>Your agents, among the stars.</small></span><span aria-hidden="true">✓</span></button><p>Each world is a different home for the same agents.</p></div>
       </header>
       <aside class="roster-panel" aria-label="Residents">
-        <div class="roster-heading"><h2><span id="roster-title">Residents</span> <span id="resident-count">0</span></h2><button id="roster-toggle" class="icon-button" aria-label="Collapse residents" aria-expanded="true" aria-controls="roster-body">−</button></div>
+        <div class="roster-heading"><h2><span id="roster-title">Residents</span> <span id="resident-count">0</span></h2><button id="new-agent" class="new-agent-button" type="button" aria-label="New Agent"><span aria-hidden="true">+</span> New<span class="new-agent-word"> Agent</span></button><button id="roster-toggle" class="icon-button" aria-label="Collapse residents" aria-expanded="true" aria-controls="roster-body">−</button></div>
         <div id="roster-body">
           <p id="project-name" class="project-name">Connecting to your project…</p>
           <div id="resident-appearance" class="resident-appearance">
@@ -32,7 +32,7 @@
           </div>
           <label class="search-field"><span aria-hidden="true">⌕</span><input id="resident-search" type="search" placeholder="Find an agent" autocomplete="off" aria-label="Search residents"></label>
           <div id="resident-list" class="resident-list" role="group" aria-label="Agent profiles"></div>
-          <div id="empty-state" class="empty-state" hidden><span class="empty-orbit" aria-hidden="true">◎</span><strong id="empty-title">No residents yet</strong><p id="empty-description">Create an agent profile in Locus to give it a home here.</p></div>
+          <div id="empty-state" class="empty-state" hidden><span class="empty-orbit" aria-hidden="true">◎</span><strong id="empty-title">No residents yet</strong><p id="empty-description">Choose New Agent to give your first agent a home here.</p></div>
           <div class="world-actions" aria-label="Agent workspace actions">
             <button id="shared-chat" type="button">Shared chat</button>
             <button id="agent-controls" type="button"><strong id="agent-controls-title">Agent controls</strong><span id="agent-controls-name">Manage your agents</span></button>

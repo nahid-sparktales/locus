@@ -60,6 +60,18 @@ final class AgentInspectorUITests: XCTestCase {
         let initialTitle = chatTitle.label + " \(chatTitle.value ?? "")"
         let parent = element("agent.seed-schedule")
         XCTAssertTrue(parent.waitForExistence(timeout: 5))
+        // The compact CI display leaves the fourth agent below the sidebar
+        // viewport. Its accessibility element still exists, so reveal the
+        // actual row before clicking instead of hitting the footer over it.
+        let sidebar = element("sidebar.scroll")
+        XCTAssertTrue(sidebar.exists)
+        for _ in 0..<16 {
+            if sidebar.frame.contains(parent.frame), parent.isHittable { break }
+            let scrollUp = parent.frame.minY < sidebar.frame.minY
+            sidebar.scroll(byDeltaX: 0, deltaY: scrollUp ? 100 : -100)
+        }
+        XCTAssertTrue(sidebar.frame.contains(parent.frame))
+        XCTAssertTrue(parent.isHittable)
         parent.click()
         let agentName = element("agentOverview.name")
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in

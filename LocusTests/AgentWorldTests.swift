@@ -41,6 +41,7 @@ final class AgentWorldTests: XCTestCase {
             (["version": 1, "type": "openAttention", "requestID": id.lowercased()], .openAttention(id)),
             (["version": 1, "type": "openTransfer", "transferID": id], .openTransfer(id)),
             (["version": 1, "type": "openSharedChat"], .openSharedChat),
+            (["version": 1, "type": "createAgent"], .createAgent),
             (["version": 1, "type": "openAgentControls"], .openAgentControls(nil)),
             (["version": 1, "type": "openAgentControls", "agentID": id], .openAgentControls(id)),
         ]
@@ -56,6 +57,91 @@ final class AgentWorldTests: XCTestCase {
             let key = type == "openAttention" ? "requestID" : type == "openTransfer" ? "transferID" : "agentID"
             XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": type, key: "../private"], screen: screen))
         }
+    }
+
+    func testWorldCreatesSavedAgentThroughNativeDraftWithoutChangingProjectOrStartingConversation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
+        try Data("<!doctype html><html><body>Agent creation fixture</body></html>".utf8)
+            .write(to: root.appendingPathComponent("ui/index.html"))
+        let title = "Agent World Creation Test " + UUID().uuidString
+        defer {
+            for window in NSApp.windows where window.title.hasPrefix(title) { window.close() }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let app = AppModel(startImmediately: false)
+        app.agentProfiles = []
+        app.agentTeamsModel.profilesChanged = {}
+        app.initialWorkspacePath = root.path
+        let world = app.agentWorld
+        var conversationsCreated = 0
+        world.configure(extensions: app.extensionsModel, profiles: { [weak app] in app?.agentProfiles ?? [] },
+                        workspace: { [weak app] in app?.workspacePath ?? "" }, availability: { _ in nil },
+                        state: { _ in .init() }, create: { _, _ in conversationsCreated += 1; return "unused" },
+                        load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("Creating an agent must not dispatch work") },
+                        stop: { _ in }, open: { _ in }, manage: {}, defaults: nil)
+        let interactive = ExtensionPluginScreen(id: "interactive", title: title, entrypoint: "ui/index.html", version: 1,
+                                                capabilities: ["agents.read", "agents.interact"])
+        let readOnly = ExtensionPluginScreen(id: "read-only", title: title, entrypoint: "ui/index.html", version: 1,
+                                             capabilities: ["agents.read"])
+        var plugin = ExtensionPlugin(id: "creation-fixture", name: "creation-fixture", displayName: title, description: nil,
+                                     version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
+                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
+                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
+        plugin.root = root.path; plugin.screens = [interactive, readOnly]
+        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
+        app.extensionsModel.extensions = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin],
+                                                            skills: [], mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
+
+        world.createAgent()
+        XCTAssertNil(world.newAgentDraft, "A closed world cannot open the editor")
+        world.open(pluginID: plugin.id, screenID: interactive.id)
+        XCTAssertTrue(world.canCreateAgent)
+        XCTAssertEqual(world.snapshot["canCreateAgent"] as? Bool, true)
+        world.createAgent()
+        let cancelledID = try XCTUnwrap(world.newAgentDraft?.id)
+        world.createAgent()
+        XCTAssertEqual(world.newAgentDraft?.id, cancelledID, "Repeated clicks must retain the current draft")
+        world.newAgentDraft = nil
+        XCTAssertTrue(app.agentProfiles.isEmpty, "Cancelling must not save a resident")
+
+        world.createAgent()
+        var draft = try XCTUnwrap(world.newAgentDraft)
+        XCTAssertNotEqual(draft.id, cancelledID)
+        XCTAssertEqual(draft.accessCeiling, .readOnly)
+        draft.name = "New Captain"; draft.model = "exact-local:7b"
+        let foreignDraft = AgentProfile(name: "Unrequested Captain", model: "exact-local:7b")
+        world.saveNewAgent(foreignDraft)
+        XCTAssertTrue(app.agentProfiles.isEmpty, "Only the native editor's current draft may be saved")
+        let pinnedWorkspace = world.workspace
+        let foregroundSession = app.currentSessionID
+        app.initialWorkspacePath = root.appendingPathComponent("another-project").path
+        world.saveNewAgent(draft)
+        XCTAssertNil(world.newAgentDraft)
+        XCTAssertEqual(app.agentProfiles.map(\.id), [draft.id])
+        XCTAssertEqual(app.agentProfiles.first?.model, "exact-local:7b")
+        XCTAssertEqual(world.residents.map(\.id), [draft.id.uuidString])
+        XCTAssertEqual((world.snapshot["agents"] as? [[String: Any]])?.first?["name"] as? String, "New Captain")
+        XCTAssertEqual(world.workspace, pinnedWorkspace)
+        XCTAssertEqual(app.currentSessionID, foregroundSession)
+        XCTAssertFalse(world.conversationPresented)
+        XCTAssertEqual(conversationsCreated, 0)
+
+        world.open(pluginID: plugin.id, screenID: readOnly.id)
+        world.createAgent()
+        XCTAssertFalse(world.canCreateAgent)
+        XCTAssertEqual(world.snapshot["canCreateAgent"] as? Bool, false)
+        XCTAssertNil(world.newAgentDraft)
+
+        world.open(pluginID: plugin.id, screenID: interactive.id)
+        world.createAgent()
+        var revokedDraft = try XCTUnwrap(world.newAgentDraft)
+        revokedDraft.name = "Revoked Captain"; revokedDraft.model = "exact-local:7b"
+        app.extensionsModel.extensions = .empty
+        world.saveNewAgent(revokedDraft)
+        XCTAssertFalse(world.canCreateAgent)
+        XCTAssertNil(world.newAgentDraft)
+        XCTAssertEqual(app.agentProfiles.map(\.id), [draft.id], "Revoking the world must revoke an open editor's save")
     }
 
     func testResidentAppearanceBridgeAcceptsOnlySupportedStylesAndOnePreferenceAtATime() {
