@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- Portable runtime package builds for Linux x86-64/ARM64 and Apple Silicon Macs,
+  with pinned Python and ChatGPT helpers, verified downloads, dependency hashes,
+  bundled license notices, and isolated service validation in CI.
+
+### Fixed
+
+- Runtime updates block new work during installation and restore the previous
+  service and databases if startup fails. Interrupted updates retain recovery
+  records; successful updates keep the previous package and database backups.
+- Packaged ChatGPT helpers start with their correct app-server entry point.
+- Run-history operations close database connections promptly, preventing
+  independent workers from exhausting the background service's file handles.
+
 ## 2.8.0 — 2026-09-09
 
 ### Added

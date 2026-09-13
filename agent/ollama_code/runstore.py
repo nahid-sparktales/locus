@@ -138,6 +138,16 @@ def _alive(pid: int) -> bool:
         return False
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Commit/rollback and close each operation without relying on cyclic GC."""
+
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class RunStore(AgentInspectorStore):
     """Thread-safe SQLite facade shared by the control and worker services."""
 
@@ -160,7 +170,7 @@ class RunStore(AgentInspectorStore):
             if disk_version is not None and disk_version < SCHEMA_VERSION:
                 backup = self.path.with_name(f"{self.path.name}.schema-{disk_version}.backup")
                 if not backup.exists():
-                    with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as destination:
+                    with sqlite3.connect(self.path, factory=_ClosingConnection) as source, sqlite3.connect(backup, factory=_ClosingConnection) as destination:
                         source.backup(destination)
                     backup.chmod(0o600)
             self._initialize()
@@ -179,8 +189,8 @@ class RunStore(AgentInspectorStore):
         if not self.path.exists():
             return None
         try:
-            uri = f"file:{self.path}?mode=ro"
-            with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+            uri = self.path.resolve().as_uri() + "?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=5, factory=_ClosingConnection) as connection:
                 exists = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
                 ).fetchone()
@@ -195,10 +205,10 @@ class RunStore(AgentInspectorStore):
 
     def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
         if readonly or self.read_only:
-            uri = f"file:{self.path}?mode=ro"
-            connection = sqlite3.connect(uri, uri=True, timeout=5)
+            uri = self.path.resolve().as_uri() + "?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, timeout=5, factory=_ClosingConnection)
         else:
-            connection = sqlite3.connect(self.path, timeout=5)
+            connection = sqlite3.connect(self.path, timeout=5, factory=_ClosingConnection)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=5000")
         connection.execute("PRAGMA foreign_keys=ON")
