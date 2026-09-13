@@ -22,6 +22,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -456,6 +457,41 @@ def _capture_continuity_snapshot(
         return
 
 
+def _run_profile_turn(
+    svc: ChatService,
+    text: str,
+    just_chat: bool,
+    attachments: list[dict[str, str]],
+    profile: AgentProfile,
+    mode: str,
+    reserved_run_id: str,
+) -> None:
+    from .agent_profile_runtime import solo_profile_boundary
+
+    with solo_profile_boundary(svc.core, profile) as configuration:
+        _run_user_turn(
+            svc, text, just_chat, attachments, configuration, mode,
+            reserved_run_id, solo_swarm_enabled=False, agent_profile=profile,
+        )
+
+
+def _expire_profile_turn(svc: ChatService) -> None:
+    """A profile deadline also releases approval and native-tool waits."""
+    svc.emit({"type": "note", "text": "The selected agent's time limit was reached."})
+    svc.core.interrupt()
+    svc.deny_all_pending()
+    svc.cancel_all_questions()
+    svc.cancel_all_computer_actions()
+    svc.cancel_all_simulator_actions()
+    svc.cancel_all_browser_actions()
+    svc.cancel_all_identity()
+    svc.cancel_all_notes_actions()
+    svc.cancel_all_connector_actions()
+    svc.cancel_dispatch_decisions()
+    svc.cancel_all_mcp_inputs()
+    svc.core.tool_registry.product_features.cancel_pending()
+
+
 def _run_user_turn(
     svc: ChatService,
     text: str,
@@ -469,6 +505,7 @@ def _run_user_turn(
     model_call_limit: int | None = None,
     capsule_context: dict[str, Any] | None = None,
     approved_plan: dict[str, Any] | None = None,
+    agent_profile: AgentProfile | None = None,
 ) -> None:
     """Worker entry that makes the UI's chat-only boundary explicit."""
     if capsule_context is not None:
@@ -580,6 +617,11 @@ def _run_user_turn(
         mode="ask" if just_chat else mode,
         memory_context=memory_context,
         continuity_context=continuity_context,
+        **({
+            "agent_id": agent_profile.id,
+            "fallback_name": agent_profile.name,
+            "fallback_instructions": agent_profile.instructions,
+        } if agent_profile is not None else {}),
     )
     swarm: Any = None
     bridge: CollaborationBridge | None = None
@@ -697,14 +739,25 @@ def _run_user_turn(
                     "instruction": str(trigger.get("instruction") or "")[:240_000],
                     "event": delivery.get("event") or {},
                 }
-        svc.core.run_turn(
-            text,
-            svc.decide,
-            allow_tools=not just_chat or workflow_result_only,
-            attachments=attachments,
-            persisted_user_metadata=persisted_metadata,
-            **({"model_call_limit": model_call_limit} if model_call_limit is not None else {}),
-        )
+        profile_timer = None
+        if agent_profile is not None:
+            timeout = svc.core.agent_configuration.runtime_policy.timeout_seconds
+            profile_timer = threading.Timer(timeout, _expire_profile_turn, args=(svc,))
+            profile_timer.daemon = True
+            profile_timer.start()
+        try:
+            svc.core.run_turn(
+                text,
+                svc.decide,
+                allow_tools=not just_chat or workflow_result_only,
+                attachments=attachments,
+                persisted_user_metadata=persisted_metadata,
+                **({"model_call_limit": model_call_limit} if model_call_limit is not None else {}),
+            )
+        finally:
+            if profile_timer is not None:
+                profile_timer.cancel()
+                profile_timer.join()
         if approved_plan is not None and svc.core.last_turn_result.get("reason") == "complete":
             from .task_state import TaskStateError, TaskStateStore, TaskVerifier
             try:
@@ -2395,11 +2448,20 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
                 or len(text.encode("utf-8")) > MAX_USER_MESSAGE_BYTES:
             _command_error(svc, str(mtype), "Message is too large to process safely.")
             return
+        session_id = getattr(core.session, "session_id", None)
+        saved_session_metadata = SessionMeta.get(session_id) if session_id else {}
+        bound_world_profile = saved_session_metadata.get("agent_world_profile_id")
+        if bound_world_profile and msg.get("agent_profile") is None:
+            _command_error(svc, str(mtype), "This Agent World conversation requires its saved agent profile. Reopen the resident or resend through its agent conversation.")
+            return
         requested_identity = msg.get("identity_mode")
         if requested_identity is not None and not isinstance(requested_identity, bool):
             _command_error(svc, str(mtype), "Identity task mode must be true or false.")
             return
         if requested_identity is True:
+            if bound_world_profile or msg.get("agent_profile") is not None:
+                _command_error(svc, str(mtype), "Agent profile conversations cannot become private Identity tasks.")
+                return
             if svc.busy:
                 _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
                 return
@@ -2476,7 +2538,26 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         if team_manifest is not None and not isinstance(team_manifest, dict):
             _command_error(svc, str(mtype), "The team manifest is malformed.")
             return
-        if capsule_context is not None:
+        agent_profile = None
+        if msg.get("agent_profile") is not None:
+            if core.identity_mode or team_manifest is not None or capsule_context is not None \
+                    or workflow_outputs is not None or approved_plan is not None or text.startswith("/"):
+                _command_error(svc, str(mtype), "An agent profile requires an ordinary Chat or Work message.")
+                return
+            from .agent_profile_runtime import parse_solo_profile
+            try:
+                agent_profile = parse_solo_profile(msg["agent_profile"], core.model)
+                bound_profile = bound_world_profile or saved_session_metadata.get("agent_profile_id")
+                if bound_profile and str(bound_profile).lower() != agent_profile.id.lower():
+                    raise ValueError("This conversation belongs to another agent profile.")
+            except (ValueError, TypeError) as exc:
+                _command_error(svc, str(mtype), str(exc))
+                return
+        if agent_profile is not None:
+            call = _run_profile_turn
+            args = (svc, text, just_chat, attachments, agent_profile, mode or "work",
+                    str(msg.get("run_id") or ""))
+        elif capsule_context is not None:
             call = _run_user_turn
             args = (svc, text, False, attachments, agent_config, mode or "plan",
                     str(msg.get("run_id") or uuid.uuid4().hex), False, None, None, capsule_context)
@@ -2730,6 +2811,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_dispatch_decisions()
         svc.cancel_all_mcp_inputs()
     elif mtype == "retry_last":
+        session_id = getattr(core.session, "session_id", None)
+        if session_id and SessionMeta.get(session_id).get("agent_world_profile_id"):
+            _command_error(svc, str(mtype), "Resend this message through the saved agent profile's Chat or Assign work action.")
+            return
         if error := _goal_retry_error(svc):
             _command_error(svc, "retry_last", error)
             return
@@ -2856,6 +2941,8 @@ def create_app(
         max_bytes=MAX_HTTP_BODY_BYTES,
         route_limits={("POST", "/api/document-jobs/upload"): MAX_SOURCE_BYTES},
     )
+    from .api.runtime import block_runtime_maintenance
+    application.middleware("http")(block_runtime_maintenance)
     application.middleware("http")(block_browser_origins)
     application.include_router(api)
     return application

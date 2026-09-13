@@ -34,6 +34,10 @@ MAX_SKILL_RESOURCE_BYTES = 8 * 1024 * 1024
 MAX_MARKETPLACE_BYTES = 4 * 1024 * 1024
 MAX_GIT_OUTPUT = 16_000
 MAX_OAUTH_METADATA_BYTES = 1024 * 1024
+MAX_PLUGIN_SCREENS = 16
+PLUGIN_SCREEN_CAPABILITIES = frozenset({
+    "agents.read", "agents.interact", "world.preferences",
+})
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
 
 def _load_mcp_catalog() -> tuple[int, tuple[dict[str, Any], ...]]:
@@ -220,6 +224,68 @@ def parse_skill(path: Path, *, source: str, plugin_id: str | None = None) -> dic
     }
 
 
+def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate opt-in Locus screens without granting their requested capabilities."""
+    if "locus" not in manifest:
+        return []
+    locus = manifest["locus"]
+    if not isinstance(locus, dict):
+        raise ExtensionError("locus must contain an object")
+    raw_screens = locus.get("screens", [])
+    if not isinstance(raw_screens, list) or len(raw_screens) > MAX_PLUGIN_SCREENS:
+        raise ExtensionError(f"locus.screens must be a list of at most {MAX_PLUGIN_SCREENS} screens")
+    screens: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for screen in raw_screens:
+        if not isinstance(screen, dict):
+            raise ExtensionError("each Locus screen must be an object")
+        identifier = screen.get("id")
+        if not isinstance(identifier, str) or not _NAME_RE.fullmatch(identifier):
+            raise ExtensionError("screen id must use 1–80 lowercase letters, numbers, '.', '_' or '-'")
+        if identifier in identifiers:
+            raise ExtensionError(f"duplicate screen id: {identifier}")
+        identifiers.add(identifier)
+        title = screen.get("title")
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 \
+                or any(ord(character) < 32 or ord(character) == 127 for character in title):
+            raise ExtensionError(f"screen {identifier} title must contain 1–120 printable characters")
+        version = screen.get("version")
+        if type(version) is not int or version != 1:
+            raise ExtensionError(f"screen {identifier} requires supported bridge version 1")
+        capabilities = screen.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) or value not in PLUGIN_SCREEN_CAPABILITIES
+            for value in capabilities
+        ):
+            raise ExtensionError(f"screen {identifier} requests unsupported capabilities")
+        if len(capabilities) != len(set(capabilities)):
+            raise ExtensionError(f"screen {identifier} declares duplicate capabilities")
+        entrypoint = screen.get("entrypoint")
+        if not isinstance(entrypoint, str) or not 1 <= len(entrypoint) <= 1024:
+            raise ExtensionError(f"screen {identifier} requires a local HTML entrypoint")
+        if entrypoint.startswith("./"):
+            entrypoint = entrypoint[2:]
+        if any(part in {"", ".", ".."} for part in entrypoint.split("/")) \
+                or any(character in entrypoint for character in "\\:%?#") \
+                or any(ord(character) < 32 or ord(character) == 127 for character in entrypoint):
+            raise ExtensionError(f"screen {identifier} entrypoint must stay inside the plugin")
+        candidate = root / entrypoint
+        if candidate.suffix.lower() not in {".html", ".htm"}:
+            raise ExtensionError(f"screen {identifier} entrypoint must be an HTML file")
+        if not _inside(root, candidate):
+            raise ExtensionError(f"screen {identifier} entrypoint escapes the plugin")
+        if not candidate.is_file():
+            raise ExtensionError(f"screen {identifier} entrypoint is missing: {entrypoint}")
+        screens.append({
+            "id": identifier,
+            "title": title.strip(),
+            "entrypoint": entrypoint,
+            "version": version,
+            "capabilities": sorted(capabilities),
+        })
+    return screens
+
+
 def parse_plugin(root: Path) -> dict[str, Any]:
     root = root.resolve()
     manifest_path = root / ".codex-plugin/plugin.json"
@@ -233,6 +299,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
         raise ExtensionError(f"plugin {name} must declare a description")
     interface = manifest.get("interface") if isinstance(manifest.get("interface"), dict) else {}
     author = manifest.get("author") if isinstance(manifest.get("author"), dict) else {}
+    screens = _parse_plugin_screens(root, manifest)
 
     skills_root = _component_path(root, manifest.get("skills"), "./skills/")
     skills: list[dict[str, Any]] = []
@@ -309,6 +376,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
         "skills": skills,
         "skill_errors": skill_errors,
         "mcp_servers": mcp_servers,
+        "screens": screens,
         "scripts": scripts,
         "unsupported": unsupported,
         "manifest": manifest,
@@ -628,6 +696,7 @@ class ExtensionManager:
             "stdio": not self.sandboxed,
             "oauth": True,
             "mcp_apps": False,
+            "plugin_screens": True,
             "hooks": False,
             "npm_marketplaces": False,
             "ssh_marketplaces": False,
@@ -875,6 +944,7 @@ class ExtensionManager:
                 item["installed_version"] = plugin.get("version") if plugin else None
                 item["display_name"] = str(item.get("name") or "").replace("-", " ").title()
                 item["description"] = ""
+                item["screens"] = []
                 if item.get("available") and item.get("source", {}).get("source") == "local":
                     try:
                         parsed = parse_plugin(self._catalog_local_path(item))
@@ -883,6 +953,7 @@ class ExtensionManager:
                             "description": parsed["description"],
                             "version": parsed["version"],
                             "author": parsed["author"].get("name") or None,
+                            "screens": parsed["screens"],
                             "capabilities": self._trust_summary(parsed),
                         })
                     except ExtensionError as exc:
@@ -1656,6 +1727,7 @@ class ExtensionManager:
                 "enabled_workspaces": list(record.get("enabled_workspaces") or []),
                 "disabled_workspaces": list(record.get("disabled_workspaces") or []),
                 "update_available": False,
+                "screens": [],
                 "error": str(exc),
             }
 
@@ -1678,7 +1750,7 @@ class ExtensionManager:
             key: parsed[key] for key in (
                 "name", "version", "description", "display_name", "short_description",
                 "long_description", "category", "homepage", "repository", "license",
-                "skills", "mcp_servers", "scripts", "unsupported",
+                "skills", "mcp_servers", "screens", "scripts", "unsupported",
             )
         }
         view["author"] = parsed["author"].get("name") or None
@@ -1688,6 +1760,7 @@ class ExtensionManager:
     def _trust_summary(parsed: dict[str, Any]) -> dict[str, Any]:
         return {
             "skills": len(parsed["skills"]),
+            "screens": list(parsed["screens"]),
             "skill_scripts": list(parsed["scripts"]),
             "mcp_servers": [
                 {
@@ -1725,6 +1798,22 @@ class ExtensionManager:
         added_scripts = sorted(set(parsed["scripts"]) - set(old["scripts"]))
         if added_scripts:
             changes.append("Adds scripts: " + ", ".join(added_scripts))
+        old_screens = {item["id"]: item for item in old["screens"]}
+        new_screens = {item["id"]: item for item in parsed["screens"]}
+        for identifier, screen in new_screens.items():
+            previous_screen = old_screens.get(identifier)
+            if previous_screen is None:
+                changes.append(f"Adds screen {screen['title']} ({identifier})")
+                continue
+            if screen["capabilities"] != previous_screen["capabilities"]:
+                requested = ", ".join(screen["capabilities"]) or "none"
+                changes.append(f"Changes capabilities for screen {identifier}: {requested}")
+            if (screen["version"], screen["entrypoint"]) != (
+                previous_screen["version"], previous_screen["entrypoint"]
+            ):
+                changes.append(f"Changes screen entrypoint or bridge version for {identifier}")
+        for identifier in sorted(old_screens.keys() - new_screens.keys()):
+            changes.append(f"Removes screen {identifier}")
         old_servers = {item["name"]: item for item in old["mcp_servers"]}
         for server in parsed["mcp_servers"]:
             if server["name"] not in old_servers:
