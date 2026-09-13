@@ -48,13 +48,13 @@ struct AgentWorldView: View {
                             HStack(alignment: .top, spacing: 9) {
                                 Circle().fill(statusColor(resident.status)).frame(width: 7, height: 7).padding(.top, 6)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(resident.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(.primary)
+                                    Text(resident.name).font(.locus(size: 12, weight: .semibold)).foregroundStyle(.primary)
                                     Text(resident.role.capitalized).font(.caption).foregroundStyle(.secondary)
                                     Text(resident.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption2).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                             }.padding(.vertical, 5).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.locus())
                             .listRowBackground(model.selection == resident.id ? Color.accentColor.opacity(0.12) : .clear)
                             .accessibilityIdentifier("agentWorld.resident.\(resident.id)")
                     }.listStyle(.sidebar)
@@ -93,7 +93,7 @@ struct AgentWorldView: View {
                         Text(profile.name).font(.title3.weight(.semibold))
                         Spacer()
                         Button(action: model.dismissConversation) { Image(systemName: "xmark") }
-                            .buttonStyle(.plain).help("Return to the world")
+                            .buttonStyle(.locus(.icon)).help("Return to the world")
                             .accessibilityIdentifier("agentWorld.closeConversation")
                         Menu {
                             Button("Start a new conversation", action: model.newConversation).disabled(model.conversationBusy)
@@ -122,7 +122,7 @@ struct AgentWorldView: View {
                             ForEach(model.blocks.filter { [.user, .assistant, .error, .note].contains($0.kind) }) { block in
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(block.kind == .user ? "You" : profile.name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                    Text(block.text).font(.system(size: 13)).textSelection(.enabled)
+                                    Text(block.text).font(.locus(size: 13)).textSelection(.enabled)
                                         .foregroundStyle(block.kind == .error ? Color.red : .primary)
                                 }.frame(maxWidth: .infinity, alignment: .leading).id(block.id)
                             }
