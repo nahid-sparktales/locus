@@ -4565,22 +4565,25 @@ final class LocusUITests: XCTestCase {
             "message.00000000-0000-0000-0000-000000000101"
         )
         let jump = anyElement("conversation.jumpToLatest")
+        let finalItem = anyElement(
+            "toolActivity.group.00000000-0000-0000-0000-000000000401"
+        )
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 3))
-        XCTAssertTrue(firstMessage.isHittable)
+        XCTAssertTrue(isVisiblyInside(firstMessage, transcript))
+        XCTAssertFalse(isVisiblyInside(finalItem, transcript))
         XCTAssertTrue(jump.waitForExistence(timeout: 3))
-        let firstMessageY = firstMessage.frame.minY
 
         // The overlay button is visibly inside the transcript, but macOS 15
         // can report it as non-hittable while the Find field owns keyboard
         // focus. A center-coordinate click exercises the same user action.
         jump.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
-        XCTAssertTrue(waitUntil(timeout: 3) {
-            !firstMessage.exists
-                || !firstMessage.isHittable
-                || firstMessage.frame.minY < firstMessageY - 20
-        })
-        XCTAssertTrue(waitUntil(timeout: 3) { !jump.exists })
+        // macOS can retain the old accessibility frame and hittability of an
+        // offscreen message after a successful jump. Verify the visible final
+        // item instead, along with the control disappearing at the bottom.
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.isVisiblyInside(finalItem, transcript) && !jump.exists
+        }, "Jump to Latest must reveal the final transcript item and hide its button")
     }
 
     func testCollapsedToolActivityGroupsAndExpands() {
