@@ -61,7 +61,7 @@ struct ReusableChecksView: View {
                         Text("Version \(record.version) · \(record.state.capitalized)").font(.caption)
                         if let active = record.activeVersion, active != record.version { Text("Approved version \(active) remains active for future tasks while this proposal is reviewed.").font(.caption) }
                         Form {
-                            TextField("Requirement", text: $requirement, axis: .vertical)
+                            LocusFormTextField("Requirement", text: $requirement, axis: .vertical)
                             Picker("Check", selection: $kind) {
                                 Text("Human review").tag("human_review")
                                 Text("File exists").tag("file_exists")
@@ -69,21 +69,21 @@ struct ReusableChecksView: View {
                                 Text("JSON value").tag("json_value")
                                 Text("Command succeeds").tag("command")
                             }
-                            if kind.hasPrefix("file_") || kind == "json_value" { TextField("Project-relative file", text: $path) }
-                            if kind == "file_contains" { TextField("Required text", text: $expected, axis: .vertical) }
+                            if kind.hasPrefix("file_") || kind == "json_value" { LocusFormTextField("Project-relative file", text: $path) }
+                            if kind == "file_contains" { LocusFormTextField("Required text", text: $expected, axis: .vertical) }
                             if kind == "json_value" {
-                                TextField("JSON pointer", text: $pointer)
-                                TextField("Expected JSON value", text: $expected)
+                                LocusFormTextField("JSON pointer", text: $pointer)
+                                LocusFormTextField("Expected JSON value", text: $expected)
                             }
                             if kind == "command" {
-                                TextField("Command", text: $command, axis: .vertical)
-                                TextField("Relevant files, separated by commas", text: $files)
+                                LocusFormTextField("Command", text: $command, axis: .vertical)
+                                LocusFormTextField("Relevant files, separated by commas", text: $files)
                                 Text("Testing and future execution use the task’s existing command permissions.").font(.caption)
                             }
                             Toggle("Only this agent or chat", isOn: $agentOnly)
-                            TextField("File scope, such as Sources/** (optional)", text: $scopeFiles)
+                            LocusFormTextField("File scope, such as Sources/** (optional)", text: $scopeFiles)
                             Text("A file scope applies when matching files change or are named in the task. Empty scope applies across this project.").font(.caption)
-                            TextField("Verification limits", text: $limits, axis: .vertical)
+                            LocusFormTextField("Verification limits", text: $limits, axis: .vertical)
                         }.disabled(busy || ["dismissed", "disabled"].contains(record.state))
                         HStack {
                             if record.state == "proposed" || record.state == "approved" {

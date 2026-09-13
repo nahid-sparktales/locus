@@ -980,7 +980,7 @@ private struct ConnectorSetupView: View {
                 .disabled(saveDisabled)
             }
             Form {
-                TextField("Connection name", text: $displayName)
+                LocusFormTextField("Connection name", text: $displayName)
                 if kind == .gmail {
                     LabeledContent("Access") {
                         Text("Google OAuth · gmail.modify")
@@ -989,31 +989,31 @@ private struct ConnectorSetupView: View {
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 } else if kind == .telegram {
-                    SecureField("Bot token", text: $token)
+                    LocusFormSecureField("Bot token", text: $token)
                     Text("The token stays in your Mac Keychain. Use trigger filters to allow only expected chats, senders, commands, and message types.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                 } else if kind == .webhook {
-                    TextField("Listener port", value: $port, format: .number)
+                    LocusFormTextField("Listener port", value: $port, format: .number)
                     Toggle("Allow devices on the local network", isOn: $allowLAN)
-                    TextField("Optional tunnel URL", text: $tunnelURL)
+                    LocusFormTextField("Optional tunnel URL", text: $tunnelURL)
                     Text("The listener binds to localhost by default. Locus does not operate a cloud relay; configure your own tunnel if the sender is remote.")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("eventAutomations.webhookSecurityNote")
                 } else {
-                    TextField("HTTPS GET endpoint with {symbol}", text: $endpointTemplate)
-                    TextField("Price JSON path", text: $priceJSONPath)
-                    TextField("Optional timestamp JSON path", text: $timestampJSONPath)
+                    LocusFormTextField("HTTPS GET endpoint with {symbol}", text: $endpointTemplate)
+                    LocusFormTextField("Price JSON path", text: $priceJSONPath)
+                    LocusFormTextField("Optional timestamp JSON path", text: $timestampJSONPath)
                     HStack {
-                        TextField("Test provider symbol", text: $testSymbol)
-                        TextField("Display symbol", text: $testDisplaySymbol)
+                        LocusFormTextField("Test provider symbol", text: $testSymbol)
+                        LocusFormTextField("Display symbol", text: $testDisplaySymbol)
                     }
                     Picker("Asset", selection: $testAssetClass) {
                         Text("Crypto").tag("crypto")
                         Text("Stock").tag("stock")
                     }
-                    TextField("Quote currency", text: $quoteCurrency)
+                    LocusFormTextField("Quote currency", text: $quoteCurrency)
                     Stepper(
                         "Poll every \(pollIntervalSeconds) seconds",
                         value: $pollIntervalSeconds, in: 15...86_400, step: 15
@@ -1025,12 +1025,12 @@ private struct ConnectorSetupView: View {
                     Toggle("Allow private or local-network hosts", isOn: $allowLocalNetwork)
                     ForEach($priceSecrets) { $secret in
                         HStack {
-                            TextField("Header or query name", text: $secret.key)
+                            LocusFormTextField("Header or query name", text: $secret.key)
                             Picker("Placement", selection: $secret.placement) {
                                 Text("Header").tag(PriceFeedSecretField.Placement.header)
                                 Text("Query").tag(PriceFeedSecretField.Placement.query)
                             }
-                            SecureField("Secret value", text: $secret.value)
+                            LocusFormSecureField("Secret value", text: $secret.value)
                             Button(role: .destructive) {
                                 priceSecrets.removeAll { $0.id == secret.id }
                             } label: { Image(systemName: "minus.circle") }
@@ -1140,7 +1140,7 @@ private struct EventTriggerEditorView: View {
             Divider()
             Form {
                 Section("Agent") {
-                    TextField("Name", text: $draft.name).focused($nameFocused)
+                    LocusFormTextField("Name", text: $draft.name).focused($nameFocused)
                         .accessibilityIdentifier("eventTrigger.name")
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Instructions").font(.locus(size: 10, weight: .semibold))
@@ -1372,19 +1372,19 @@ private struct EventTriggerEditorView: View {
                 get: { draft.filters.priceCondition ?? PriceCondition() },
                 set: { draft.filters.priceCondition = $0 }
             )
-            TextField("Provider symbol", text: condition.providerSymbol)
-            TextField("Display symbol", text: condition.displaySymbol)
+            LocusFormTextField("Provider symbol", text: condition.providerSymbol)
+            LocusFormTextField("Display symbol", text: condition.displaySymbol)
             Picker("Asset", selection: condition.assetClass) {
                 Text("Crypto").tag("crypto")
                 Text("Stock").tag("stock")
             }
-            TextField("Quote currency", text: condition.quoteCurrency)
+            LocusFormTextField("Quote currency", text: condition.quoteCurrency)
             Picker("Condition", selection: condition.comparison) {
                 ForEach(PriceComparison.allCases) { comparison in
                     Text(comparison.title).tag(comparison)
                 }
             }
-            TextField("Threshold", text: condition.threshold)
+            LocusFormTextField("Threshold", text: condition.threshold)
                 .accessibilityIdentifier("eventAutomation.price.threshold")
             Picker("After firing", selection: condition.lifecycle) {
                 ForEach(PriceLifecycle.allCases) { lifecycle in
@@ -1431,14 +1431,14 @@ private struct EventTriggerEditorView: View {
             CSVField("Event names", values: $draft.filters.eventNames)
             ForEach($draft.filters.predicates) { $predicate in
                 HStack {
-                    TextField("JSON path", text: $predicate.path)
+                    LocusFormTextField("JSON path", text: $predicate.path)
                     Picker("Condition", selection: $predicate.operation) {
                         ForEach(EventFilterPredicate.Operation.allCases) { operation in
                             Text(operation.rawValue.capitalized).tag(operation)
                         }
                     }
                     if predicate.operation != .exists {
-                        TextField("Value", text: $predicate.value)
+                        LocusFormTextField("Value", text: $predicate.value)
                     }
                     Button(role: .destructive) {
                         draft.filters.predicates.removeAll { $0.id == predicate.id }
@@ -1539,19 +1539,35 @@ private struct EventTriggerEditorView: View {
 private struct CSVField: View {
     let title: String
     @Binding var values: [String]
+    @State private var text: String
 
     init(_ title: String, values: Binding<[String]>) {
         self.title = title
         _values = values
+        _text = State(initialValue: values.wrappedValue.joined(separator: ", "))
     }
 
     var body: some View {
-        TextField(title, text: Binding(
-            get: { values.joined(separator: ", ") },
-            set: { values = $0.split(separator: ",").map {
-                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty } }
-        ))
+        LocusFormTextField(title, text: $text, prompt: Text(placeholder))
+            .onChange(of: text) { _, value in values = Self.parse(value) }
+            .onChange(of: values) { _, value in
+                // Preserve a trailing comma and spaces while the next value is typed.
+                if Self.parse(text) != value { text = value.joined(separator: ", ") }
+            }
+    }
+
+    private var placeholder: String {
+        switch title {
+        case "Senders", "Recipients": "Email addresses, separated by commas"
+        case "Subject contains": "Words or phrases, separated by commas"
+        default: "\(title), separated by commas"
+        }
+    }
+
+    private static func parse(_ text: String) -> [String] {
+        text.split(separator: ",").map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
     }
 }
 

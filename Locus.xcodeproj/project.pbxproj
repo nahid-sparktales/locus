@@ -95,6 +95,7 @@
 		0EB2B021890CED44DCB58983 /* NotebookCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = D22A9EC84DF55DCD1BC0375A /* NotebookCommands.swift */; };
 		0EE20A5823F71CE649F5669A /* OrchestrationRunsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA950FE5E9C533D215492CA3 /* OrchestrationRunsModel.swift */; };
 		0F5A08BE5EF99AB4D7B7BC2C /* WalletSuiGraphQLClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66C116044B2AC9649522021 /* WalletSuiGraphQLClient.swift */; };
+		0F6C8CE2C5861C55B101C25A /* FormFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A04F1B7896C1165FCB414C2 /* FormFields.swift */; };
 		0F6E9659DD293134A89BB907 /* EvaluationsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4452FAF6D288142B4A7D97 /* EvaluationsModel.swift */; };
 		0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EA24EB82248151706E566E /* GitStatusModels.swift */; };
 		0F93C3A166B1038C8682007E /* AutomationWorkflowEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD80A49CC4579DDF9E76175F /* AutomationWorkflowEditorView.swift */; };
@@ -641,6 +642,7 @@
 		7B0F505C63CD67E851888DFD /* WalletSuiCanonicalTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 206B1FB753D6028103FCB782 /* WalletSuiCanonicalTransaction.swift */; };
 		7B2082B330CFAE2C2D8D51D1 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD24095E0EA6433F8AF94214 /* ScheduleModels.swift */; };
 		7B597890A343050DCFC455E6 /* AppModel+UITestFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A65C8C0698978C8CF184FCA3 /* AppModel+UITestFixtures.swift */; };
+		7B6D09D3A665A7154E7D2B33 /* FormFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A04F1B7896C1165FCB414C2 /* FormFields.swift */; };
 		7B712BED4ED8227896F2BE36 /* text-encoding-utf-8-1.0.2.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 96E784D21CB76D9CA4E7D580 /* text-encoding-utf-8-1.0.2.LICENSE */; };
 		7B884C6B4090C65F0EF1BD66 /* InteractiveAnswerDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC3D72AF9571D9A1906E499 /* InteractiveAnswerDocument.swift */; };
 		7BDF45BDB2A7B99922CCBC2B /* BrowserFavicons.swift in Sources */ = {isa = PBXBuildFile; fileRef = A256B308D8C600193136B212 /* BrowserFavicons.swift */; };
@@ -1059,6 +1061,7 @@
 		CB1CBE60641E20C63C256F27 /* PluginScreenHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97EA856108016CB840EBF5D8 /* PluginScreenHost.swift */; };
 		CB1DA59CCBE182095D647A5E /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A37D5FE4583645B552296C /* SessionSidebarView.swift */; };
 		CB22892B835E59A99C4FA35D /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCCEF7CD29A9C6F9C3E1472F /* LocusApp.swift */; };
+		CB47FD3896CF70774E54C034 /* FormFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A04F1B7896C1165FCB414C2 /* FormFields.swift */; };
 		CB539BDAB01E69E8E2AB8C83 /* AccountEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD1471F0D2805148D40887 /* AccountEditorView.swift */; };
 		CB588949411419DA38BE7821 /* OutputsLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EE6591E5FA0BE34D456851A /* OutputsLibraryTests.swift */; };
 		CB8A23C56844B2089851BDE6 /* InteractiveAnswerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB54BC06D9F668EA915750CC /* InteractiveAnswerView.swift */; };
@@ -1211,6 +1214,7 @@
 		E6B5E9C34E90B735A5A84C22 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18BD6EB5EBD180B3E69FBD6 /* ComposerView.swift */; };
 		E7071BB89FEA175C28347A9C /* VoiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C05527F03B7D68A59343C4E /* VoiceModels.swift */; };
 		E722285F8F427D2AF1FF518B /* GoalTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB7549F4D2E5B3F63EE045A /* GoalTypes.swift */; };
+		E75095F78B57436AD5A2987A /* FormFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A04F1B7896C1165FCB414C2 /* FormFields.swift */; };
 		E77B6C3A0E472B2E665BEB46 /* DocumentReference.swift in Sources */ = {isa = PBXBuildFile; fileRef = B313AE68C7413C99043DC025 /* DocumentReference.swift */; };
 		E77C5AC74E6292498229D6AB /* AppModel+ChatOrganization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FEC18063F2B5DD71D342F67 /* AppModel+ChatOrganization.swift */; };
 		E7A8080D43EC280AD1C4B9D8 /* AppModel+BackendEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BAFC6DFED15705B38AC0CE2 /* AppModel+BackendEvents.swift */; };
@@ -1546,6 +1550,7 @@
 		3909625E36445E040EE3AE90 /* LocusXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LocusXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		396C4535C45E729833627F88 /* AppModel+ResponseOutputFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ResponseOutputFixtures.swift"; sourceTree = "<group>"; };
 		39A793D07F7907D8F2C789E5 /* AppModel+Goals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Goals.swift"; sourceTree = "<group>"; };
+		3A04F1B7896C1165FCB414C2 /* FormFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormFields.swift; sourceTree = "<group>"; };
 		3AF5D84E90C61DF600758768 /* IdentityVaultCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityVaultCoordinatorTests.swift; sourceTree = "<group>"; };
 		3CCE0A795E088D797A8DFDB0 /* WalletFuzzDecoderFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletFuzzDecoderFixtures.swift; sourceTree = "<group>"; };
 		3D508444E398AA3AB5441198 /* InspectorRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorRail.swift; sourceTree = "<group>"; };
@@ -2273,6 +2278,7 @@
 				113F63D8FC35F53C8044F1A4 /* EventConnectorClient.swift */,
 				EED889C7219DB222230353F3 /* EventWebhookServer.swift */,
 				C0EFBBAE84F5B838F776CBF6 /* ExtensionsModel.swift */,
+				3A04F1B7896C1165FCB414C2 /* FormFields.swift */,
 				06DD9A63C8FBDB42368F8A0C /* GitClient.swift */,
 				821D2EE07104AAF4E9163C6A /* GitRemote.swift */,
 				63EA24EB82248151706E566E /* GitStatusModels.swift */,
@@ -3345,6 +3351,7 @@
 				F45512F575D873F3A9EBBB97 /* EventWebhookServer.swift in Sources */,
 				FCED14E06DED4CBB99D063BA /* ExtensionModels.swift in Sources */,
 				341496154185BC9602A0B07E /* ExtensionsModel.swift in Sources */,
+				7B6D09D3A665A7154E7D2B33 /* FormFields.swift in Sources */,
 				0960DB528018B890ACD15027 /* GitClient.swift in Sources */,
 				8381D1C28836F8B8368B70D8 /* GitRemote.swift in Sources */,
 				D52DAA3BF6FA508050C2D254 /* GitStatusModels.swift in Sources */,
@@ -3740,6 +3747,7 @@
 				E8D85FE96A82FE02DC67E6F8 /* EventWebhookServer.swift in Sources */,
 				434EC61340C47BC3152C5FE4 /* ExtensionModels.swift in Sources */,
 				812B49657632395CE0781BC3 /* ExtensionsModel.swift in Sources */,
+				E75095F78B57436AD5A2987A /* FormFields.swift in Sources */,
 				404AF919F8C0790788D0A26B /* GitClient.swift in Sources */,
 				685B525FA0448752EDE77E84 /* GitRemote.swift in Sources */,
 				0F72DE71A4842FDA1E802CC0 /* GitStatusModels.swift in Sources */,
@@ -4000,6 +4008,7 @@
 				B9BCCD6E3A18CAB6B49013C1 /* EventWebhookServer.swift in Sources */,
 				6F1AE8D7CC8F06F66910E29E /* ExtensionModels.swift in Sources */,
 				F58A81A3B524683095E4B9D4 /* ExtensionsModel.swift in Sources */,
+				CB47FD3896CF70774E54C034 /* FormFields.swift in Sources */,
 				8F674D1398BBBFEB043FB536 /* GitClient.swift in Sources */,
 				7DF85FCAE34A64B48D707FC7 /* GitRemote.swift in Sources */,
 				2FD44DC8D5F09C734D00D51C /* GitStatusModels.swift in Sources */,
@@ -4404,6 +4413,7 @@
 				68746E58338947E03143D26E /* EventWebhookServer.swift in Sources */,
 				83B4D09914C4340094BA7EAB /* ExtensionModels.swift in Sources */,
 				3575BC4DF25974B3ADCA1DC1 /* ExtensionsModel.swift in Sources */,
+				0F6C8CE2C5861C55B101C25A /* FormFields.swift in Sources */,
 				B0B246849391D804DE6F3EC2 /* GitClient.swift in Sources */,
 				7CD75E6606643BCFF9E59265 /* GitRemote.swift in Sources */,
 				463853B6B1D1CDE43EBB6C80 /* GitStatusModels.swift in Sources */,

@@ -65,7 +65,7 @@ struct BrowserSettingsView: View {
                 }
 
                 Section("Defaults") {
-                    TextField("Home URL", text: $draft.previewURL)
+                    LocusFormTextField("Home URL", text: $draft.previewURL)
                         .accessibilityIdentifier("settings.previewURL")
                     Picker("Viewport", selection: $draft.browserViewportRaw) {
                         ForEach(BrowserViewport.allCases) { viewport in
@@ -342,10 +342,10 @@ private struct BrowserPasswordEditor: View {
 
     var body: some View {
         Form {
-            TextField("Website", text: $record.origin, prompt: Text("https://example.com"))
-            TextField("Username", text: $record.username)
-            SecureField("Password", text: $record.password)
-            TextField("Label", text: $record.label)
+            LocusFormTextField("Website", text: $record.origin, prompt: Text("https://example.com"))
+            LocusFormTextField("Username", text: $record.username)
+            LocusFormSecureField("Password", text: $record.password)
+            LocusFormTextField("Label", text: $record.label)
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -423,18 +423,18 @@ private struct BrowserContactEditor: View {
     var body: some View {
         Form {
             Section("Identity") {
-                TextField("Label", text: $record.label)
-                TextField("Full name", text: $record.fullName)
-                TextField("Organization", text: $record.organization)
-                TextField("Email", text: $record.email)
-                TextField("Phone", text: $record.phone)
+                LocusFormTextField("Label", text: $record.label)
+                LocusFormTextField("Full name", text: $record.fullName)
+                LocusFormTextField("Organization", text: $record.organization)
+                LocusFormTextField("Email", text: $record.email)
+                LocusFormTextField("Phone", text: $record.phone)
             }
             Section("Address") {
-                TextField("Street", text: $record.street)
-                TextField("City", text: $record.city)
-                TextField("State or province", text: $record.region)
-                TextField("Postal code", text: $record.postalCode)
-                TextField("Country", text: $record.country)
+                LocusFormTextField("Street", text: $record.street)
+                LocusFormTextField("City", text: $record.city)
+                LocusFormTextField("State or province", text: $record.region)
+                LocusFormTextField("Postal code", text: $record.postalCode)
+                LocusFormTextField("Country", text: $record.country)
             }
         }
         .formStyle(.grouped)
@@ -518,9 +518,9 @@ private struct BrowserCardEditor: View {
 
     var body: some View {
         Form {
-            TextField("Nickname", text: $record.nickname)
-            TextField("Name on card", text: $record.cardholder)
-            TextField("Card number", text: $record.number)
+            LocusFormTextField("Nickname", text: $record.nickname)
+            LocusFormTextField("Name on card", text: $record.cardholder)
+            LocusFormTextField("Card number", text: $record.number)
             HStack {
                 Picker("Month", selection: $record.expirationMonth) {
                     ForEach(1...12, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
@@ -796,7 +796,7 @@ private struct BrowserPermissionManager: View {
                     .font(.caption).foregroundStyle(LocusTheme.textTertiary)
             }
             Section("Add site override") {
-                TextField("Site origin", text: $origin, prompt: Text("https://example.com"))
+                LocusFormTextField("Site origin", text: $origin, prompt: Text("https://example.com"))
                 Picker("Permission", selection: $kind) { ForEach(BrowserPermissionKind.allCases) { Text($0.title).tag($0) } }
                 Picker("Decision", selection: $decision) { ForEach(BrowserPermissionDecision.allCases) { Text($0.title).tag($0) } }
                 Button("Add Override") {

@@ -221,7 +221,7 @@ struct DeployAgentView: View {
                         Text("Ollama on remote host").tag("")
                         ForEach(providerAccounts.providerAccounts) { account in Text(account.displayName).tag(account.id.uuidString) }
                     }
-                    TextField("Model", text: $modelName)
+                    LocusFormTextField("Model", text: $modelName)
                     Picker("Permissions", selection: $permissionMode) {
                         Text("Ask before actions").tag("ask")
                         Text("Allow file edits").tag("accept_edits")
@@ -242,7 +242,7 @@ struct DeployAgentView: View {
                     Text("Only selected connector credentials are provisioned. Sign-in stays in Locus.").font(.caption)
                 }
                 Section("Work") {
-                    TextField("What should this agent do?", text: $prompt, axis: .vertical).lineLimit(3...6)
+                    LocusFormTextField("What should this agent do?", text: $prompt, axis: .vertical).lineLimit(3...6)
                     Toggle("Keep running when Locus closes", isOn: $keepRunning)
                     Toggle("Repeat every hour", isOn: $scheduled)
                 }
@@ -365,7 +365,7 @@ struct RemoteRuntimeStatusView: View {
                                     return try? JSONDecoder().decode(AgentQuestion.self, from: data)
                                 }) { question in
                                     Text(question.question)
-                                    TextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                                    LocusFormTextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
                                 }
                                 Button("Send answers") { respond(decision, approved: true) }
                             } else if decision.event["type"]?.string == "permission_request" {

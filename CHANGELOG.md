@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- Agent and settings forms use full-width, left-aligned placeholder inputs;
+  comma-separated event filters preserve unfinished entries while typing.
 - Saved-agent chats support full work modes, goals, task capsules, and controlled
   delegation while retaining the agent’s model, instructions, and access.
 - Gmail agent polling handles connection responses consistently and saved-agent

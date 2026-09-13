@@ -357,9 +357,9 @@ struct AgentTeamsSettingsView: View {
     private var observabilitySection: some View {
         Section("Optional telemetry") {
             Toggle("Export completed runs with OTLP/HTTP", isOn: $model.settings.otlpExportEnabled)
-            TextField("https://collector.example", text: $model.settings.otlpEndpoint)
+            LocusFormTextField("https://collector.example", text: $model.settings.otlpEndpoint)
                 .textFieldStyle(.roundedBorder)
-            SecureField(
+            LocusFormSecureField(
                 "Authorization header (optional)",
                 text: $model.settings.otlpAuthorization
             )
@@ -1257,8 +1257,8 @@ private struct AgentBehaviorEditor: View {
             ScrollView {
                 Form {
                     Section("Identity and response") {
-                        TextField("Display name", text: $draft.displayName)
-                        TextField("What this agent is", text: $draft.selfDescription, axis: .vertical)
+                        LocusFormTextField("Display name", text: $draft.displayName)
+                        LocusFormTextField("What this agent is", text: $draft.selfDescription, axis: .vertical)
                             .lineLimit(2...5)
                         Picker("Tone", selection: $draft.responseStyle.tone) {
                             ForEach(AgentResponseTone.allCases) { Text($0.title).tag($0) }
@@ -1334,10 +1334,10 @@ private struct AgentBehaviorEditor: View {
             Group {
                 Text("MODE-SPECIFIC GUIDANCE")
                     .font(.locus(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
-                TextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
-                TextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
-                TextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
-                TextField("Grill", text: $draft.modeInstructions.grill, axis: .vertical)
+                LocusFormTextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
+                LocusFormTextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
+                LocusFormTextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
+                LocusFormTextField("Grill", text: $draft.modeInstructions.grill, axis: .vertical)
             }
             Divider()
             Group {
@@ -1442,15 +1442,15 @@ private struct AgentBehaviorEditor: View {
             }
             Toggle("Task model-call limit", isOn: Binding(get: { draft.runtimePolicy.maxModelCalls != nil }, set: { draft.runtimePolicy.maxModelCalls = $0 ? 100 : nil }))
             if draft.runtimePolicy.maxModelCalls != nil {
-                TextField("Maximum calls", value: Binding(get: { draft.runtimePolicy.maxModelCalls ?? 100 }, set: { draft.runtimePolicy.maxModelCalls = max($0, 1) }), format: .number)
+                LocusFormTextField("Maximum calls", value: Binding(get: { draft.runtimePolicy.maxModelCalls ?? 100 }, set: { draft.runtimePolicy.maxModelCalls = max($0, 1) }), format: .number)
             }
             Toggle("Task token limit", isOn: Binding(get: { draft.runtimePolicy.maxTotalTokens != nil }, set: { draft.runtimePolicy.maxTotalTokens = $0 ? 100_000 : nil }))
             if draft.runtimePolicy.maxTotalTokens != nil {
-                TextField("Maximum tokens", value: Binding(get: { draft.runtimePolicy.maxTotalTokens ?? 100_000 }, set: { draft.runtimePolicy.maxTotalTokens = max($0, 1) }), format: .number)
+                LocusFormTextField("Maximum tokens", value: Binding(get: { draft.runtimePolicy.maxTotalTokens ?? 100_000 }, set: { draft.runtimePolicy.maxTotalTokens = max($0, 1) }), format: .number)
             }
             Toggle("Estimated spending control", isOn: Binding(get: { draft.runtimePolicy.maxEstimatedUSD != nil }, set: { draft.runtimePolicy.maxEstimatedUSD = $0 ? 5 : nil }))
             if draft.runtimePolicy.maxEstimatedUSD != nil {
-                TextField("Maximum estimated USD", value: Binding(get: { draft.runtimePolicy.maxEstimatedUSD ?? 5 }, set: { draft.runtimePolicy.maxEstimatedUSD = max($0, 0.01) }), format: .number)
+                LocusFormTextField("Maximum estimated USD", value: Binding(get: { draft.runtimePolicy.maxEstimatedUSD ?? 5 }, set: { draft.runtimePolicy.maxEstimatedUSD = max($0, 0.01) }), format: .number)
                 Text("New API calls pause when pricing or unsettled usage prevents a meaningful estimate. Subscription usage is separate.").font(.caption)
             }
             Text("Managed providers are interrupted at the next usage boundary they report.")
@@ -2406,7 +2406,7 @@ private struct AgentTeamEditor: View {
             Divider()
             ScrollView {
                 Form {
-                    TextField("Team name", text: $draft.name)
+                    LocusFormTextField("Team name", text: $draft.name)
                     Section("Members") {
                         ForEach(agentTeams.agentProfiles) { profile in
                             Toggle(isOn: Binding(
@@ -2476,8 +2476,8 @@ private struct AgentTeamEditor: View {
                         )) {
                             ForEach(AgentRoutingMode.allCases) { Text($0.title).tag($0) }
                         }
-                        TextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
-                        TextField(
+                        LocusFormTextField("Evaluation tags", text: $evaluationTags, prompt: Text("swift, security, tests"))
+                        LocusFormTextField(
                             "Maximum estimated cost",
                             value: $draft.maximumEstimatedCost,
                             format: .currency(code: "USD")
@@ -2678,9 +2678,9 @@ private struct EvaluationSuiteEditor: View {
 
     var body: some View {
         Form {
-            TextField("Suite name", text: $draft.name)
-            TextField("Description", text: $draft.description, axis: .vertical)
-            TextField("Tags", text: $tags, prompt: Text("swift, security, routing"))
+            LocusFormTextField("Suite name", text: $draft.name)
+            LocusFormTextField("Description", text: $draft.description, axis: .vertical)
+            LocusFormTextField("Tags", text: $tags, prompt: Text("swift, security, routing"))
             Toggle("Allow explicitly read-only MCP evidence", isOn: $draft.readOnlyMCP)
             Text("Coding cases always run in disposable managed worktrees. Computer control and mutating MCP tools are disabled.")
                 .font(.locus(size: 8))
@@ -2689,16 +2689,16 @@ private struct EvaluationSuiteEditor: View {
                 ForEach(draft.cases.indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 7) {
                         HStack {
-                            TextField("Case name", text: $draft.cases[index].name)
+                            LocusFormTextField("Case name", text: $draft.cases[index].name)
                             Button(role: .destructive) {
                                 if draft.cases.count > 1 { draft.cases.remove(at: index) }
                             } label: { Image(systemName: "trash") }
                                 .buttonStyle(.locus())
                                 .disabled(draft.cases.count == 1)
                         }
-                        TextField("Prompt", text: $draft.cases[index].prompt, axis: .vertical)
+                        LocusFormTextField("Prompt", text: $draft.cases[index].prompt, axis: .vertical)
                             .lineLimit(3...8)
-                        TextField(
+                        LocusFormTextField(
                             "Case tags",
                             text: caseTagsBinding(index),
                             prompt: Text("swift, routing, regression")
@@ -2760,7 +2760,7 @@ private struct EvaluationSuiteEditor: View {
                             }
                             .font(.locus(size: 8))
                         }
-                        TextField("Optional subjective rubric", text: $draft.cases[index].rubric, axis: .vertical)
+                        LocusFormTextField("Optional subjective rubric", text: $draft.cases[index].rubric, axis: .vertical)
                         if !draft.cases[index].rubric.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Picker("Blind judge", selection: $draft.cases[index].judgeProfileID) {
                                 Text("No subjective judge").tag("")
@@ -2779,7 +2779,7 @@ private struct EvaluationSuiteEditor: View {
                                         "output_contains", "output_regex",
                                     ], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ")).tag($0) }
                                 }
-                                TextField(
+                                LocusFormTextField(
                                     draft.cases[index].assertions[assertionIndex].kind == "command" ? "Command" : "Path",
                                     text: draft.cases[index].assertions[assertionIndex].kind == "command"
                                         ? $draft.cases[index].assertions[assertionIndex].command
@@ -2788,7 +2788,7 @@ private struct EvaluationSuiteEditor: View {
                                 if !["path_exists", "path_absent"].contains(
                                     draft.cases[index].assertions[assertionIndex].kind
                                 ) {
-                                    TextField(
+                                    LocusFormTextField(
                                         "Expected value or JSON",
                                         text: assertionValueBinding(index, assertionIndex)
                                     )
@@ -3148,12 +3148,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                 }
             }
             Toggle("Index this workspace", isOn: $enabled)
-            TextField(
+            LocusFormTextField(
                 "Optional Ollama embedding model",
                 text: $embeddingModel,
                 prompt: Text("Text search only")
             )
-            TextField(
+            LocusFormTextField(
                 "Additional exclusions",
                 text: $exclusions,
                 prompt: Text("Generated/**, Fixtures/private-*.json")
@@ -3395,12 +3395,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .foregroundStyle(LocusTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                         Toggle("Index this workspace", isOn: $enabled)
-                        TextField(
+                        LocusFormTextField(
                             "Optional local Ollama embedding model",
                             text: $embeddingModel,
                             prompt: Text("Leave empty for fast text search only")
                         )
-                        TextField(
+                        LocusFormTextField(
                             "Additional exclusions (comma separated globs)",
                             text: $exclusions,
                             prompt: Text("Generated/**, Fixtures/private-*.json")
@@ -4107,7 +4107,7 @@ private struct WorkspaceMemoryEditor: View {
             Text(scopeExplanation)
                 .font(.locus(size: 8))
                 .foregroundStyle(LocusTheme.muted)
-            TextField("Title", text: $value.title)
+            LocusFormTextField("Title", text: $value.title)
             TextEditor(text: $value.content)
                 .foregroundStyle(LocusTheme.inkSoft)
                 .tint(LocusTheme.accentAction)
@@ -4116,7 +4116,7 @@ private struct WorkspaceMemoryEditor: View {
                 .font(.locus(size: 10))
                 .frame(minHeight: 180)
                 .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
-            TextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
+            LocusFormTextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text("Confidence · \(value.confidence, format: .percent.precision(.fractionLength(0)))")
                     .font(.locus(size: 9, weight: .semibold))
